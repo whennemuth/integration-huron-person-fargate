@@ -1,0 +1,31 @@
+
+# CDK asset staging directory
+.cdk.staging
+cdk.out/
+cdk.out/*
+
+# TypeScript build artifacts
+dist/
+dist/*
+*.js
+!bin/*.js
+!jest.config.js
+*.d.ts
+node_modules
+
+# CDK context cache
+cdk.context.json
+
+# Exclude the auto-generated Node.js compilation cache directory
+.vscode/compile-cache/*
+
+# exclude environment files
+.env
+.env.*
+
+# exclude test data files
+test-data/*
+
+# exclude scrap files
+scrap/*
+HuronIRB*.json

@@ -1,0 +1,61 @@
+# Node modules (will be installed in container)
+node_modules
+npm-debug.log
+
+# Build outputs (will be generated in container)
+dist
+*.js
+*.d.ts
+*.js.map
+
+# Test files and data
+test
+test-data
+*.test.ts
+coverage
+
+# CDK outputs
+cdk.out
+.cdk.staging
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Logs
+logs
+*.log
+
+# Environment files (will be provided at runtime)
+.env
+.env.local
+.env.*.local
+
+# Documentation
+*.md
+docs
+
+# Old code
+src-old
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# CDK files (not needed in container)
+lib
+bin
+context
+!context/*.ts
+
+# TypeScript config (already copied explicitly)
+# tsconfig.json is needed and explicitly copied
+
+# Package lock not needed as we use npm ci
+# package-lock.json is needed and explicitly copied

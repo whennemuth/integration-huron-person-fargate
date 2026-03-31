@@ -1,0 +1,79 @@
+version: '3.8'
+
+# Docker Compose configuration for local development and testing
+# 
+# AWS Credentials:
+#   Uses AWS_PROFILE environment variable to reference profiles in ~/.aws/credentials
+#   The ~/.aws directory is mounted read-only, providing access to:
+#     - ~/.aws/credentials (access keys per profile)
+#     - ~/.aws/config (region and other settings per profile)
+#
+# Usage:
+#   Normal mode:    docker-compose up chunker
+#   Manual mode:    docker-compose -f docker-compose.yml -f docker-compose.manual.yml up -d chunker
+#                   docker exec -it huron-chunker sh
+#
+# Note: In Fargate, these containers use IAM roles instead of profiles
+
+services:
+  # Phase 1: Chunker service
+  chunker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      platforms:
+        - linux/arm64
+    image: huron-person-processor:latest
+    container_name: huron-chunker
+    command: node dist/docker/chunker.js
+    env_file:
+      - ./chunker.env
+    volumes:
+      # Mount AWS credentials/config directory (read-only)
+      - ~/.aws:/root/.aws:ro
+    networks:
+      - huron-network
+
+  # Phase 2: Processor service
+  processor:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      platforms:
+        - linux/arm64
+    image: huron-person-processor:latest
+    container_name: huron-processor
+    command: node dist/docker/processor.js
+    env_file:
+      - ./processor.env
+    volumes:
+      # Mount AWS credentials/config directory (read-only)
+      - ~/.aws:/root/.aws:ro
+    networks:
+      - huron-network
+    depends_on:
+      - chunker
+
+  # Phase 3: Merger service
+  merger:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      platforms:
+        - linux/arm64
+    image: huron-person-processor:latest
+    container_name: huron-merger
+    command: node dist/docker/merger.js
+    env_file:
+      - ./merger.env
+    volumes:
+      # Mount AWS credentials/config directory (read-only)
+      - ~/.aws:/root/.aws:ro
+    networks:
+      - huron-network
+    depends_on:
+      - processor
+
+networks:
+  huron-network:
+    driver: bridge

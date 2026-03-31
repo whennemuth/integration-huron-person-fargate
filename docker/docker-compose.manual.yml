@@ -1,0 +1,36 @@
+# Docker Compose override file for manual/debug mode
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.manual.yml up -d chunker
+#
+# This keeps containers running without executing the node commands,
+# allowing you to shell in and run commands manually for debugging.
+#
+# Example workflow:
+#   1. Start container: docker-compose -f docker-compose.yml -f docker-compose.manual.yml up -d chunker
+#   2. Shell in: docker exec -it huron-chunker sh
+#   3. Run manually: node dist/docker/chunker.js
+#   4. Test with params: INPUT_KEY=different-file.json node dist/docker/chunker.js
+#
+
+version: '3.8'
+
+services:
+  chunker:
+    # Override command to keep container alive
+    command: tail -f /dev/null
+    # Enable interactive terminal
+    stdin_open: true
+    tty: true
+
+  processor:
+    # Override command to keep container alive
+    command: tail -f /dev/null
+    # Enable interactive terminal
+    stdin_open: true
+    tty: true
+
+  merger:
+    # Override command to keep container alive
+    command: tail -f /dev/null
+    # Enable interactive terminal
+    stdin_open: true
+    tty: true

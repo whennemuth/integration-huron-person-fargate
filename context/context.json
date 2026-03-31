@@ -1,0 +1,75 @@
+{
+  "STACK_ID": "huron-person-fargate-processor",
+  "ACCOUNT": "770203350335",
+  "REGION": "us-east-2",
+  "TAGS": {
+    "Service": "research-administration",
+    "Function": "kuali",
+    "Landscape": "dev",
+    "CostCenter": "AWS Kuali",
+    "Ticket": "PRJ2017653"
+  },
+  "ITEMS_PER_CHUNK": 200,
+  "S3": {
+    "inputBucket": "huron-person-file-drop-dev",
+    "chunksBucket": "huron-person-chunks-dev",
+    "chunkExpirationDays": 14,
+    "deltaExpirationDays": 30
+  },
+  "ECR": {
+    "repositoryName": "huron-person-processor"
+  },
+  "ECS": {
+    "clusterName": "huron-person-cluster",
+    "chunkerTaskDefinition": {
+      "cpu": 2048,
+      "memoryLimitMiB": 4096,
+      "logRetentionDays": 7
+    },
+    "processorTaskDefinition": {
+      "cpu": 1024,
+      "memoryLimitMiB": 2048,
+      "logRetentionDays": 7
+    },
+    "mergerTaskDefinition": {
+      "cpu": 1024,
+      "memoryLimitMiB": 2048,
+      "logRetentionDays": 7
+    },
+    "processorService": {
+      "minScalingCapacity": 0,
+      "maxScalingCapacity": 5
+    }
+  },
+  "SQS": {
+    "visibilityTimeoutSeconds": 900,
+    "retentionPeriodDays": 4,
+    "deadLetterQueueMaxReceiveCount": 3
+  },
+  "LAMBDA": {
+    "chunkerSubscriber": {
+      "timeoutSeconds": 60,
+      "memorySizeMb": 256
+    },
+    "mergerSubscriber": {
+      "timeoutSeconds": 60,
+      "memorySizeMb": 256,
+      "pollIntervalMinutes": 2
+    }
+  },
+  "HURON_PERSON_CONFIG": {
+    "configPath": "../integration-huron-person/config.json"
+  },
+  "BULK_RESET": true,
+  "DRY_RUN": {
+    "lambda": {
+      "chunker": false,
+      "merger": false
+    },
+    "taskdef": {
+      "chunker": false,
+      "processor": false,
+      "merger": true
+    }
+  }
+}

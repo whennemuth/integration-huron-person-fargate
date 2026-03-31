@@ -1,0 +1,59 @@
+{
+  "name": "integration-huron-person-fargate",
+  "version": "0.1.0",
+  "description": "This CDK TypeScript project deploys the Huron Person integration as a set of serverless ECS Fargate tasks that process batches of people synchronization in parallel",
+  "bin": {
+    "integration-huron-person-fargate": "bin/integration-huron-person-fargate.js"
+  },
+  "scripts": {
+    "clearcache": "sh bin/clear-cache.sh",
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "jest",
+    "cdk": "cdk",
+    "get-stack-name": "ts-node -e \"require('./src/Utils.ts').echoStackName()\"",
+    "synth": "npm run get-stack-name | xargs cdk synth 2>&1 | tee cdk.out/synth.output.yaml",
+    "deploy": "sh bin/deploy.sh",
+    "redeploy": "cdk destroy --all -f && npm run deploy",
+    "teardown": "cdk destroy -f",
+    "uninstall-tgz": "npm uninstall integration-huron-person",
+    "install-tgz": "npm install integration-huron-person https://simple-npm-package-bucket.s3.us-east-1.amazonaws.com/integration-huron-person-1.0.0.tgz",
+    "reinstall-tgz": "npm run uninstall-tgz && npm run install-tgz",
+    "docker-build": "cd docker && sh build.sh",
+    "docker-push": "cd docker && sh push.sh",
+    "docker-publish": "cd docker && sh publish.sh",
+    "chunker": "sh ./docker/run.sh chunker",
+    "chunker-debug": "sh ./docker/run.sh --manual chunker",
+    "processor": "sh ./docker/run.sh processor",
+    "processor-debug": "sh ./docker/run.sh --manual processor",
+    "merger": "sh ./docker/run.sh merger",
+    "merger-debug": "sh ./docker/run.sh --manual merger"
+  },
+  "devDependencies": {
+    "@smithy/util-stream": "^3.0.0",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^24.10.1",
+    "@types/stream-json": "^1.7.8",
+    "aws-cdk": "2.1033.0",
+    "aws-sdk-client-mock": "^4.0.0",
+    "aws-sdk-client-mock-jest": "^4.0.0",
+    "dotenv": "^17.4.1",
+    "esbuild": "^0.24.2",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.9.3"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ecr": "^3.1012.0",
+    "@aws-sdk/client-ecr-public": "^3.1013.0",
+    "@aws-sdk/client-ecs": "^3.1012.0",
+    "@aws-sdk/client-s3": "^3.400.0",
+    "@aws-sdk/client-sqs": "^3.1013.0",
+    "@aws-sdk/client-ssm": "^3.1026.0",
+    "aws-cdk-lib": "2.215.0",
+    "constructs": "^10.0.0",
+    "integration-huron-person": "https://simple-npm-package-bucket.s3.us-east-1.amazonaws.com/integration-huron-person-1.0.0.tgz",
+    "stream-json": "^1.8.0"
+  }
+}
