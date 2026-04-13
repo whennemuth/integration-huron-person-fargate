@@ -5,7 +5,6 @@
  */
 
 import { extractChunkId, validateChunk, buildChunkConfig } from '../docker/processor';
-import { NextChunk } from '../src/Queue';
 
 // Simple mock for ConfigManager to avoid file system dependencies
 jest.mock('integration-huron-person', () => ({
@@ -13,9 +12,25 @@ jest.mock('integration-huron-person', () => ({
     getInstance: jest.fn(() => ({
       reset: jest.fn().mockReturnThis(),
       fromJsonString: jest.fn().mockReturnThis(),
+      fromSecretManager: jest.fn().mockReturnThis(),
       fromEnvironment: jest.fn().mockReturnThis(),
       fromFileSystem: jest.fn().mockReturnThis(),
       getConfig: jest.fn(() => ({
+        dataSource: {
+          people: {
+            region: 'us-east-1',
+            fieldsOfInterest: ['id', 'firstName', 'lastName']
+          }
+        },
+        dataTarget: {
+          apiEndpoint: 'https://api.example.com'
+        },
+        storage: {
+          bucketName: 'test-bucket',
+          fileKeyPrefix: 'test-data/'
+        }
+      })),
+      getConfigAsync: jest.fn(async () => ({
         dataSource: {
           people: {
             region: 'us-east-1',
