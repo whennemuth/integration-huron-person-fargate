@@ -27,7 +27,11 @@
     "processor": "sh ./docker/run.sh processor",
     "processor-debug": "sh ./docker/run.sh --manual processor",
     "merger": "sh ./docker/run.sh merger",
-    "merger-debug": "sh ./docker/run.sh --manual merger"
+    "merger-debug": "sh ./docker/run.sh --manual merger",
+    "start-full-sync": "sh bin/start-off-schedule-sync.sh --populationType person-full --bulkReset false",
+    "start-full-reset": "sh bin/start-off-schedule-sync.sh --populationType person-full --bulkReset true",
+    "start-delta-sync": "sh bin/start-off-schedule-sync.sh --populationType person-delta --bulkReset false",
+    "start-delta-reset": "sh bin/start-off-schedule-sync.sh --populationType person-delta --bulkReset true"
   },
   "devDependencies": {
     "@smithy/util-stream": "^3.0.0",
