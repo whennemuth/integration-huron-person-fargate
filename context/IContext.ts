@@ -102,6 +102,17 @@ export interface IContext {
    * Huron Person Integration Configuration
    * This is passed to the processor tasks as environment variables
    * Note: Most HURON_API fields are replaced by this comprehensive config
+   * 
+   * For API-based chunking via EventBridge schedule, configure:
+   *   dataSource.people.fetchSchedule = {
+   *     enabled: boolean,        // Enable/disable the schedule
+   *     cronExpression: string   // AWS cron expression (e.g., 'cron(0 2 * * ? *)')
+   *   }
+   * 
+   * The EventBridge schedule is only created when:
+   * - dataSource.people.fetchSchedule exists
+   * - fetchSchedule.enabled is true
+   * - fetchSchedule.cronExpression is a valid cron expression
    */
   HURON_PERSON_CONFIG: Partial<HuronPersonConfig> | {
     /** 

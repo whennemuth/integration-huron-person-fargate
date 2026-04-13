@@ -3,8 +3,15 @@ import { extractChunkBasePath } from "../src/chunking/filedrop/ChunkPathUtils";
 import { getLocalConfig } from "../src/Utils";
 import { S3StorageAdapter } from "../src/storage/S3StorageAdapter";
 import { BigJsonFetch, BigJsonFetchConfig } from "../src/chunking/fetch/BigJsonFetch";
-import { ChunkFromParams, IChunkFromSource, writeMetadata } from "./chunker";
+import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, SyncPopulation, writeMetadata } from "./chunker";
 import { PersonArrayWrapper } from "../src/PersonArrayWrapper";
+
+export type TaskParameters = {
+  baseUrl: string,
+  fetchPath: string,
+  populationType: SyncPopulation,
+  bulkReset: boolean
+};
 
 /**
  * Chunker Entry Point (Phase 1)
@@ -30,6 +37,7 @@ import { PersonArrayWrapper } from "../src/PersonArrayWrapper";
  * - REGION: AWS region (e.g., 'us-east-2')
  * - ITEMS_PER_CHUNK: Number of persons per chunk (default: 200)
  * - PERSON_ID_FIELD: Field name for person IDs (default: 'personid')
+ * - BULK_RESET: Used to tag the chunk files (will be referenced by processor.ts when processing the chunk files)
  * - DRY_RUN: If 'true', performs a dry run without writing chunks (default: 'false')
  * 
  * Output:
@@ -39,28 +47,150 @@ import { PersonArrayWrapper } from "../src/PersonArrayWrapper";
  * 
  * Example Local Usage:
  * ```bash
- * INPUT_BUCKET=input-bucket INPUT_KEY=data.json CHUNKS_BUCKET=chunks-bucket node dist/docker/chunker.js
+ * INPUT_BUCKET=input-bucket INPUT_KEY=data.json CHUNKS_BUCKET=chunks-bucket BULK_RESET=false node dist/docker/chunker.js
  * ```
  */
 export class ChunkFromAPI implements IChunkFromSource {
-  constructor(private config: Config) { }
+  private taskParameters: TaskParameters;
 
-  private validateConfig = () => {
+  public static defaultPopulationType = SyncPopulation.PersonFull;
+
+  /**
+   * On instantiation, attempt to read task parameters from environment variables 
+   * (local dev/docker-compose mode)
+   * @param config 
+   */
+  constructor(private config: Config) {
+    this.setTaskParametersFromEnvironment();
+  }
+
+  /**
+   * Set task parameters from environment variables (local dev/docker-compose mode).
+   */
+  private setTaskParametersFromEnvironment = (): void => {
+    let { 
+      BASE_URL: baseUrl, 
+      FETCH_PATH: fetchPath, 
+      POPULATION_TYPE: populationType 
+    } = process.env;
+
+    if (!Object.values(SyncPopulation).includes(populationType as SyncPopulation)) {
+      console.log(`Invalid or missing POPULATION_TYPE (${populationType}) in environment, defaulting to ${SyncPopulation.PersonFull}`);
+      populationType = ChunkFromAPI.defaultPopulationType;
+    }
+
+    if (baseUrl && fetchPath && populationType) {
+      console.log('Running in local context - task parameters come from environment variables');
+      this.taskParameters = {
+        baseUrl: baseUrl,
+        fetchPath: fetchPath,
+        populationType: populationType as SyncPopulation,
+        bulkReset: process.env.BULK_RESET?.toLowerCase() === 'true'
+      };
+    }
+  }
+
+  /**
+   * Set task parameters from SQS message body (ECS mode). 
+   * This will be called by the main chunker entry point after reading a message from the queue.
+   * @param messageBody 
+   */
+  public setTaskParametersFromQueueMessageBody = (messageBody: any) => {
+    let { 
+      BASE_URL: baseUrl='from_config', 
+      FETCH_PATH: fetchPath='from_config', 
+      POPULATION_TYPE: populationType=SyncPopulation.PersonFull,
+      BULK_RESET: bulkReset='false'
+    } = messageBody || {}; 
+
+    if (!Object.values(SyncPopulation).includes(populationType)) {
+      console.warn(`Invalid or missing POPULATION_TYPE (${populationType}) in message parameters, defaulting to ${SyncPopulation.PersonFull}`);
+      populationType = ChunkFromAPI.defaultPopulationType;
+    }
+
+    this.taskParameters = { 
+      baseUrl, 
+      fetchPath, 
+      populationType, 
+      bulkReset: bulkReset.toLowerCase() === 'true' 
+    };
+  }
+
+  private setTaskParametersFromConfig = (): void => {
+    const { 
+      baseUrl: msgBaseUrl='from_config', 
+      fetchPath: msgFetchPath='from_config', 
+    } = this.taskParameters || {};
+    
     const { config } = this;
     const { dataSource: { people } = {} } = config ?? {};
-    const { endpointConfig: { apiKey, baseUrl } = {}, fetchPath } = people as DataSourceConfig;
+    
+    // Guard against undefined people
+    if (!people) {
+      return;
+    }
+    
+    const { endpointConfig: { baseUrl } = {}, fetchPath } = people as DataSourceConfig;
+
     if( ! baseUrl) {
-      console.error('ERROR: Missing required API config.dataSource.people.endpointConfig.baseUrl in config');
-      process.exit(1);
+      if(msgBaseUrl && msgBaseUrl !== 'from_config') {
+        (this.config.dataSource.people as DataSourceConfig).endpointConfig.baseUrl = msgBaseUrl;
+      } 
     };
+
     if( ! fetchPath) {
-      console.error('ERROR: Missing required API config.dataSource.people.fetchPath in config');
-      process.exit(1);
+      if(msgFetchPath && msgFetchPath !== 'from_config') {
+        (this.config.dataSource.people as DataSourceConfig).fetchPath = msgFetchPath;
+      } 
+    };
+  }
+
+  public hasSufficientTaskInfo = (logToConsole: boolean = false): boolean => {
+    const { baseUrl, fetchPath } = this.taskParameters || {};
+    if( ! baseUrl && logToConsole) {
+      console.log('Missing required baseUrl for API source');
     }
+    if( ! fetchPath && logToConsole) {
+      console.log('Missing required fetchPath for API source');
+    }
+    return !!baseUrl && !!fetchPath;
+  }
+
+  public hasSufficientConfig = (logToConsole: boolean = false): boolean => {
+    // First, try to populate task parameters from config if not already set
+    if (!this.taskParameters) {
+      const { dataSource: { people } = {} } = this.config ?? {};
+      if (people) {
+        const { endpointConfig: { baseUrl } = {}, fetchPath } = people as DataSourceConfig;
+        if (baseUrl && fetchPath) {
+          this.taskParameters = {
+            baseUrl,
+            fetchPath,
+            populationType: ChunkFromAPI.defaultPopulationType,
+            bulkReset: false
+          };
+        }
+      }
+    } else {
+      // Task parameters exist, try to fill in missing values from config
+      this.setTaskParametersFromConfig();
+    }
+    
+    const { dataSource: { people } = {} } = this.config ?? {};
+    const { endpointConfig: { apiKey } = {} } = (people as DataSourceConfig) || {};
+
+    let sufficient = true;
     if( ! apiKey) {
-      console.error('ERROR: Missing required API config.dataSource.people.endpointConfig.apiKey in config');
-      process.exit(1);
+      sufficient = false;
+      if(logToConsole) {
+        console.log('Missing required API key in config.dataSource.people.endpointConfig.apiKey');
+      }
     }
+    
+    if( ! this.hasSufficientTaskInfo(logToConsole)) {
+      sufficient = false;
+    }
+    return sufficient;
   }
 
   /**
@@ -73,26 +203,28 @@ export class ChunkFromAPI implements IChunkFromSource {
    * @returns 
    */
   private getSyntheticInputKey(): string {
-    const { SYNC_TYPE: syncType = 'person-full' } = process.env;
-    if (syncType !== 'person-full' && syncType !== 'person-delta') {
-      console.error(`ERROR: Invalid SYNC_TYPE: ${syncType} (must be 'person-full' or 'person-delta')`);
-      process.exit(1);
-    }
-    console.log(`Sync type: ${syncType}`);
+    const { populationType } = this.taskParameters || {};
     const timestamp = new Date().toISOString();
-    return `${syncType}/${timestamp}.json`;
+    const key = `${populationType}/${timestamp}.json`;
+    console.log(`Generated synthetic input key for API source: ${key}`);
+    return key;
   }
 
-
+  /**
+   * Perform the fetch from the API endpoint and chunking operation.
+   * @param params 
+   */
   public runChunking = async (params: ChunkFromParams) => {
 
-    this.validateConfig();
+    if (!this.hasSufficientConfig(true)) {
+      process.exit(1);
+    }
 
     const { chunksBucket, region, itemsPerChunk, personIdField, dryRun } = params;
     
     // Extract chunk base path (creates: chunks/person-full/2026-04-09T15:28:18.703Z)
     const chunkBasePath = extractChunkBasePath(this.getSyntheticInputKey());
-    
+
     console.log(`Chunks: s3://${chunksBucket}/${chunkBasePath}/`);
     console.log(`Region: ${region || 'default'}`);
     console.log(`Items per chunk: ${itemsPerChunk}`);
@@ -180,6 +312,13 @@ if(require.main === module) {
       .fromEnvironment()                            // ← Fallback to individual env var overrides
       .fromFileSystem(localConfigPath)              // ← Local dev only
       .getConfigAsync('people');
+
+    const chunkFromAPI = new ChunkFromAPI(config);
+
+    if (!chunkFromAPI.hasSufficientTaskInfo()) {
+      const msgBody = await grabMessageBodyFromQueue();
+      chunkFromAPI.setTaskParametersFromQueueMessageBody(msgBody);
+    }
 
     // Run API fetch and chunking operation.
     await new ChunkFromAPI(config).runChunking({

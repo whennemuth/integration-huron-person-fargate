@@ -18,20 +18,28 @@ export interface ChunkerSubscribingLambdaProps {
 }
 
 /**
- * Creates a Lambda function that triggers the chunker Fargate task by sending messages to SQS.
+ * Creates a Lambda function that triggers chunker Fargate tasks by sending messages to SQS.
  * 
- * Sequence of events:
+ * This Lambda acts as a dispatcher for two types of chunking events:
+ * 
+ * **S3-based chunking sequence:**
  * - 1) A large JSON file containing person records is uploaded to the foreign input S3 bucket.
- * - 2) A foreign Lambda, subscribed to S3 events for the input bucket, is activated to call this 
- *      ChunkerSubscribingLambda (technically not "subscribing").
- * - 3) This ChunkerSubscribingLambda sends a message to the chunker SQS queue with the S3 key of 
- *      the uploaded file - thus "passing on" the subscription to Fargate as follows:
- * - 4) The desiredCount of the chunker Fargate service is then adjusted upward by the 
- *      QueueProcessingFargateService construct internals responding to the temporarily heightened
- *      depth of the SQS queue, which in turn causes a new Fargate task for chunking to be created.
- * - 5) The chunking task polls for a message in the queue that it expects to find with the S3
- *      bucket name and key of the uploaded file. 
- * - 6) The task processes the file and creates smaller NDJSON chunk files in the chunks S3 bucket.
+ * - 2) A foreign Lambda, subscribed to S3 events for the input bucket, calls this 
+ *      ChunkerSubscribingLambda with S3 file details (bucket, key).
+ * - 3) This Lambda delegates to ChunkerS3Subscriber which sends a message to the chunker SQS queue
+ *      with the S3 file location.
+ * - 4) QueueProcessingFargateService detects the heightened queue depth and auto-scales.
+ * - 5) Fargate task reads the message, streams the S3 file, and creates NDJSON chunks.
+ * 
+ * **API-based chunking sequence:**
+ * - 1) EventBridge schedule triggers this Lambda on a cron schedule.
+ * - 2) Lambda delegates to ChunkerApiSubscriber which sends a message to the chunker SQS queue
+ *      with API endpoint configuration (baseUrl, fetchPath, populationType).
+ * - 3) QueueProcessingFargateService detects the heightened queue depth and auto-scales.
+ * - 4) Fargate task reads the message, fetches data from the API, and creates NDJSON chunks.
+ * 
+ * Note: The Lambda entry point (src/chunking/ChunkerSubscriber.ts) analyzes the event structure
+ * and routes to the appropriate handler (S3 or API).
  */
 export class ChunkerSubscribingLambda extends Construct {
   public readonly function: NodejsFunction;
@@ -59,11 +67,10 @@ export class ChunkerSubscribingLambda extends Construct {
     // Create Lambda function
     this.function = new NodejsFunction(this, 'Function', {
       functionName: 'chunker-subscriber',
-      description: `Triggered by S3 event where big person JSON file lands in 
-        ${props.inputBucketName} (SEE DESCRIPTION environment variable(s) for task performed)`,
+      description: `Dispatcher for chunker events: S3 file uploads to ${props.inputBucketName} or EventBridge schedule for API fetch (SEE DESCRIPTION environment variable(s) for task performed)`,
       runtime: Runtime.NODEJS_20_X,
       handler: 'handler',
-      entry: 'src/ChunkerSubscriber.ts',
+      entry: 'src/chunking/ChunkerSubscriber.ts',
       timeout: Duration.seconds(props.timeoutSeconds),
       memorySize: props.memorySizeMb,
       role: lambdaRole,
@@ -73,8 +80,9 @@ export class ChunkerSubscribingLambda extends Construct {
         CHUNKER_QUEUE_URL: props.chunkerQueueUrl,
         DRY_RUN: props.dryRun ? 'true' : 'false',
         DESCRIPTION1: 
-          `Sends SQS message to chunker queue to trigger Fargate task that breaks the big person 
-          JSON file into smaller "bite sized" .NDJSON chunk files.`
+          `Analyzes incoming event (S3 or API) and delegates to appropriate handler (ChunkerS3Subscriber 
+          or ChunkerApiSubscriber). Both handlers send SQS messages to trigger Fargate tasks that create 
+          NDJSON chunk files from person data.`
       },
       bundling: {
         externalModules: [

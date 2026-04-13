@@ -105,15 +105,32 @@ export class AppConstruct extends Construct {
     }
 
     // ========================================
-    // 5. Chunker Service (Phase 1)
+    // 5. Subscribing Lambdas (Chunker & Merger)
     // ========================================
+    // Create subscribing lambdas before services so chunker lambda can be
+    // passed to ChunkerService for EventBridge schedule configuration
+    this.subscribingLambdas = new SubscribingLambdas(this, 'SubscribingLambdas', {
+      ecsInfra: this.ecs,
+      chunksBucket: this.chunksBucket,
+      chunkerQueueUrl: this.queue.chunkerQueue.queueUrl,
+      mergerQueueUrl: this.queue.mergerQueue.queueUrl,
+      context: ctx,
+      tags,
+    });
+
+    // ========================================
+    // 6. Chunker Service (Phase 1)
+    // ========================================
+    // Pass chunker lambda and context for EventBridge schedule configuration
     this.ecs.createChunkerService(
       this.queue.chunkerQueue,
-      this.queue.chunkerDeadLetterQueue
+      this.queue.chunkerDeadLetterQueue,
+      this.subscribingLambdas.chunker.function,
+      ctx
     );
 
     // ========================================
-    // 6. Processor Service (Phase 2)
+    // 7. Processor Service (Phase 2)
     // ========================================
     // Create processor service as child of ECS infrastructure
     this.ecs.createProcessorService(
@@ -123,23 +140,11 @@ export class AppConstruct extends Construct {
     );
 
     // ========================================
-    // 7. Merger Service (Phase 3)
+    // 8. Merger Service (Phase 3)
     // ========================================
     this.ecs.createMergerService(
       this.queue.mergerQueue,
       this.queue.mergerDeadLetterQueue
     );
-
-    // ========================================
-    // 8. Subscribing Lambdas (Chunker & Merger)
-    // ========================================
-    this.subscribingLambdas = new SubscribingLambdas(this, 'SubscribingLambdas', {
-      ecsInfra: this.ecs,
-      chunksBucket: this.chunksBucket,
-      chunkerQueueUrl: this.queue.chunkerQueue.queueUrl,
-      mergerQueueUrl: this.queue.mergerQueue.queueUrl,
-      context: ctx,
-      tags,
-    });
   }
 }

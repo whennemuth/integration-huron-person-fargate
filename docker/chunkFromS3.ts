@@ -1,10 +1,14 @@
-import { ConfigManager } from "integration-huron-person";
 import { PersonArrayWrapper } from "../src/PersonArrayWrapper";
 import { BigJsonFile, BigJsonFileConfig } from "../src/chunking/filedrop/BigJsonFile";
 import { extractChunkBasePath } from '../src/chunking/filedrop/ChunkPathUtils';
 import { S3StorageAdapter } from "../src/storage/S3StorageAdapter";
-import { ChunkFromParams, getTaskParameters, IChunkFromSource, writeMetadata } from "./chunker";
-import { getLocalConfig } from "../src/Utils";
+import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeMetadata } from "./chunker";
+
+export type TaskParameters = {
+  inputBucket: string,
+  inputKey: string,
+  bulkReset: boolean
+}
 
 /**
  * Chunker Entry Point (Phase 1)
@@ -26,6 +30,7 @@ import { getLocalConfig } from "../src/Utils";
  *   - REGION: AWS region (e.g., 'us-east-2')
  *   - ITEMS_PER_CHUNK: Number of persons per chunk (default: 200)
  *   - PERSON_ID_FIELD: Field name for person IDs (default: 'personid')
+ *   - BULK_RESET: Used to tag the chunk files (will be referenced by processor.ts when processing the chunk files)
  *   - DRY_RUN: If 'true', performs a dry run without writing chunks (default: 'false')
  * 
  * Output:
@@ -39,23 +44,64 @@ import { getLocalConfig } from "../src/Utils";
  * ```
  */
 export class ChunkFromS3 implements IChunkFromSource {
-  constructor() { }
+  private taskParameters: TaskParameters;
+
+  /**
+   * On instantiation, attempt to read task parameters from environment variables 
+   * (local dev/docker-compose mode)
+   */
+  constructor() {
+    const { INPUT_BUCKET, INPUT_KEY, BULK_RESET } = process.env;
+    if (INPUT_BUCKET && INPUT_KEY) {
+      console.log('Running in local context - task parameters come from environment variables');
+      this.taskParameters = {
+        inputBucket: INPUT_BUCKET,
+        inputKey: INPUT_KEY,
+        bulkReset: BULK_RESET?.toLowerCase() === 'true'
+      };
+    }
+  }
+
+  /**
+   * Set task parameters from SQS message body (ECS mode). 
+   * This will be called by the main chunker entry point after reading a message from the queue.
+   * @param messageBody 
+   */
+  public setTaskParametersFromQueueMessageBody = (messageBody: any) => {
+    if (!messageBody) {
+      return;
+    }
+    
+    this.taskParameters = {
+      inputBucket: messageBody.INPUT_BUCKET,
+      inputKey: messageBody.INPUT_KEY,
+      bulkReset: messageBody.BULK_RESET?.toLowerCase() === 'true'
+    };
+  }
+
+  public hasSufficientTaskInfo = (logToConsole: boolean = false): boolean => {
+    const { inputBucket, inputKey } = this.taskParameters || {};
+    if (!inputBucket && logToConsole) {
+      console.log('Missing required inputBucket for S3 source');
+    }
+    if (!inputKey && logToConsole) {
+      console.log('Missing required inputKey for S3 source');
+    }
+    return !!inputBucket && !!inputKey;
+  }
   
   /**
    * Run chunking operation using BigJsonFile (S3 source)
    */
   public runChunking = async (params: ChunkFromParams) => {
-    const { chunksBucket, region, itemsPerChunk, personIdField, dryRun } = params;
 
-    // Get task parameters from SQS or environment
-    const taskParams = await getTaskParameters();
-
-    if (!taskParams) {
-      console.error('ERROR: No task parameters available for S3 mode (checked SQS queue and environment variables)');
+    if (!this.hasSufficientTaskInfo(true)) {
       process.exit(1);
     }
 
-    const { inputBucket, inputKey } = taskParams;
+    const { chunksBucket, region, itemsPerChunk, personIdField, dryRun } = params;
+
+    const { inputBucket, inputKey } = this.taskParameters!;
 
     // Extract chunk base path from input key
     // This uses the key path + ISO timestamp (if present) or filename without extension
@@ -142,7 +188,17 @@ if (require.main === module) {
 
   // Run API fetch and chunking operation.
   (async () => {
-    await new ChunkFromS3().runChunking({
+    
+    // Check for environmental task parameters (local dev mode) or read from SQS queue (ECS mode)
+    const chunkFromS3 = new ChunkFromS3();
+
+    if (!chunkFromS3.hasSufficientTaskInfo()) {
+      const msgBody = await grabMessageBodyFromQueue();
+      chunkFromS3.setTaskParametersFromQueueMessageBody(msgBody);
+    }
+
+    // Run chunking operation
+    await chunkFromS3.runChunking({
       chunksBucket, region, itemsPerChunk, personIdField, dryRun
     });
   })();

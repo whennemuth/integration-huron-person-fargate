@@ -10,7 +10,6 @@
  * 2. Local development: Reads INPUT_BUCKET and INPUT_KEY from environment variables (fallback)
  * 
  * Environment Variables:
- * - SOURCE_FETCH_TYPE: 's3' or 'api' (determines data source and mode of operation)
  * 
  * - (api datasource):
  *   - SECRET_ARN: Secrets Manager ARN containing config (fallback)
@@ -30,6 +29,7 @@
  *   - REGION: AWS region (e.g., 'us-east-2')
  *   - ITEMS_PER_CHUNK: Number of persons per chunk (default: 200)
  *   - PERSON_ID_FIELD: Field name for person IDs (default: 'personid')
+ *   - BULK_RESET: Used to tag the chunk files (will be referenced by processor.ts when processing the chunk files)
  *   - DRY_RUN: If 'true', performs a dry run without writing chunks (default: 'false')
  * 
  * Output:
@@ -39,24 +39,25 @@
  * 
  * Example Local Usage:
  * ```bash
- * INPUT_BUCKET=input-bucket INPUT_KEY=data.json CHUNKS_BUCKET=chunks-bucket node dist/docker/chunker.js
+ * INPUT_BUCKET=input-bucket INPUT_KEY=data.json CHUNKS_BUCKET=chunks-bucket BULK_RESET=false node dist/docker/chunker.js
  * ```
  */
 
-import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
+import { Config, ConfigManager } from 'integration-huron-person';
 import { S3StorageAdapter } from '../src/storage/S3StorageAdapter';
+import { getLocalConfig } from '../src/Utils';
 import { ChunkFromAPI } from './chunkFromAPI';
 import { ChunkFromS3 } from './chunkFromS3';
-import { Config, ConfigManager } from 'integration-huron-person';
-import { getLocalConfig } from '../src/Utils';
+import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 
 export type IChunkFromSource = {
   runChunking: (params: ChunkFromParams) => Promise<void>
 }
 
-export type TaskParameters = {
-  inputBucket: string,
-  inputKey: string
+/** The source of person data either is all people, or only those that have changed */
+export enum SyncPopulation {
+  PersonFull = 'person-full',
+  PersonDelta = 'person-delta'
 }
 
 export type ChunkFromParams = {
@@ -71,10 +72,9 @@ export type ChunkFromParams = {
  * Reads task parameters from SQS queue or environment variables.
  * Priority: SQS message > Environment variables
  */
-export async function getTaskParameters(): Promise<TaskParameters | null> {
-  const { SQS_QUEUE_URL, INPUT_BUCKET, INPUT_KEY, REGION } = process.env;
+export const grabMessageBodyFromQueue = async (): Promise<any> => {
+  const { SQS_QUEUE_URL, REGION } = process.env;
 
-  // Mode 1: ECS Fargate - read from SQS queue
   if (SQS_QUEUE_URL) {
     console.log('Running in ECS context - reading task parameters from SQS queue');
     const sqsClient = new SQSClient({ region: REGION });
@@ -108,26 +108,12 @@ export async function getTaskParameters(): Promise<TaskParameters | null> {
       }
 
       console.log('Task parameters from SQS:', JSON.stringify(body));
-      return {
-        inputBucket: body.INPUT_BUCKET,
-        inputKey: body.INPUT_KEY,
-      };
+      return body;
     } catch (error) {
       console.error('Error reading from SQS queue:', error);
-      return null;
+      return undefined;
     }
   }
-
-  // Mode 2: Local development - read from environment variables
-  if (INPUT_BUCKET && INPUT_KEY) {
-    console.log('Running in local context - reading task parameters from environment variables');
-    return {
-      inputBucket: INPUT_BUCKET,
-      inputKey: INPUT_KEY,
-    };
-  }
-
-  return null;
 }
 
 /**
@@ -205,13 +191,45 @@ export const getConfig = async (): Promise<Config> => {
     .getConfigAsync('people');
 }
 
+const getChunkerInstance = async (config: Config): Promise<IChunkFromSource | undefined> => {
+  const s3Chunker = new ChunkFromS3();
+
+  if(s3Chunker.hasSufficientTaskInfo()) {
+    console.log('Data source type: S3 (person data will be streamed from S3 bucket)');
+    return s3Chunker;
+  }
+
+  const apiChunker = new ChunkFromAPI(config);
+
+  if(apiChunker.hasSufficientConfig()) {
+    console.log('Data source type: API (person data will be fetched from API endpoint)');
+    return apiChunker;
+  }
+
+  const msgBody = await grabMessageBodyFromQueue();
+
+  s3Chunker.setTaskParametersFromQueueMessageBody(msgBody);
+
+  if(s3Chunker.hasSufficientTaskInfo(true)) {
+    console.log('Data source type: S3 (person data will be streamed from S3 bucket)');
+    return s3Chunker;
+  }
+  
+  apiChunker.setTaskParametersFromQueueMessageBody(msgBody);
+  if(apiChunker.hasSufficientTaskInfo(true)) {
+    console.log('Data source type: API (person data will be fetched from API endpoint)');
+    return apiChunker;
+  }
+
+  return undefined;
+}
+
 
 async function main() {
   console.log('=== Phase 1: Chunker ===\n');
 
   // Read additional configuration from environment
   const {
-    SOURCE_FETCH_TYPE: sourceFetchType = 'api',
     CHUNKS_BUCKET: chunksBucket,
     REGION: region,
     ITEMS_PER_CHUNK: itemsPerChunkStr = '200',
@@ -240,13 +258,12 @@ async function main() {
   // Run chunking operation based on source type (API or S3)
   (async () => {
     const config = await getConfig();
-    if((config.dataSource.people as any)?.bucketName) {
-      console.log('Data source type: S3 (person data will be streamed from S3 bucket)');
-      await new ChunkFromS3().runChunking(chunkFromParams);
-    } else {
-      console.log('Data source type: API (person data will be fetched from API endpoint)');
-      await new ChunkFromAPI(config).runChunking(chunkFromParams);
+    const chunker = await getChunkerInstance(config);
+    if(!chunker) {
+      console.error('ERROR: Insufficient task parameters. Must provide either API config or S3 input parameters via SQS message or environment variables.');
+      process.exit(1);
     }
+    await chunker.runChunking(chunkFromParams);
   })();
 }
 

@@ -1,69 +1,74 @@
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { S3ChunkerEvent } from '../ChunkerSubscriber';
 
 const { 
   CHUNKER_QUEUE_URL,
-  REGION:region,
-  DRY_RUN='false' 
+  REGION: region,
+  DRY_RUN = 'false' 
 } = process.env;
 
 const sqsClient = new SQSClient({ region });
 
 /**
- * Lambda function to trigger chunker Fargate tasks via SQS.
+ * S3-based Chunker Subscriber
  * 
- * This function is called by a foreign lambda responding to S3 events when a new JSON file is 
- * uploaded to the input bucket. Instead of directly launching ECS tasks (which doesn't work with 
- * QueueProcessingFargateService), it sends a message to the chunker's SQS queue. The 
- * QueueProcessingFargateService monitors the queue depth and auto-scales to process messages.
+ * Handles S3 file upload events that trigger chunker Fargate tasks via SQS.
  * 
- * Architecture:
- * 1. S3 event triggers the foreign Lambda
- * 2. Foreign Lambda calls this chunker subscribing Lambda with a custom payload
- * 3. Lambda sends message to SQS queue with task parameters
- * 4. QueueProcessingFargateService detects queue depth increase
- * 5. Service auto-scales up (increases desired count)
- * 6. ECS launches Fargate task(s)
- * 7. Task reads message from queue and processes the file
- * 8. Queue depth decreases, service scales back down
+ * This function is called when a large JSON file containing person records is uploaded
+ * to the input S3 bucket. Instead of directly launching ECS tasks (which doesn't work
+ * with QueueProcessingFargateService), it sends a message to the chunker's SQS queue.
+ * The QueueProcessingFargateService monitors the queue depth and auto-scales to process messages.
  * 
- * Environment Variables:
- * - CHUNKER_QUEUE_URL: URL of the SQS queue for chunker tasks
- * - REGION: AWS region (e.g., 'us-east-2')
- * - DRY_RUN: If set to 'true', the function will not send messages (default: 'false')
+ * Sequence:
+ * 1. S3 event triggers a foreign Lambda
+ * 2. Foreign Lambda calls the main ChunkerSubscriber with custom payload
+ * 3. ChunkerSubscriber delegates to this handler
+ * 4. Handler sends message to SQS queue with task parameters (INPUT_BUCKET, INPUT_KEY)
+ * 5. QueueProcessingFargateService detects queue depth increase
+ * 6. Service auto-scales up (increases desired count)
+ * 7. ECS launches Fargate task(s) that read from queue
+ * 8. Task processes the S3 file and creates NDJSON chunks
+ * 9. Queue depth decreases, service scales back down
  * 
- * Input:
- * - S3 event containing bucket and key of the uploaded JSON file
+ * Input Event Structure:
+ * {
+ *   s3Path?: string,              // Full S3 path (s3://bucket/key)
+ *   bucket?: string,              // S3 bucket name
+ *   key?: string,                 // S3 object key
+ *   processingMetadata?: {
+ *     processedAt?: string,
+ *     processorVersion?: string
+ *   }
+ * }
  * 
- * @param event 
- * NOT a standard S3 event as per:
- * https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-content-structure.html - 
- * this Lambda is invoked by a custom subscriber Lambda that receives the S3 event and then calls 
- * this chunker subscribing Lambda with a custom payload containing s3Path, bucket, key, and processingMetadata.
+ * Note: Event is NOT a standard S3 event. This handler is invoked by a custom subscriber
+ * Lambda that receives the S3 event and calls the ChunkerSubscriber with a simplified payload.
  * 
- * @returns 
+ * @param event - S3-based chunker event
+ * @returns Response object with status code and message
  */
-export async function handler(event:any): Promise<any> {
-  console.log('Received event:', JSON.stringify(event, null, 2));
-
-  // Extract S3 bucket and key from event.
+export async function handleS3Event(event: S3ChunkerEvent): Promise<any> {
+  // Extract S3 bucket and key from event
   let { s3Path, bucket, key, processingMetadata: { processedAt, processorVersion } = {} } = event || {};  
 
   // Extract environment variables
   const dryRun = DRY_RUN.toLowerCase() === 'true';
 
   // Validate environment variables
-  if( ! CHUNKER_QUEUE_URL) {
+  if (!CHUNKER_QUEUE_URL) {
     console.error('Missing required environment variable: CHUNKER_QUEUE_URL');
     return { statusCode: 500, body: 'Server configuration error, missing CHUNKER_QUEUE_URL environment variable' };
   }
 
-  key = decodeURIComponent(key?.replace(/\\+/g, ' ') || '');
+  // Decode and normalize key
+  key = decodeURIComponent(key?.replace(/\+/g, ' ') || '');
 
-  if( ! bucket) {
+  // Extract bucket and key from s3Path if not directly provided
+  if (!bucket) {
     bucket = getBucketFromS3Path(s3Path);
   }
 
-  if( ! key) {
+  if (!key) {
     key = getKeyFromS3Path(s3Path);
   }
   
@@ -79,14 +84,14 @@ export async function handler(event:any): Promise<any> {
     return { statusCode: 200, body: 'Skipped chunk file' };
   }
 
-  // End off early if in dry run mode
+  // End early if in dry run mode
   if (dryRun) {
     const msg = `[DRY RUN] Would start Fargate task for file: s3://${bucket}/${key}`;
     console.log(msg);
     return { statusCode: 200, body: msg };
   }
 
-  console.log(`Processing file: s3://${bucket}/${key}`);
+  console.log(`Processing S3 file: s3://${bucket}/${key}`);
 
   // Send message to SQS queue to trigger chunker task
   // The QueueProcessingFargateService will detect the message and auto-scale to process it
@@ -108,14 +113,14 @@ export async function handler(event:any): Promise<any> {
     console.error('Failed to send message to queue:', error);
     throw error;
   }
-};
+}
 
 /**
  * Extracts the bucket name from an S3 path.
- * @param s3Path The S3 path in the format s3://bucket/key
+ * @param s3Path - The S3 path in the format s3://bucket/key
  * @returns The bucket name or undefined if the path is invalid
  */
-const getBucketFromS3Path = (s3Path: string | undefined): string | undefined => {
+function getBucketFromS3Path(s3Path: string | undefined): string | undefined {
   if (!s3Path) {
     console.error('No S3 path provided');
     return undefined;
@@ -126,14 +131,14 @@ const getBucketFromS3Path = (s3Path: string | undefined): string | undefined => 
     return undefined;
   }
   return match[1];
-};
+}
 
 /**
  * Extracts the key from an S3 path.
- * @param s3Path The S3 path in the format s3://bucket/key
+ * @param s3Path - The S3 path in the format s3://bucket/key
  * @returns The key or undefined if the path is invalid
  */
-const getKeyFromS3Path = (s3Path: string | undefined): string | undefined => {
+function getKeyFromS3Path(s3Path: string | undefined): string | undefined {
   if (!s3Path) {
     console.error('No S3 path provided');
     return undefined;
@@ -144,4 +149,4 @@ const getKeyFromS3Path = (s3Path: string | undefined): string | undefined => {
     return undefined;
   }
   return match[1];
-};
+}
