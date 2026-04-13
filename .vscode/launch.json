@@ -9,7 +9,7 @@
       "runtimeArgs": ["-r", "${workspaceFolder}/node_modules/ts-node/register/transpile-only"],
       "args": [
         "${file}",
-        "${workspaceFolder}"
+        "workspaceFolder=${workspaceFolder}"
       ], 
       "envFile": "${workspaceFolder}/.env"
     },
@@ -19,7 +19,10 @@
       "name": "Debug current file (task-specific)",
       "skipFiles": ["<node_internals>/**"],
       "runtimeArgs": ["-r", "${workspaceFolder}/node_modules/ts-node/register/transpile-only"],
-      "args": ["${file}"],
+      "args": [
+        "${file}",
+        "workspaceFolder=${workspaceFolder}"
+      ],
       "envFile": "${fileDirname}/${fileBasenameNoExtension}.env"
     },
     {

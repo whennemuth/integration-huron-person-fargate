@@ -10,6 +10,7 @@ import {
 import { IPersonArrayWrapper, PersonArrayWrapper } from "../../PersonArrayWrapper";
 import { FileSystemStorageAdapter, IStorageAdapter, S3StorageAdapter } from "../../storage";
 import { extractChunkBasePath } from '../filedrop/ChunkPathUtils';
+import { getLocalConfig } from '../../Utils';
 
 /**
  * Configuration for BigJsonFetch chunking operations
@@ -350,14 +351,8 @@ if (require.main === module) {
       return;
     }
 
-    // Load configuration from integration-huron-person
-    const workspaceFolder = process.argv[2];
-    if (!workspaceFolder) {
-      console.error('ERROR: Workspace folder path is required as first argument');
-      return;
-    }
-
-    const configPath = require('path').resolve(workspaceFolder, '../integration-huron-person/config.json');
+    // Load configuration from integration-huron-person (running locally, so using file system config loading)
+    const configPath = getLocalConfig();
     
     // Load configuration
     const configManager = ConfigManager.getInstance();
