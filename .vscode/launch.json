@@ -4,6 +4,17 @@
     {
       "type": "node",
       "request": "launch",
+      "name": "CDK Debugger (App)",
+      "skipFiles": ["<node_internals>/**"],
+      "runtimeArgs": ["-r", "${workspaceFolder}/node_modules/ts-node/register/transpile-only"],
+      "args": ["${workspaceFolder}/bin/App.ts"],
+      "env": {
+        "AWS_PROFILE": "infnprd"
+      }
+    },
+    {
+      "type": "node",
+      "request": "launch",
       "name": "Debug current file",
       "skipFiles": [ "<node_internals>/**" ],
       "runtimeArgs": ["-r", "${workspaceFolder}/node_modules/ts-node/register/transpile-only"],
