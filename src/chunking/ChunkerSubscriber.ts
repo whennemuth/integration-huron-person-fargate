@@ -35,7 +35,7 @@
 
 import { handleS3Event } from './filedrop/ChunkerS3Subscriber';
 import { handleApiEvent } from './fetch/ChunkerApiSubscriber';
-import { SyncPopulation } from '../../docker/chunker';
+import { SyncPopulation } from '../../docker/chunkTypes';
 
 /**
  * S3-based event structure

@@ -3,8 +3,9 @@ import { extractChunkBasePath } from "../src/chunking/filedrop/ChunkPathUtils";
 import { getLocalConfig } from "../src/Utils";
 import { S3StorageAdapter } from "../src/storage/S3StorageAdapter";
 import { BigJsonFetch, BigJsonFetchConfig } from "../src/chunking/fetch/BigJsonFetch";
-import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, SyncPopulation, writeMetadata } from "./chunker";
+import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeMetadata } from "./chunker";
 import { PersonArrayWrapper } from "../src/PersonArrayWrapper";
+import { SyncPopulation } from "./chunkTypes";
 
 export type TaskParameters = {
   baseUrl: string,

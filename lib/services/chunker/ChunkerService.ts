@@ -5,8 +5,9 @@ import { LambdaFunction } from 'aws-cdk-lib/aws-events-targets';
 import { IFunction } from 'aws-cdk-lib/aws-lambda';
 import { Construct } from 'constructs';
 import { IContext } from '../../../context/IContext';
+import { SyncPopulation } from '../../../docker/chunkTypes';
 import { AbstractService, AbstractServiceProps } from '../AbstractService';
-import { SyncPopulation } from '../../../docker/chunker';
+import { ConfigManager } from 'integration-huron-person';
 
 export interface ChunkerServiceProps extends AbstractServiceProps {
   /** The ChunkerSubscriber Lambda function to invoke on schedule */

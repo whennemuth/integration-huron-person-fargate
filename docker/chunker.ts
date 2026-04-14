@@ -54,12 +54,6 @@ export type IChunkFromSource = {
   runChunking: (params: ChunkFromParams) => Promise<void>
 }
 
-/** The source of person data either is all people, or only those that have changed */
-export enum SyncPopulation {
-  PersonFull = 'person-full',
-  PersonDelta = 'person-delta'
-}
-
 export type ChunkFromParams = {
   chunksBucket: string,
   region: string | undefined,
