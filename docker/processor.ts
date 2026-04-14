@@ -22,7 +22,6 @@
  * - SQS_QUEUE_URL: URL of the SQS queue to read chunk messages from (if not using env vars for CHUNKS_BUCKET and CHUNK_KEY)
  * - STATIC_MAP_USAGE: JSON string specifying which static maps to load (e.g., '{ "orgMap": true, "stateMap": true, "countryMap": true }')
  * - BULK_RESET: If "true", will "upsert" all persons in the chunk, ignoring previous delta state. SEE: src\UpsertDeltaStrategy.ts
- * - STACK_ID: Unique identifier for this stack, used in SSM parameter naming for bulk reset flag
  * - DRY_RUN: If "true", runs the sync without making API calls (default: false)
  * - All huron-person config env vars (HURON_API_ENDPOINT, JWT credentials, storage config, etc.)
  * 
@@ -46,7 +45,6 @@ import {
   S3DataSourceConfig,
   BasicCache
 } from 'integration-huron-person';
-import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
 import { NextChunk, QueueReader } from '../src/Queue';
 import { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
 import { pathUpTo } from '../src/Utils';
@@ -144,45 +142,6 @@ export const validateChunk = (chunk: NextChunk | undefined) => {
   }
 }
 
-/**
- * Get BULK_RESET flag from environment variable or SSM Parameter Store.
- * Fallback chain: ENV VAR → SSM Parameter → false
- * 
- * @param region - AWS region for SSM client
- * @param stackId - Stack ID used in parameter name
- * @returns Promise<boolean> - The bulk reset flag value
- */
-export const getBulkResetFlag = async (region: string, stackId: string): Promise<boolean> => {
-  // First check environment variable (for docker-compose or manual override)
-  const { BULK_RESET } = process.env;
-  if (BULK_RESET !== undefined) {
-    const value = BULK_RESET.trim().toLowerCase() === 'true';
-    console.log(`Bulk Reset (from ENV): ${value}`);
-    return value;
-  }
-
-  // Try to read from SSM Parameter Store
-  try {
-    const ssmClient = new SSMClient({ region });
-    const parameterName = `/huron-person-integration/${stackId}/bulk-reset`;
-    
-    const command = new GetParameterCommand({ Name: parameterName });
-    const response = await ssmClient.send(command);
-    
-    const value = response.Parameter?.Value?.trim().toLowerCase() === 'true';
-    console.log(`Bulk Reset (from SSM ${parameterName}): ${value}`);
-    return value;
-  } catch (error: any) {
-    // If parameter doesn't exist or read fails, log warning and default to false
-    if (error.name === 'ParameterNotFound') {
-      console.warn('Bulk Reset parameter not found in SSM, defaulting to false');
-    } else {
-      console.warn(`Failed to read Bulk Reset from SSM: ${error.message}, defaulting to false`);
-    }
-    return false;
-  }
-}
-
 export async function main(queueReader: QueueReader) {
   // Check for expected environment variables
   const { 
@@ -193,9 +152,10 @@ export async function main(queueReader: QueueReader) {
     HURON_PERSON_CONFIG_JSON,
     STATIC_MAP_USAGE,
     DRY_RUN,
-    STACK_ID
+    BULK_RESET
   } = process.env;  
   const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
+  const bulkReset = `${BULK_RESET}`.trim().toLowerCase() === 'true';
   const staticMapUsage: StaticMapUsage | undefined = STATIC_MAP_USAGE ? JSON.parse(STATIC_MAP_USAGE) : undefined;
 
   console.log(`=== ${dryRun ? 'DRY RUN: ' : ''}Phase 2: Processor (using HuronPersonIntegration) ===\n`);
@@ -204,9 +164,7 @@ export async function main(queueReader: QueueReader) {
   console.log(`SQS queue URL: ${queueUrl || 'not set, using environment variables for bucket/key'}`);
   console.log(`Huron person config json: ${HURON_PERSON_CONFIG_JSON?.substring(0, 10)}...`);
   console.log(`Static map usage: ${JSON.stringify(staticMapUsage ?? {})}`);
-  
-  // Get bulk reset flag with fallback chain: ENV → SSM → false
-  const bulkReset = await getBulkResetFlag(region || 'us-east-2', STACK_ID || 'huron-person-fargate-processor');
+  console.log(`Bulk Reset: ${bulkReset}`);
   
   // Read chunk information from queue or environment
   let nextChunk: NextChunk | undefined;

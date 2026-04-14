@@ -122,15 +122,6 @@ export interface IContext {
     configPath?: string;
   };
 
-  /**
-   * Bulk Reset Mode - When true, processor will query target system for each person
-   * to determine if they exist (PATCH) or need to be created (POST), ignoring delta storage.
-   * This is useful for initial sync when no prior delta exists or when delta storage is corrupted.
-   * Stored in SSM Parameter Store for easy runtime toggling without stack updates.
-   * Defaults to false if not specified.
-   */
-  BULK_RESET?: boolean;
-
   /** 
    * Dry-run mode configuration - controls whether operations actually modify data
    * or just simulate the operations without making changes.

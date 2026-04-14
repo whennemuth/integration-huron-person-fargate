@@ -3,7 +3,6 @@ import { IRepository } from 'aws-cdk-lib/aws-ecr';
 import { ContainerImage, CpuArchitecture, FargateTaskDefinition, LogDriver, OperatingSystemFamily, Secret as EcsSecret, LogDrivers } from 'aws-cdk-lib/aws-ecs';
 import { Effect, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
-import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
 import { IContext } from '../../../context/IContext';
 import { HuronPersonSecrets } from '../../Secrets';
@@ -35,15 +34,6 @@ export class ProcessorTaskDefinition extends Construct {
     // Create Secrets Manager secret for huron-person configuration
     const huronPersonSecrets = new HuronPersonSecrets(this, props.context);
 
-    // Create SSM Parameter for BULK_RESET flag (allows runtime toggling without stack updates)
-    const { STACK_ID, BULK_RESET = false } = props.context;
-    const bulkResetParameter = new StringParameter(this, 'BulkResetParameter', {
-      parameterName: `/huron-person-integration/${STACK_ID}/bulk-reset`,
-      description: 'Enable bulk reset mode for huron person integration processor tasks (true/false). When true, queries target system for each person instead of using delta storage.',
-      stringValue: BULK_RESET.toString(),
-      simpleName: false, // Use full parameter name with path
-    });
-
     // Create CloudWatch log group
     const logGroup = new LogGroup(this, 'LogGroup', {
       logGroupName: `/ecs/huron-person-processor`,
@@ -67,7 +57,6 @@ export class ProcessorTaskDefinition extends Construct {
     const environment: { [key: string]: string } = {
       REGION: props.region,
       SQS_QUEUE_URL: props.queueUrl,
-      STACK_ID: props.context.STACK_ID, // Used for SSM parameter name lookup
       // CHUNKS_BUCKET and CHUNK_KEY are set from SQS messages at runtime (not env vars)
       STATIC_MAP_USAGE: '{ "orgMap": true, "stateMap": true, "countryMap": true }', // Used by processor to determine which static maps to load in data mapper
       SECRET_ARN: huronPersonSecrets.secretArn, // ARN of the Secrets Manager secret to read config from
@@ -160,10 +149,6 @@ export class ProcessorTaskDefinition extends Construct {
     // not the task role. The execution role is used by ECS agent to pull images,
     // retrieve secrets, and write logs before the container even starts.
     huronPersonSecrets.secret.grantRead(this.taskDefinition.executionRole!);
-
-    // Grant SSM Parameter Store read access for BULK_RESET flag
-    // This is read by the TASK ROLE at runtime (not execution role)
-    bulkResetParameter.grantRead(this.taskDefinition.taskRole);
 
     // Apply any resource-specific tags - tags not defined in IContext.TAGS
     if (props.tags) {
