@@ -6,6 +6,7 @@ import { EcsInfrastructure } from './EcsInfrastructure';
 import { IContext } from '../context/IContext';
 import { QueueInfrastructure } from './QueueInfrastructure';
 import { SubscribingLambdas } from './SubscribingLambdas';
+import { ProcessorStatisticsTable } from './DynamoDB';
 
 export interface AppConstructProps {
   context: IContext;
@@ -22,6 +23,7 @@ export class AppConstruct extends Construct {
   public readonly queue: QueueInfrastructure;
   public readonly chunksBucket: Bucket;
   public readonly subscribingLambdas: SubscribingLambdas;
+  public readonly statisticsTable: ProcessorStatisticsTable;
 
   constructor(scope: Construct, id: string, props: AppConstructProps) {
     super(scope, id);
@@ -38,17 +40,26 @@ export class AppConstruct extends Construct {
     });
 
     // ========================================
-    // 2. ECS Infrastructure (Cluster + Task Definitions)
+    // 2. DynamoDB Table for Processor Statistics
+    // ========================================
+    this.statisticsTable = new ProcessorStatisticsTable(this, 'DynamoDb', {
+      context: ctx,
+      tags,
+    });
+
+    // ========================================
+    // 3. ECS Infrastructure (Cluster + Task Definitions)
     // ========================================
     this.ecs = new EcsInfrastructure(this, 'Ecs', {
       repository: this.ecr.repository,
       context: ctx,
       stackScope: scope,  // Pass stack reference for escape hatches
+      dynamoDbTableName: this.statisticsTable.table.tableName,
       tags,
     });
 
     // ========================================
-    // 3. Queue Infrastructure
+    // 4. Queue Infrastructure
     // ========================================
     this.queue = new QueueInfrastructure(this, 'Queue', {
       context: ctx,
@@ -70,7 +81,7 @@ export class AppConstruct extends Construct {
     );
 
     // ========================================
-    // 4. Chunks Bucket
+    // 5. Chunks Bucket
     // ========================================
     this.chunksBucket = new Bucket(this, 'ChunksBucket', {
       bucketName: ctx.S3.chunksBucket,
@@ -105,7 +116,7 @@ export class AppConstruct extends Construct {
     }
 
     // ========================================
-    // 5. Subscribing Lambdas (Chunker & Merger)
+    // 6. Subscribing Lambdas (Chunker & Merger)
     // ========================================
     // Create subscribing lambdas before services so chunker lambda can be
     // passed to ChunkerService for EventBridge schedule configuration
@@ -119,7 +130,7 @@ export class AppConstruct extends Construct {
     });
 
     // ========================================
-    // 6. Chunker Service (Phase 1)
+    // 7. Chunker Service (Phase 1)
     // ========================================
     // Pass chunker lambda and context for EventBridge schedule configuration
     this.ecs.createChunkerService(
@@ -130,7 +141,7 @@ export class AppConstruct extends Construct {
     );
 
     // ========================================
-    // 7. Processor Service (Phase 2)
+    // 8. Processor Service (Phase 2)
     // ========================================
     // Create processor service as child of ECS infrastructure
     this.ecs.createProcessorService(
@@ -140,7 +151,7 @@ export class AppConstruct extends Construct {
     );
 
     // ========================================
-    // 8. Merger Service (Phase 3)
+    // 9. Merger Service (Phase 3)
     // ========================================
     this.ecs.createMergerService(
       this.queue.mergerQueue,

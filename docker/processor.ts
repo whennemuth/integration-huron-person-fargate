@@ -43,11 +43,14 @@ import {
   ConfigManager,
   HuronPersonIntegration,
   S3DataSourceConfig,
-  BasicCache
+  BasicCache,
+  TargetApiErrorEventProcessor
 } from 'integration-huron-person';
 import { NextChunk, QueueReader } from '../src/Queue';
 import { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
 import { pathUpTo } from '../src/Utils';
+import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/ApiErrorTracking';
+import { getRetryStrategy } from '../src/ApiErrorRetryStrategy';
 
 /**
  * Create a config with S3 data source for the chunk
@@ -126,6 +129,16 @@ export const extractChunkId = (s3Key: string): string | undefined => {
   return match ? match[1] : undefined;
 }
 
+/**
+ * Extract integration timestamp from S3 key
+ * @param s3Key - S3 key like "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0124.ndjson"
+ * @returns ISO timestamp like "2026-03-03T19:58:41.277Z" or undefined if not present
+ */
+export const extractIntegrationTimestamp = (s3Key: string): string | undefined => {
+  const match = s3Key.match(/\/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\//);
+  return match ? match[1] : undefined;
+}
+
 export const validateChunk = (chunk: NextChunk | undefined) => {
   if (!chunk) {
     throw new Error('No chunk information provided in SQS message or environment variables');
@@ -152,7 +165,9 @@ export async function main(queueReader: QueueReader) {
     HURON_PERSON_CONFIG_JSON,
     STATIC_MAP_USAGE,
     DRY_RUN,
-    BULK_RESET
+    BULK_RESET,
+    DYNAMODB_TABLE_NAME: dynamoDbTableName,
+    RETRY_STRATEGY
   } = process.env;  
   const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
   const bulkReset = `${BULK_RESET}`.trim().toLowerCase() === 'true';
@@ -165,6 +180,7 @@ export async function main(queueReader: QueueReader) {
   console.log(`Huron person config json: ${HURON_PERSON_CONFIG_JSON?.substring(0, 10)}...`);
   console.log(`Static map usage: ${JSON.stringify(staticMapUsage ?? {})}`);
   console.log(`Bulk Reset: ${bulkReset}`);
+  console.log(`DynamoDB table: ${dynamoDbTableName || 'not configured'}`);
   
   // Read chunk information from queue or environment
   let nextChunk: NextChunk | undefined;
@@ -187,11 +203,39 @@ export async function main(queueReader: QueueReader) {
   // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
   const chunkId = extractChunkId(s3Key!);
 
+  // Extract integration timestamp from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "2026-03-03T19:58:41.277Z")
+  const integrationTimestamp = extractIntegrationTimestamp(s3Key!) || new Date().toISOString();
+
   console.log(`Processing chunk: s3://${bucketName}/${s3Key}`);
   if (chunkId) {
     console.log(`Chunk ID: ${chunkId}`);
   }
+  console.log(`Integration timestamp: ${integrationTimestamp}`);
   console.log(`Region: ${region || 'default (us-east-1)'}\n`);
+
+  // Initialize a retry strategy based on environment variable configuration
+  const retryStrategy = getRetryStrategy(RETRY_STRATEGY);
+  if(retryStrategy) {
+    console.log(`Retry strategy initialized: ${RETRY_STRATEGY}`);
+  }
+
+  // Initialize error tracker for capturing errors and statistics to DynamoDB
+  let errorTracker: TargetApiErrorEventProcessor | undefined;
+  if (dynamoDbTableName) {
+    errorTracker = new TrackingTargetApiErrorProcessor({
+      tableName: dynamoDbTableName,
+      integrationTimestamp,
+      region,
+      logToConsole: true
+    });
+    console.log(`Error tracker initialized with table: ${dynamoDbTableName}`);
+  } else {
+    console.warn('WARNING: DYNAMODB_TABLE_NAME not configured - error tracking disabled');
+    errorTracker = new LoggingTargetApiErrorProcessor();
+  }
+
+  const startTimestamp = new Date().toISOString();
+  let processedRecordCount = 0;
 
   try {
     // Build config with S3 data source pointing to this chunk
@@ -207,19 +251,52 @@ export async function main(queueReader: QueueReader) {
       config,  // Pass pre-built config with S3 data source
       staticMapUsage, // Pass through static map usage from environment variable
       bulkReset, // Pass through bulk reset flag from environment variable
-      cache // Shared cache for JWT tokens
+      cache, // Shared cache for JWT tokens
+      errorEventProcessor: errorTracker, // Inject error tracker for tracking errors and throttling
+      retryStrategy // Inject retry strategy for handling transient API failures (429, 5xx, network errors)
     });
     
     // Pass chunkId to enable chunked storage output. 
     // If in dry run mode, this won't actually write deltas but allows us to see the intended storage paths in logs.
     await integration.run(`Processing chunk: s3://${bucketName}/${s3Key}`, chunkId);
 
+    // TODO: Extract actual record count from integration.run() result
+    // For now, we'll need to enhance HuronPersonIntegration to return processing stats
+    processedRecordCount = 0; // Placeholder
+
+    console.log('\n✓ Chunk processing completed successfully');
+    
     process.exit(0);
 
   } catch (error: any) {
     console.error(`\n✗ Processing chunk: s3://${bucketName}/${s3Key} failed:`, error.message);
     console.error(error.stack);
     process.exit(1);
+  } finally {
+    // Write statistics to DynamoDB
+    if (errorTracker instanceof TrackingTargetApiErrorProcessor) {
+      const endTimestamp = new Date().toISOString();
+      try {
+        await errorTracker.writeStatistics({
+          startTimestamp,
+          endTimestamp,
+          chunkCount: 1, // This processor handles 1 chunk per run
+          chunkSize: processedRecordCount,
+          totalRecords: processedRecordCount,
+          sourceDescription: `chunk-${chunkId || 'unknown'}`
+        });
+
+        // Log statistics summary
+        const stats = errorTracker.getStatisticsSummary();
+        console.log('\n=== Processing Statistics ===');
+        console.log(`Total errors: ${stats.totalErrors}`);
+        console.log(`Throttle events: ${stats.throttleCount}`);
+        console.log(`Errors by status:`, stats.errorsByStatus);
+      } catch (statsError: any) {
+        console.error('Failed to write statistics to DynamoDB:', statsError);
+        // Don't fail the entire process if statistics write fails
+      }
+    }
   }
 }
 

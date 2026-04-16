@@ -88,5 +88,10 @@ export class IntegrationHuronPersonLambdaStack extends Stack {
       value: app.chunksBucket.bucketName,
       description: 'Chunks S3 bucket name',
     });
+
+    new CfnOutput(this, 'StatisticsTableName', {
+      value: app.statisticsTable.table.tableName,
+      description: 'DynamoDB table for processor statistics and error tracking',
+    });
   }
 }

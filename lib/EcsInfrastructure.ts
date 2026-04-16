@@ -16,6 +16,7 @@ export interface EcsInfrastructureProps {
   repository: IRepository;
   context: IContext;
   stackScope: Construct;  // Stack reference for escape hatches
+  dynamoDbTableName: string;
   tags?: { [key: string]: string };
 }
 
@@ -38,7 +39,7 @@ export class EcsInfrastructure extends Construct {
   constructor(scope: Construct, id: string, props: EcsInfrastructureProps) {
     super(scope, id);
 
-    const { repository, context: ctx, stackScope, tags } = props;
+    const { repository, context: ctx, stackScope, dynamoDbTableName, tags } = props;
     this.context = ctx;
     this.stackScope = stackScope;
     this.tags = tags;
@@ -85,6 +86,7 @@ export class EcsInfrastructure extends Construct {
     this.taskDefinitions = new TaskDefinitions(this, 'TaskDefs', {
       repository,
       context: ctx,
+      dynamoDbTableName, // Pass DynamoDB table name for processor task definition
       tags,
     });
   }

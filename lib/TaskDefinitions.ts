@@ -8,6 +8,7 @@ import { ProcessorTaskDefinition } from './services/processor/ProcessorTaskDefin
 export interface TaskDefinitionsProps {
   repository: IRepository;
   context: IContext;
+  dynamoDbTableName: string;
   tags?: { [key: string]: string };
 }
 
@@ -23,7 +24,7 @@ export class TaskDefinitions extends Construct {
   constructor(scope: Construct, id: string, props: TaskDefinitionsProps) {
     super(scope, id);
 
-    const { repository, context: ctx, tags } = props;
+    const { repository, context: ctx, dynamoDbTableName, tags } = props;
 
     // Chunker task definition
     this.chunker = new ChunkerTaskDefinition(this, 'chunker', {
@@ -48,6 +49,7 @@ export class TaskDefinitions extends Construct {
       logRetentionDays: ctx.ECS.processorTaskDefinition.logRetentionDays,
       chunksBucketName: ctx.S3.chunksBucket,
       queueUrl: '', // Will be set after queue is created
+      dynamoDbTableName, // DynamoDB table for error tracking and statistics
       context: ctx,
       region: ctx.REGION,
       dryRun: ctx.DRY_RUN?.taskdef?.processor,

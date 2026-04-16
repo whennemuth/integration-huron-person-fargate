@@ -15,6 +15,7 @@ export interface ProcessorTaskDefinitionProps {
   logRetentionDays: number;
   chunksBucketName: string;
   queueUrl: string;
+  dynamoDbTableName: string;
   context: IContext;
   region: string;
   dryRun?: boolean;
@@ -57,6 +58,7 @@ export class ProcessorTaskDefinition extends Construct {
     const environment: { [key: string]: string } = {
       REGION: props.region,
       SQS_QUEUE_URL: props.queueUrl,
+      DYNAMODB_TABLE_NAME: props.dynamoDbTableName,
       // CHUNKS_BUCKET and CHUNK_KEY are set from SQS messages at runtime (not env vars)
       STATIC_MAP_USAGE: '{ "orgMap": true, "stateMap": true, "countryMap": true }', // Used by processor to determine which static maps to load in data mapper
       SECRET_ARN: huronPersonSecrets.secretArn, // ARN of the Secrets Manager secret to read config from
@@ -66,6 +68,15 @@ export class ProcessorTaskDefinition extends Construct {
       DESCRIPTION2: 
         `It processes the chunk by syncing all person records in it to the Huron API.`
     };
+
+    // Check if the context includes retry strategy configuration and add it to environment variables if present.
+    const { retries } = props.context.ECS.processorTaskDefinition;
+    if(retries) {
+      const { retryStrategyOptions, retryStrategyType } = retries;
+      if(retryStrategyOptions || retryStrategyType) {
+        environment.RETRY_STRATEGY = JSON.stringify(retryStrategyType);
+      }
+    }
 
     // ECS secrets (injected at runtime from Secrets Manager)
     // These take precedence over environment variables in Fargate context
@@ -140,6 +151,23 @@ export class ProcessorTaskDefinition extends Construct {
         ],
         resources: [
           `arn:aws:sqs:${props.region}:${Stack.of(this).account}:*`,
+        ],
+      })
+    );
+
+    // Grant DynamoDB permissions for writing error events and statistics
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'dynamodb:PutItem',
+          'dynamodb:UpdateItem',
+          'dynamodb:Query',
+          'dynamodb:GetItem',
+        ],
+        resources: [
+          `arn:aws:dynamodb:${props.region}:${Stack.of(this).account}:table/${props.dynamoDbTableName}`,
+          `arn:aws:dynamodb:${props.region}:${Stack.of(this).account}:table/${props.dynamoDbTableName}/index/*`,
         ],
       })
     );

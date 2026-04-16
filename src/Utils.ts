@@ -1,4 +1,5 @@
 import { IContext } from "../context/IContext";
+import { log, warn, error} from "integration-huron-person";
 
 /**
  * @returns The name of the stack
@@ -69,6 +70,73 @@ export const getLocalConfig = (params?: { projectFolder?: string, configFileName
   }
 }
 
+export const logAxiosResponse = (params: { 
+  response: any, 
+  msg?: string, 
+  flat?: boolean, 
+  logAs: 'log' | 'warn' | 'error', 
+  level?: 'terse' | 'normal' | 'verbose'
+}) => {
+  const { response, msg, flat=false, logAs='log', level='terse' } = params;
+  const { status, statusText, config: { headers={} }, data={} } = response || {};
+  let loggable = {};
+  switch(level) {
+    case 'terse':
+      loggable = { status, statusText, data };
+      break;
+    case 'normal':
+      const { baseURL, params={}, responseType, method, url } = headers;
+      loggable = {
+        headers: { baseURL, params, responseType, method, url }, status, statusText, data 
+      };
+      break;
+    case 'verbose':
+      loggable = response;
+      break;
+  }
+  
+  switch(logAs) {
+    case 'log':
+      log({ o: loggable, msg, flat });
+      break;
+    case 'warn':
+      warn({ o: loggable, msg, flat });
+      break;
+    case 'error':
+      error({ o: loggable, msg, flat });
+      break;
+  }
+}
+
+export const logAxiosError = (params: { 
+  error: any, 
+  msg?: string, 
+  flat?: boolean, 
+  logAs: 'log' | 'warn' | 'error', 
+  level?: 'terse' | 'normal' | 'verbose'
+}) => {
+  const { error={}, msg, flat=false, logAs='error', level='terse' } = params;
+  const { response } = error || {};
+  if (response) {
+    logAxiosResponse({ response, msg, flat, logAs, level });
+  } else {
+    switch(logAs) {
+      case 'log':  
+        log({ o: error, msg, flat });
+        break;
+      case 'warn':
+        warn({ o: error, msg, flat });
+        break;
+      case 'error':
+        error({ o: error, msg, flat });
+        break;
+    }
+  }
+}
+
+export const logShortAxiosError = (error: any, msg: string) => {
+  logAxiosError({ error, msg, flat: false, logAs: 'error', level: 'terse' });
+}
 
 if(require.main === module) {
   console.log(pathUpTo({ fullPath: '/a/b/c/d', segment: 'c' }));

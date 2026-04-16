@@ -1,4 +1,5 @@
 import { Config as HuronPersonConfig } from 'integration-huron-person';
+import { RetryStrategyConfig } from '../src/ApiErrorRetryStrategy';
 
 export interface IContext {
 
@@ -58,6 +59,7 @@ export interface IContext {
       cpu: number;
       memoryLimitMiB: number;
       logRetentionDays: number;
+      retries?: RetryStrategyConfig;
     };
     /** Merger task definition configuration */
     mergerTaskDefinition: {
