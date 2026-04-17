@@ -5,12 +5,12 @@
  */
 
 import { BigJsonFile, BigJsonFileConfig } from '../src/chunking/filedrop/BigJsonFile';
-import { PersonArrayWrapper } from '../src/PersonArrayWrapper';
+import { PersonArrayWrapper } from '../src/chunking/PersonArrayWrapper';
 import { S3StorageAdapter } from '../src/storage/S3StorageAdapter';
 
 // Mock the storage adapter
 jest.mock('../src/storage/S3StorageAdapter');
-jest.mock('../src/PersonArrayWrapper');
+jest.mock('../src/chunking/PersonArrayWrapper');
 
 describe('Chunker Integration', () => {
   let mockStorage: jest.Mocked<S3StorageAdapter>;

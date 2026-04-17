@@ -302,9 +302,9 @@ User is not authorized to perform: lambda:InvokeFunction
 - **src/chunking/ChunkerSubscriber.ts**: Lambda handler (dispatcher)
 - **src/chunking/fetch/ChunkerApiSubscriber.ts**: API event handler
 - **src/chunking/filedrop/ChunkerS3Subscriber.ts**: S3 event handler
-- **docker/chunker.ts**: Fargate task entry point
-- **docker/chunkFromAPI.ts**: API-based chunking implementation
-- **docker/chunkFromS3.ts**: S3-based chunking implementation
+- **src/chunker.ts**: Fargate task entry point
+- **src/chunking/fetch/ChunkFromAPI.ts**: API-based chunking implementation
+- **src/chunking/filedrop/ChunkFromS3.ts**: S3-based chunking implementation
 
 ---
 

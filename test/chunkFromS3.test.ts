@@ -1,5 +1,5 @@
 /**
- * Comprehensive tests for chunkFromS3.ts
+ * Comprehensive tests for ChunkFromS3.ts
  * 
  * Tests the parameter gathering, validation, and S3-based chunking logic.
  * Covers all variations of:
@@ -11,7 +11,7 @@
 // Mock dependencies BEFORE importing the module under test
 jest.mock('@aws-sdk/client-sqs');
 jest.mock('../src/storage/S3StorageAdapter');
-jest.mock('../src/PersonArrayWrapper');
+jest.mock('../src/chunking/PersonArrayWrapper');
 jest.mock('../docker/chunker', () => ({
   SyncPopulation: {
     PersonFull: 'person-full',
@@ -21,7 +21,7 @@ jest.mock('../docker/chunker', () => ({
   writeMetadata: jest.fn()
 }));
 
-import { ChunkFromS3, TaskParameters } from '../docker/chunkFromS3';
+import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
 
 describe('ChunkFromS3 Parameter Gathering', () => {
   let originalEnv: NodeJS.ProcessEnv;

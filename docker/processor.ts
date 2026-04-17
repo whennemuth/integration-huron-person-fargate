@@ -49,8 +49,8 @@ import {
 import { NextChunk, QueueReader } from '../src/Queue';
 import { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
 import { pathUpTo } from '../src/Utils';
-import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/ApiErrorTracking';
-import { getRetryStrategy } from '../src/ApiErrorRetryStrategy';
+import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/processing/ApiErrorTracking';
+import { getRetryStrategy } from '../src/processing/ApiErrorRetryStrategy';
 
 /**
  * Create a config with S3 data source for the chunk

@@ -1,5 +1,5 @@
 import { Config as HuronPersonConfig } from 'integration-huron-person';
-import { RetryStrategyConfig } from '../src/ApiErrorRetryStrategy';
+import { RetryStrategyConfig } from '../src/processing/ApiErrorRetryStrategy';
 
 export interface IContext {
 

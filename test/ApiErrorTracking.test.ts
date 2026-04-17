@@ -12,7 +12,7 @@ import {
   TrackingTargetApiErrorProcessor,
   ErrorEventDetails,
   SyncStatistics,
-} from '../src/ApiErrorTracking';
+} from '../src/processing/ApiErrorTracking';
 import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 

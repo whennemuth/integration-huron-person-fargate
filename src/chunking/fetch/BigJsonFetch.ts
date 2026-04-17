@@ -7,7 +7,7 @@ import {
   ConfigManager,
   AxiosResponseStreamFilter
 } from 'integration-huron-person';
-import { IPersonArrayWrapper, PersonArrayWrapper } from "../../PersonArrayWrapper";
+import { IPersonArrayWrapper, PersonArrayWrapper } from "../PersonArrayWrapper";
 import { FileSystemStorageAdapter, IStorageAdapter, S3StorageAdapter } from "../../storage";
 import { extractChunkBasePath } from '../filedrop/ChunkPathUtils';
 import { getLocalConfig } from '../../Utils';

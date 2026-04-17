@@ -12,7 +12,7 @@ import {
   DEFAULT_RETRY_STRATEGY,
   AGGRESSIVE_RETRY_STRATEGY,
   THROTTLING_ONLY_RETRY_STRATEGY,
-} from '../src/ApiErrorRetryStrategy';
+} from '../src/processing/ApiErrorRetryStrategy';
 
 describe('RetryStrategy', () => {
   describe('constructor and defaults', () => {

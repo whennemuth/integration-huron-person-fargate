@@ -3,7 +3,7 @@ import { parser } from 'stream-json';
 import { pick } from 'stream-json/filters/Pick';
 import { streamArray } from 'stream-json/streamers/StreamArray';
 import { IStorageAdapter, S3StorageAdapter, FileSystemStorageAdapter } from '../../storage';
-import { IPersonArrayWrapper, PersonArrayWrapper } from '../../PersonArrayWrapper';
+import { IPersonArrayWrapper, PersonArrayWrapper } from '../PersonArrayWrapper';
 import { Timer } from 'integration-core'
 
 /**

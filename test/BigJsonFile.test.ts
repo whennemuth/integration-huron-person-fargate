@@ -4,7 +4,7 @@ import { mockClient } from 'aws-sdk-client-mock';
 import 'aws-sdk-client-mock-jest';
 import { Readable } from 'stream';
 import { BigJsonFile, BigJsonFileConfig } from '../src/chunking/filedrop/BigJsonFile';
-import { PersonArrayWrapper } from '../src/PersonArrayWrapper';
+import { PersonArrayWrapper } from '../src/chunking/PersonArrayWrapper';
 import { S3StorageAdapter } from '../src/storage';
 
 // Create S3 client mock

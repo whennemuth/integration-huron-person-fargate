@@ -9,14 +9,13 @@
  * - Combination scenarios with priority handling
  */
 
-import { ChunkFromAPI, TaskParameters } from '../docker/chunkFromAPI';
 import { Config, DataSourceConfig } from 'integration-huron-person';
-import { ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
+import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 
 // Mock dependencies
 jest.mock('@aws-sdk/client-sqs');
 jest.mock('../src/storage/S3StorageAdapter');
-jest.mock('../src/PersonArrayWrapper');
+jest.mock('../src/chunking/PersonArrayWrapper');
 jest.mock('integration-huron-person', () => {
   const actual = jest.requireActual('integration-huron-person');
   return {

@@ -1,4 +1,4 @@
-import { PersonArrayWrapper, IStorageReader } from '../src/PersonArrayWrapper';
+import { PersonArrayWrapper, IStorageReader } from '../src/chunking/PersonArrayWrapper';
 import { Readable } from 'stream';
 
 /**

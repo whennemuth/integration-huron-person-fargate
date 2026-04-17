@@ -1,11 +1,11 @@
 import { AxiosResponseStreamFilter, Config, ConfigManager, DataSourceConfig } from "integration-huron-person";
-import { extractChunkBasePath } from "../src/chunking/filedrop/ChunkPathUtils";
-import { getLocalConfig } from "../src/Utils";
-import { S3StorageAdapter } from "../src/storage/S3StorageAdapter";
-import { BigJsonFetch, BigJsonFetchConfig } from "../src/chunking/fetch/BigJsonFetch";
-import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeMetadata } from "./chunker";
-import { PersonArrayWrapper } from "../src/PersonArrayWrapper";
-import { SyncPopulation } from "./chunkTypes";
+import { extractChunkBasePath } from "../filedrop/ChunkPathUtils";
+import { getLocalConfig } from "../../Utils";
+import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
+import { BigJsonFetch, BigJsonFetchConfig } from "./BigJsonFetch";
+import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeMetadata } from "../../../docker/chunker";
+import { PersonArrayWrapper } from "../PersonArrayWrapper";
+import { SyncPopulation } from "../../../docker/chunkTypes";
 
 export type TaskParameters = {
   baseUrl: string,

@@ -46,8 +46,8 @@
 import { Config, ConfigManager } from 'integration-huron-person';
 import { S3StorageAdapter } from '../src/storage/S3StorageAdapter';
 import { getLocalConfig } from '../src/Utils';
-import { ChunkFromAPI } from './chunkFromAPI';
-import { ChunkFromS3 } from './chunkFromS3';
+import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
+import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
 import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 
 export type IChunkFromSource = {

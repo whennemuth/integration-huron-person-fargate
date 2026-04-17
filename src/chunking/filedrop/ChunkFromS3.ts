@@ -1,8 +1,8 @@
-import { PersonArrayWrapper } from "../src/PersonArrayWrapper";
-import { BigJsonFile, BigJsonFileConfig } from "../src/chunking/filedrop/BigJsonFile";
-import { extractChunkBasePath } from '../src/chunking/filedrop/ChunkPathUtils';
-import { S3StorageAdapter } from "../src/storage/S3StorageAdapter";
-import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeMetadata } from "./chunker";
+import { PersonArrayWrapper } from "../PersonArrayWrapper";
+import { BigJsonFile, BigJsonFileConfig } from "./BigJsonFile";
+import { extractChunkBasePath } from './ChunkPathUtils';
+import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
+import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeMetadata } from "../../../docker/chunker";
 
 export type TaskParameters = {
   inputBucket: string,
