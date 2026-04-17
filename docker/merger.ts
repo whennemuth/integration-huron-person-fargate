@@ -41,6 +41,8 @@ import { SQSClient, ReceiveMessageCommand, DeleteMessageCommand } from '@aws-sdk
 import * as readline from 'readline';
 import { Readable } from 'stream';
 import { extractChunkBasePath } from '../src/chunking/filedrop/ChunkPathUtils';
+import { HashMapMerger } from 'integration-huron-person';
+import { FieldSet } from 'integration-core';
 
 interface TaskParameters {
   chunksBucket: string;
@@ -195,6 +197,51 @@ class Merger {
   }
 
   /**
+   * Read existing merged file if it exists (for merge operation)
+   */
+  private async readExistingMergedFile(key: string): Promise<FieldSet[] | null> {
+    try {
+      console.log(`  Checking for existing file: s3://${this.config.bucketName}/${key}`);
+      
+      const response = await this.s3.getObject({
+        Bucket: this.config.bucketName,
+        Key: key
+      });
+
+      const fieldSets: FieldSet[] = [];
+      const stream = response.Body as Readable;
+      const rl = readline.createInterface({
+        input: stream,
+        crlfDelay: Infinity
+      });
+
+      for await (const line of rl) {
+        if (line.trim()) {
+          try {
+            const fieldSet = JSON.parse(line) as FieldSet;
+            fieldSets.push(fieldSet);
+          } catch (parseError: any) {
+            throw new Error(`Failed to parse NDJSON line in existing file: ${parseError.message}`);
+          }
+        }
+      }
+
+      console.log(`    Found ${fieldSets.length} existing records`);
+      return fieldSets;
+
+    } catch (error: any) {
+      // NoSuchKey means file doesn't exist yet (first run) - this is okay
+      if (error.name === 'NoSuchKey' || error.Code === 'NoSuchKey') {
+        console.log(`    No existing file found (first run)`);
+        return null;
+      }
+      
+      // Any other error is a real failure - fail fast
+      throw new Error(`Failed to read existing merged file ${key}: ${error.message}`);
+    }
+  }
+
+  /**
    * Write merged content to output file
    */
   private async writeMergedFile(lines: string[], outputKey: string): Promise<void> {
@@ -318,9 +365,11 @@ async function main() {
   // Read additional configuration from environment
   const {
     REGION: region,
-    DRY_RUN='false'
+    DRY_RUN='false',
+    PRIMARY_KEY_FIELDS='BUID' // Comma-separated list of primary key fields (default: BUID)
   } = process.env;
   const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
+  const primaryKeyFieldSet = new Set(PRIMARY_KEY_FIELDS.split(',').map(f => f.trim()));
 
   try {
     // Convert chunk directory to delta directory
@@ -350,26 +399,84 @@ async function main() {
 
     const s3 = new S3({ region });
     
-    // Read from delta directory
+    // Step 1: Read consolidated chunks from delta directory and parse as FieldSets
+    console.log(`\nStep 1: Reading consolidated chunks from: s3://${bucketName}/${sourceKey}`);
     const { Body } = await s3.getObject({ Bucket: bucketName, Key: sourceKey });
     const content = await Body?.transformToString();
+    const lines = content?.split('\n').filter(l => l.trim()) || [];
     
-    // Write to shared location, overwriting the prior older copy if it exists.
-    await s3.putObject({
-      Bucket: bucketName,
-      Key: targetKey,
-      Body: content,
-      ContentType: 'application/x-ndjson'
-    });
-
-    console.log(`✓ Merged output copied to shared location`);
+    const consolidatedChunks: FieldSet[] = [];
+    for (const line of lines) {
+      try {
+        consolidatedChunks.push(JSON.parse(line) as FieldSet);
+      } catch (parseError: any) {
+        throw new Error(`Failed to parse consolidated chunks: ${parseError.message}`);
+      }
+    }
+    console.log(`  Parsed ${consolidatedChunks.length} records from consolidated chunks`);
+    
+    // Step 2: Read existing previous-input.ndjson from shared location (if exists)
+    console.log(`\nStep 2: Reading existing baseline from shared location`);
+    const merger = new Merger({ bucketName, clientId: sharedOutputPath, region });
+    const existingBaseline = await merger['readExistingMergedFile'](targetKey);
+    
+    // Step 3: Merge consolidated chunks with existing baseline
+    console.log(`\nStep 3: Merging data`);
+    const hashMapMerger = new HashMapMerger();
+    
+    if (!existingBaseline || existingBaseline.length === 0) {
+      console.log(`  No existing baseline found - writing consolidated chunks as new baseline`);
+      
+      // First run - just write consolidated chunks
+      const mergedContent = consolidatedChunks.map((fs: FieldSet) => JSON.stringify(fs)).join('\n') + '\n';
+      await s3.putObject({
+        Bucket: bucketName,
+        Key: targetKey,
+        Body: mergedContent,
+        ContentType: 'application/x-ndjson'
+      });
+      
+      console.log(`  ✓ Wrote ${consolidatedChunks.length} records to shared location`);
+    } else {
+      console.log(`  Existing baseline: ${existingBaseline.length} records`);
+      console.log(`  Consolidated chunks: ${consolidatedChunks.length} records`);
+      
+      // Convert to KeyHashPairs
+      const baselineKeyPairs = HashMapMerger.fieldSetsToKeyHashPairs(existingBaseline, primaryKeyFieldSet);
+      const incrementalKeyPairs = HashMapMerger.fieldSetsToKeyHashPairs(consolidatedChunks, primaryKeyFieldSet);
+      
+      // Merge
+      const mergeResult = hashMapMerger.merge(baselineKeyPairs, incrementalKeyPairs);
+      
+      console.log(`  Merge statistics:`);
+      console.log(`    Retained (baseline only): ${mergeResult.stats.retained}`);
+      console.log(`    Added (new): ${mergeResult.stats.added}`);
+      console.log(`    Updated (hash changed): ${mergeResult.stats.updated}`);
+      console.log(`    Unchanged (same hash): ${mergeResult.stats.unchanged}`);
+      console.log(`    Total: ${mergeResult.stats.total}`);
+      
+      // Convert back to FieldSets
+      const mergedFieldSets = HashMapMerger.keyHashPairsToFieldSets(mergeResult.merged);
+      
+      // Write merged result
+      const mergedContent = mergedFieldSets.map((fs: FieldSet) => JSON.stringify(fs)).join('\n') + '\n';
+      await s3.putObject({
+        Bucket: bucketName,
+        Key: targetKey,
+        Body: mergedContent,
+        ContentType: 'application/x-ndjson'
+      });
+      
+      console.log(`  ✓ Wrote ${mergedFieldSets.length} merged records to shared location`);
+    }
 
     console.log(`\nMerge Summary:`);
-    console.log(`  Total lines: ${result.totalLines}`);
-    console.log(`  Delta chunks merged: ${result.chunkCount}`);
+    console.log(`  Chunks consolidated: ${result.chunkCount}`);
+    console.log(`  Records in chunks: ${result.totalLines}`);
     console.log(`  Timestamped output: s3://${bucketName}/${sourceKey}`);
-    console.log(`  Shared output: s3://${bucketName}/${targetKey}`);
-    console.log(`  Cleanup: ${result.deletedChunks.length} files deleted`);
+    console.log(`  Shared output (merged): s3://${bucketName}/${targetKey}`);
+    console.log(`  Cleanup: ${result.deletedChunks.length} chunk files deleted`);
+    console.log(`  Primary key field(s): ${Array.from(primaryKeyFieldSet).join(', ')}`);
 
     process.exit(0);
 

@@ -248,7 +248,7 @@ export async function main(queueReader: QueueReader) {
 
     // Create and run integration using HuronPersonIntegration
     const integration = new HuronPersonIntegration({ 
-      config,  // Pass pre-built config with S3 data source
+      config,  // Pass pre-built config with S3 or API data source
       staticMapUsage, // Pass through static map usage from environment variable
       bulkReset, // Pass through bulk reset flag from environment variable
       cache, // Shared cache for JWT tokens
@@ -256,8 +256,21 @@ export async function main(queueReader: QueueReader) {
       retryStrategy // Inject retry strategy for handling transient API failures (429, 5xx, network errors)
     });
     
-    // Pass chunkId to enable chunked storage output. 
-    // If in dry run mode, this won't actually write deltas but allows us to see the intended storage paths in logs.
+    /**
+     * Pass chunkId to enable chunked storage output.
+     * If in dry run mode, this won't actually write deltas but allows us to see the intended 
+     * storage paths in logs.
+     * 
+     * NOTE: This function engages the "EndToEnd" flow of the integration, which "believes" it is
+     * processing a full sync, but the S3 data source is actually scoped to just the chunk file.
+     * When the "EndToEnd" flow executes the DeltaStorage.updatePreviousData method, it won't be
+     * be overwriting a global previous-input.ndjson file, but instead writing to a chunk-specific,
+     * unique delta storage path derived from the chunk ID (as part of parallel processing). 
+     * Thus, no prior state is ever actually being overwritten, though we let the "EndToEnd" flow 
+     * maintain the illusion that it is doing so. We will later have the merger read all of these 
+     * chunk-specific delta outputs and merge them together to create a new global 
+     * previous-input.ndjson for the next run.
+     */
     const result = await integration.run(`Processing chunk: s3://${bucketName}/${s3Key}`, chunkId);
 
     // Extract actual record count from integration result
