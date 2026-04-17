@@ -265,12 +265,12 @@ export async function main(queueReader: QueueReader) {
     
     console.log(`\n✓ Integration completed with results:`);
     console.log(`  - Total Processed: ${result.totalProcessed}`);
-    console.log(`  - ✅ Successful: ${result.successCount}`);
-    console.log(`  - ❌ Failed: ${result.failureCount}`);
-    console.log(`  - ➕ Added: ${result.addedCount}`);
-    console.log(`  - 🔄 Updated: ${result.updatedCount}`);
-    console.log(`  - ➖ Removed: ${result.removedCount}`);
-    console.log(`  - ⏱ Duration: ${result.duration}ms`);
+    console.log(`  - ✓ Successful: ${result.successCount}`);
+    console.log(`  - ✗ Failed: ${result.failureCount}`);
+    console.log(`  - + Added: ${result.addedCount}`);
+    console.log(`  - ~ Updated: ${result.updatedCount}`);
+    console.log(`  - - Removed: ${result.removedCount}`);
+    console.log(`  - ⧗ Duration: ${result.duration}ms`);
 
     console.log('\n✓ Chunk processing completed successfully');
     
