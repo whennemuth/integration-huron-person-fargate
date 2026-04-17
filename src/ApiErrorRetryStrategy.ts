@@ -41,6 +41,8 @@
  * - With maxDelayMs=5000, attempt 2+ capped at 0-5000ms
  */
 
+import { ApiRetryStrategy } from 'integration-huron-person';
+
 export type RetryStrategyConfig = {
   retryStrategyOptions?: RetryStrategyOptions;
   retryStrategyType?: RetryStrategyType; // Optional string to specify which retry strategy to use (e.g., 'DEFAULT', 'AGGRESSIVE', 'THROTTLING_ONLY')
@@ -72,7 +74,7 @@ export enum RetryStrategyType {
   THROTTLING_ONLY = 'THROTTLING_ONLY'
 }
 
-export class RetryStrategy {
+export class RetryStrategy implements ApiRetryStrategy {
   public readonly maxRetries: number;
   private readonly baseDelayMs: number;
   private readonly exponentialBase: number;

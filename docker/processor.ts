@@ -258,11 +258,19 @@ export async function main(queueReader: QueueReader) {
     
     // Pass chunkId to enable chunked storage output. 
     // If in dry run mode, this won't actually write deltas but allows us to see the intended storage paths in logs.
-    await integration.run(`Processing chunk: s3://${bucketName}/${s3Key}`, chunkId);
+    const result = await integration.run(`Processing chunk: s3://${bucketName}/${s3Key}`, chunkId);
 
-    // TODO: Extract actual record count from integration.run() result
-    // For now, we'll need to enhance HuronPersonIntegration to return processing stats
-    processedRecordCount = 0; // Placeholder
+    // Extract actual record count from integration result
+    processedRecordCount = result.totalProcessed;
+    
+    console.log(`\n✓ Integration completed with results:`);
+    console.log(`  - Total Processed: ${result.totalProcessed}`);
+    console.log(`  - ✅ Successful: ${result.successCount}`);
+    console.log(`  - ❌ Failed: ${result.failureCount}`);
+    console.log(`  - ➕ Added: ${result.addedCount}`);
+    console.log(`  - 🔄 Updated: ${result.updatedCount}`);
+    console.log(`  - ➖ Removed: ${result.removedCount}`);
+    console.log(`  - ⏱ Duration: ${result.duration}ms`);
 
     console.log('\n✓ Chunk processing completed successfully');
     
