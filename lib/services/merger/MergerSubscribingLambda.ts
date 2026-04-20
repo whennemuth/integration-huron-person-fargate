@@ -32,14 +32,14 @@ export interface MergerSubscribingLambdaProps {
  * - 4) If all expected delta chunks are present in the chunks bucket, as per a metadata file it 
  *      reads from the same bucket, this Lambda sends a message to the merger SQS queue with the 
  *      S3 key of the uploaded chunk file - thus "passing on" the subscription to Fargate as follows: 
- * - 4) The desiredCount of the merger Fargate service is then adjusted upward by the
+ * - 5) The desiredCount of the merger Fargate service is then adjusted upward by the
  *      QueueProcessingFargateService construct internals responding to the temporarily heightened
  *      depth of the SQS queue, which in turn causes a new Fargate task for merging to be created.
- * - 5) The merger task polls for a message in the queue that it expects to find with the S3
+ * - 6) The merger task polls for a message in the queue that it expects to find with the S3
  *      bucket details for inspecting content as follows:.
- * - 6) If all expected delta chunks are present in the chunks bucket, it sends a message to the 
+ * - 7) If all expected delta chunks are present in the chunks bucket, it sends a message to the 
  *      merger SQS queue to trigger the merger Fargate task.
- * - 7) The merger task concatenates all NDJSON chunk files into a single "previous-input.ndjson" file, which overwrites the prior version in the same bucket, and then deletes the chunk files.
+ * - 8) The merger task concatenates all NDJSON chunk files into a single "previous-input.ndjson" file, which overwrites the prior version in the same bucket, and then deletes the chunk files.
  */
 export class MergerSubscribingLambda extends Construct {
   public readonly function: NodejsFunction;
