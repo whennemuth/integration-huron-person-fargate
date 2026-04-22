@@ -115,6 +115,40 @@ export class ChunkFromAPI implements IChunkFromSource {
       populationType, 
       bulkReset: typeof bulkReset === 'boolean' ? bulkReset : bulkReset === 'true'
     };
+
+    const { dataSource: { people } = {} } = this.config;
+    const { 
+      fetchPath: configFetchPath, endpointConfig: { baseUrl: configBaseUrl, apiKey } = {} 
+    } = people as DataSourceConfig;
+
+    let overrodeConfig = false;
+    const overrideConfig = (cfg:string|undefined, msg:string|undefined): boolean => {
+      if(cfg && cfg !== 'from_config') {
+        if(msg && msg !== cfg) {
+          overrodeConfig = true;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    if(overrideConfig(configBaseUrl, baseUrl)) {
+      console.log(`Overriding config baseUrl (${configBaseUrl}) with value from message parameters (${baseUrl})`);
+      (this.config.dataSource.people as DataSourceConfig).endpointConfig.baseUrl = baseUrl;
+    }
+
+    if(overrideConfig(configFetchPath, fetchPath)) {
+      console.log(`Overriding config fetchPath (${configFetchPath}) with value from message parameters (${fetchPath})`);
+      (this.config.dataSource.people as DataSourceConfig).fetchPath = fetchPath;
+    }
+
+    if (apiKey && overrodeConfig) {
+      const maskedApiKey = apiKey.length > 4 ? `${apiKey.slice(0, 2)}${apiKey.split('').map(c => '*').join('').substr(4)}${apiKey.slice(-2)}` : '****';
+      console.log(
+        `NOTE: One or more of the standard source API parameters have been overridden by sqs 
+        message details. This assumes that the configured apiKey (${maskedApiKey}) is still valid 
+        for the alternate endpoint`);
+    }
   }
 
   private setTaskParametersFromConfig = (): void => {
