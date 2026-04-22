@@ -216,9 +216,10 @@ async function triggerMerger(chunkDirectory: string): Promise<boolean> {
 
   // Prepare message with task parameters
   // The merger task will read these from the SQS message
+  // Message format uses camelCase (standardized across all message bodies)
   const message = {
-    CHUNKS_BUCKET: CHUNKS_BUCKET_NAME,
-    CHUNK_DIRECTORY: chunkDirectory,
+    chunksBucket: CHUNKS_BUCKET_NAME,
+    chunkDirectory,
   };
 
   try {

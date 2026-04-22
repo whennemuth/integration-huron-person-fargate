@@ -34,6 +34,7 @@ const sqsClient = new SQSClient({ region });
  *   baseUrl: string,              // API base URL (e.g., 'https://api.bu.edu')
  *   fetchPath: string,            // API fetch path (e.g., '/people/v1')
  *   populationType: string,       // 'person-full' or 'person-delta'
+ *   bulkReset?: boolean,          // Optional flag for bulk reset (default: false)
  *   processingMetadata?: {
  *     processedAt?: string,
  *     processorVersion?: string
@@ -53,7 +54,10 @@ const sqsClient = new SQSClient({ region });
  */
 export async function handleApiEvent(event: ApiChunkerEvent): Promise<any> {
   // Extract API parameters from event
-  const { baseUrl, fetchPath, populationType, processingMetadata: { processedAt, processorVersion } = {} } = event;
+  const { 
+    baseUrl, fetchPath, populationType, bulkReset, 
+    processingMetadata: { processedAt, processorVersion } = {} 
+  } = event;
 
   // Extract environment variables
   const dryRun = DRY_RUN.toLowerCase() === 'true';
@@ -90,11 +94,12 @@ export async function handleApiEvent(event: ApiChunkerEvent): Promise<any> {
 
   // Send message to SQS queue to trigger chunker task
   // The QueueProcessingFargateService will detect the message and auto-scale to process it
-  // Message format matches what ChunkFromAPI.setTaskParametersFromQueueMessageBody() expects
+  // Message format uses camelCase (standardized across all message bodies)
   const message = {
-    BASE_URL: baseUrl,
-    FETCH_PATH: fetchPath,
-    POPULATION_TYPE: populationType
+    baseUrl,
+    fetchPath,
+    populationType,
+    bulkReset: `${bulkReset}`.toLowerCase() === 'true',
   };
 
   try {

@@ -91,8 +91,8 @@ async function getTaskParameters(): Promise<TaskParameters | null> {
 
       console.log('Task parameters from SQS:', JSON.stringify(body));
       return {
-        chunksBucket: body.CHUNKS_BUCKET,
-        chunkDirectory: body.CHUNK_DIRECTORY || null,
+        chunksBucket: body.chunksBucket,
+        chunkDirectory: body.chunkDirectory || null,
       };
     } catch (error) {
       console.error('Error reading from SQS queue:', error);

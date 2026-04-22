@@ -95,9 +95,10 @@ export async function handleS3Event(event: S3ChunkerEvent): Promise<any> {
 
   // Send message to SQS queue to trigger chunker task
   // The QueueProcessingFargateService will detect the message and auto-scale to process it
+  // Message format uses camelCase (standardized across all message bodies)
   const message = {
-    INPUT_BUCKET: bucket,
-    INPUT_KEY: key,
+    inputBucket: bucket,
+    inputKey: key,
   };
 
   try {

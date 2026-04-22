@@ -127,9 +127,9 @@ describe('ChunkFromS3 Parameter Gathering', () => {
 
     it('should set task parameters from queue message with all fields', () => {
       const messageBody = {
-        INPUT_BUCKET: 'queue-input-bucket',
-        INPUT_KEY: 'person-full/2026-04-13T12:00:00.000Z-people.json',
-        BULK_RESET: 'true'
+        inputBucket: 'queue-input-bucket',
+        inputKey: 'person-full/2026-04-13T12:00:00.000Z-people.json',
+        bulkReset: 'true'
       };
 
       const chunker = new ChunkFromS3();
@@ -139,9 +139,9 @@ describe('ChunkFromS3 Parameter Gathering', () => {
 
     it('should handle message with missing BULK_RESET', () => {
       const messageBody = {
-        INPUT_BUCKET: 'queue-input-bucket',
-        INPUT_KEY: 'person-delta/people.json'
-        // BULK_RESET missing
+        inputBucket: 'queue-input-bucket',
+        inputKey: 'person-delta/people.json'
+        // bulkReset missing
       };
 
       const chunker = new ChunkFromS3();
@@ -151,9 +151,9 @@ describe('ChunkFromS3 Parameter Gathering', () => {
 
     it('should handle message with BULK_RESET as false', () => {
       const messageBody = {
-        INPUT_BUCKET: 'queue-input-bucket',
-        INPUT_KEY: 'person-full/data.json',
-        BULK_RESET: 'false'
+        inputBucket: 'queue-input-bucket',
+        inputKey: 'person-full/data.json',
+        bulkReset: 'false'
       };
 
       const chunker = new ChunkFromS3();
@@ -163,9 +163,9 @@ describe('ChunkFromS3 Parameter Gathering', () => {
 
     it('should handle message with BULK_RESET as TRUE (uppercase)', () => {
       const messageBody = {
-        INPUT_BUCKET: 'queue-input-bucket',
-        INPUT_KEY: 'person-full/data.json',
-        BULK_RESET: 'TRUE'
+        inputBucket: 'queue-input-bucket',
+        inputKey: 'person-full/data.json',
+        bulkReset: 'TRUE'
       };
 
       const chunker = new ChunkFromS3();
@@ -175,8 +175,8 @@ describe('ChunkFromS3 Parameter Gathering', () => {
 
     it('should fail when message is missing INPUT_BUCKET', () => {
       const messageBody = {
-        INPUT_KEY: 'person-full/people.json',
-        BULK_RESET: 'false'
+        inputKey: 'person-full/people.json',
+        bulkReset: 'false'
       };
 
       const chunker = new ChunkFromS3();
@@ -186,8 +186,8 @@ describe('ChunkFromS3 Parameter Gathering', () => {
 
     it('should fail when message is missing INPUT_KEY', () => {
       const messageBody = {
-        INPUT_BUCKET: 'queue-input-bucket',
-        BULK_RESET: 'false'
+        inputBucket: 'queue-input-bucket',
+        bulkReset: 'false'
       };
 
       const chunker = new ChunkFromS3();
@@ -219,9 +219,9 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       process.env.INPUT_KEY = 'person-full/env-people.json';
 
       const messageBody = {
-        INPUT_BUCKET: 'queue-input-bucket',
-        INPUT_KEY: 'person-delta/queue-people.json',
-        BULK_RESET: 'false'
+        inputBucket: 'queue-input-bucket',
+        inputKey: 'person-delta/queue-people.json',
+        bulkReset: 'false'
       };
 
       const chunker = new ChunkFromS3();
@@ -235,8 +235,8 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       delete process.env.INPUT_KEY;
 
       const messageBody = {
-        INPUT_BUCKET: 'queue-input-bucket',
-        INPUT_KEY: 'person-full/queue-people.json'
+        inputBucket: 'queue-input-bucket',
+        inputKey: 'person-full/queue-people.json'
       };
 
       const chunker = new ChunkFromS3();
@@ -249,8 +249,8 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       delete process.env.INPUT_KEY;
 
       const messageBody = {
-        INPUT_BUCKET: 'queue-input-bucket',
-        INPUT_KEY: 'person-delta/queue-people.json'
+        inputBucket: 'queue-input-bucket',
+        inputKey: 'person-delta/queue-people.json'
       };
 
       const chunker = new ChunkFromS3();
@@ -262,8 +262,8 @@ describe('ChunkFromS3 Parameter Gathering', () => {
   describe('Input key path variations', () => {
     it('should handle person-full directory structure', () => {
       const messageBody = {
-        INPUT_BUCKET: 'test-bucket',
-        INPUT_KEY: 'person-full/2026-04-13T10:00:00.000Z-people.json'
+        inputBucket: 'test-bucket',
+        inputKey: 'person-full/2026-04-13T10:00:00.000Z-people.json'
       };
 
       const chunker = new ChunkFromS3();
@@ -273,8 +273,8 @@ describe('ChunkFromS3 Parameter Gathering', () => {
 
     it('should handle person-delta directory structure', () => {
       const messageBody = {
-        INPUT_BUCKET: 'test-bucket',
-        INPUT_KEY: 'person-delta/2026-04-13T10:00:00.000Z-people.json'
+        inputBucket: 'test-bucket',
+        inputKey: 'person-delta/2026-04-13T10:00:00.000Z-people.json'
       };
 
       const chunker = new ChunkFromS3();
@@ -284,8 +284,8 @@ describe('ChunkFromS3 Parameter Gathering', () => {
 
     it('should handle nested path structures', () => {
       const messageBody = {
-        INPUT_BUCKET: 'test-bucket',
-        INPUT_KEY: 'data/input/person-full/2026-04-13T10:00:00.000Z-people.json'
+        inputBucket: 'test-bucket',
+        inputKey: 'data/input/person-full/2026-04-13T10:00:00.000Z-people.json'
       };
 
       const chunker = new ChunkFromS3();
@@ -295,8 +295,8 @@ describe('ChunkFromS3 Parameter Gathering', () => {
 
     it('should handle simple filename without path', () => {
       const messageBody = {
-        INPUT_BUCKET: 'test-bucket',
-        INPUT_KEY: 'people.json'
+        inputBucket: 'test-bucket',
+        inputKey: 'people.json'
       };
 
       const chunker = new ChunkFromS3();
@@ -306,8 +306,8 @@ describe('ChunkFromS3 Parameter Gathering', () => {
 
     it('should handle ISO timestamp in filename', () => {
       const messageBody = {
-        INPUT_BUCKET: 'test-bucket',
-        INPUT_KEY: 'person-full/2026-04-13T10:00:00.000Z.json'
+        inputBucket: 'test-bucket',
+        inputKey: 'person-full/2026-04-13T10:00:00.000Z.json'
       };
 
       const chunker = new ChunkFromS3();
@@ -385,9 +385,9 @@ describe('ChunkFromS3 Parameter Gathering', () => {
 
     it('should handle message body with extra fields', () => {
       const messageBody = {
-        INPUT_BUCKET: 'test-bucket',
-        INPUT_KEY: 'test-key.json',
-        BULK_RESET: 'true',
+        inputBucket: 'test-bucket',
+        inputKey: 'test-key.json',
+        bulkReset: 'true',
         EXTRA_FIELD: 'should-be-ignored',
         ANOTHER_FIELD: 123
       };
@@ -399,8 +399,8 @@ describe('ChunkFromS3 Parameter Gathering', () => {
 
     it('should handle whitespace in bucket name', () => {
       const messageBody = {
-        INPUT_BUCKET: '  test-bucket  ',
-        INPUT_KEY: 'test-key.json'
+        inputBucket: '  test-bucket  ',
+        inputKey: 'test-key.json'
       };
 
       const chunker = new ChunkFromS3();
@@ -410,8 +410,8 @@ describe('ChunkFromS3 Parameter Gathering', () => {
 
     it('should handle whitespace in key', () => {
       const messageBody = {
-        INPUT_BUCKET: 'test-bucket',
-        INPUT_KEY: '  test-key.json  '
+        inputBucket: 'test-bucket',
+        inputKey: '  test-key.json  '
       };
 
       const chunker = new ChunkFromS3();

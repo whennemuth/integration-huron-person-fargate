@@ -98,14 +98,14 @@ export class ChunkFromAPI implements IChunkFromSource {
    */
   public setTaskParametersFromQueueMessageBody = (messageBody: any) => {
     let { 
-      BASE_URL: baseUrl='from_config', 
-      FETCH_PATH: fetchPath='from_config', 
-      POPULATION_TYPE: populationType=SyncPopulation.PersonFull,
-      BULK_RESET: bulkReset='false'
+      baseUrl = 'from_config', 
+      fetchPath = 'from_config', 
+      populationType = SyncPopulation.PersonFull,
+      bulkReset = false
     } = messageBody || {}; 
 
     if (!Object.values(SyncPopulation).includes(populationType)) {
-      console.warn(`Invalid or missing POPULATION_TYPE (${populationType}) in message parameters, defaulting to ${SyncPopulation.PersonFull}`);
+      console.warn(`Invalid or missing populationType (${populationType}) in message parameters, defaulting to ${SyncPopulation.PersonFull}`);
       populationType = ChunkFromAPI.defaultPopulationType;
     }
 
@@ -113,7 +113,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       baseUrl, 
       fetchPath, 
       populationType, 
-      bulkReset: bulkReset.toLowerCase() === 'true' 
+      bulkReset: typeof bulkReset === 'boolean' ? bulkReset : bulkReset === 'true'
     };
   }
 

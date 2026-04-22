@@ -73,9 +73,9 @@ export class ChunkFromS3 implements IChunkFromSource {
     }
     
     this.taskParameters = {
-      inputBucket: messageBody.INPUT_BUCKET,
-      inputKey: messageBody.INPUT_KEY,
-      bulkReset: messageBody.BULK_RESET?.toLowerCase() === 'true'
+      inputBucket: messageBody.inputBucket,
+      inputKey: messageBody.inputKey,
+      bulkReset: typeof messageBody.bulkReset === 'boolean' ? messageBody.bulkReset : messageBody.bulkReset === 'true'
     };
   }
 
