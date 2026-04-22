@@ -48,7 +48,7 @@ import {
 } from 'integration-huron-person';
 import { NextChunk, QueueReader } from '../src/Queue';
 import { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
-import { pathUpTo } from '../src/Utils';
+import { getLocalConfig, pathUpTo } from '../src/Utils';
 import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/processing/ApiErrorTracking';
 import { getRetryStrategy } from '../src/processing/ApiErrorRetryStrategy';
 
@@ -61,12 +61,13 @@ export const buildChunkConfig = async (bucketName: string, s3Key: string, region
   // Load base configuration from environment/filesystem
   const { HURON_PERSON_CONFIG_PATH, SECRET_ARN } = process.env;
   const configManager = ConfigManager.getInstance();
+  const localConfigPath = HURON_PERSON_CONFIG_PATH || getLocalConfig();
   const baseConfig = await configManager
     .reset()
     .fromJsonString('HURON_PERSON_CONFIG_JSON')   // ← Check JSON first
     .fromSecretManager(SECRET_ARN)                // ← Then check Secrets Manager if SECRET_ARN is provided
     .fromEnvironment()                            // ← Then individual overrides
-    .fromFileSystem(HURON_PERSON_CONFIG_PATH)     // ← Then file-based config
+    .fromFileSystem(localConfigPath)              // ← Then file-based config
     .getConfigAsync('people');
 
   // Create S3 data source config for this chunk
