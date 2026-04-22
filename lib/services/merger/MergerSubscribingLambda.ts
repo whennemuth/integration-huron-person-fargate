@@ -71,7 +71,7 @@ export class MergerSubscribingLambda extends Construct {
         `Subscribes to S3 event where a "chunk" file comprising hashed person delta data lands in 
         ${props.chunksBucketName}. (SEE DESCRIPTION environment variable(s) for task performed)`,      runtime: Runtime.NODEJS_20_X,
       handler: 'handler',
-      entry: 'src/MergerSubscriber.ts',
+      entry: 'src/merging/MergerSubscriber.ts',
       timeout: Duration.seconds(props.timeoutSeconds),
       memorySize: props.memorySizeMb,
       role: lambdaRole,
