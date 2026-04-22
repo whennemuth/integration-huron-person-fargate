@@ -92,6 +92,7 @@ export class ChunkerTaskDefinition extends Construct {
         PERSON_ID_FIELD: 'personid',
         SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
         // INPUT_BUCKET and INPUT_KEY will be provided at runtime by Lambda
+        IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
         DRY_RUN: dryRun ? 'true' : 'false',
       },
       secrets

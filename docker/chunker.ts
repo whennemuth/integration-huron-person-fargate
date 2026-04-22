@@ -186,35 +186,62 @@ export const getConfig = async (): Promise<Config> => {
 }
 
 const getChunkerInstance = async (config: Config): Promise<IChunkFromSource | undefined> => {
-  const s3Chunker = new ChunkFromS3();
-
-  if(s3Chunker.hasSufficientTaskInfo()) {
-    console.log('Data source type: S3 (person data will be streamed from S3 bucket)');
-    return s3Chunker;
-  }
-
-  const apiChunker = new ChunkFromAPI(config);
-
-  if(apiChunker.hasSufficientConfig()) {
-    console.log('Data source type: API (person data will be fetched from API endpoint)');
-    return apiChunker;
-  }
-
-  const msgBody = await grabMessageBodyFromQueue();
-
-  s3Chunker.setTaskParametersFromQueueMessageBody(msgBody);
-
-  if(s3Chunker.hasSufficientTaskInfo(true)) {
-    console.log('Data source type: S3 (person data will be streamed from S3 bucket)');
-    return s3Chunker;
+  const isEcsTask = process.env.IS_ECS_TASK === 'true';
+  
+  if (isEcsTask) {
+    // Fargate execution: Message takes priority over config/environment
+    console.log('Running in ECS task - checking SQS message first...');
+    const msgBody = await grabMessageBodyFromQueue();
+    
+    // Try S3 chunker with message parameters
+    const s3Chunker = new ChunkFromS3();
+    s3Chunker.setTaskParametersFromQueueMessageBody(msgBody);
+    if(s3Chunker.hasSufficientTaskInfo()) {
+      console.log('Data source type: S3 (person data will be streamed from S3 bucket)');
+      return s3Chunker;
+    }
+    
+    // Try API chunker with message parameters (config provides fallback values)
+    const apiChunker = new ChunkFromAPI(config);
+    apiChunker.setTaskParametersFromQueueMessageBody(msgBody);
+    if(apiChunker.hasSufficientConfig()) {
+      console.log('Data source type: API (person data will be fetched from API endpoint)');
+      return apiChunker;
+    }
+  } else {
+    // Local execution: Config/environment takes priority
+    console.log('Running locally - using config/environment variables...');
+    
+    // Check S3 from environment first
+    const s3Chunker = new ChunkFromS3();
+    if(s3Chunker.hasSufficientTaskInfo()) {
+      console.log('Data source type: S3 (person data will be streamed from S3 bucket)');
+      return s3Chunker;
+    }
+    
+    // Check API from config
+    const apiChunker = new ChunkFromAPI(config);
+    if(apiChunker.hasSufficientConfig()) {
+      console.log('Data source type: API (person data will be fetched from API endpoint)');
+      return apiChunker;
+    }
+    
+    // Fallback: try reading message if available
+    const msgBody = await grabMessageBodyFromQueue();
+    
+    s3Chunker.setTaskParametersFromQueueMessageBody(msgBody);
+    if(s3Chunker.hasSufficientTaskInfo(true)) {
+      console.log('Data source type: S3 (person data will be streamed from S3 bucket)');
+      return s3Chunker;
+    }
+    
+    apiChunker.setTaskParametersFromQueueMessageBody(msgBody);
+    if(apiChunker.hasSufficientTaskInfo(true)) {
+      console.log('Data source type: API (person data will be fetched from API endpoint)');
+      return apiChunker;
+    }
   }
   
-  apiChunker.setTaskParametersFromQueueMessageBody(msgBody);
-  if(apiChunker.hasSufficientTaskInfo(true)) {
-    console.log('Data source type: API (person data will be fetched from API endpoint)');
-    return apiChunker;
-  }
-
   return undefined;
 }
 

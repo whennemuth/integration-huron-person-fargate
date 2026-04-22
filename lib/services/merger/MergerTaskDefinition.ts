@@ -64,6 +64,7 @@ export class MergerTaskDefinition extends Construct {
         REGION: props.region,
         INPUT_BUCKET: props.inputBucketName,
         // CHUNKS_BUCKET will be provided at runtime by Lambda
+        IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
         DRY_RUN: props.dryRun ? 'true' : 'false',
         DESCRIPTION1: 
           `Container run by lambda function responding to S3 events when a new "chunk" 

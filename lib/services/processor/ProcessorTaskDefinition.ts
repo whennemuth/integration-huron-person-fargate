@@ -66,6 +66,7 @@ export class ProcessorTaskDefinition extends Construct {
       // CHUNKS_BUCKET and CHUNK_KEY are set from SQS messages at runtime (not env vars)
       STATIC_MAP_USAGE: '{ "orgMap": true, "stateMap": true, "countryMap": true }', // Used by processor to determine which static maps to load in data mapper
       SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
+      IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
       DRY_RUN: dryRun ? 'true' : 'false',
       DESCRIPTION1: `Container run by lambda function responding to S3 events when a new "chunk" 
         file comprising person data is deposited into ${chunksBucketName}.`,
