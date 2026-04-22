@@ -17,7 +17,7 @@ export class HuronPersonSecrets {
 
     const integrationConfig = buildSecretValue(context);
 
-    const secretName = `${STACK_ID}/integration/config/${Landscape}`;
+    const secretName = `${STACK_ID}/integration/_config/${Landscape}`;
 
     const secret = new Secret(scope, 'huron-person-secret', {
       secretName,

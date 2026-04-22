@@ -4,6 +4,7 @@ import { IContext } from '../context/IContext';
 import { ChunkerTaskDefinition } from './services/chunker/ChunkerTaskDefinition';
 import { MergerTaskDefinition } from './services/merger/MergerTaskDefinition';
 import { ProcessorTaskDefinition } from './services/processor/ProcessorTaskDefinition';
+import { HuronPersonSecrets } from './Secrets';
 
 export interface TaskDefinitionsProps {
   repository: IRepository;
@@ -26,6 +27,9 @@ export class TaskDefinitions extends Construct {
 
     const { repository, context: ctx, dynamoDbTableName, tags } = props;
 
+    // Create Secrets Manager secret for huron-person configuration
+    const huronPersonSecrets = new HuronPersonSecrets(this, props.context);
+
     // Chunker task definition
     this.chunker = new ChunkerTaskDefinition(this, 'chunker', {
       repository,
@@ -36,6 +40,7 @@ export class TaskDefinitions extends Construct {
       chunksBucketName: ctx.S3.chunksBucket,
       queueUrl: '', // Will be set after queue is created
       itemsPerChunk: ctx.ITEMS_PER_CHUNK,
+      huronPersonSecrets,
       region: ctx.REGION,
       dryRun: ctx.DRY_RUN?.taskdef?.chunker,
       tags,
@@ -50,6 +55,7 @@ export class TaskDefinitions extends Construct {
       chunksBucketName: ctx.S3.chunksBucket,
       queueUrl: '', // Will be set after queue is created
       dynamoDbTableName, // DynamoDB table for error tracking and statistics
+      huronPersonSecrets,
       context: ctx,
       region: ctx.REGION,
       dryRun: ctx.DRY_RUN?.taskdef?.processor,
