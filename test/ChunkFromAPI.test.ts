@@ -1,5 +1,5 @@
 /**
- * Comprehensive tests for chunkFromAPI.ts
+ * Comprehensive tests for ChunkFromAPI.ts
  * 
  * Tests the parameter gathering, validation, and API-based chunking logic.
  * Covers all variations of:
