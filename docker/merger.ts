@@ -320,7 +320,7 @@ class Merger {
    * - Delta files available for debugging if merge fails
    * - Marker files preserved for audit trail (never deleted)
    */
-  private async cleanupDeltaFiles(): Promise<void> {
+  private async deleteDeltaFiles(): Promise<void> {
     console.log(`\n🧹 Cleaning up delta files from: s3://${this.config.bucketName}/${this.config.clientId}/`);
 
     try {
@@ -403,7 +403,7 @@ class Merger {
 
     // Step 4: Cleanup chunk files and delta files
     await this.deleteChunkFiles(chunkKeys);
-    await this.cleanupDeltaFiles();
+    await this.deleteDeltaFiles();
 
     console.log('\n✓ Merge completed successfully');
 
