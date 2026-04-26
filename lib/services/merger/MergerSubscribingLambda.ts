@@ -126,14 +126,15 @@ export class MergerSubscribingLambda extends Construct {
       })
     );
 
-    // Add S3 event notification to trigger Lambda when delta chunk files are created
-    // This replaces the previous EventBridge schedule approach
+    // Add S3 event notification to trigger Lambda when marker files are created
+    // Marker files indicate a chunk has finished processing and prevent race conditions
+    // where delta files are deleted before S3 events can process (6-15 second window issue)
     props.chunksBucket.addEventNotification(
       EventType.OBJECT_CREATED,
       new LambdaDestination(this.function),
       {
-        prefix: 'deltas/',  // Filter to delta files only
-        suffix: '.ndjson',  // Only NDJSON files
+        prefix: 'deltas/',                  // Filter to delta directory
+        suffix: '_processing_complete.json', // Only marker files
       }
     );
 

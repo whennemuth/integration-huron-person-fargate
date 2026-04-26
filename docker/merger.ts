@@ -300,6 +300,73 @@ class Merger {
   }
 
   /**
+   * Cleanup delta files after successful merge.
+   * 
+   * Why cleanup in merger task instead of processor:
+   * ================================================
+   * Delta files created and deleted within 6-15 seconds can cause S3 event notifications
+   * to be cancelled or never sent. S3 needs time to process the ObjectCreated event internally.
+   * 
+   * If a file is deleted before the event completes:
+   * - S3 detects object no longer exists
+   * - Event is cancelled or never sent
+   * - Lambda never invokes (no log stream)
+   * - Delta files never merged = data loss
+   * 
+   * Solution: Keep delta files until merger completes successfully, then cleanup.
+   * This ensures:
+   * - Delta files persist long enough for S3 events to process
+   * - Cleanup only happens after proven merge success
+   * - Delta files available for debugging if merge fails
+   * - Marker files preserved for audit trail (never deleted)
+   */
+  private async cleanupDeltaFiles(): Promise<void> {
+    console.log(`\n🧹 Cleaning up delta files from: s3://${this.config.bucketName}/${this.config.clientId}/`);
+
+    try {
+      const prefix = `${this.config.clientId}/`;
+      const response = await this.s3.listObjectsV2({
+        Bucket: this.config.bucketName,
+        Prefix: prefix,
+      });
+
+      const deltaFiles = (response.Contents || [])
+        .map((obj) => obj.Key!)
+        .filter((key) => /chunk-\d+\.ndjson$/.test(key)); // Only .ndjson files, not marker files
+
+      if (deltaFiles.length === 0) {
+        console.log('No delta files to cleanup');
+        return;
+      }
+
+      console.log(`Deleting ${deltaFiles.length} delta files...`);
+      
+      // AWS S3 deleteObjects can handle up to 1000 objects at once
+      const chunks = [];
+      for (let i = 0; i < deltaFiles.length; i += 1000) {
+        chunks.push(deltaFiles.slice(i, i + 1000));
+      }
+
+      for (const chunk of chunks) {
+        await this.s3.deleteObjects({
+          Bucket: this.config.bucketName,
+          Delete: {
+            Objects: chunk.map(key => ({ Key: key })),
+            Quiet: true
+          }
+        });
+      }
+
+      console.log(`✓ Cleanup complete: ${deltaFiles.length} delta files deleted`);
+      console.log('Note: Marker files preserved for audit trail');
+
+    } catch (error: any) {
+      console.error(`Failed to cleanup delta files: ${error.message}`);
+      // Don't throw - cleanup failure shouldn't block merger task completion
+    }
+  }
+
+  /**
    * Execute the merge operation
    */
   async merge(): Promise<MergeResult> {
@@ -334,8 +401,9 @@ class Merger {
     const outputKey = `${this.config.clientId}/previous-input.ndjson`;
     await this.writeMergedFile(allLines, outputKey);
 
-    // Step 4: Cleanup chunk files
+    // Step 4: Cleanup chunk files and delta files
     await this.deleteChunkFiles(chunkKeys);
+    await this.cleanupDeltaFiles();
 
     console.log('\n✓ Merge completed successfully');
 

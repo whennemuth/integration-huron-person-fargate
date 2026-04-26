@@ -46,7 +46,7 @@ const s3Client = new S3Client({ region });
  * - CHUNKS_BUCKET_NAME: Name of the S3 bucket where chunk and delta files are stored
  * 
  * Input:
- * - S3 event when delta chunk file is created (e.g., deltas/person-full/2026-03-03T19:58:41.277Z/chunk-0042.ndjson)
+ * - S3 event when processor completes (e.g., deltas/person-full/2026-03-03T19:58:41.277Z/chunk-0042_processing_complete.json)
  * 
  * Output:
  * - If not all chunks are ready: logs status and returns 200 with message "Still processing"
@@ -57,7 +57,7 @@ export async function handler(event: any): Promise<any> {
   console.log('=== Merger Trigger (S3 Event) ===');
   console.log('Event:', JSON.stringify(event, null, 2));
 
-  // Extract delta file info from S3 event
+  // Extract marker file info from S3 event
   const records = event.Records || [];
   if (records.length === 0) {
     console.log('No S3 records in event');
@@ -66,19 +66,19 @@ export async function handler(event: any): Promise<any> {
 
   const record = records[0]; // Process first record
   const bucket = record.s3?.bucket?.name;
-  const deltaFileKey = decodeURIComponent(record.s3?.object?.key?.replace(/\+/g, ' ') || '');
+  const markerFileKey = decodeURIComponent(record.s3?.object?.key?.replace(/\+/g, ' ') || '');
 
-  if (!bucket || !deltaFileKey) {
+  if (!bucket || !markerFileKey) {
     console.error('Invalid S3 event record:', record);
     return { statusCode: 400, body: 'Invalid S3 event' };
   }
 
-  console.log(`Delta file created: s3://${bucket}/${deltaFileKey}`);
+  console.log(`Marker file created: s3://${bucket}/${markerFileKey}`);
 
-  // Extract delta storage path from the delta file key
-  // Example: "deltas/person-full/2026-03-03T19:58:41.277Z/chunk-0042.ndjson" 
+  // Extract delta storage path from the marker file key
+  // Example: "deltas/person-full/2026-03-03T19:58:41.277Z/chunk-0042_processing_complete.json" 
   //       -> "deltas/person-full/2026-03-03T19:58:41.277Z"
-  const deltaStoragePath = deltaFileKey.substring(0, deltaFileKey.lastIndexOf('/'));
+  const deltaStoragePath = markerFileKey.substring(0, markerFileKey.lastIndexOf('/'));
   
   // Derive chunk directory from delta storage path
   // Example: "deltas/person-full/2026-03-03T19:58:41.277Z" 
@@ -98,8 +98,8 @@ export async function handler(event: any): Promise<any> {
 
   const expectedChunks = metadata.chunkCount;
 
-  // Step 2: Count actual delta chunk files in S3
-  const actualChunks = await countDeltaChunkFiles(deltaStoragePath);
+  // Step 2: Count actual marker files in S3 (one per completed chunk)
+  const actualChunks = await countCompletedChunks(deltaStoragePath);
 
   // Step 3: Check if all chunks are ready
   if (actualChunks < expectedChunks) {
@@ -176,10 +176,14 @@ export async function getChunkMetadata(
 }
 
 /**
- * Counts delta chunk files in S3
+ * Counts completed chunks by counting marker files in S3.
+ * Each marker file indicates a chunk has finished processing.
+ * This approach prevents the race condition where delta files are counted
+ * but then deleted before the merger can run.
+ * 
  * @param deltaStoragePath - The delta storage path (e.g., "deltas/person-full/2026-03-03T19:58:41.277Z")
  */
-async function countDeltaChunkFiles(deltaStoragePath: string): Promise<number> {
+async function countCompletedChunks(deltaStoragePath: string): Promise<number> {
   if (!CHUNKS_BUCKET_NAME) {
     return 0;
   }
@@ -194,14 +198,14 @@ async function countDeltaChunkFiles(deltaStoragePath: string): Promise<number> {
       })
     );
 
-    const deltaChunkFiles = (response.Contents || [])
+    const markerFiles = (response.Contents || [])
       .map((obj) => obj.Key!)
-      .filter((key) => /chunk-\d+\.ndjson$/.test(key));
+      .filter((key) => /chunk-\d+_processing_complete\.json$/.test(key));
 
-    console.log(`Found ${deltaChunkFiles.length} delta chunk files in s3://${CHUNKS_BUCKET_NAME}/${prefix}`);
-    return deltaChunkFiles.length;
+    console.log(`Found ${markerFiles.length} completed chunks in s3://${CHUNKS_BUCKET_NAME}/${prefix}`);
+    return markerFiles.length;
   } catch (error: any) {
-    console.error(`Error listing delta chunk files: ${error.message}`);
+    console.error(`Error listing marker files: ${error.message}`);
     return 0;
   }
 }

@@ -46,6 +46,7 @@ import {
   BasicCache,
   TargetApiErrorEventProcessor
 } from 'integration-huron-person';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getChunkMetadata } from '../src/merging/MergerSubscriber';
 import { NextChunk, QueueReader } from '../src/Queue';
 import { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
@@ -192,6 +193,66 @@ export const validateChunk = (chunk: NextChunk | undefined) => {
   }
 }
 
+/**
+ * Creates a _processing_complete marker file to trigger the merger Lambda.
+ * 
+ * This solves the S3 event race condition where delta files created and deleted
+ * within 6-15 seconds can prevent S3 event notifications from being sent.
+ * 
+ * Timeline that caused the issue:
+ * - 20:44:45.333Z: Delta file created → S3 begins internal event processing
+ * - 20:44:51.771Z: Delta file deleted (6.4s later) → S3 event processing aborted
+ * - Result: Lambda never invoked (no log stream)
+ * 
+ * Solution: Create marker file AFTER processing completes. Marker file:
+ * - Never deleted (remains for audit trail)
+ * - Guarantees S3 event will trigger because file persists
+ * - Contains metadata about the completed chunk for debugging
+ * 
+ * @param bucketName - S3 bucket containing chunks
+ * @param chunkKey - S3 key of the processed chunk (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0042.ndjson")
+ * @param region - AWS region
+ */
+async function createProcessingCompleteMarker(bucketName: string, chunkKey: string, region?: string): Promise<void> {
+  // Derive delta storage path from chunk key
+  // Example: "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0042.ndjson" 
+  //       -> "deltas/person-full/2026-03-03T19:58:41.277Z"
+  const chunkDirectory = chunkKey.substring(0, chunkKey.lastIndexOf('/'));
+  const deltaStoragePath = chunkDirectory.replace(/^chunks\//, 'deltas/');
+  
+  // Extract chunk ID from key
+  const chunkFilename = chunkKey.substring(chunkKey.lastIndexOf('/') + 1);
+  const chunkIdMatch = chunkFilename.match(/chunk-(\d+)\.ndjson$/);
+  const chunkId = chunkIdMatch ? chunkIdMatch[1] : 'unknown';
+  
+  // Create marker file path: deltas/person-full/2026-03-03T19:58:41.277Z/chunk-0042_processing_complete.json
+  const markerKey = `${deltaStoragePath}/chunk-${chunkId}_processing_complete.json`;
+  
+  const markerContent = {
+    chunkId,
+    chunkKey,
+    deltaStoragePath,
+    processedAt: new Date().toISOString(),
+    status: 'complete'
+  };
+  
+  console.log(`Creating marker file: s3://${bucketName}/${markerKey}`);
+  
+  const s3Client = new S3Client({ region });
+  try {
+    await s3Client.send(new PutObjectCommand({
+      Bucket: bucketName,
+      Key: markerKey,
+      Body: JSON.stringify(markerContent, null, 2),
+      ContentType: 'application/json'
+    }));
+    console.log(`✓ Marker file created successfully`);
+  } catch (error: any) {
+    console.error(`Failed to create marker file: ${error.message}`);
+    throw error;
+  }
+}
+
 export async function main(queueReader: QueueReader) {
   // Check for expected environment variables
   const { 
@@ -288,6 +349,26 @@ export async function main(queueReader: QueueReader) {
     const cache = BasicCache.getInstance();
     console.log(`Cache instance created: ${cache.constructor.name}`);
 
+    /**
+     * Disable cleanup of delta files to prevent S3 event race condition.
+     * 
+     * Why? S3 event notifications require internal processing time (typically 1-15 seconds).
+     * If delta files are created and deleted within this window, S3 may:
+     * 1. Still be processing the "ObjectCreated" event internally
+     * 2. Detect the object no longer exists
+     * 3. Cancel or never send the event notification to the merger Lambda
+     * 
+     * Timeline that caused the issue:
+     * - 20:44:45.333Z: Delta file created → S3 begins internal event processing
+     * - 20:44:51.771Z: Delta file deleted (6.4s later) → S3 event processing aborted
+     * - Result: Merger Lambda never invoked (no log stream = no invocation)
+     * 
+     * Solution: Set cleanupPreviousData=false to prevent delta file deletion.
+     * Delta files are cleaned up by the merger task after successful merge.
+     * See: integration-huron-person-fargate/docker/merger.ts (cleanupDeltaFiles method)
+     */
+    const cleanupPreviousData = false;
+
     // Create and run integration using HuronPersonIntegration
     const integration = new HuronPersonIntegration({ 
       config,  // Pass pre-built config with S3 or API data source
@@ -295,7 +376,8 @@ export async function main(queueReader: QueueReader) {
       bulkReset, // Pass through bulk reset flag from environment variable
       cache, // Shared cache for JWT tokens
       errorEventProcessor: errorTracker, // Inject error tracker for tracking errors and throttling
-      retryStrategy // Inject retry strategy for handling transient API failures (429, 5xx, network errors)
+      retryStrategy, // Inject retry strategy for handling transient API failures (429, 5xx, network errors)
+      cleanupPreviousData
     });
     
     /**
@@ -326,6 +408,10 @@ export async function main(queueReader: QueueReader) {
     console.log(`  - ~ Updated: ${result.updatedCount}`);
     console.log(`  - - Removed: ${result.removedCount}`);
     console.log(`  - ⧗ Duration: ${result.duration}ms`);
+
+    // Create marker file to trigger merger Lambda
+    // This prevents S3 event race condition where delta files are deleted before events process
+    await createProcessingCompleteMarker(bucketName!, s3Key!, region);
 
     console.log('\n✓ Chunk processing completed successfully');
     
