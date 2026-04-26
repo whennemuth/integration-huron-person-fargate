@@ -336,6 +336,23 @@ export class ChunkFromAPI implements IChunkFromSource {
       const fetcher = new BigJsonFetch(fetchConfig);
       const result = await fetcher.fetchAndChunk();
 
+      // Build source and target URLs for metadata
+      const { baseUrl, fetchPath } = this.taskParameters;
+      const sourceUrl = `${baseUrl}${fetchPath}`;
+      
+      // Build target URL from config if available
+      let targetUrl: string | undefined;
+      try {
+        const targetBaseUrl = this.config.dataTarget?.endpointConfig?.baseUrl;
+        const personsPath = this.config.dataTarget?.personsPath;
+        if (targetBaseUrl && personsPath) {
+          targetUrl = `${targetBaseUrl}${personsPath}`;
+        }
+      } catch (error) {
+        // Target URL is optional, don't fail if not available
+        console.log('Target URL not available in config');
+      }
+
       // Write metadata and log results
       await writeMetadata(
         chunksStorage,
@@ -343,7 +360,8 @@ export class ChunkFromAPI implements IChunkFromSource {
         chunkBasePath,
         result,
         itemsPerChunk,
-        `api://config`,
+        sourceUrl,
+        targetUrl,
         fetchConfig.dryRun || false,
         bulkReset
       );

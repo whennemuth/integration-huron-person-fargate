@@ -119,7 +119,8 @@ export async function writeMetadata(
   chunkBasePath: string,
   result: { chunkCount: number; totalRecords: number; chunkKeys: string[] },
   itemsPerChunk: number,
-  sourceDescription: string,
+  source: string,
+  target: string | undefined,
   dryRun: boolean,
   bulkReset: boolean
 ) {
@@ -131,17 +132,22 @@ export async function writeMetadata(
   // Example: "chunks/person-full/2026-03-03T19:58:41.277Z" -> "deltas/person-full/2026-03-03T19:58:41.277Z"
   const deltaStoragePath = chunkBasePath.replace(/^chunks\//, 'deltas/');
   
-  const metadata = {
+  const metadata: any = {
     chunkCount: result.chunkCount,
     totalRecords: result.totalRecords,
     itemsPerChunk,
-    source: sourceDescription,
+    source,
     chunkDirectory: chunkBasePath,
     deltaStoragePath,
     bulkReset,
     createdAt: new Date().toISOString(),
     chunkKeys: result.chunkKeys
   };
+
+  // Add target if provided
+  if (target) {
+    metadata.target = target;
+  }
 
   if (!dryRun) {
     await chunksStorage.writeFile(metadataKey, JSON.stringify(metadata, null, 2), 'application/json');

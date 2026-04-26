@@ -136,14 +136,18 @@ export class ChunkFromS3 implements IChunkFromSource {
       const chunker = new BigJsonFile(config);
       const result = await chunker.breakup(inputKey);
 
-      // Write metadata and log results
+      // Build source URL
+      const sourceUrl = `s3://${inputBucket}/${inputKey}`;
+
+      // Write metadata and log results (no target for S3 source)
       await writeMetadata(
         chunksStorage,
         chunksBucket,
         chunkBasePath,
         result,
         itemsPerChunk,
-        `s3://${inputBucket}/${inputKey}`,
+        sourceUrl,
+        undefined, // No target for S3 source
         config.dryRun || false,
         bulkReset
       );
