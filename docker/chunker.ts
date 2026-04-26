@@ -70,7 +70,7 @@ export const grabMessageBodyFromQueue = async (): Promise<any> => {
   const { SQS_QUEUE_URL, REGION } = process.env;
 
   if (SQS_QUEUE_URL) {
-    console.log('Running in ECS context - reading task parameters from SQS queue');
+    console.log(`SQS_QUEUE_URL detected: ${SQS_QUEUE_URL} - reading task parameters from SQS queue`);
     const sqsClient = new SQSClient({ region: REGION });
 
     try {
@@ -120,7 +120,8 @@ export async function writeMetadata(
   result: { chunkCount: number; totalRecords: number; chunkKeys: string[] },
   itemsPerChunk: number,
   sourceDescription: string,
-  dryRun: boolean
+  dryRun: boolean,
+  bulkReset: boolean
 ) {
   // Write metadata file for merger trigger detection
   // Path uses the chunk base path: s3://chunks-bucket/chunks/person-full/2026-03-03T19:58:41.277Z/_metadata.json
@@ -137,6 +138,7 @@ export async function writeMetadata(
     source: sourceDescription,
     chunkDirectory: chunkBasePath,
     deltaStoragePath,
+    bulkReset,
     createdAt: new Date().toISOString(),
     chunkKeys: result.chunkKeys
   };

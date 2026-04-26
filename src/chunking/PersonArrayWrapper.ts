@@ -62,10 +62,15 @@ export class PersonArrayWrapper implements IPersonArrayWrapper {
    * @param key - Storage key of the file to analyze
    * @returns Path string (e.g., '0.response') or undefined if top-level/indeterminate
    */
-  async detectPersonArrayPath(key: string): Promise<string | undefined> {
+  async detectPersonArrayPath(key: string | undefined): Promise<string | undefined> {
     console.log(`Detecting person array path for: ${key}`);
     return new Promise(async (resolve) => {
       try {
+        if( ! key) {
+          console.log('detectPersonArrayPath: Cancelled - no key provided');
+          resolve(undefined);
+          return;
+        }
         const stream = await this.storage.getReadStream(key);
         let rawData = '';
 
@@ -148,8 +153,8 @@ export class PersonArrayWrapper implements IPersonArrayWrapper {
  */
 if (require.main === module) {
   // Import storage adapters (only needed for test harness)
-  const { FileSystemStorageAdapter } = require('./storage/FileSystemStorageAdapter');
-  const { S3StorageAdapter } = require('./storage/S3StorageAdapter');
+  const { FileSystemStorageAdapter } = require('../storage/FileSystemStorageAdapter');
+  const { S3StorageAdapter } = require('../storage/S3StorageAdapter');
 
   (async () => {
     console.log('=== PersonArrayWrapper Test Harness ===\n');

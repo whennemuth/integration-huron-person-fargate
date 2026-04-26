@@ -27,6 +27,29 @@
     {
       "type": "node",
       "request": "launch",
+      "name": "Debug compiled file",
+      "program": "${workspaceFolder}/dist/${relativeFileDirname}/${fileBasenameNoExtension}.js",
+      "cwd": "${workspaceFolder}",
+      "sourceMaps": true,
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "envFile": "${workspaceFolder}/.env",
+      "preLaunchTask": "npm: build"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug ChunkFromAPI (hardcoded path)",
+      "skipFiles": [ "<node_internals>/**" ],
+      "runtimeArgs": ["-r", "${workspaceFolder}/node_modules/ts-node/register/transpile-only"],
+      "args": [
+        "${workspaceFolder}/src/chunking/fetch/ChunkFromAPI.ts",
+        "workspaceFolder=${workspaceFolder}"
+      ], 
+      "envFile": "${workspaceFolder}/.env"
+    },
+    {
+      "type": "node",
+      "request": "launch",
       "name": "Debug current file (task-specific)",
       "skipFiles": ["<node_internals>/**"],
       "runtimeArgs": ["-r", "${workspaceFolder}/node_modules/ts-node/register/transpile-only"],

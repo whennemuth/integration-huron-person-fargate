@@ -58,6 +58,8 @@ export interface BigJsonFetchConfig {
    */
   personArrayWrapper?: IPersonArrayWrapper;
 
+  sourcePath?: string; // Optional source path for context, not used in current implementation
+
   /** Optional dry run mode (default: false), if true, no files will be written */
   dryRun?: boolean;
 }
@@ -106,6 +108,7 @@ export class BigJsonFetch {
   private readonly clientId: string;
   private readonly personIdField: string;
   private readonly personArrayWrapper: IPersonArrayWrapper;
+  private readonly sourcePath?: string;
   private readonly dryRun: boolean;
 
   constructor(config: BigJsonFetchConfig) {
@@ -115,6 +118,7 @@ export class BigJsonFetch {
     this.outputStorage = config.outputStorage;
     this.clientId = config.clientId;
     this.personIdField = config.personIdField || 'personid';
+    this.sourcePath = config.sourcePath;
     this.dryRun = config.dryRun || false;
     
     // Use provided wrapper or default to '0.response' (BU API structure)
@@ -172,7 +176,7 @@ export class BigJsonFetch {
         private parent: BigJsonFetch,
         private chunkDir: string,
         private chunkKeys: string[],
-        private chunkNumber: { value: number }
+        private chunkNumber: { value: number },
       ) {
         super(dataSource, batchSize);
       }
@@ -232,12 +236,19 @@ export class BigJsonFetch {
    * 
    * @param responseData - The data returned from the API (may be array or wrapped structure)
    * @returns Array of person objects
-   */async extractPersonsFromResponse(responseData: any): Promise<any[]> {
-    // Use wrapper to detect person array path
-    const arrayPath = await this.personArrayWrapper.detectPersonArrayPath('api-response');
+   */
+  async extractPersonsFromResponse(responseData: any): Promise<any[]> {
+    const { sourcePath } = this;
+    let arrayPath: string | undefined;
+
+    if(sourcePath) {
+      // Use wrapper to detect person array path
+      arrayPath = await this.personArrayWrapper.detectPersonArrayPath(sourcePath);
+    }
     
     if (!arrayPath) {
       // No specific path - try to find persons recursively
+      console.log('No specific array path detected, determining array path recursively...');
       return this.extractPersons(responseData);
     }
 

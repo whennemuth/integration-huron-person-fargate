@@ -1,12 +1,15 @@
 import { ScalingInterval } from 'aws-cdk-lib/aws-applicationautoscaling';
+import { IFunction } from 'aws-cdk-lib/aws-lambda';
 import { Schedule, ScheduleExpression, ScheduleTargetInput } from 'aws-cdk-lib/aws-scheduler';
 import { LambdaInvoke } from 'aws-cdk-lib/aws-scheduler-targets';
-import { IFunction } from 'aws-cdk-lib/aws-lambda';
 import { Construct } from 'constructs';
+import { ConfigManager, DataSourceConfig } from 'integration-huron-person';
 import { IContext } from '../../../context/IContext';
 import { SyncPopulation } from '../../../docker/chunkTypes';
+import { ApiChunkerEvent } from '../../../src/chunking/ChunkerSubscriber';
+import { getLocalConfig } from '../../../src/Utils';
 import { AbstractService, AbstractServiceProps } from '../AbstractService';
-import { ConfigManager } from 'integration-huron-person';
+import { handleApiEvent } from '../../../src/chunking/fetch/ChunkerApiSubscriber';
 
 export interface ChunkerServiceProps extends AbstractServiceProps {
   /** The ChunkerSubscriber Lambda function to invoke on schedule */
@@ -121,4 +124,95 @@ export class ChunkerService extends AbstractService {
   public getServiceLogicalId(): string {
     return 'Chunker';
   }
+}
+
+
+/**
+ * FOR TESTING:
+ * 
+ * It is expected that an AWS EventBridge schedule will trigger the chunking process on a cron schedule,
+ * which will invoke the ChunkerSubscriber Lambda to send messages to the chunker SQS queue. call this
+ * function to manually trigger the chunking service to start a task off schedule, for example to kick 
+ * off an initial chunking run or to test the service.
+ * 
+ */
+async function startChunkingService() {
+  /** Read additional configuration from environment */
+  const {
+    HURON_PERSON_CONFIG_PATH, 
+    SECRET_ARN,
+    BULK_RESET = 'false',
+    POPULATION_TYPE,
+    SINGLE_PERSON_BUID: buid,
+    CHUNKER_QUEUE_URL: queueUrl
+  } = process.env;
+
+  /** Load configuration. */
+  const configManager = ConfigManager.getInstance();
+  const localConfigPath = HURON_PERSON_CONFIG_PATH || getLocalConfig();
+  const config = await configManager
+    .reset()
+    .fromFileSystem(localConfigPath)              // ← Local dev only
+    .fromJsonString('HURON_PERSON_CONFIG_JSON')   // ← TaskDef secret injection
+    .fromSecretManager(SECRET_ARN)                // ← Fallback to Secrets Manager
+    .fromEnvironment()                            // ← Fallback to individual env var overrides
+    .getConfigAsync(buid ? 'person' : 'people');
+
+  /**
+   * Single person test?
+   * 
+   * If a buid is provided, pretend the single person endpoint is the full dataset. This allows us to 
+   * test the full end to end flow in such a way as to confine errors to one person and in a 
+   * conveniently short time due to the miniscule payload.
+   */
+  let baseUrl: string | undefined, fetchPath: string | undefined;
+  if(buid) {
+    const { 
+      endpointConfig: { baseUrl: personBaseUrl } = {}, fetchPath: personFetchPath 
+    } = config.dataSource.person || {};
+    baseUrl = personBaseUrl;
+    fetchPath = `${personFetchPath}?buid=${buid}`;
+  }
+  else {
+    const { 
+      endpointConfig: { baseUrl: peopleBaseUrl } = {}, fetchPath: peopleFetchPath 
+    } = config.dataSource?.people as DataSourceConfig || {};
+    baseUrl = peopleBaseUrl;
+    fetchPath = peopleFetchPath;
+  }
+
+  /** Validate configuration */
+  if(!baseUrl) {
+    console.error('Missing baseUrl in configuration!');
+    return;
+  }
+  if(!fetchPath) {
+    console.error('Missing fetchPath in configuration!');
+    return;
+  }
+  if(!queueUrl) {
+    console.error('Missing CHUNKER_QUEUE_URL environment variable!');
+    return;
+  }
+  
+  /** Define the API chunker event */
+  const { PersonDelta, PersonFull } = SyncPopulation;
+  const apiChunkerEvent = {
+    baseUrl,
+    fetchPath,
+    populationType: POPULATION_TYPE?.toLowerCase() === PersonDelta ? PersonDelta : PersonFull,
+    bulkReset: BULK_RESET.toLowerCase() === 'true',
+    processingMetadata: {
+      processedAt: new Date().toISOString(),
+      processorVersion: '1.0.0'
+    }
+  } satisfies ApiChunkerEvent;
+
+  // Send the event to the queue to trigger the chunking process.
+  handleApiEvent(apiChunkerEvent);
+}
+
+// Run if executed directly
+if (require.main === module) {
+  startChunkingService();
 }

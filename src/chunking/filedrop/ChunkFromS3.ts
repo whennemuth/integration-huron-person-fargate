@@ -101,7 +101,7 @@ export class ChunkFromS3 implements IChunkFromSource {
 
     const { chunksBucket, region, itemsPerChunk, personIdField, dryRun } = params;
 
-    const { inputBucket, inputKey } = this.taskParameters!;
+    const { inputBucket, inputKey, bulkReset } = this.taskParameters!;
 
     // Extract chunk base path from input key
     // This uses the key path + ISO timestamp (if present) or filename without extension
@@ -144,7 +144,8 @@ export class ChunkFromS3 implements IChunkFromSource {
         result,
         itemsPerChunk,
         `s3://${inputBucket}/${inputKey}`,
-        config.dryRun || false
+        config.dryRun || false,
+        bulkReset
       );
 
       // Exit with success

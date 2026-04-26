@@ -20,6 +20,7 @@
     "experimentalDecorators": true,
     "strictPropertyInitialization": false,
     "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
     "types": ["jest", "node"],
     "typeRoots": [
       "./node_modules/@types"

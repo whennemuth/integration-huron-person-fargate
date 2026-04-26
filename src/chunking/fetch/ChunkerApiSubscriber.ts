@@ -22,7 +22,11 @@ const sqsClient = new SQSClient({ region });
  * Sequence:
  * 1. EventBridge schedule triggers the main ChunkerSubscriber Lambda on a cron schedule
  * 2. ChunkerSubscriber delegates to this handler
- * 3. Handler sends message to SQS queue with task parameters (BASE_URL, FETCH_PATH, POPULATION_TYPE)
+ * 3. Handler sends message to SQS queue with task parameters (
+ *      DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL, 
+ *      DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH,
+ *      POPULATION_TYPE
+ * )
  * 4. QueueProcessingFargateService detects queue depth increase
  * 5. Service auto-scales up (increases desired count)
  * 6. ECS launches Fargate task(s) that read from queue

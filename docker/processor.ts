@@ -46,6 +46,7 @@ import {
   BasicCache,
   TargetApiErrorEventProcessor
 } from 'integration-huron-person';
+import { getChunkMetadata } from '../src/merging/MergerSubscriber';
 import { NextChunk, QueueReader } from '../src/Queue';
 import { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
 import { getLocalConfig, pathUpTo } from '../src/Utils';
@@ -140,6 +141,41 @@ export const extractIntegrationTimestamp = (s3Key: string): string | undefined =
   return match ? match[1] : undefined;
 }
 
+/**
+ * Read chunk metadata file from S3
+ * @param bucketName - S3 bucket containing the metadata
+ * @param s3Key - Chunk S3 key like "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0124.ndjson"
+ * @param region - AWS region
+ * @returns Metadata object with bulkReset, chunkCount, deltaStoragePath, etc.
+ */
+export const readChunkMetadata = async (
+  bucketName: string,
+  s3Key: string,
+  region?: string
+): Promise<{ bulkReset?: boolean; chunkCount?: number; totalRecords?: number; deltaStoragePath?: string; [key: string]: any }> => {
+  try {
+    // Derive chunk directory from chunk key
+    // "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0000.ndjson" -> "chunks/person-full/2026-03-03T19:58:41.277Z"
+    const chunkDirectory = s3Key.substring(0, s3Key.lastIndexOf('/'));
+    
+    console.log(`Reading metadata from chunk directory: ${chunkDirectory}`);
+    
+    // Reuse shared getChunkMetadata function from MergerSubscriber
+    const metadata = await getChunkMetadata(chunkDirectory, bucketName, region);
+    
+    if (metadata) {
+      console.log(`Metadata loaded: bulkReset=${metadata.bulkReset ?? 'not specified'}, chunkCount=${metadata.chunkCount}, totalRecords=${metadata.totalRecords}`);
+      return metadata;
+    }
+    
+    return {};
+  } catch (error: any) {
+    console.warn(`Warning: Could not read metadata file: ${error.message}`);
+    console.warn('Falling back to environment variables for configuration');
+    return {};
+  }
+};
+
 export const validateChunk = (chunk: NextChunk | undefined) => {
   if (!chunk) {
     throw new Error('No chunk information provided in SQS message or environment variables');
@@ -171,7 +207,6 @@ export async function main(queueReader: QueueReader) {
     RETRY_STRATEGY
   } = process.env;  
   const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
-  const bulkReset = `${BULK_RESET}`.trim().toLowerCase() === 'true';
   const staticMapUsage: StaticMapUsage | undefined = STATIC_MAP_USAGE ? JSON.parse(STATIC_MAP_USAGE) : undefined;
 
   console.log(`=== ${dryRun ? 'DRY RUN: ' : ''}Phase 2: Processor (using HuronPersonIntegration) ===\n`);
@@ -180,7 +215,6 @@ export async function main(queueReader: QueueReader) {
   console.log(`SQS queue URL: ${queueUrl || 'not set, using environment variables for bucket/key'}`);
   console.log(`Huron person config json: ${HURON_PERSON_CONFIG_JSON?.substring(0, 10)}...`);
   console.log(`Static map usage: ${JSON.stringify(staticMapUsage ?? {})}`);
-  console.log(`Bulk Reset: ${bulkReset}`);
   console.log(`DynamoDB table: ${dynamoDbTableName || 'not configured'}`);
   
   // Read chunk information from queue or environment
@@ -200,6 +234,13 @@ export async function main(queueReader: QueueReader) {
 
   // Validate required information
   validateChunk(nextChunk);
+
+  // Read chunk metadata to get per-sync configuration (bulkReset, etc.)
+  const metadata = await readChunkMetadata(bucketName!, s3Key!, region);
+  
+  // Use bulkReset from metadata if available, otherwise fall back to environment variable
+  const bulkReset = metadata.bulkReset ?? (`${BULK_RESET}`.trim().toLowerCase() === 'true');
+  console.log(`Bulk Reset: ${bulkReset}${metadata.bulkReset !== undefined ? ' (from metadata)' : ' (from environment)'}`);
 
   // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
   const chunkId = extractChunkId(s3Key!);
@@ -277,7 +318,7 @@ export async function main(queueReader: QueueReader) {
     // Extract actual record count from integration result
     processedRecordCount = result.totalProcessed;
     
-    console.log(`\n✓ Integration completed with results:`);
+    console.log(`\n✓ Chunk integration completed with results:`);
     console.log(`  - Total Processed: ${result.totalProcessed}`);
     console.log(`  - ✓ Successful: ${result.successCount}`);
     console.log(`  - ✗ Failed: ${result.failureCount}`);

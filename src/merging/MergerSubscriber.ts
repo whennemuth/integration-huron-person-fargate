@@ -1,13 +1,14 @@
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { S3Client, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
 
-interface ChunkMetadata {
+export interface ChunkMetadata {
   chunkCount: number;
   totalRecords: number;
   itemsPerChunk: number;
   sourceFile: string;
   chunkDirectory: string;
   deltaStoragePath: string;
+  bulkReset?: boolean;
   createdAt: string;
   chunkKeys: string[];
 }
@@ -88,7 +89,7 @@ export async function handler(event: any): Promise<any> {
   console.log(`Chunk directory: ${chunkDirectory}`);
 
   // Step 1: Get expected chunk count from metadata
-  const metadata = await getChunkMetadata(chunkDirectory);
+  const metadata = await getChunkMetadata(chunkDirectory, bucket, region);
 
   if (!metadata) {
     console.log('No metadata file found - cannot determine completion');
@@ -129,26 +130,34 @@ export async function handler(event: any): Promise<any> {
 /**
  * Reads metadata file to determine expected chunk count
  * @param chunkDirectory - The chunk directory path (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z")
+ * @param bucketName - S3 bucket name (optional, uses CHUNKS_BUCKET_NAME env var if not provided)
+ * @param region - AWS region (optional, uses REGION env var if not provided)
  */
-async function getChunkMetadata(chunkDirectory: string): Promise<ChunkMetadata | null> {
-  if (!CHUNKS_BUCKET_NAME) {
-    console.error('Missing required environment variable: CHUNKS_BUCKET_NAME');
+export async function getChunkMetadata(
+  chunkDirectory: string,
+  bucketName?: string,
+  region?: string
+): Promise<ChunkMetadata | null> {
+  const bucket = bucketName || CHUNKS_BUCKET_NAME;
+  if (!bucket) {
+    console.error('Missing required bucket name (parameter or CHUNKS_BUCKET_NAME env var)');
     return null;
   }
 
   const metadataKey = `${chunkDirectory}/_metadata.json`;
+  const client = new S3Client({ region: region || process.env.REGION });
 
   try {
-    const response = await s3Client.send(
+    const response = await client.send(
       new GetObjectCommand({
-        Bucket: CHUNKS_BUCKET_NAME,
+        Bucket: bucket,
         Key: metadataKey,
       })
     );
 
     const body = await response.Body?.transformToString();
     if (!body) {
-      console.log(`No metadata file found at s3://${CHUNKS_BUCKET_NAME}/${metadataKey}`);
+      console.log(`No metadata file found at s3://${bucket}/${metadataKey}`);
       return null;
     }
 

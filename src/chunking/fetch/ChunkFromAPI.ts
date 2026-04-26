@@ -69,15 +69,23 @@ export class ChunkFromAPI implements IChunkFromSource {
    * Set task parameters from environment variables (local dev/docker-compose mode).
    */
   private setTaskParametersFromEnvironment = (): void => {
-    let { 
-      BASE_URL: baseUrl, 
-      FETCH_PATH: fetchPath, 
-      POPULATION_TYPE: populationType 
+    let {
+      POPULATION_SCOPE:scope = 'standard',
+      POPULATION_TYPE: populationType,
+      DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: baseUrl,
+      DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: fetchPath,
+      BULK_RESET
     } = process.env;
 
-    if (!Object.values(SyncPopulation).includes(populationType as SyncPopulation)) {
-      console.log(`Invalid or missing POPULATION_TYPE (${populationType}) in environment, defaulting to ${SyncPopulation.PersonFull}`);
-      populationType = ChunkFromAPI.defaultPopulationType;
+    scope = (scope ?? 'standard').toLowerCase();
+    switch(scope) {
+      case 'single':
+        return this.setTaskParametersFromTestEnvironment();
+      case 'standard':
+        break;
+      default:
+        console.warn(`Unrecognized POPULATION_SCOPE value: ${scope}, defaulting to 'standard'`);
+        scope = 'standard';
     }
 
     if (baseUrl && fetchPath && populationType) {
@@ -86,8 +94,44 @@ export class ChunkFromAPI implements IChunkFromSource {
         baseUrl: baseUrl,
         fetchPath: fetchPath,
         populationType: populationType as SyncPopulation,
-        bulkReset: process.env.BULK_RESET?.toLowerCase() === 'true'
+        bulkReset: BULK_RESET?.toLowerCase() === 'true'
       };
+    }
+  }
+
+  /**
+   * To avoid having to acquire parameters from the SQS message for local testing, this method allows 
+   * us to set parameters from a specific set of environment variables that mimic the message body 
+   * structure. This is only used when POPULATION_SCOPE is set to "single" and allows us to easily 
+   * test against an artificial siutation in which the fetch produces a single person result, and we 
+   * can pretend it is a full population fetch by setting the SINGLE_PERSON_BUID environment variable
+   * and getting only one person (this keeps the logic consistent with a full population fetch but with
+   * the brevity of a single person).
+   */
+  private setTaskParametersFromTestEnvironment = (): void => {
+    let {
+      POPULATION_TYPE: populationType,
+      DATASOURCE_ENDPOINTCONFIG_PERSON_BASE_URL: baseUrl,
+      DATASOURCE_ENDPOINTCONFIG_PERSON_PATH: fetchPath,
+      SINGLE_PERSON_BUID: buid,
+      BULK_RESET
+    } = process.env;
+
+    if(!buid) {
+      throw new Error('SINGLE_PERSON_BUID environment variable is required when POPULATION_SCOPE is set to "single"');
+    }
+    fetchPath = `${fetchPath}?buid=${buid}`;
+
+    if (baseUrl && fetchPath && populationType) {
+      console.log('Running in local context - task parameters come from environment variables');
+      // Fake a situation in which we pretend the values we set in the environment variables came from
+      // an SQS message body, as if we had received a message from the queue.
+      this.setTaskParametersFromQueueMessageBody({
+        baseUrl: baseUrl,
+        fetchPath: fetchPath,
+        populationType: populationType as SyncPopulation,
+        bulkReset: BULK_RESET?.toLowerCase() === 'true'
+      });
     }
   }
 
@@ -103,11 +147,6 @@ export class ChunkFromAPI implements IChunkFromSource {
       populationType = SyncPopulation.PersonFull,
       bulkReset = false
     } = messageBody || {}; 
-
-    if (!Object.values(SyncPopulation).includes(populationType)) {
-      console.warn(`Invalid or missing populationType (${populationType}) in message parameters, defaulting to ${SyncPopulation.PersonFull}`);
-      populationType = ChunkFromAPI.defaultPopulationType;
-    }
 
     this.taskParameters = { 
       baseUrl, 
@@ -145,9 +184,9 @@ export class ChunkFromAPI implements IChunkFromSource {
     if (apiKey && overrodeConfig) {
       const maskedApiKey = apiKey.length > 4 ? `${apiKey.slice(0, 2)}${apiKey.split('').map(c => '*').join('').substr(4)}${apiKey.slice(-2)}` : '****';
       console.log(
-        `NOTE: One or more of the standard source API parameters have been overridden by sqs 
-        message details. This assumes that the configured apiKey (${maskedApiKey}) is still valid 
-        for the alternate endpoint`);
+        `NOTE: One or more of the standard source API parameters have been overridden by sqs ` +
+        `message details. This assumes that the configured apiKey (${maskedApiKey}) is still valid ` +
+        `for the alternate endpoint`);
     }
   }
 
@@ -251,6 +290,13 @@ export class ChunkFromAPI implements IChunkFromSource {
    */
   public runChunking = async (params: ChunkFromParams) => {
 
+    const { bulkReset, populationType } = this.taskParameters || { bulkReset: false };
+    
+    if( ! populationType) {
+      console.warn(`Population type not specified either POPULATION_TYPE environment variable or message parameters, defaulting to ${ChunkFromAPI.defaultPopulationType}`);
+      this.taskParameters.populationType = ChunkFromAPI.defaultPopulationType;
+    }
+
     if (!this.hasSufficientConfig(true)) {
       process.exit(1);
     }
@@ -264,6 +310,7 @@ export class ChunkFromAPI implements IChunkFromSource {
     console.log(`Region: ${region || 'default'}`);
     console.log(`Items per chunk: ${itemsPerChunk}`);
     console.log(`Person ID field: ${personIdField}\n`);
+    console.log(`Final task parameters: ${JSON.stringify(this.taskParameters)}`);
 
     try {
 
@@ -281,6 +328,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         clientId: chunkBasePath, // Derived from synthetic input key with timestamp
         personIdField,
         personArrayWrapper,
+        sourcePath: undefined, // Not used for API source, as the wrapper will detect the person array path from the API response stream directly
         dryRun: dryRun.toLowerCase() === 'true'
       };
 
@@ -296,7 +344,8 @@ export class ChunkFromAPI implements IChunkFromSource {
         result,
         itemsPerChunk,
         `api://config`,
-        fetchConfig.dryRun || false
+        fetchConfig.dryRun || false,
+        bulkReset
       );
 
       // Exit with success
@@ -356,7 +405,7 @@ if(require.main === module) {
     }
 
     // Run API fetch and chunking operation.
-    await new ChunkFromAPI(config).runChunking({
+    await chunkFromAPI.runChunking({
       chunksBucket, region, itemsPerChunk, personIdField, dryRun
     });
 
