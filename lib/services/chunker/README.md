@@ -53,7 +53,7 @@ HURON_PERSON_CONFIG: {
         baseUrl: 'https://prod-budev-fm.snaplogic.io',  // CDM API base URL
         apiKey: 'your-api-key-here'          // API authentication key
       },
-      fetchPath: '/api/1/rest/feed/run/task/BUDev/Admin-Integration-Services/GenericGets/huronIRBPersonByPopulation',                // API endpoint path
+      fetchPath: '/api/1/rest/feed/run/task/BUTest/Admin-Integration-Services/GenericGets/huronIRBgetPersonByPopulation',                // API endpoint path
       fetchSchedule: {
         enabled: true,                        // Enable the schedule
         cronExpression: 'cron(0 2 * * ? *)'  // Run daily at 2 AM UTC
@@ -90,7 +90,7 @@ AWS EventBridge uses a 6-field cron format: `cron(Minutes Hours Day-of-month Mon
      ```json
      {
        "baseUrl": "https://prod-budev-fm.snaplogic.io",
-       "fetchPath": "/api/1/rest/feed/run/task/BUDev/Admin-Integration-Services/GenericGets/huronIRBPersonByPopulation",
+       "fetchPath": "/api/1/rest/feed/run/task/BUTest/Admin-Integration-Services/GenericGets/huronIRBgetPersonByPopulation",
        "populationType": "person-delta",
        "bulkReset": false,
        "processingMetadata": {
@@ -136,7 +136,7 @@ aws lambda invoke \
   --region us-east-2 \
   --payload '{
     "baseUrl": "https://prod-budev-fm.snaplogic.io",
-    "fetchPath": "/api/1/rest/feed/run/task/BUDev/Admin-Integration-Services/GenericGets/huronIRBPersonByPopulation",
+    "fetchPath": "/api/1/rest/feed/run/task/BUTest/Admin-Integration-Services/GenericGets/huronIRBgetPersonByPopulation",
     "populationType": "person-full",
     "bulkReset": true,
     "processingMetadata": {
@@ -177,7 +177,7 @@ aws lambda invoke \
   --region us-east-2 \
   --payload '{
     "baseUrl": "https://prod-budev-fm.snaplogic.io",
-    "fetchPath": "/api/1/rest/feed/run/task/BUDev/Admin-Integration-Services/GenericGets/huronIRBPersonByPopulation",
+    "fetchPath": "/api/1/rest/feed/run/task/BUTest/Admin-Integration-Services/GenericGets/huronIRBgetPersonByPopulation",
     "populationType": "person-delta",
     "bulkReset": false,
     "processingMetadata": {
