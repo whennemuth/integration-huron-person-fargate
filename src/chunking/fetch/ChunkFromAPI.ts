@@ -88,12 +88,14 @@ export class ChunkFromAPI implements IChunkFromSource {
         scope = 'standard';
     }
 
-    if (baseUrl && fetchPath && populationType) {
+    // Set taskParameters if we have baseUrl and fetchPath
+    // populationType can default to person-full if not provided
+    if (baseUrl && fetchPath) {
       console.log('Running in local context - task parameters come from environment variables');
       this.taskParameters = {
         baseUrl: baseUrl,
         fetchPath: fetchPath,
-        populationType: populationType as SyncPopulation,
+        populationType: (populationType as SyncPopulation) || ChunkFromAPI.defaultPopulationType,
         bulkReset: BULK_RESET?.toLowerCase() === 'true'
       };
     }

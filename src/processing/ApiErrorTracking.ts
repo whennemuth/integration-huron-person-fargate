@@ -163,11 +163,11 @@ export class LoggingTargetApiErrorProcessor implements TargetApiErrorEventProces
     }
     const anonymousEvent = new AnonymousEvent(error);
     const { object: { hrn, sourceIdentifier} = {}, message} = details || {};
-    console.error(`API Error Event: ${JSON.stringify({
+    console.error('API Error Event:', {
       message: anonymousEvent.getMessage() || error?.message || 'Unknown error',
       incidentId: anonymousEvent.getIncidentId(),
       details: { hrn, sourceIdentifier, message },
-    })}`);
+    });
   }
 }
 
