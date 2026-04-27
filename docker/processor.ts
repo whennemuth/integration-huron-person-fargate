@@ -81,7 +81,7 @@ export const buildChunkConfig = async (bucketName: string, s3Key: string, region
     bucketName,
     key: s3Key,
     region: region || baseRegion,
-    fieldsOfInterest: baseConfig.dataSource.people?.fieldsOfInterest
+    // fieldsOfInterest: baseConfig.dataSource.people?.fieldsOfInterest
   };
 
   // Derive delta storage paths from chunk key

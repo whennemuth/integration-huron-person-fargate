@@ -319,13 +319,11 @@ export class ChunkFromAPI implements IChunkFromSource {
       // Create storage adapter for output chunks
       const chunksStorage = new S3StorageAdapter({ bucketName: chunksBucket, region });
       const personArrayWrapper = new PersonArrayWrapper(chunksStorage, personIdField);
-      const responseFilter = new AxiosResponseStreamFilter({ fieldsOfInterest: [personIdField] });
 
       // Configure fetcher
       const fetchConfig: BigJsonFetchConfig = {
         itemsPerChunk,
         config: this.config,
-        responseFilter,
         outputStorage: chunksStorage,
         clientId: chunkBasePath, // Derived from synthetic input key with timestamp
         personIdField,
