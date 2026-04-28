@@ -55,6 +55,7 @@ export class S3StorageAdapter implements IStorageAdapter {
    * Write content to an S3 object.
    */
   async writeFile(key: string, content: string | Buffer, contentType?: string): Promise<void> {
+    console.log(`Writing file to s3://${this.bucketName}/${key})`);
     await this.s3.send(new PutObjectCommand({
       Bucket: this.bucketName,
       Key: key,

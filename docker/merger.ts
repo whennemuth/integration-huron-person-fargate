@@ -273,6 +273,8 @@ class Merger {
       return;
     }
 
+    const { bucketName: Bucket} = this.config;
+
     console.log(`\nDeleting ${chunkKeys.length} chunk files...`);
 
     try {
@@ -283,8 +285,11 @@ class Merger {
       }
 
       for (const chunk of chunks) {
+        console.log('Deleting chunk files:');
+        chunk.forEach(key => console.log(`  s3://${Bucket}/${key}`));
+
         await this.s3.deleteObjects({
-          Bucket: this.config.bucketName,
+          Bucket,
           Delete: {
             Objects: chunk.map(key => ({ Key: key })),
             Quiet: true
@@ -323,10 +328,12 @@ class Merger {
   private async deleteDeltaFiles(): Promise<void> {
     console.log(`\n🧹 Cleaning up delta files from: s3://${this.config.bucketName}/${this.config.clientId}/`);
 
+    const { bucketName: Bucket} = this.config;
+
     try {
       const prefix = `${this.config.clientId}/`;
       const response = await this.s3.listObjectsV2({
-        Bucket: this.config.bucketName,
+        Bucket,
         Prefix: prefix,
       });
 
@@ -348,8 +355,10 @@ class Merger {
       }
 
       for (const chunk of chunks) {
+        console.log('Deleting delta files:');
+        chunk.forEach(key => console.log(`  s3://${Bucket}/${key}`));
         await this.s3.deleteObjects({
-          Bucket: this.config.bucketName,
+          Bucket,
           Delete: {
             Objects: chunk.map(key => ({ Key: key })),
             Quiet: true
