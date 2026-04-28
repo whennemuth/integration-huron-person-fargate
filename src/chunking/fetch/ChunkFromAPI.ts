@@ -143,12 +143,13 @@ export class ChunkFromAPI implements IChunkFromSource {
    * @param messageBody 
    */
   public setTaskParametersFromQueueMessageBody = (messageBody: any) => {
+    // Handle both camelCase (baseUrl) and environment variable style (DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL) property names
     let { 
-      baseUrl = 'from_config', 
-      fetchPath = 'from_config', 
-      populationType = SyncPopulation.PersonFull,
-      bulkReset = false
-    } = messageBody || {}; 
+      baseUrl = messageBody?.DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL || 'from_config',
+      fetchPath = messageBody?.DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH || 'from_config',
+      populationType = messageBody?.POPULATION_TYPE || SyncPopulation.PersonFull,
+      bulkReset = messageBody?.BULK_RESET || false
+    } = messageBody || {};
 
     this.taskParameters = { 
       baseUrl, 
@@ -223,6 +224,16 @@ export class ChunkFromAPI implements IChunkFromSource {
 
   public hasSufficientTaskInfo = (logToConsole: boolean = false): boolean => {
     const { baseUrl, fetchPath } = this.taskParameters || {};
+    
+    // Special case: if BOTH are 'from_config', it means the SQS queue was empty and we got only
+    // the fallback default values, so this is NOT sufficient task info (empty queue scenario)
+    if (baseUrl === 'from_config' && fetchPath === 'from_config') {
+      if (logToConsole) {
+        console.log('Insufficient task info - queue message was empty (both baseUrl and fetchPath are default from_config placeholders)');
+      }
+      return false;
+    }
+    
     if( ! baseUrl && logToConsole) {
       console.log('Missing required baseUrl for API source');
     }
@@ -233,39 +244,31 @@ export class ChunkFromAPI implements IChunkFromSource {
   }
 
   public hasSufficientConfig = (logToConsole: boolean = false): boolean => {
-    // First, try to populate task parameters from config if not already set
-    if (!this.taskParameters) {
-      const { dataSource: { people } = {} } = this.config ?? {};
-      if (people) {
-        const { endpointConfig: { baseUrl } = {}, fetchPath } = people as DataSourceConfig;
-        if (baseUrl && fetchPath) {
-          this.taskParameters = {
-            baseUrl,
-            fetchPath,
-            populationType: ChunkFromAPI.defaultPopulationType,
-            bulkReset: false
-          };
-        }
-      }
-    } else {
-      // Task parameters exist, try to fill in missing values from config
-      this.setTaskParametersFromConfig();
+    const { dataSource: { people: configPeople } = {} } = this.config ?? {};
+    const { endpointConfig: { baseUrl: configBaseUrl, apiKey } = {}, fetchPath: configFetchPath } = (configPeople as DataSourceConfig) || {};
+    
+    // Check if config has the required values
+    let sufficient = !!(configBaseUrl && configFetchPath && apiKey);
+    
+    if (!apiKey && logToConsole) {
+      console.log('Missing required API key in config.dataSource.people.endpointConfig.apiKey');
+    }
+    if (!configBaseUrl && logToConsole) {
+      console.log('Missing required baseUrl in config');
+    }
+    if (!configFetchPath && logToConsole) {
+      console.log('Missing required fetchPath in config');
     }
     
-    const { dataSource: { people } = {} } = this.config ?? {};
-    const { endpointConfig: { apiKey } = {} } = (people as DataSourceConfig) || {};
-
-    let sufficient = true;
-    if( ! apiKey) {
-      sufficient = false;
-      if(logToConsole) {
-        console.log('Missing required API key in config.dataSource.people.endpointConfig.apiKey');
-      }
+    // If we don't have sufficient config, try to fill in missing values from taskParameters
+    if (!sufficient && this.taskParameters) {
+      const { baseUrl: taskBaseUrl, fetchPath: taskFetchPath } = this.taskParameters;
+      // Only use task parameters if they're not 'from_config' defaults
+      const effectiveBaseUrl = (taskBaseUrl && taskBaseUrl !== 'from_config') ? taskBaseUrl : configBaseUrl;
+      const effectiveFetchPath = (taskFetchPath && taskFetchPath !== 'from_config') ? taskFetchPath : configFetchPath;
+      sufficient = !!(effectiveBaseUrl && effectiveFetchPath && apiKey);
     }
     
-    if( ! this.hasSufficientTaskInfo(logToConsole)) {
-      sufficient = false;
-    }
     return sufficient;
   }
 

@@ -37,7 +37,7 @@
  */
 
 import { S3 } from '@aws-sdk/client-s3';
-import { SQSClient, ReceiveMessageCommand, DeleteMessageCommand } from '@aws-sdk/client-sqs';
+import { SQSClient, ReceiveMessageCommand, DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput } from '@aws-sdk/client-sqs';
 import * as readline from 'readline';
 import { Readable } from 'stream';
 import { extractChunkBasePath } from '../src/chunking/filedrop/ChunkPathUtils';
@@ -72,8 +72,13 @@ async function getTaskParameters(): Promise<TaskParameters | null> {
       const messages = response.Messages || [];
 
       if (messages.length === 0) {
-        console.log('No messages in queue - exiting');
-        return null;
+        console.log('No messages in queue (queue empty or wait expired)');
+        console.log('Empty queue - this probably means that the desired count for the ' +
+          'service has not scaled down yet to zero after processing the last message and deleting ' +
+          'it from the queue. An empty queue will eventually cause the service to scale down to ' +
+          'zero, but in the meantime we should just exit the task.');
+        console.log('✗ Task cancelled.');
+        process.exit(0);
       }
 
       const message = messages[0];
@@ -81,12 +86,20 @@ async function getTaskParameters(): Promise<TaskParameters | null> {
 
       // Delete message from queue (prevents reprocessing)
       if (message.ReceiptHandle) {
-        await sqsClient.send(
+        const input = {
+          QueueUrl: SQS_QUEUE_URL,
+          ReceiptHandle: message.ReceiptHandle,
+        } as DeleteMessageCommandInput;
+        console.log(`Deleting message from queue: ${JSON.stringify(input)}`);
+        const output = await sqsClient.send(
           new DeleteMessageCommand({
             QueueUrl: SQS_QUEUE_URL,
             ReceiptHandle: message.ReceiptHandle,
           })
-        );
+        ) as DeleteMessageCommandOutput;
+        output.$metadata.httpStatusCode === 200
+          ? console.log('✓ Message deleted from queue successfully')
+          : console.warn('✗ Failed to delete message from queue:', output);
       }
 
       console.log('Task parameters from SQS:', JSON.stringify(body));
@@ -141,7 +154,7 @@ class Merger {
    * List all chunk files in S3
    */
   private async listChunkFiles(): Promise<string[]> {
-    const prefix = `${this.config.clientId}/chunks/`;
+    const prefix = `${this.config.clientId}/`;
     console.log(`Listing chunk files with prefix: ${prefix}`);
 
     try {

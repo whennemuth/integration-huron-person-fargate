@@ -1,4 +1,4 @@
-import { DeleteMessageCommand, ReceiveMessageCommand, SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
+import { DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput, ReceiveMessageCommand, SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 
 /**
  * Represents the next chunk to be processed
@@ -188,7 +188,8 @@ export class SQSQueueReader extends QueueReader {
       const messages = response.Messages || [];
       
       if (messages.length === 0) {
-        return undefined; // No messages available (queue empty or wait expired)
+        console.log('No messages in queue (queue empty or wait expired)');
+        return undefined;
       }
 
       const message = messages[0];
@@ -237,10 +238,28 @@ export class SQSQueueReader extends QueueReader {
    */
   private async deleteMessage(receiptHandle: string): Promise<void> {
     try {
-      await this.sqsClient.send(new DeleteMessageCommand({
-        QueueUrl: this.queueUrl,
-        ReceiptHandle: receiptHandle
-      }));
+      const { queueUrl:QueueUrl } = this;
+
+      // Delete message from queue (prevents reprocessing)
+      if (receiptHandle) {
+        const input = {
+          QueueUrl,
+          ReceiptHandle: receiptHandle,
+        } as DeleteMessageCommandInput;
+        console.log(`Deleting message from queue: ${JSON.stringify(input)}`);
+        const output = await this.sqsClient.send(
+          new DeleteMessageCommand({
+            QueueUrl,
+            ReceiptHandle: receiptHandle,
+          })
+        ) as DeleteMessageCommandOutput;
+        output.$metadata.httpStatusCode === 200
+          ? console.log('✅ Message deleted from queue successfully')
+          : console.warn('⚠️ Failed to delete message from queue:', output);
+      }
+      else {
+        console.warn('No receipt handle provided - cannot delete message from queue');
+      }
     } catch (error) {
       console.error('Error deleting message from SQS:', error);
       // Don't throw - message will become visible again after visibility timeout

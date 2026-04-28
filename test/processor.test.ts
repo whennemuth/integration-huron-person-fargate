@@ -149,8 +149,7 @@ describe('Processor (Phase 2)', () => {
       expect(config.dataSource.people).toMatchObject({
         bucketName: 'my-bucket',
         key: 'data/chunk-0001.ndjson',
-        region: 'us-west-2',
-        fieldsOfInterest: ['id', 'firstName', 'lastName']
+        region: 'us-west-2'
       });
     });
 
@@ -160,8 +159,7 @@ describe('Processor (Phase 2)', () => {
       expect(config.dataSource.people).toMatchObject({
         bucketName: 'my-bucket',
         key: 'data/chunk-0001.ndjson',
-        region: 'us-east-1',  // from mock
-        fieldsOfInterest: ['id', 'firstName', 'lastName']
+        region: 'us-east-1'  // from mock
       });
     });
 
@@ -176,7 +174,7 @@ describe('Processor (Phase 2)', () => {
         fileKeyPrefix: 'test-data/',
         config: {
           bucketName: 'my-bucket',
-          keyPrefix: 'deltas/person-full/2026-03-03T19:58:41.277Z/'
+          keyPrefix: 'deltas/'  // Explicit keyPrefix to prevent test-datasets default in DeltaStrategyForS3Bucket
         }
       });
     });
@@ -184,11 +182,8 @@ describe('Processor (Phase 2)', () => {
     it('should handle fieldsOfInterest from base config', async () => {
       const config = await buildChunkConfig('my-bucket', 'data/chunk-0001.ndjson');
 
-      expect(config.dataSource.people?.fieldsOfInterest).toEqual([
-        'id',
-        'firstName',
-        'lastName'
-      ]);
+      // fieldsOfInterest is intentionally not passed through to avoid creating unnecessary S3 stream filters
+      expect(config.dataSource.people?.fieldsOfInterest).toBeUndefined();
     });
 
     it('should override only the data source, not other config sections', async () => {

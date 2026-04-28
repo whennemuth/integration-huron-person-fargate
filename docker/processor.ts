@@ -49,10 +49,12 @@ import {
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getChunkMetadata } from '../src/merging/MergerSubscriber';
 import { NextChunk, QueueReader } from '../src/Queue';
-import { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
+import type { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
 import { getLocalConfig, pathUpTo } from '../src/Utils';
 import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/processing/ApiErrorTracking';
 import { getRetryStrategy } from '../src/processing/ApiErrorRetryStrategy';
+
+const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
 /**
  * Create a config with S3 data source for the chunk
@@ -95,11 +97,18 @@ export const buildChunkConfig = async (bucketName: string, s3Key: string, region
   console.log(`Chunked delta storage path: ${chunkedDeltaStoragePath}`);
   console.log(`Integrated delta storage path: ${integratedDeltaStoragePath}`);
 
+  // For DeltaStrategyForS3Bucket:
+  // - keyPrefix: 'deltas/' (to avoid test-datasets/ default)
+  // - clientId: Remove 'deltas/' prefix so concatenation works correctly
+  // This ensures final S3 keys are: deltas/person-full/{timestamp}/chunk-{id}.ndjson
+  const clientIdForDeltaStrategy = chunkedDeltaStoragePath.replace(/^deltas\//, '');
+
   // Return config with S3 data source and overridden storage/clientId for delta storage
   // IMPORTANT: 
   // - storage.config.bucketName: Use chunks bucket (not input bucket)
-  // - integration.clientId: Chunked path for writing chunk-specific deltas
-  // - integratedDeltaClientId: Integrated path for reading merged previous-input.ndjson
+  // - integration.clientId: Without 'deltas/' prefix so DeltaStrategyForS3Bucket keyPrefix=''deltas/' will concatenate correctly
+  // - storage.config.keyPrefix: Set to 'deltas/' to override the test-datasets/${clientId} default
+  //   This prevents DeltaStrategyForS3Bucket from defaulting to test-datasets/person-full/{timestamp}
   return {
     ...baseConfig,
     dataSource: {
@@ -108,16 +117,20 @@ export const buildChunkConfig = async (bucketName: string, s3Key: string, region
     },
     integration: {
       ...baseConfig.integration,
-      clientId: chunkedDeltaStoragePath // For writing chunk-specific deltas
+      clientId: clientIdForDeltaStrategy // For writing chunk-specific deltas (without deltas/ prefix)
     },
     integratedDeltaClientId: integratedDeltaStoragePath, // For reading integrated previous-input.ndjson
     storage: {
       ...baseConfig.storage,
-      config: {
-        ...(baseConfig.storage.config as any),
-        bucketName: bucketName,     // Use chunks bucket, not input bucket from base config
-        keyPrefix: chunkedDeltaStoragePath + '/'  // Organize deltas by run timestamp
-      }
+      config: (() => {
+        const baseConfigStorage = (baseConfig.storage.config as any) || {};
+        const { keyPrefix: _, ...otherConfig } = baseConfigStorage;
+        return {
+          ...otherConfig,
+          bucketName: bucketName,     // Use chunks bucket, not input bucket from base config
+          keyPrefix: 'deltas/'        // Explicit prefix to prevent DeltaStrategyForS3Bucket default
+        };
+      })()
     }
   } as Config;
 }
@@ -286,6 +299,14 @@ export async function main(queueReader: QueueReader) {
   else if(queueUrl) {
     console.log('Reading chunk information from SQS queue...');
     nextChunk = await queueReader.receiveMessage() as NextChunk;
+    if(isEcsTask() && !nextChunk) {
+      console.log('Empty queue - this probably means that the desired count for the ' +
+        'service has not scaled down yet to zero after processing the last message and deleting ' +
+        'it from the queue. An empty queue will eventually cause the service to scale down to ' +
+        'zero, but in the meantime we should just exit the task.');
+      console.log('✗ Task cancelled.');
+      process.exit(0);
+    }
   } 
   else {
     console.error('ERROR: Either CHUNKS_BUCKET and CHUNK_KEY environment variables or SQS_QUEUE_URL must be provided');

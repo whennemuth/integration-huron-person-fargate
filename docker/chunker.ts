@@ -43,12 +43,12 @@
  * ```
  */
 
+import { DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { Config, ConfigManager } from 'integration-huron-person';
-import { S3StorageAdapter } from '../src/storage/S3StorageAdapter';
-import { getLocalConfig } from '../src/Utils';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
-import { DeleteMessageCommand, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
+import { S3StorageAdapter } from '../src/storage/S3StorageAdapter';
+import { getLocalConfig } from '../src/Utils';
 
 export type IChunkFromSource = {
   runChunking: (params: ChunkFromParams) => Promise<void>
@@ -61,6 +61,8 @@ export type ChunkFromParams = {
   personIdField: string,
   dryRun: string
 }
+
+const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
 /**
  * Reads task parameters from SQS queue or environment variables.
@@ -84,7 +86,15 @@ export const grabMessageBodyFromQueue = async (): Promise<any> => {
       const messages = response.Messages || [];
 
       if (messages.length === 0) {
-        console.log('No messages in queue - exiting');
+        if (isEcsTask()) {
+          console.log('No messages in queue - this probably means that the desired count for the ' +
+            'service has not scaled down yet to zero after processing the last message and deleting ' +
+            'it from  the queue. An empty queue will eventually cause the service to scale down to ' +
+            'zero, but in the meantime we should just exit the task.');
+          console.log('✗ Task cancelled')
+          return null;
+        }
+        console.log('No messages in queue');
         return null;
       }
 
@@ -93,12 +103,20 @@ export const grabMessageBodyFromQueue = async (): Promise<any> => {
 
       // Delete message from queue (prevents reprocessing)
       if (message.ReceiptHandle) {
-        await sqsClient.send(
+        const input = {
+          QueueUrl: SQS_QUEUE_URL,
+          ReceiptHandle: message.ReceiptHandle,
+        } as DeleteMessageCommandInput;
+        console.log(`Deleting message from queue: ${JSON.stringify(input)}`);
+        const output = await sqsClient.send(
           new DeleteMessageCommand({
             QueueUrl: SQS_QUEUE_URL,
             ReceiptHandle: message.ReceiptHandle,
           })
-        );
+        ) as DeleteMessageCommandOutput;
+        output.$metadata.httpStatusCode === 200
+          ? console.log('✓ Message deleted from queue successfully')
+          : console.warn('✗ Failed to delete message from queue:', output);
       }
 
       console.log('Task parameters from SQS:', JSON.stringify(body));
@@ -194,12 +212,17 @@ export const getConfig = async (): Promise<Config> => {
 }
 
 const getChunkerInstance = async (config: Config): Promise<IChunkFromSource | undefined> => {
-  const isEcsTask = process.env.IS_ECS_TASK === 'true';
   
-  if (isEcsTask) {
+  if (isEcsTask()) {
     // Fargate execution: Message takes priority over config/environment
     console.log('Running in ECS task - checking SQS message first...');
     const msgBody = await grabMessageBodyFromQueue();
+    
+    // If queue is empty, exit immediately (grabMessageBodyFromQueue already logged)
+    if (!msgBody) {
+      console.log('No messages in queue - exiting');
+      process.exit(0);
+    }
     
     // Try S3 chunker with message parameters
     const s3Chunker = new ChunkFromS3();
