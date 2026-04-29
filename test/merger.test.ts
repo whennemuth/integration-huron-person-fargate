@@ -51,7 +51,8 @@ describe('Merger Integration', () => {
     // Default merger config
     mergerConfig = {
       bucketName: 'test-bucket',
-      clientId: 'test-client',
+      deltaDir: 'test-client',
+      sharedDeltaDir: 'delta-storage/test',
       region: 'us-east-2'
     };
 
@@ -84,7 +85,8 @@ describe('Merger Integration', () => {
       delete process.env.REGION;
       const config: MergerConfig = {
         bucketName: 'test',
-        clientId: 'test'
+        deltaDir: 'test-delta',
+        sharedDeltaDir: 'test-shared'
       };
       expect(config.region).toBeUndefined();
     });
@@ -390,7 +392,7 @@ describe('Merger Integration', () => {
 
       const merger = new Merger(mergerConfig);
 
-      await expect(merger.merge()).rejects.toThrow('Failed to list chunk files');
+      await expect(merger.merge()).rejects.toThrow('Failed to list delta chunk files');
     });
 
     it('should throw error when chunk read fails', async () => {
@@ -429,7 +431,7 @@ describe('Merger Integration', () => {
 
       const merger = new Merger(mergerConfig);
 
-      await expect(merger.merge()).rejects.toThrow('Failed to write merged file');
+      await expect(merger.merge()).rejects.toThrow('Failed to write merged delta file');
     });
 
     it('should throw error when deleteObjects fails', async () => {
@@ -455,7 +457,9 @@ describe('Merger Integration', () => {
 
       const merger = new Merger(mergerConfig);
 
-      await expect(merger.merge()).rejects.toThrow('Failed to delete chunk files');
+      // merge() now completes successfully; cleanup() is where deletion happens
+      await merger.merge();
+      await expect(merger.cleanup()).rejects.toThrow('Failed to delete delta chunk files');
     });
   });
 
