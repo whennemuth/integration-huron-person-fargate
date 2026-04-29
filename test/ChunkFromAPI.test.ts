@@ -11,6 +11,7 @@
 
 import { Config, DataSourceConfig } from 'integration-huron-person';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
+import { SyncPopulation } from '../docker/chunkTypes';
 
 // Mock dependencies
 jest.mock('@aws-sdk/client-sqs');
@@ -241,7 +242,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       const messageBody = {
         DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
         DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
-        POPULATION_TYPE: 'person-delta'
+        POPULATION_TYPE: SyncPopulation.PersonDelta
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
@@ -306,7 +307,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       const messageBody = {
         DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
         DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
-        POPULATION_TYPE: 'person-delta'
+        POPULATION_TYPE: SyncPopulation.PersonDelta
       };
 
       const chunker = new ChunkFromAPI(mockConfig);

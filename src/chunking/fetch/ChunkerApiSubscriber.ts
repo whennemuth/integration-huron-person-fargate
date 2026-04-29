@@ -1,5 +1,6 @@
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { ApiChunkerEvent } from '../ChunkerSubscriber';
+import { SyncPopulation } from '../../../docker/chunkTypes';
 
 const { 
   CHUNKER_QUEUE_URL,
@@ -63,6 +64,8 @@ export async function handleApiEvent(event: ApiChunkerEvent): Promise<any> {
     processingMetadata: { processedAt, processorVersion } = {} 
   } = event;
 
+  const { PersonDelta, PersonFull } = SyncPopulation;
+
   // Extract environment variables
   const dryRun = DRY_RUN.toLowerCase() === 'true';
 
@@ -80,7 +83,7 @@ export async function handleApiEvent(event: ApiChunkerEvent): Promise<any> {
   }
 
   // Validate populationType
-  const validPopulationTypes = ['person-full', 'person-delta'];
+  const validPopulationTypes = [PersonFull, PersonDelta];
   if (!validPopulationTypes.includes(populationType)) {
     const errMsg = `Invalid populationType: ${populationType}. Must be one of: ${validPopulationTypes.join(', ')}`;
     console.error(errMsg);

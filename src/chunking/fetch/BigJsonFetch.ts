@@ -11,6 +11,7 @@ import { IPersonArrayWrapper, PersonArrayWrapper } from "../PersonArrayWrapper";
 import { FileSystemStorageAdapter, IStorageAdapter, S3StorageAdapter } from "../../storage";
 import { extractChunkBasePath } from '../filedrop/ChunkPathUtils';
 import { getLocalConfig } from '../../Utils';
+import { SyncPopulation } from '../../../docker/chunkTypes';
 
 /**
  * Configuration for BigJsonFetch chunking operations
@@ -374,10 +375,11 @@ if (require.main === module) {
       .fromFileSystem(configPath)
       .getConfig('people');
 
-    const { SYNC_TYPE: syncType = 'person-full' } = process.env;
+    const { PersonDelta, PersonFull } = SyncPopulation;
+    const { SYNC_TYPE: syncType = PersonFull } = process.env;
 
-    if (syncType !== 'person-full' && syncType !== 'person-delta') {
-      console.error(`Invalid SYNC_TYPE: ${syncType} (must be 'person-full' or 'person-delta')`);
+    if (syncType !== PersonFull && syncType !== PersonDelta) {
+      console.error(`Invalid SYNC_TYPE: ${syncType} (must be '${PersonFull}' or '${PersonDelta}')`);
       return;
     }
 

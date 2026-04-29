@@ -12,7 +12,7 @@
  * Architecture:
  * - Lists all files matching pattern: deltas/{key-path}/{timestamp}/chunk-*.ndjson
  * - Streams each delta chunk file and concatenates NDJSON content
- * - Writes concatenated output to: delta-storage/{key-path}/previous-input.ndjson (no timestamp)
+ * - Writes concatenated output to: delta-storage/previous-input.ndjson (no timestamp)
  * - Deletes all delta chunk files after successful merge
  * 
  * Environment Variables:
@@ -27,7 +27,7 @@
  * - Multiple NDJSON delta files: deltas/person-full/2026-03-03T19:58:41.277Z/chunk-0000.ndjson, etc.
  * 
  * Output:
- * - Single merged file: delta-storage/person-full/previous-input.ndjson
+ * - Single merged file: delta-storage/previous-input.ndjson
  * - Cleanup of all delta chunk files
  * 
  * Example Local Usage:
@@ -466,11 +466,10 @@ async function main() {
     // Example: "chunks/person-full/2026-03-03T19:58:41.277Z" -> "deltas/person-full/2026-03-03T19:58:41.277Z"
     const deltaDir = chunkDir.replace(/^chunks\//, 'deltas/');
     
-    // Extract the key path without timestamp for the shared output location
-    // Example: "deltas/person-full/2026-03-03T19:58:41.277Z" -> "person-full"
-    const keyPathMatch = deltaDir.match(/^deltas\/(.+?)\/[^\/]+$/);
-    const keyPath = keyPathMatch ? keyPathMatch[1] : deltaDir.replace(/^deltas\//, '').replace(/\/[^\/]+$/, '');
-    const sharedOutputPath = `delta-storage/${keyPath}`;
+    // Shared output is always delta-storage (agnostic to person-full/person-delta sync type)
+    // Since previous-input.ndjson is cumulative (records never removed, only added/updated),
+    // there's no need to separate full vs. delta syncs - both merge into the same state.
+    const sharedOutputPath = SHARED_DELTA_STORAGE_DIR;
 
     console.log(`\nSource delta directory: ${deltaDir}`);
     console.log(`Target output directory: ${sharedOutputPath}`);
