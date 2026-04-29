@@ -7,9 +7,11 @@ import { IContext } from '../context/IContext';
 import { QueueInfrastructure } from './QueueInfrastructure';
 import { SubscribingLambdas } from './SubscribingLambdas';
 import { ProcessorStatisticsTable } from './DynamoDB';
+import { Config } from 'integration-huron-person';
 
 export interface AppConstructProps {
   context: IContext;
+  config?: Config;
   tags?: { [key: string]: string };
 }
 
@@ -28,7 +30,7 @@ export class AppConstruct extends Construct {
   constructor(scope: Construct, id: string, props: AppConstructProps) {
     super(scope, id);
 
-    const { context: ctx, tags } = props;
+    const { context: ctx, config, tags } = props;
 
     // ========================================
     // 1. ECR Repository
@@ -53,6 +55,7 @@ export class AppConstruct extends Construct {
     this.ecs = new EcsInfrastructure(this, 'Ecs', {
       repository: this.ecr.repository,
       context: ctx,
+      config,
       stackScope: scope,  // Pass stack reference for escape hatches
       dynamoDbTableName: this.statisticsTable.table.tableName,
       tags,

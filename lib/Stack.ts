@@ -2,8 +2,10 @@ import { CfnOutput, Stack, StackProps } from 'aws-cdk-lib/core';
 import { Construct } from 'constructs';
 import { AppConstruct } from './AppConstruct';
 import { IContext } from '../context/IContext';
+import { Config } from 'integration-huron-person';
 
 export interface IntegrationHuronPersonLambdaStackProps extends StackProps {
+  config?: Config;
   context: IContext;
 }
 
@@ -11,7 +13,7 @@ export class IntegrationHuronPersonLambdaStack extends Stack {
   constructor(scope: Construct, id: string, props: IntegrationHuronPersonLambdaStackProps) {
     super(scope, id, props);
 
-    const { context: ctx } = props;
+    const { context: ctx, config } = props;
 
     // Convert tags object to record for CDK
     const tags: Record<string, string> = { ...ctx.TAGS };
@@ -21,6 +23,7 @@ export class IntegrationHuronPersonLambdaStack extends Stack {
     // ========================================
     const app = new AppConstruct(this, 'App', {
       context: ctx,
+      config,
       tags,
     });
 

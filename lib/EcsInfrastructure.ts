@@ -11,10 +11,12 @@ import { ChunkerService } from './services/chunker/ChunkerService';
 import { MergerService } from './services/merger/MergerService';
 import { ProcessorService } from './services/processor/ProcessorService';
 import { TaskDefinitions } from './TaskDefinitions';
+import { Config } from 'integration-huron-person';
 
 export interface EcsInfrastructureProps {
   repository: IRepository;
   context: IContext;
+  config?: Config;
   stackScope: Construct;  // Stack reference for escape hatches
   dynamoDbTableName: string;
   tags?: { [key: string]: string };

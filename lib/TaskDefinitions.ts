@@ -5,10 +5,12 @@ import { ChunkerTaskDefinition } from './services/chunker/ChunkerTaskDefinition'
 import { MergerTaskDefinition } from './services/merger/MergerTaskDefinition';
 import { ProcessorTaskDefinition } from './services/processor/ProcessorTaskDefinition';
 import { HuronPersonSecrets } from './Secrets';
+import { Config } from 'integration-huron-person';
 
 export interface TaskDefinitionsProps {
   repository: IRepository;
   context: IContext;
+  config?: Config;
   dynamoDbTableName: string;
   tags?: { [key: string]: string };
 }
@@ -25,7 +27,7 @@ export class TaskDefinitions extends Construct {
   constructor(scope: Construct, id: string, props: TaskDefinitionsProps) {
     super(scope, id);
 
-    const { repository, context: ctx, dynamoDbTableName, tags } = props;
+    const { config, repository, context: ctx, dynamoDbTableName, tags } = props;
 
     // Create Secrets Manager secret for huron-person configuration
     const huronPersonSecrets = new HuronPersonSecrets(this, props.context);
@@ -64,6 +66,7 @@ export class TaskDefinitions extends Construct {
 
     // Merger task definition
     this.merger = new MergerTaskDefinition(this, 'merger', {
+      config,
       repository,
       cpu: ctx.ECS.mergerTaskDefinition.cpu,
       memoryLimitMiB: ctx.ECS.mergerTaskDefinition.memoryLimitMiB,
