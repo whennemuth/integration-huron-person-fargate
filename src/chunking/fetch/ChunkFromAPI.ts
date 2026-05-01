@@ -1,11 +1,11 @@
-import { AxiosResponseStreamFilter, Config, ConfigManager, DataSourceConfig } from "integration-huron-person";
-import { extractChunkBasePath } from "../filedrop/ChunkPathUtils";
+import { Config, ConfigManager, DataSourceConfig } from "integration-huron-person";
+import { SyncPopulation } from "../../../docker/chunkTypes";
+import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeMetadata } from "../../../docker/chunker";
 import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
-import { BigJsonFetch, BigJsonFetchConfig } from "./BigJsonFetch";
-import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeMetadata } from "../../../docker/chunker";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
-import { SyncPopulation } from "../../../docker/chunkTypes";
+import { extractChunkBasePath } from "../filedrop/ChunkPathUtils";
+import { BigJsonFetch, BigJsonFetchConfig } from "./BigJsonFetch";
 
 export type TaskParameters = {
   baseUrl: string,
@@ -295,7 +295,13 @@ export class ChunkFromAPI implements IChunkFromSource {
    */
   public runChunking = async (params: ChunkFromParams) => {
 
-    const { bulkReset, populationType } = this.taskParameters || { bulkReset: false };
+    const { chunksBucket, region, itemsPerChunk, personIdField, bulkReset: bulkResetOverride=false, dryRun } = params;
+
+    let { bulkReset, populationType } = this.taskParameters || { bulkReset: false };
+    if(bulkReset !== bulkResetOverride && bulkResetOverride === true) {
+      console.warn(`Overriding bulkReset flag in task parameters from ${bulkReset} to ${bulkResetOverride} based on message parameters`);
+    }
+    bulkReset = bulkReset || bulkResetOverride; // Allow override of bulkReset flag from message parameters if needed
     
     if( ! populationType) {
       console.warn(`Population type not specified either POPULATION_TYPE environment variable or message parameters, defaulting to ${ChunkFromAPI.defaultPopulationType}`);
@@ -305,8 +311,6 @@ export class ChunkFromAPI implements IChunkFromSource {
     if (!this.hasSufficientConfig(true)) {
       process.exit(1);
     }
-
-    const { chunksBucket, region, itemsPerChunk, personIdField, dryRun } = params;
     
     // Extract chunk base path (creates: chunks/person-full/2026-04-09T15:28:18.703Z)
     const chunkBasePath = extractChunkBasePath(this.getSyntheticInputKey());

@@ -99,9 +99,13 @@ export class ChunkFromS3 implements IChunkFromSource {
       process.exit(1);
     }
 
-    const { chunksBucket, region, itemsPerChunk, personIdField, dryRun } = params;
+    const { chunksBucket, region, itemsPerChunk, personIdField, bulkReset: bulkResetOverride=false, dryRun } = params;
 
-    const { inputBucket, inputKey, bulkReset } = this.taskParameters!;
+    let { inputBucket, inputKey, bulkReset } = this.taskParameters!;
+    if(bulkReset !== bulkResetOverride && bulkResetOverride === true) {
+      console.warn(`Overriding bulkReset flag in task parameters from ${bulkReset} to ${bulkResetOverride} based on message parameters`);
+    }
+    bulkReset = bulkReset || bulkResetOverride; // Allow override of bulkReset flag from message parameters if needed
 
     // Extract chunk base path from input key
     // This uses the key path + ISO timestamp (if present) or filename without extension
