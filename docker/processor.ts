@@ -451,13 +451,10 @@ export async function main(queueReader: QueueReader) {
     await createProcessingCompleteMarker(bucketName!, s3Key!, region);
 
     console.log('\n✓ Chunk processing completed successfully');
-    
-    process.exit(0);
 
   } catch (error: any) {
     console.error(`\n✗ Processing chunk: s3://${bucketName}/${s3Key} failed:`, error.message);
     console.error(error.stack);
-    process.exit(1);
   } finally {
     // Write statistics to DynamoDB
     if (errorTracker instanceof TrackingTargetApiErrorProcessor) {
@@ -484,6 +481,11 @@ export async function main(queueReader: QueueReader) {
       }
     }
   }
+  
+  // Exit after finally block completes
+  // Exit code 0 for success, 1 if there was an error (errorTracker will have non-zero totalErrors)
+  const exitCode = (errorTracker instanceof TrackingTargetApiErrorProcessor && errorTracker.getStatisticsSummary().totalErrors > 0) ? 1 : 0;
+  process.exit(exitCode);
 }
 
 // Run if executed directly
