@@ -104,15 +104,19 @@ export const buildChunkConfig = async (params: {
   console.log(`Integrated delta storage path: ${integratedDeltaStoragePath}`);
 
   // For DeltaStrategyForS3Bucket:
-  // - keyPrefix: 'deltas/' (to avoid test-datasets/ default)
-  // - clientId: Remove 'deltas/' prefix so concatenation works correctly
-  // This ensures final S3 keys are: deltas/person-full/{timestamp}/chunk-{id}.ndjson
-  const clientIdForDeltaStrategy = chunkedDeltaStoragePath.replace(/^deltas\//, '');
+  // - keyPrefix: '' (empty - paths are already complete)
+  // - clientId: Full path including 'deltas/' prefix
+  // This ensures:
+  //   - Chunked writes: deltas/person-full/{timestamp}/chunk-{id}.ndjson
+  //   - Shared reads: delta-storage/previous-input.ndjson (no 'deltas/' prefix)
+  const clientIdForDeltaStrategy = chunkedDeltaStoragePath; // Keep full path with 'deltas/' prefix
 
   // Return config with S3 data source and overridden storage/clientId for delta storage
   // IMPORTANT: 
   // - storage.config.bucketName: Use chunks bucket (not input bucket)
-  // - integration.clientId: Without 'deltas/' prefix so DeltaStrategyForS3Bucket keyPrefix=''deltas/' will concatenate correctly
+  // - integration.clientId: Full path with 'deltas/' prefix for chunked writes
+  // - integratedDeltaClientId: Full path (delta-storage) for shared reads
+  // - storage.config.keyPrefix: Empty string (paths are complete, no prefix needed)
   // - storage.config.keyPrefix: Set to 'deltas/' to override the test-datasets/${clientId} default
   //   This prevents DeltaStrategyForS3Bucket from defaulting to test-datasets/person-full/{timestamp}
   return {
@@ -123,7 +127,7 @@ export const buildChunkConfig = async (params: {
     },
     integration: {
       ...baseConfig.integration,
-      clientId: clientIdForDeltaStrategy // For writing chunk-specific deltas (without deltas/ prefix)
+      clientId: clientIdForDeltaStrategy // Full path for chunk-specific delta writes: deltas/person-full/{timestamp}
     },
     integratedDeltaClientId: integratedDeltaStoragePath, // Path for reading shared previous-input.ndjson: delta-storage
     storage: {
@@ -134,7 +138,7 @@ export const buildChunkConfig = async (params: {
         return {
           ...otherConfig,
           bucketName: bucketName,     // Use chunks bucket, not input bucket from base config
-          keyPrefix: 'deltas/'        // Explicit prefix to prevent DeltaStrategyForS3Bucket default
+          keyPrefix: ''               // Empty - no prefix needed since clientId values above contain complete paths
         };
       })()
     }
