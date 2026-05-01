@@ -383,8 +383,10 @@ export async function main(queueReader: QueueReader) {
 
     // Create shared cache instance for JWT tokens to avoid repeated authentication
     // This cache will be shared across all API client instances (organizations, person lookups, person updates)
-    const cache = BasicCache.getInstance();
-    console.log(`Cache instance created: ${cache.constructor.name}`);
+    const cache = BasicCache.getInstance(config);
+    if(cache) {
+      console.log(`Cache instance created: ${cache.constructor.name}`);
+    }
 
     /**
      * Disable cleanup of delta files to prevent S3 event race condition.
