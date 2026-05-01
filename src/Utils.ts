@@ -1,5 +1,7 @@
+import { HeadObjectCommand } from "@aws-sdk/client-s3";
 import { IContext } from "../context/IContext";
 import { log, warn, error} from "integration-huron-person";
+import { S3StreamProvider } from "integration-core";
 
 /**
  * @returns The name of the stack
@@ -68,6 +70,10 @@ export const getLocalConfig = (params?: { projectFolder?: string, configFileName
     console.error('Error determining local config path:', error);
     return undefined;
   }
+}
+
+export const objectExistsInS3 = async (Bucket: string, Key: string, region?: string): Promise<boolean> => {
+  return await (new S3StreamProvider({ bucketName: Bucket, region })).resourceExists(Key);
 }
 
 export const logAxiosResponse = (params: { 

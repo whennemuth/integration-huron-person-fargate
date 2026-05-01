@@ -144,7 +144,12 @@ describe('Processor (Phase 2)', () => {
 
   describe('buildChunkConfig', () => {
     it('should create S3 data source config with provided parameters', async () => {
-      const config = await buildChunkConfig('my-bucket', 'data/chunk-0001.ndjson', 'us-west-2');
+      const config = await buildChunkConfig({
+        bucketName: 'my-bucket',
+        s3Key: 'data/chunk-0001.ndjson',
+        integratedDeltaStoragePath: 'delta-storage',
+        region: 'us-west-2'
+      });
 
       expect(config.dataSource.people).toMatchObject({
         bucketName: 'my-bucket',
@@ -154,7 +159,11 @@ describe('Processor (Phase 2)', () => {
     });
 
     it('should use default region from base config when not specified', async () => {
-      const config = await buildChunkConfig('my-bucket', 'data/chunk-0001.ndjson');
+      const config = await buildChunkConfig({
+        bucketName: 'my-bucket',
+        s3Key: 'data/chunk-0001.ndjson',
+        integratedDeltaStoragePath: 'delta-storage'
+      });
 
       expect(config.dataSource.people).toMatchObject({
         bucketName: 'my-bucket',
@@ -164,7 +173,12 @@ describe('Processor (Phase 2)', () => {
     });
 
     it('should preserve base configuration fields', async () => {
-      const config = await buildChunkConfig('my-bucket', 'chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0001.ndjson', 'us-west-2');
+      const config = await buildChunkConfig({
+        bucketName: 'my-bucket',
+        s3Key: 'chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0001.ndjson',
+        integratedDeltaStoragePath: 'delta-storage',
+        region: 'us-west-2'
+      });
 
       expect(config.dataTarget).toEqual({
         apiEndpoint: 'https://api.example.com'
@@ -174,20 +188,29 @@ describe('Processor (Phase 2)', () => {
         fileKeyPrefix: 'test-data/',
         config: {
           bucketName: 'my-bucket',
-          keyPrefix: 'deltas/'  // Explicit keyPrefix to prevent test-datasets default in DeltaStrategyForS3Bucket
+          keyPrefix: ''  // Empty prefix - clientId paths include 'deltas/' where needed
         }
       });
     });
 
     it('should handle fieldsOfInterest from base config', async () => {
-      const config = await buildChunkConfig('my-bucket', 'data/chunk-0001.ndjson');
+      const config = await buildChunkConfig({
+        bucketName: 'my-bucket',
+        s3Key: 'data/chunk-0001.ndjson',
+        integratedDeltaStoragePath: 'delta-storage'
+      });
 
       // fieldsOfInterest is intentionally not passed through to avoid creating unnecessary S3 stream filters
       expect(config.dataSource.people?.fieldsOfInterest).toBeUndefined();
     });
 
     it('should override only the data source, not other config sections', async () => {
-      const config = await buildChunkConfig('new-bucket', 'new-key.ndjson', 'eu-west-1');
+      const config = await buildChunkConfig({
+        bucketName: 'new-bucket',
+        s3Key: 'new-key.ndjson',
+        integratedDeltaStoragePath: 'delta-storage',
+        region: 'eu-west-1'
+      });
 
       // S3 datasource should be new
       expect(config.dataSource.people).toMatchObject({

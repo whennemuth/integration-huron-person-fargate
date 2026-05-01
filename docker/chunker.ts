@@ -48,7 +48,7 @@ import { Config, ConfigManager } from 'integration-huron-person';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
 import { S3StorageAdapter } from '../src/storage/S3StorageAdapter';
-import { getLocalConfig } from '../src/Utils';
+import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
 
 export type IChunkFromSource = {
   runChunking: (params: ChunkFromParams) => Promise<void>
@@ -59,6 +59,7 @@ export type ChunkFromParams = {
   region: string | undefined,
   itemsPerChunk: number,
   personIdField: string,
+  bulkReset?: boolean, // To override the bulkReset flag set in the TaskParameters of the chunker instance.
   dryRun: string
 }
 
@@ -276,6 +277,29 @@ const getChunkerInstance = async (config: Config): Promise<IChunkFromSource | un
   return undefined;
 }
 
+/**
+ * Determine if the shared delta storage file exists in S3, which indicates that a previous sync 
+ * operation was run and we have a baseline to compare against for delta processing. Without this
+ * baseline, there is no other way to check if any given person exists in the target system, except
+ * by looking them up first, which requires the bulkReset flag be set to true (env var: BULK_RESET=true).
+ * @param bucket 
+ * @param region 
+ */
+const sharedDeltaStorageFileExists = async (bucket: string, region?: string): Promise<boolean> => {
+  const { SHARED_DELTA_STORAGE_DIR='delta-storage' } = process.env;
+  const deltaStorageKey = `${SHARED_DELTA_STORAGE_DIR}/previous-input.ndjson`;
+  const retval = await objectExistsInS3(bucket, deltaStorageKey, region);
+  if(retval) {
+    console.log(`✓ Found existing delta storage file at s3://${bucket}/${deltaStorageKey}`);
+  } else {
+    console.warn(`✗ No existing delta storage file found at s3://${bucket}/${deltaStorageKey} - ` +
+      `setting/overriding bulkReset=true to force target system lookups to determine create vs ` +
+      `update for each person record (this may cause the sync to run slower than usual, or this ` +
+      `may be the first time a sync has been run and you forgot to set the BULK_RESET ` +
+      `environment variable to true)`);
+  }
+  return retval;
+}
 
 async function main() {
   console.log('=== Phase 1: Chunker ===\n');
@@ -311,10 +335,18 @@ async function main() {
   (async () => {
     const config = await getConfig();
     const chunker = await getChunkerInstance(config);
+
     if(!chunker) {
       console.error('ERROR: Insufficient task parameters. Must provide either API config or S3 input parameters via SQS message or environment variables.');
       process.exit(1);
     }
+
+    const noHistoricalData = !await sharedDeltaStorageFileExists(chunksBucket, region);
+    if(noHistoricalData) {
+      // Set/override the bulk reset flag in the chunker instance TaskParameters to true
+      chunkFromParams.bulkReset = true;
+    }
+
     await chunker.runChunking(chunkFromParams);
   })();
 }

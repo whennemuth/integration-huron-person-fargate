@@ -6,6 +6,7 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { IContext } from '../../../context/IContext';
 import { HuronPersonSecrets } from '../../Secrets';
+import { Config } from 'integration-huron-person';
 
 export interface ProcessorTaskDefinitionProps {
   repository: IRepository;
@@ -17,6 +18,7 @@ export interface ProcessorTaskDefinitionProps {
   queueUrl: string;
   dynamoDbTableName: string;
   context: IContext;
+  sharedDeltaStorageDir: string;
   region: string;
   huronPersonSecrets: HuronPersonSecrets;
   dryRun?: boolean;
@@ -67,6 +69,7 @@ export class ProcessorTaskDefinition extends Construct {
       STATIC_MAP_USAGE: '{ "orgMap": true, "stateMap": true, "countryMap": true }', // Used by processor to determine which static maps to load in data mapper
       SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
       IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
+      SHARED_DELTA_STORAGE_DIR: props.sharedDeltaStorageDir,
       DRY_RUN: dryRun ? 'true' : 'false',
       DESCRIPTION1: `Container run by lambda function responding to S3 events when a new "chunk" 
         file comprising person data is deposited into ${chunksBucketName}.`,

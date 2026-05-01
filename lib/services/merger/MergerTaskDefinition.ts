@@ -4,11 +4,9 @@ import { ContainerImage, CpuArchitecture, FargateTaskDefinition, LogDriver, Oper
 import { Effect, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
-import { Config } from 'integration-huron-person';
 import { S3Config as S3FolderConfig } from 'integration-core';
 
 export interface MergerTaskDefinitionProps {
-  config?: Config;
   repository: IRepository;
   imageTag?: string;
   cpu: number;
@@ -16,7 +14,7 @@ export interface MergerTaskDefinitionProps {
   logRetentionDays: number;
   inputBucketName: string;
   chunksBucketName: string;
-  sharedDeltaStorageDir?: string; // Optional, defaults to 'delta-storage'
+  sharedDeltaStorageDir: string;
   region: string;
   dryRun?: boolean;
   tags?: { [key: string]: string };
@@ -52,14 +50,6 @@ export class MergerTaskDefinition extends Construct {
     });
 
     // Add container
-    let sharedDeltaStorageDir = 'delta-storage'; // Default value
-    const { storage, storage: { type: storageType, config: storageConfig } = {} } = props.config || {};
-    if(storage && storageType === 's3') {
-      const { keyPrefix } = storageConfig as S3FolderConfig;
-      if(keyPrefix) {
-        sharedDeltaStorageDir = keyPrefix.endsWith('/') ? keyPrefix.slice(0, -1) : keyPrefix; // Remove trailing slash if present
-      }
-    }
     const container = this.taskDefinition.addContainer('MergerContainer', {
       containerName: 'merger',
       image: ContainerImage.fromEcrRepository(
@@ -76,7 +66,7 @@ export class MergerTaskDefinition extends Construct {
         REGION: props.region,
         INPUT_BUCKET: props.inputBucketName,
         // CHUNKS_BUCKET will be provided at runtime by Lambda
-        SHARED_DELTA_STORAGE_DIR: sharedDeltaStorageDir,
+        SHARED_DELTA_STORAGE_DIR: props.sharedDeltaStorageDir,
         IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
         DRY_RUN: props.dryRun ? 'true' : 'false',
         DESCRIPTION1: 

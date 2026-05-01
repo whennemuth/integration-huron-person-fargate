@@ -50,7 +50,7 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getChunkMetadata } from '../src/merging/MergerSubscriber';
 import { NextChunk, QueueReader } from '../src/Queue';
 import type { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
-import { getLocalConfig, pathUpTo } from '../src/Utils';
+import { getLocalConfig } from '../src/Utils';
 import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/processing/ApiErrorTracking';
 import { getRetryStrategy } from '../src/processing/ApiErrorRetryStrategy';
 
@@ -61,7 +61,13 @@ const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
  * Builds base config from environment/filesystem, then injects S3 chunk details
  * Also derives delta storage path from chunk key to organize delta outputs by run
  */
-export const buildChunkConfig = async (bucketName: string, s3Key: string, region?: string): Promise<Config> => {
+export const buildChunkConfig = async (params: {
+  bucketName: string, 
+  s3Key: string, 
+  integratedDeltaStoragePath: string,
+  region?: string
+}): Promise<Config> => {
+  const { bucketName, s3Key, integratedDeltaStoragePath, region } = params;
   // Load base configuration from environment/filesystem
   const { HURON_PERSON_CONFIG_PATH, SECRET_ARN } = process.env;
   const configManager = ConfigManager.getInstance();
@@ -89,10 +95,10 @@ export const buildChunkConfig = async (bucketName: string, s3Key: string, region
   // Derive delta storage paths from chunk key
   // Chunked path: "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0124.ndjson" 
   //            -> "deltas/person-full/2026-03-03T19:58:41.277Z" (for chunk-specific delta writes)
-  // Integrated path: "deltas" (for reading previous-input.ndjson created by merger)
+  // Integrated path: SHARED_DELTA_STORAGE_DIR env var (for reading previous-input.ndjson created by merger)
+  //   This matches the sharedDeltaDir used by merger.ts
   const chunkDir = s3Key.substring(0, s3Key.lastIndexOf('/'));
   const chunkedDeltaStoragePath = chunkDir.replace(/^chunks\//, 'deltas/');
-  const integratedDeltaStoragePath = pathUpTo({ fullPath: chunkedDeltaStoragePath, segment: 'deltas' });
 
   console.log(`Chunked delta storage path: ${chunkedDeltaStoragePath}`);
   console.log(`Integrated delta storage path: ${integratedDeltaStoragePath}`);
@@ -119,7 +125,7 @@ export const buildChunkConfig = async (bucketName: string, s3Key: string, region
       ...baseConfig.integration,
       clientId: clientIdForDeltaStrategy // For writing chunk-specific deltas (without deltas/ prefix)
     },
-    integratedDeltaClientId: integratedDeltaStoragePath, // For reading integrated previous-input.ndjson
+    integratedDeltaClientId: integratedDeltaStoragePath, // Path for reading shared previous-input.ndjson: delta-storage
     storage: {
       ...baseConfig.storage,
       config: (() => {
@@ -278,7 +284,8 @@ export async function main(queueReader: QueueReader) {
     DRY_RUN,
     BULK_RESET,
     DYNAMODB_TABLE_NAME: dynamoDbTableName,
-    RETRY_STRATEGY
+    RETRY_STRATEGY,
+    SHARED_DELTA_STORAGE_DIR='delta-storage'
   } = process.env;  
   const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
   const staticMapUsage: StaticMapUsage | undefined = STATIC_MAP_USAGE ? JSON.parse(STATIC_MAP_USAGE) : undefined;
@@ -363,7 +370,12 @@ export async function main(queueReader: QueueReader) {
 
   try {
     // Build config with S3 data source pointing to this chunk
-    const config = await buildChunkConfig(bucketName!, s3Key!, region);
+    const config = await buildChunkConfig({
+      bucketName: bucketName!,
+      s3Key: s3Key!,
+      integratedDeltaStoragePath: SHARED_DELTA_STORAGE_DIR,
+      region
+    });
 
     // Create shared cache instance for JWT tokens to avoid repeated authentication
     // This cache will be shared across all API client instances (organizations, person lookups, person updates)

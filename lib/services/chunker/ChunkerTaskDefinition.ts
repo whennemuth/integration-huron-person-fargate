@@ -16,6 +16,7 @@ export interface ChunkerTaskDefinitionProps {
   inputBucketName: string;
   chunksBucketName: string;
   itemsPerChunk: number;
+  sharedDeltaStorageDir: string;
   region: string;
   huronPersonSecrets: HuronPersonSecrets;
   dryRun?: boolean;
@@ -88,6 +89,7 @@ export class ChunkerTaskDefinition extends Construct {
         REGION: region,
         SQS_QUEUE_URL: queueUrl,
         CHUNKS_BUCKET: chunksBucketName,
+        SHARED_DELTA_STORAGE_DIR: props.sharedDeltaStorageDir,
         ITEMS_PER_CHUNK: itemsPerChunk.toString(),
         PERSON_ID_FIELD: 'personid',
         SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
@@ -124,11 +126,14 @@ export class ChunkerTaskDefinition extends Construct {
       })
     );
 
-    // Grant S3 write permissions for chunks bucket
+    // Grant S3 read+write permissions for chunks bucket
+    // Read is needed to check if delta-storage/previous-input.ndjson exists
     this.taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
         actions: [
+          's3:GetObject',
+          's3:GetObjectVersion',
           's3:PutObject',
           's3:PutObjectAcl',
         ],

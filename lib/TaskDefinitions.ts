@@ -6,6 +6,7 @@ import { MergerTaskDefinition } from './services/merger/MergerTaskDefinition';
 import { ProcessorTaskDefinition } from './services/processor/ProcessorTaskDefinition';
 import { HuronPersonSecrets } from './Secrets';
 import { Config } from 'integration-huron-person';
+import { S3Config as S3FolderConfig } from 'integration-core';
 
 export interface TaskDefinitionsProps {
   repository: IRepository;
@@ -28,6 +29,14 @@ export class TaskDefinitions extends Construct {
     super(scope, id);
 
     const { config, repository, context: ctx, dynamoDbTableName, tags } = props;
+    let sharedDeltaStorageDir = 'delta-storage'; // Default value
+    const { storage, storage: { type: storageType, config: storageConfig } = {} } = props.config || {};
+    if(storage && storageType === 's3') {
+      const { keyPrefix } = storageConfig as S3FolderConfig;
+      if(keyPrefix) {
+        sharedDeltaStorageDir = keyPrefix.endsWith('/') ? keyPrefix.slice(0, -1) : keyPrefix; // Remove trailing slash if present
+      }
+    }
 
     // Create Secrets Manager secret for huron-person configuration
     const huronPersonSecrets = new HuronPersonSecrets(this, props.context);
@@ -43,6 +52,7 @@ export class TaskDefinitions extends Construct {
       queueUrl: '', // Will be set after queue is created
       itemsPerChunk: ctx.ITEMS_PER_CHUNK,
       huronPersonSecrets,
+      sharedDeltaStorageDir,
       region: ctx.REGION,
       dryRun: ctx.DRY_RUN?.taskdef?.chunker,
       tags,
@@ -58,6 +68,7 @@ export class TaskDefinitions extends Construct {
       queueUrl: '', // Will be set after queue is created
       dynamoDbTableName, // DynamoDB table for error tracking and statistics
       huronPersonSecrets,
+      sharedDeltaStorageDir,
       context: ctx,
       region: ctx.REGION,
       dryRun: ctx.DRY_RUN?.taskdef?.processor,
@@ -66,13 +77,13 @@ export class TaskDefinitions extends Construct {
 
     // Merger task definition
     this.merger = new MergerTaskDefinition(this, 'merger', {
-      config,
       repository,
       cpu: ctx.ECS.mergerTaskDefinition.cpu,
       memoryLimitMiB: ctx.ECS.mergerTaskDefinition.memoryLimitMiB,
       logRetentionDays: ctx.ECS.mergerTaskDefinition.logRetentionDays,
       inputBucketName: ctx.S3.inputBucket,
       chunksBucketName: ctx.S3.chunksBucket,
+      sharedDeltaStorageDir,
       region: ctx.REGION,
       dryRun: ctx.DRY_RUN?.taskdef?.merger,
       tags,
