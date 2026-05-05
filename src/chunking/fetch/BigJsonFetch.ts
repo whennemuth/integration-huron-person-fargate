@@ -368,12 +368,12 @@ if (require.main === module) {
     
     // Load configuration
     const configManager = ConfigManager.getInstance();
-    const cfg = configManager
+    const cfg = await configManager
       .reset()
       .fromSecretManager(process.env.SECRET_ARN) // Load from Secrets Manager first if SECRET_ARN is provided
       .fromEnvironment()
       .fromFileSystem(configPath)
-      .getConfig('people');
+      .getConfigAsync('people');
 
     const { PersonDelta, PersonFull } = SyncPopulation;
     const { SYNC_TYPE: syncType = PersonFull } = process.env;
