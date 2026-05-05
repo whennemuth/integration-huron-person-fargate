@@ -72,7 +72,7 @@
     "taskdef": {
       "chunker": false,
       "processor": false,
-      "merger": true
+      "merger": false
     }
   }
 }
