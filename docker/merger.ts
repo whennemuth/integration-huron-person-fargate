@@ -37,17 +37,18 @@
  */
 
 import { S3 } from '@aws-sdk/client-s3';
-import { SQSClient, ReceiveMessageCommand, DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput } from '@aws-sdk/client-sqs';
-import * as readline from 'readline';
-import { Readable } from 'stream';
-import { extractChunkBasePath } from '../src/chunking/filedrop/ChunkPathUtils';
-import { HashMapMerger, FieldDefinitions } from 'integration-huron-person';
-import { FieldSet } from 'integration-core';
+import { DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
+import { FieldSet, Timer } from 'integration-core';
+import { FieldDefinitions, HashMapMerger } from 'integration-huron-person';
 import { objectExistsInS3 } from '../src/Utils';
+import { extractChunkBasePath } from '../src/chunking/filedrop/ChunkPathUtils';
+import { DeferredDeleteHandler } from '../src/merging/DeferredDeleteHandler';
+import { MergeEngine } from '../src/merging/MergeEngine';
 
 interface TaskParameters {
   chunksBucket: string;
   chunkDirectory: string | null;
+  createdAt?: string; // Timestamp from chunker metadata (when chunking started)
 }
 
 /**
@@ -107,6 +108,7 @@ async function getTaskParameters(): Promise<TaskParameters | null> {
       return {
         chunksBucket: body.chunksBucket,
         chunkDirectory: body.chunkDirectory || null,
+        createdAt: body.createdAt, // Timestamp from chunker metadata
       };
     } catch (error) {
       console.error('Error reading from SQS queue:', error);
@@ -126,366 +128,25 @@ async function getTaskParameters(): Promise<TaskParameters | null> {
   return null;
 }
 
-interface MergerConfig {
-  bucketName: string;
-  deltaDir: string;
-  sharedDeltaDir: string;
-  region?: string;
-}
-
-interface MergeResult {
-  totalLines: number;
-  chunkCount: number;
-  outputKey: string;
-  deletedChunks: string[];
-}
-
-/**
- * Merger class handles concatenation of chunk outputs into final file
- */
-class Merger {
-  private s3: S3;
-  private config: MergerConfig;
-  private chunkKeys: string[] = [];
-
-  constructor(config: MergerConfig) {
-    this.config = config;
-    this.s3 = new S3({ region: config.region || 'us-east-1' });
-  }
-
-  /**
-   * List all delta chunk files in S3
-   */
-  private async listChunkFiles(): Promise<string[]> {
-    const prefix = `${this.config.deltaDir}/`;
-    console.log(`Listing delta chunk files with prefix: ${prefix}`);
-
-    try {
-      const response = await this.s3.listObjectsV2({
-        Bucket: this.config.bucketName,
-        Prefix: prefix
-      });
-
-      const chunkKeys = (response.Contents || [])
-        .map(obj => obj.Key!)
-        .filter(key => key.match(/chunk-\d+\.ndjson$/))
-        .sort(); // Sort to ensure deterministic order
-
-      console.log(`Found ${chunkKeys.length} delta chunk files`);
-      return chunkKeys;
-
-    } catch (error: any) {
-      throw new Error(`Failed to list delta chunk files: ${error.message}`);
-    }
-  }
-
-  /**
-   * Stream a single delta chunk file and return line count
-   */
-  private async readChunkLines(chunkKey: string): Promise<string[]> {
-    console.log(`  Reading: s3://${this.config.bucketName}/${chunkKey}`);
-
-    try {
-      const response = await this.s3.getObject({
-        Bucket: this.config.bucketName,
-        Key: chunkKey
-      });
-
-      const lines: string[] = [];
-      const stream = response.Body as Readable;
-      const rl = readline.createInterface({
-        input: stream,
-        crlfDelay: Infinity
-      });
-
-      for await (const line of rl) {
-        if (line.trim()) {
-          lines.push(line);
-        }
-      }
-
-      console.log(`    Read ${lines.length} lines`);
-      return lines;
-
-    } catch (error: any) {
-      throw new Error(`Failed to read chunk ${chunkKey}: ${error.message}`);
-    }
-  }
-
-  /**
-   * Get the full path to the shared previous-input.ndjson file
-   */
-  public getSharedOutputKey(): string {
-    return `${this.config.sharedDeltaDir}/previous-input.ndjson`;
-  }
-
-  /**
-   * Read existing merged file from shared location if it exists
-   */
-  public async readExistingMergedFile(): Promise<FieldSet[] | null> {
-    const key = this.getSharedOutputKey();
-    try {
-      console.log(`  Checking for existing file: s3://${this.config.bucketName}/${key}`);
-      
-      const response = await this.s3.getObject({
-        Bucket: this.config.bucketName,
-        Key: key
-      });
-
-      const fieldSets: FieldSet[] = [];
-      const stream = response.Body as Readable;
-      const rl = readline.createInterface({
-        input: stream,
-        crlfDelay: Infinity
-      });
-
-      for await (const line of rl) {
-        if (line.trim()) {
-          try {
-            const fieldSet = JSON.parse(line) as FieldSet;
-            fieldSets.push(fieldSet);
-          } catch (parseError: any) {
-            throw new Error(`Failed to parse NDJSON line in existing file: ${parseError.message}`);
-          }
-        }
-      }
-
-      console.log(`    Found ${fieldSets.length} existing records`);
-      return fieldSets;
-
-    } catch (error: any) {
-      // NoSuchKey means file doesn't exist yet (first run) - this is okay
-      if (error.name === 'NoSuchKey' || error.Code === 'NoSuchKey') {
-        console.log(`    No existing file found (first run)`);
-        return null;
-      }
-      
-      // Any other error is a real failure - fail fast
-      throw new Error(`Failed to read existing merged file ${key}: ${error.message}`);
-    }
-  }
-
-  /**
-   * Write merged content to output file containing
-   */
-  private async writeMergedDeltaFile(lines: string[], outputKey: string): Promise<void> {
-    console.log(`\nWriting merged delta file: s3://${this.config.bucketName}/${outputKey}`);
-    console.log(`Total lines: ${lines.length}`);
-
-    const content = lines.join('\n') + '\n';
-
-    try {
-      await this.s3.putObject({
-        Bucket: this.config.bucketName,
-        Key: outputKey,
-        Body: content,
-        ContentType: 'application/x-ndjson'
-      });
-
-      console.log('✓ Merged delta file written successfully');
-
-    } catch (error: any) {
-      throw new Error(`Failed to write merged delta file: ${error.message}`);
-    }
-  }
-
-  /**
-   * Write merged content to shared location
-   */
-  public async writeMergedToSharedLocation(fieldSets: FieldSet[]): Promise<void> {
-    const key = this.getSharedOutputKey();
-    console.log(`  ✓ Writing ${fieldSets.length} records to shared location: s3://${this.config.bucketName}/${key}`);
-    
-    const content = fieldSets.map((fs: FieldSet) => JSON.stringify(fs)).join('\n') + '\n';
-    
-    try {
-      await this.s3.putObject({
-        Bucket: this.config.bucketName,
-        Key: key,
-        Body: content,
-        ContentType: 'application/x-ndjson'
-      });
-    } catch (error: any) {
-      throw new Error(`Failed to write to shared location: ${error.message}`);
-    }
-  }
-
-  /**
-   * Delete all delta chunk files after successful merge
-   */
-  private async deleteDeltaChunkFiles(chunkKeys: string[]): Promise<void> {
-    const { bucketName: Bucket} = this.config;
-
-    console.log(`\nDeleting ${chunkKeys.length} delta chunk files...`);
-
-    if (chunkKeys.length === 0) {
-      console.log('No delta chunk files to delete');
-      return;
-    }
-
-    try {
-      // AWS S3 deleteObjects can handle up to 1000 objects at once
-      const chunks = [];
-      for (let i = 0; i < chunkKeys.length; i += 1000) {
-        chunks.push(chunkKeys.slice(i, i + 1000));
-      }
-
-      for (const chunk of chunks) {
-        console.log('Deleting delta chunk files:');
-        chunk.forEach(key => console.log(`  s3://${Bucket}/${key}`));
-
-        await this.s3.deleteObjects({
-          Bucket,
-          Delete: {
-            Objects: chunk.map(key => ({ Key: key })),
-            Quiet: true
-          }
-        });
-      }
-
-      console.log('✓ All delta chunk files deleted');
-
-    } catch (error: any) {
-      throw new Error(`Failed to delete delta chunk files: ${error.message}`);
-    }
-  }
-
-  /**
-   * Cleanup delta files after successful merge.
-   * 
-   * Why cleanup in merger task instead of processor:
-   * ================================================
-   * Delta files created and deleted within 6-15 seconds can cause S3 event notifications
-   * to be cancelled or never sent. S3 needs time to process the ObjectCreated event internally.
-   * 
-   * If a file is deleted before the event completes:
-   * - S3 detects object no longer exists
-   * - Event is cancelled or never sent
-   * - Lambda never invokes (no log stream)
-   * - Delta files never merged = data loss
-   * 
-   * Solution: Keep delta files until merger completes successfully, then cleanup.
-   * This ensures:
-   * - Delta files persist long enough for S3 events to process
-   * - Cleanup only happens after proven merge success
-   * - Delta files available for debugging if merge fails
-   * - Marker files preserved for audit trail (never deleted)
-   */
-  private async deleteDeltaFiles(): Promise<void> {
-    console.log(`\n🧹 Cleaning up delta files from: s3://${this.config.bucketName}/${this.config.deltaDir}/`);
-
-    const { bucketName: Bucket} = this.config;
-
-    try {
-      const prefix = `${this.config.deltaDir}/`;
-      const response = await this.s3.listObjectsV2({
-        Bucket,
-        Prefix: prefix,
-      });
-
-      const deltaFiles = (response.Contents || [])
-        .map((obj) => obj.Key!)
-        .filter((key) => /\.ndjson$/.test(key)); // All .ndjson files (chunks and merged outputs), not marker files
-
-      if (deltaFiles.length === 0) {
-        console.log('No delta files to cleanup');
-        return;
-      }
-
-      console.log(`Deleting ${deltaFiles.length} delta files...`);
-      
-      // AWS S3 deleteObjects can handle up to 1000 objects at once
-      const chunks = [];
-      for (let i = 0; i < deltaFiles.length; i += 1000) {
-        chunks.push(deltaFiles.slice(i, i + 1000));
-      }
-
-      for (const chunk of chunks) {
-        chunk.forEach(key => console.log(`  s3://${Bucket}/${key}`));
-        await this.s3.deleteObjects({
-          Bucket,
-          Delete: {
-            Objects: chunk.map(key => ({ Key: key })),
-            Quiet: true
-          }
-        });
-      }
-
-      console.log(`✓ Cleanup complete: ${deltaFiles.length} delta files deleted`);
-      console.log('Note: Marker files preserved for audit trail');
-
-    } catch (error: any) {
-      console.error(`Failed to cleanup delta files: ${error.message}`);
-      // Don't throw - cleanup failure shouldn't block merger task completion
-    }
-  }
-
-  /**
-   * Execute the merge operation
-   */
-  async merge(): Promise<MergeResult> {
-    console.log('=== Phase 3: Merger ===\n');
-    console.log(`Bucket: ${this.config.bucketName}`);
-    console.log(`Delta directory: ${this.config.deltaDir}`);
-    console.log(`Shared delta directory: ${this.config.sharedDeltaDir}`);
-    console.log(`Region: ${this.config.region || 'default (us-east-1)'}\n`);
-
-    // Step 1: List all delta chunk files
-    this.chunkKeys = await this.listChunkFiles();
-
-    if (this.chunkKeys.length === 0) {
-      console.warn('⚠ No delta chunk files found. Nothing to merge.');
-      return {
-        totalLines: 0,
-        chunkCount: 0,
-        outputKey: `${this.config.deltaDir}/previous-input.ndjson`,
-        deletedChunks: []
-      };
-    }
-
-    // Step 2: Read and concatenate all chunks
-    console.log('\nReading delta chunk files:');
-    const allLines: string[] = [];
-
-    for (const chunkKey of this.chunkKeys) {
-      const lines = await this.readChunkLines(chunkKey);
-      allLines.push(...lines);
-    }
-
-    // Step 3: Write merged delta file
-    const outputKey = `${this.config.deltaDir}/previous-input.ndjson`;
-    await this.writeMergedDeltaFile(allLines, outputKey);
-
-    console.log('\n✓ Merge completed successfully');
-
-    return {
-      totalLines: allLines.length,
-      chunkCount: this.chunkKeys.length,
-      outputKey,
-      deletedChunks: this.chunkKeys
-    };
-  }
-
-  async cleanup(): Promise<void> {
-    // Step 4: Cleanup delta chunk files and delta files
-    await this.deleteDeltaChunkFiles(this.chunkKeys);
-    await this.deleteDeltaFiles();
-  }
-}
-
 /**
  * Main entry point
  */
 async function main() {
+
+  const timer = new Timer();
+  timer.start();
+  let exitCode = 0;
+
   // Get task parameters from SQS or environment
   const taskParams = await getTaskParameters();
 
   if (!taskParams || !taskParams.chunkDirectory) {
     console.error('ERROR: No task parameters available (checked SQS queue and environment variables)');
-    process.exit(1);
+    exitCode = 1;
+    return;
   }
 
-  const { chunksBucket: bucketName, chunkDirectory: chunkDir } = taskParams;
+  const { chunksBucket: bucketName, chunkDirectory: chunkDir, createdAt } = taskParams;
 
   // Read additional configuration from environment
   const {
@@ -493,6 +154,12 @@ async function main() {
     SHARED_DELTA_STORAGE_DIR='delta-storage',
     DRY_RUN='false'
   } = process.env;
+
+  // Parse chunking start time from task parameters (provided by MergerSubscriber lambda)
+  const chunkingStartTime = createdAt ? new Date(createdAt) : null;
+  if (chunkingStartTime) {
+    console.log(`\nChunking started at: ${createdAt}`);
+  }
   const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
   
   // Extract primary key field names from the same FieldDefinitions used when writing delta files.
@@ -516,12 +183,7 @@ async function main() {
     console.log(`Target output directory: ${sharedOutputPath}`);
 
     // Create single Merger instance with both paths
-    const merger = new Merger({ 
-      bucketName, 
-      deltaDir, 
-      sharedDeltaDir: sharedOutputPath, 
-      region 
-    });
+    const merger = new MergeEngine({ bucketName, deltaDir, sharedDeltaDir: sharedOutputPath, region });
     
     // Merge delta chunks from timestamped directory
     const result = await merger.merge();
@@ -591,6 +253,33 @@ async function main() {
         console.log(`    Unchanged (same hash): ${mergeResult.stats.unchanged}`);
         console.log(`    Total: ${mergeResult.stats.total}`);
         
+        // Step 3.5: Process deletions if configured
+        // After merge, compare consolidated (current source state) vs baseline (previous state)
+        // to identify records truly removed from source and soft-delete them from target API
+        if (DeferredDeleteHandler.isConfiguredForDeletes()) {
+          console.log(`\nStep 3.5: Processing deletions`);
+          try {
+            const deleteHandler = await DeferredDeleteHandler.getInstance({
+              region, bucketName, sourceKey, targetKey, primaryKeyFieldNames,
+            });
+
+            const deletionResult = await deleteHandler!.processDeletes();
+            console.log(`  ${deletionResult.message}`);
+            if (deletionResult.totalProcessed > 0) {
+              console.log(`  Deleted: ${deletionResult.deletedCount} of ${deletionResult.totalProcessed}`);
+              if (deletionResult.failedCount > 0) {
+                console.warn(`  Failed: ${deletionResult.failedCount} deletions failed`);
+              }
+            }
+          } catch (deleteError: any) {
+            console.error(`  Failed to process deletions: ${deleteError.message}`);
+            // Don't fail the entire merge if deletions fail - log and continue
+            console.warn(`  Continuing with merge despite deletion failure`);
+          }
+        } else {
+          console.log(`\nStep 3.5: Deletion handling disabled (skipping)`);
+        }
+        
         // Convert back to FieldSets
         const mergedFieldSets = HashMapMerger.keyHashPairsToFieldSets(mergeResult.merged);
         
@@ -619,12 +308,32 @@ async function main() {
     console.log(`  Cleanup: ${result.deletedChunks.length} delta chunk files deleted`);
     console.log(`  Primary key field(s): ${Array.from(primaryKeyFieldSet).join(', ')}`);
 
-    process.exit(0);
+    exitCode = 0;
 
   } catch (error: any) {
     console.error('\n✗ Merge failed:', error.message);
     console.error(error.stack);
-    process.exit(1);
+    exitCode = 1;
+  }
+  finally {
+    timer.stop();
+    
+    if(exitCode === 0) {
+      timer.logElapsed('\n✓ Merge phase duration');
+      
+      // Calculate and log full sync duration from chunking start to merge end
+      if (chunkingStartTime) {
+        const fullDurationMs = Date.now() - chunkingStartTime.getTime();
+        const fullDuration = timer.getDuration(fullDurationMs);
+        console.log(`✓ Full sync duration (chunking → processing → merging): ${fullDuration}`);
+      } else {
+        console.log('  (Full sync duration unavailable - createdAt timestamp not provided)');
+      }
+    } else {
+      timer.logElapsed('\n✗ Duration until failure');
+    }
+    
+    process.exit(exitCode);
   }
 }
 
@@ -633,4 +342,3 @@ if (require.main === module) {
   main();
 }
 
-export { Merger, MergerConfig, MergeResult };

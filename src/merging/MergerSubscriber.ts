@@ -118,7 +118,7 @@ export async function handler(event: any): Promise<any> {
   // Step 4: All chunks ready - trigger merger
   console.log(`✅ All delta chunks ready: ${actualChunks}/${expectedChunks}`);
 
-  const triggered = await triggerMerger(chunkDirectory);
+  const triggered = await triggerMerger(chunkDirectory, metadata.createdAt);
 
   if (triggered) {
     return { statusCode: 200, body: 'Merger triggered' };
@@ -214,8 +214,9 @@ async function countCompletedChunks(deltaStoragePath: string): Promise<number> {
  * Triggers the merger Fargate task by sending a message to SQS.
  * The QueueProcessingFargateService will detect the message and auto-scale to process it.
  * @param chunkDirectory - The chunk directory path to pass to merger
+ * @param createdAt - ISO timestamp when chunking started (from metadata file)
  */
-async function triggerMerger(chunkDirectory: string): Promise<boolean> {
+async function triggerMerger(chunkDirectory: string, createdAt: string): Promise<boolean> {
   if (!MERGER_QUEUE_URL) {
     console.error('Missing required environment variable: MERGER_QUEUE_URL');
     return false;
@@ -233,6 +234,7 @@ async function triggerMerger(chunkDirectory: string): Promise<boolean> {
   const message = {
     chunksBucket: CHUNKS_BUCKET_NAME,
     chunkDirectory,
+    createdAt, // Include timestamp for full sync duration tracking
   };
 
   try {

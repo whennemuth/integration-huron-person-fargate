@@ -44,6 +44,7 @@
  */
 
 import { DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
+import { Timer } from 'integration-core';
 import { Config, ConfigManager } from 'integration-huron-person';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
@@ -52,6 +53,7 @@ import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
 
 export type IChunkFromSource = {
   runChunking: (params: ChunkFromParams) => Promise<void>
+  noMessagesFromQueue?: boolean
 }
 
 export type ChunkFromParams = {
@@ -220,9 +222,11 @@ const getChunkerInstance = async (config: Config): Promise<IChunkFromSource | un
     const msgBody = await grabMessageBodyFromQueue();
     
     // If queue is empty, exit immediately (grabMessageBodyFromQueue already logged)
-    if (!msgBody) {
-      console.log('No messages in queue - exiting');
-      process.exit(0);
+    if (!msgBody) {     
+      return new class implements IChunkFromSource {
+        runChunking = async (params: ChunkFromParams) => { return; }
+        noMessagesFromQueue = true
+      }();
     }
     
     // Try S3 chunker with message parameters
@@ -304,41 +308,54 @@ const sharedDeltaStorageFileExists = async (bucket: string, region?: string): Pr
 async function main() {
   console.log('=== Phase 1: Chunker ===\n');
 
-  // Read additional configuration from environment
-  const {
-    CHUNKS_BUCKET: chunksBucket,
-    REGION: region,
-    ITEMS_PER_CHUNK: itemsPerChunkStr = '200',
-    PERSON_ID_FIELD: personIdField = 'personid',
-    DRY_RUN: dryRun = 'false'
-  } = process.env;
+  let exitCode = 0;
+  const timer = new Timer();
+  timer.start();
 
-  // Validate bucket name required for output is provided.
-  if (!chunksBucket) {
-    console.error('ERROR: CHUNKS_BUCKET environment variable is required');
-    process.exit(1);
-  }
+  try {
+    // Read additional configuration from environment
+    const {
+      CHUNKS_BUCKET: chunksBucket,
+      REGION: region,
+      ITEMS_PER_CHUNK: itemsPerChunkStr = '200',
+      PERSON_ID_FIELD: personIdField = 'personid',
+      DRY_RUN: dryRun = 'false'
+    } = process.env;
 
-  // Validate items per chunk is a positive integer
-  const itemsPerChunk = parseInt(itemsPerChunkStr, 10);
-  if (isNaN(itemsPerChunk) || itemsPerChunk <= 0) {
-    console.error(`ERROR: Invalid ITEMS_PER_CHUNK: ${itemsPerChunkStr}`);
-    process.exit(1);
-  }
+    // Validate bucket name required for output is provided.
+    if (!chunksBucket) {
+      console.error('ERROR: CHUNKS_BUCKET environment variable is required');
+      exitCode = 1;
+      return;
+    }
 
-  // Instantiate general chunker params object to pass to either chunking class.
-  const chunkFromParams: ChunkFromParams = { 
-    chunksBucket, region, itemsPerChunk, personIdField, dryRun
-  };
+    // Validate items per chunk is a positive integer
+    const itemsPerChunk = parseInt(itemsPerChunkStr, 10);
+    if (isNaN(itemsPerChunk) || itemsPerChunk <= 0) {
+      console.error(`ERROR: Invalid ITEMS_PER_CHUNK: ${itemsPerChunkStr}`);
+      exitCode = 1;
+      return;
+    }
 
-  // Run chunking operation based on source type (API or S3)
-  (async () => {
+    // Instantiate general chunker params object to pass to either chunking class.
+    const chunkFromParams: ChunkFromParams = { 
+      chunksBucket, region, itemsPerChunk, personIdField, dryRun
+    };
+
+    // Run chunking operation based on source type (API or S3)
     const config = await getConfig();
     const chunker = await getChunkerInstance(config);
 
     if(!chunker) {
       console.error('ERROR: Insufficient task parameters. Must provide either API config or S3 input parameters via SQS message or environment variables.');
-      process.exit(1);
+      exitCode = 1;
+      return;
+    }
+
+    if(chunker.noMessagesFromQueue) {
+      console.log('No messages in queue - exiting');
+      exitCode = 0;
+      return;
     }
 
     const noHistoricalData = !await sharedDeltaStorageFileExists(chunksBucket, region);
@@ -348,7 +365,20 @@ async function main() {
     }
 
     await chunker.runChunking(chunkFromParams);
-  })();
+  }
+  catch (error) {
+    console.error('Error in chunking process:', error);
+    exitCode = 1;
+  }
+  finally {
+    timer.stop();
+    if(exitCode === 0) {
+      timer.logElapsed('\n✓ Chunker process completed successfully');
+    } else {
+      timer.logElapsed('\n✗ Chunker process failed');
+    }
+    process.exit(exitCode);
+  }
 }
 
 // Run if executed directly

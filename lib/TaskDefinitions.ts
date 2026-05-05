@@ -5,7 +5,7 @@ import { ChunkerTaskDefinition } from './services/chunker/ChunkerTaskDefinition'
 import { MergerTaskDefinition } from './services/merger/MergerTaskDefinition';
 import { ProcessorTaskDefinition } from './services/processor/ProcessorTaskDefinition';
 import { HuronPersonSecrets } from './Secrets';
-import { Config } from 'integration-huron-person';
+import { Config, TargetPersonDeleteType } from 'integration-huron-person';
 import { S3Config as S3FolderConfig } from 'integration-core';
 
 export interface TaskDefinitionsProps {
@@ -83,7 +83,10 @@ export class TaskDefinitions extends Construct {
       logRetentionDays: ctx.ECS.mergerTaskDefinition.logRetentionDays,
       inputBucketName: ctx.S3.inputBucket,
       chunksBucketName: ctx.S3.chunksBucket,
+      dynamoDbTableName, // DynamoDB table for error tracking and statistics
+      huronPersonSecrets,
       sharedDeltaStorageDir,
+      personDeleteType: props.config?.dataTarget?.personDeleteType || TargetPersonDeleteType.SOFT,
       region: ctx.REGION,
       dryRun: ctx.DRY_RUN?.taskdef?.merger,
       tags,

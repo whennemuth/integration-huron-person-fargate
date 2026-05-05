@@ -38,21 +38,22 @@
  * ```
  */
 
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { Timer } from 'integration-core';
 import {
+  BasicCache,
   Config,
   ConfigManager,
   HuronPersonIntegration,
   S3DataSourceConfig,
-  BasicCache,
   TargetApiErrorEventProcessor
 } from 'integration-huron-person';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { getChunkMetadata } from '../src/merging/MergerSubscriber';
-import { NextChunk, QueueReader } from '../src/Queue';
 import type { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
-import { getLocalConfig } from '../src/Utils';
-import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/processing/ApiErrorTracking';
+import { getChunkMetadata } from '../src/merging/MergerSubscriber';
 import { getRetryStrategy } from '../src/processing/ApiErrorRetryStrategy';
+import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/processing/ApiErrorTracking';
+import { NextChunk, QueueReader } from '../src/Queue';
+import { getLocalConfig } from '../src/Utils';
 
 const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
@@ -294,6 +295,9 @@ export async function main(queueReader: QueueReader) {
   const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
   const staticMapUsage: StaticMapUsage | undefined = STATIC_MAP_USAGE ? JSON.parse(STATIC_MAP_USAGE) : undefined;
 
+  const timer = new Timer();
+  timer.start();
+
   console.log(`=== ${dryRun ? 'DRY RUN: ' : ''}Phase 2: Processor (using HuronPersonIntegration) ===\n`);
   console.log(`Chunks bucket: ${chunksBucket || 'from SQS messages'}`);
   console.log(`Chunk key: ${chunkKey || 'from SQS messages'}`);
@@ -482,6 +486,8 @@ export async function main(queueReader: QueueReader) {
         // Don't fail the entire process if statistics write fails
       }
     }
+    timer.stop();
+    timer.logElapsed('Total processing time');
   }
   
   // Exit after finally block completes
