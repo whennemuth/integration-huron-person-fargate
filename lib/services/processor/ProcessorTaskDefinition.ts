@@ -6,7 +6,6 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { IContext } from '../../../context/IContext';
 import { HuronPersonSecrets } from '../../Secrets';
-import { Config } from 'integration-huron-person';
 
 export interface ProcessorTaskDefinitionProps {
   repository: IRepository;
