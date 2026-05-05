@@ -29,3 +29,6 @@ test-data/*
 # exclude scrap files
 scrap/*
 HuronIRB*.json
+
+# Cache files
+*-cache.json
