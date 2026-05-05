@@ -59,8 +59,11 @@ export class ProcessorStatisticsTable extends Construct {
       },
       billingMode: BillingMode.PAY_PER_REQUEST, // No capacity planning needed
       encryption: TableEncryption.AWS_MANAGED, // Encrypt at rest
-      pointInTimeRecovery: true, // Enable backup
-      removalPolicy: RemovalPolicy.DESTROY, // For now, delete table when stack is destroyed
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true, // Enable PITR for backup and restore
+        recoveryPeriodInDays: 35, // Retain PITR data for 35 days (max allowed)
+      },
+      removalPolicy: RemovalPolicy.DESTROY, // For now, delete table when stack is destroyed (change to RETAIN for production)
     });
 
     // GSI for querying errors by type across all integration runs
