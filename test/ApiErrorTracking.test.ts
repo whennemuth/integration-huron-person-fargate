@@ -198,7 +198,7 @@ describe('AbstractErrorByStatus', () => {
 });
 
 describe('AnonymousEvent', () => {
-  it('should handle any error without status matching', () => {
+  it('should match any status code (statusCode=-1 means match all)', () => {
     const error = {
       response: {
         status: 418, // I'm a teapot
@@ -212,14 +212,79 @@ describe('AnonymousEvent', () => {
     };
     const event = new AnonymousEvent(error);
     
-    // AnonymousEvent uses -1 as status code, so status match will fail
-    expect(event.isStatusMatch()).toBe(false);
+    // AnonymousEvent uses -1 as status code, which means "match any status"
+    expect(event.isStatusMatch()).toBe(true);
     
-    // getMessage() returns undefined because status doesn't match
-    expect(event.getMessage()).toBeUndefined();
+    // Should extract message from any error
+    expect(event.getMessage()).toBe('Cannot brew coffee');
     
-    // But we can verify the event was created
     expect(event).toBeInstanceOf(AnonymousEvent);
+  });
+
+  it('should match 404 errors', () => {
+    const error = {
+      response: {
+        status: 404,
+        statusText: 'Not Found',
+        data: {
+          errors: [
+            { status: 404, internalErrorMessage: 'Resource not found', incidentId: 'INC-404' },
+          ],
+        },
+      },
+    };
+    const event = new AnonymousEvent(error);
+    
+    expect(event.isStatusMatch()).toBe(true);
+    expect(event.getMessage()).toBe('Resource not found');
+    expect(event.getIncidentId()).toBe('INC-404');
+  });
+
+  it('should match 500 errors', () => {
+    const error = {
+      response: {
+        status: 500,
+        data: {
+          errors: [
+            { status: 500, internalErrorMessage: 'Internal server error' },
+          ],
+        },
+      },
+    };
+    const event = new AnonymousEvent(error);
+    
+    expect(event.isStatusMatch()).toBe(true);
+    expect(event.getMessage()).toBe('Internal server error');
+  });
+
+  it('should match 429 throttling errors', () => {
+    const error = {
+      response: {
+        status: 429,
+        data: {
+          errors: [
+            { status: 429, internalErrorMessage: 'Rate limit exceeded', incidentId: 'INC-THROTTLE' },
+          ],
+        },
+      },
+    };
+    const event = new AnonymousEvent(error);
+    
+    expect(event.isStatusMatch()).toBe(true);
+    expect(event.getMessage()).toBe('Rate limit exceeded');
+    expect(event.getIncidentId()).toBe('INC-THROTTLE');
+  });
+
+  it('should return false for missing or invalid status', () => {
+    const error = {
+      response: {
+        data: {},
+      },
+    };
+    const event = new AnonymousEvent(error);
+    
+    expect(event.isStatusMatch()).toBe(false);
+    expect(event.getMessage()).toBeUndefined();
   });
 });
 
@@ -315,15 +380,18 @@ describe('LoggingTargetApiErrorProcessor', () => {
 
     await processor.process(error, details);
 
+    // LoggingTargetApiErrorProcessor logs a JSON string, not an object
     expect(console.error).toHaveBeenCalledWith(
       'API Error Event:',
-      expect.objectContaining({
-        details: expect.objectContaining({
-          hrn: 'HRN123',
-          sourceIdentifier: 'SRC456',
-          message: 'Failed to update person',
-        }),
-      })
+      expect.stringContaining('HRN123')
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      'API Error Event:',
+      expect.stringContaining('SRC456')
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      'API Error Event:',
+      expect.stringContaining('Failed to update person')
     );
   });
 
@@ -336,9 +404,10 @@ describe('LoggingTargetApiErrorProcessor', () => {
 
     await processor.process(error);
 
+    // LoggingTargetApiErrorProcessor logs a JSON string
     expect(console.error).toHaveBeenCalledWith(
       'API Error Event:',
-      expect.any(Object)
+      expect.stringContaining('Not Found')
     );
   });
 });

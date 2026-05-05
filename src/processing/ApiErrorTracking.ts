@@ -86,6 +86,10 @@ export abstract class AbstractErrorByStatus {
   }
 
   protected matchesStatus = (status:any): boolean => {
+    // Special case: -1 means match any status code (used by AnonymousEvent)
+    if (this.statusCode === -1) {
+      return !!status; // Match any valid status
+    }
     return status && (status === this.statusCode || status === String(this.statusCode));
   }
 
@@ -163,11 +167,11 @@ export class LoggingTargetApiErrorProcessor implements TargetApiErrorEventProces
     }
     const anonymousEvent = new AnonymousEvent(error);
     const { object: { hrn, sourceIdentifier} = {}, message} = details || {};
-    console.error('API Error Event:', {
+    console.error('API Error Event:', JSON.stringify({
       message: anonymousEvent.getMessage() || error?.message || 'Unknown error',
       incidentId: anonymousEvent.getIncidentId(),
       details: { hrn, sourceIdentifier, message },
-    });
+    }));
   }
 }
 
