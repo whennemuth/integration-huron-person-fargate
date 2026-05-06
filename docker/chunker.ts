@@ -50,10 +50,13 @@ import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
 import { S3StorageAdapter } from '../src/storage/S3StorageAdapter';
 import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
+import { HuronPersonCache } from '../src/PersonCache';
 
 export type IChunkFromSource = {
   runChunking: (params: ChunkFromParams) => Promise<void>
   noMessagesFromQueue?: boolean
+  getChunkBasePath: () => string
+  getBulkResetFlag?: () => boolean  // Optional getter for bulkReset flag from task parameters
 }
 
 export type ChunkFromParams = {
@@ -226,6 +229,7 @@ const getChunkerInstance = async (config: Config): Promise<IChunkFromSource | un
       return new class implements IChunkFromSource {
         runChunking = async (params: ChunkFromParams) => { return; }
         noMessagesFromQueue = true
+        getChunkBasePath = () => ''
       }();
     }
     
@@ -342,26 +346,53 @@ async function main() {
       chunksBucket, region, itemsPerChunk, personIdField, dryRun
     };
 
-    // Run chunking operation based on source type (API or S3)
+    // Get chunking operation instance based on source type (API or S3)
     const config = await getConfig();
     const chunker = await getChunkerInstance(config);
 
+    // Bail out if there is some kind of unexpected lapse in configuration or message parameters that leaves us without a clear source of person data to chunk from.
     if(!chunker) {
       console.error('ERROR: Insufficient task parameters. Must provide either API config or S3 input parameters via SQS message or environment variables.');
       exitCode = 1;
       return;
     }
 
+    // Bail out if there are no messages in the queue (this likely means the service is still scaling down after processing the last message and deleting it from the queue, and we should just exit the task)
     if(chunker.noMessagesFromQueue) {
       console.log('No messages in queue - exiting');
       exitCode = 0;
       return;
     }
 
-    const noHistoricalData = !await sharedDeltaStorageFileExists(chunksBucket, region);
-    if(noHistoricalData) {
-      // Set/override the bulk reset flag in the chunker instance TaskParameters to true
+    // Check if shared delta storage file exists in S3 to determine if we have a baseline for doing 
+    // lookups during chunk processing, or if we need to set the bulkReset flag to true to force lookups 
+    // for every record.
+    // Priority: SQS message bulkReset > No historical data check
+    const hasHistoricalData = await sharedDeltaStorageFileExists(chunksBucket, region);
+    const bulkResetFromMessage = chunker.getBulkResetFlag?.() || false;
+    
+    if (bulkResetFromMessage) {
+      console.log('✓ bulkReset=true from SQS message - will create person cache for lookups');
       chunkFromParams.bulkReset = true;
+    } else if (!hasHistoricalData) {
+      console.log('✓ No historical data found - setting bulkReset=true to force target system lookups');
+      chunkFromParams.bulkReset = true;
+    } else {
+      console.log('✓ Historical data exists and bulkReset not requested - using delta comparison');
+      chunkFromParams.bulkReset = false;
+    }
+
+    /**
+     * Writes the full population from the target API to an S3 file as a cache for lookup during chunk processing.
+     */
+    if(chunkFromParams.bulkReset) {
+      const config = await getConfig();
+      const { CACHE_FILE_NAME } = HuronPersonCache;
+      await new HuronPersonCache({ config }).setS3PopulationCache({ 
+        bucketName: chunksBucket, 
+        key: chunker.getChunkBasePath() + `/${CACHE_FILE_NAME}`, 
+        region: region! 
+      });
     }
 
     await chunker.runChunking(chunkFromParams);

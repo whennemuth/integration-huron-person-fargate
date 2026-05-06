@@ -53,6 +53,7 @@ export type TaskParameters = {
  */
 export class ChunkFromAPI implements IChunkFromSource {
   private taskParameters: TaskParameters;
+  private chunkBasePath: string;
 
   public static defaultPopulationType = SyncPopulation.PersonFull;
 
@@ -289,6 +290,21 @@ export class ChunkFromAPI implements IChunkFromSource {
     return key;
   }
 
+  public getChunkBasePath = (): string => {
+    if(!this.chunkBasePath) {
+      this.chunkBasePath = extractChunkBasePath(this.getSyntheticInputKey());
+    }
+    return this.chunkBasePath;
+  }
+
+  /**
+   * Get the bulkReset flag from task parameters.
+   * Returns true if bulkReset was specified in SQS message or environment, false otherwise.
+   */
+  public getBulkResetFlag = (): boolean => {
+    return this.taskParameters?.bulkReset || false;
+  }
+
   /**
    * Perform the fetch from the API endpoint and chunking operation.
    * @param params 
@@ -313,7 +329,7 @@ export class ChunkFromAPI implements IChunkFromSource {
     }
     
     // Extract chunk base path (creates: chunks/person-full/2026-04-09T15:28:18.703Z)
-    const chunkBasePath = extractChunkBasePath(this.getSyntheticInputKey());
+    const chunkBasePath = this.getChunkBasePath();
 
     console.log(`Chunks: s3://${chunksBucket}/${chunkBasePath}/`);
     console.log(`Region: ${region || 'default'}`);

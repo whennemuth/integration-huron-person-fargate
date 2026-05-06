@@ -45,6 +45,7 @@ export type TaskParameters = {
  */
 export class ChunkFromS3 implements IChunkFromSource {
   private taskParameters: TaskParameters;
+  private chunkBasePath: string;
 
   /**
    * On instantiation, attempt to read task parameters from environment variables 
@@ -89,6 +90,22 @@ export class ChunkFromS3 implements IChunkFromSource {
     }
     return !!inputBucket && !!inputKey;
   }
+
+  public getChunkBasePath = (): string => {
+    if(!this.chunkBasePath) {
+      const { inputKey } = this.taskParameters || {};
+      this.chunkBasePath = extractChunkBasePath(inputKey);
+    }
+    return this.chunkBasePath;
+  }
+
+  /**
+   * Get the bulkReset flag from task parameters.
+   * Returns true if bulkReset was specified in SQS message or environment, false otherwise.
+   */
+  public getBulkResetFlag = (): boolean => {
+    return this.taskParameters?.bulkReset || false;
+  }
   
   /**
    * Run chunking operation using BigJsonFile (S3 source)
@@ -109,7 +126,7 @@ export class ChunkFromS3 implements IChunkFromSource {
 
     // Extract chunk base path from input key
     // This uses the key path + ISO timestamp (if present) or filename without extension
-    const chunkBasePath = extractChunkBasePath(inputKey);
+    const chunkBasePath = this.getChunkBasePath();
     
     console.log(`Input: s3://${inputBucket}/${inputKey}`);
     console.log(`Chunks: s3://${chunksBucket}/${chunkBasePath}/`);
