@@ -585,6 +585,177 @@ describe('TrackingTargetApiErrorProcessor', () => {
       expect(stats.errorsByStatus[500]).toBe(2);
       expect(stats.errorsByStatus[404]).toBe(1);
     });
+
+    it('should extract Huron-specific message and incident ID for 400 errors', async () => {
+      const processor = new TrackingTargetApiErrorProcessor({
+        tableName: 'test-table',
+        integrationTimestamp: '2026-04-15T19:30:00.000Z',
+        logToConsole: false,
+      });
+
+      let errorEventItem: any;
+      dynamoMock.on(PutItemCommand).callsFake((input) => {
+        if (input.Item && input.Item.eventType && input.Item.eventType.S?.startsWith('ERROR:400')) {
+          errorEventItem = input.Item;
+        }
+        return {};
+      });
+
+      const error = {
+        response: {
+          status: 400,
+          statusText: 'Bad Request',
+          data: {
+            errors: [
+              {
+                status: 400,
+                internalErrorMessage: 'Validation failed: email field is required',
+                incidentId: 'INC-400-12345',
+              },
+            ],
+          },
+        },
+      };
+      const details: ErrorEventDetails = {
+        message: 'Huron creation error',
+        object: { hrn: 'HRN123', sourceIdentifier: 'U01234567' },
+      };
+
+      await processor.process(error, details);
+
+      // Give async DynamoDB write time to complete
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(errorEventItem).toBeDefined();
+      expect(errorEventItem.message.S).toBe('Huron creation error: Validation failed: email field is required');
+      expect(errorEventItem.incidentId.S).toBe('INC-400-12345');
+      expect(errorEventItem.statusCode.N).toBe('400');
+      expect(errorEventItem.isThrottled.BOOL).toBe(false);
+    });
+
+    it('should extract Huron-specific message for 500 errors', async () => {
+      const processor = new TrackingTargetApiErrorProcessor({
+        tableName: 'test-table',
+        integrationTimestamp: '2026-04-15T19:30:00.000Z',
+        logToConsole: false,
+      });
+
+      let errorEventItem: any;
+      dynamoMock.on(PutItemCommand).callsFake((input) => {
+        if (input.Item && input.Item.eventType && input.Item.eventType.S?.startsWith('ERROR:500')) {
+          errorEventItem = input.Item;
+        }
+        return {};
+      });
+
+      const error = {
+        response: {
+          status: 500,
+          statusText: 'Internal Server Error',
+          data: {
+            errors: [
+              {
+                status: 500,
+                internalErrorMessage: 'Database connection failed',
+                incidentId: 'INC-500-99999',
+              },
+            ],
+          },
+        },
+      };
+      const details: ErrorEventDetails = {
+        message: 'Huron update error',
+        object: { hrn: 'HRN456', sourceIdentifier: 'U09876543' },
+      };
+
+      await processor.process(error, details);
+
+      // Give async DynamoDB write time to complete
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(errorEventItem).toBeDefined();
+      expect(errorEventItem.message.S).toBe('Huron update error: Database connection failed');
+      expect(errorEventItem.incidentId.S).toBe('INC-500-99999');
+    });
+
+    it('should use generic message when Huron-specific message not available', async () => {
+      const processor = new TrackingTargetApiErrorProcessor({
+        tableName: 'test-table',
+        integrationTimestamp: '2026-04-15T19:30:00.000Z',
+        logToConsole: false,
+      });
+
+      let errorEventItem: any;
+      dynamoMock.on(PutItemCommand).callsFake((input) => {
+        if (input.Item && input.Item.eventType && input.Item.eventType.S?.startsWith('ERROR:404')) {
+          errorEventItem = input.Item;
+        }
+        return {};
+      });
+
+      const error = {
+        response: {
+          status: 404,
+          statusText: 'Not Found',
+          data: {}, // No errors array, so no Huron-specific message
+        },
+      };
+      const details: ErrorEventDetails = {
+        message: 'Huron lookup error',
+        object: { hrn: 'HRN789', sourceIdentifier: 'U11111111' },
+      };
+
+      await processor.process(error, details);
+
+      // Give async DynamoDB write time to complete
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(errorEventItem).toBeDefined();
+      expect(errorEventItem.message.S).toBe('Huron lookup error');
+      expect(errorEventItem.incidentId).toBeUndefined(); // No incident ID in response
+    });
+
+    it('should extract Huron message even when no generic message provided', async () => {
+      const processor = new TrackingTargetApiErrorProcessor({
+        tableName: 'test-table',
+        integrationTimestamp: '2026-04-15T19:30:00.000Z',
+        logToConsole: false,
+      });
+
+      let errorEventItem: any;
+      dynamoMock.on(PutItemCommand).callsFake((input) => {
+        if (input.Item && input.Item.eventType && input.Item.eventType.S?.startsWith('ERROR:422')) {
+          errorEventItem = input.Item;
+        }
+        return {};
+      });
+
+      const error = {
+        response: {
+          status: 422,
+          statusText: 'Unprocessable Entity',
+          data: {
+            errors: [
+              {
+                status: 422,
+                internalErrorMessage: 'Invalid data format',
+                incidentId: 'INC-422-77777',
+              },
+            ],
+          },
+        },
+      };
+      // No details provided
+
+      await processor.process(error);
+
+      // Give async DynamoDB write time to complete
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(errorEventItem).toBeDefined();
+      expect(errorEventItem.message.S).toBe('Invalid data format');
+      expect(errorEventItem.incidentId.S).toBe('INC-422-77777');
+    });
   });
 
   describe('writeStatistics', () => {

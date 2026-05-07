@@ -228,9 +228,21 @@ export class TrackingTargetApiErrorProcessor implements TargetApiErrorEventProce
       this.throttleEvents.push({ timestamp, event: throttleEvent });
     }
     
-    // Extract message and incident ID using existing AbstractErrorByStatus methods
-    const message = details?.message || throttleEvent.getMessage() || error?.message || 'Unknown error';
-    const incidentId = throttleEvent.getIncidentId();
+    // Use AnonymousEvent to extract Huron-specific error details for ANY status code
+    const anonymousEvent = new AnonymousEvent(error);
+    const huronMessage = anonymousEvent.getMessage();
+    const incidentId = anonymousEvent.getIncidentId();
+    
+    // Combine generic message from caller with Huron-specific message if available
+    const genericMessage = details?.message;
+    let message: string;
+    if (genericMessage && huronMessage) {
+      // Combine both messages: "Huron creation error: Validation failed: email is required"
+      message = `${genericMessage}: ${huronMessage}`;
+    } else {
+      // Use whichever message is available
+      message = huronMessage || genericMessage || error?.message || 'Unknown error';
+    }
     
     // Update in-memory statistics
     this.totalErrors++;
