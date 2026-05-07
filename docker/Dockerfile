@@ -9,7 +9,7 @@
 # - Many reported CVEs in base images are not exploitable in this specific use case
 
 # Stage 1: Build stage
-FROM --platform=linux/arm64 node:current-alpine3.22 AS builder
+FROM --platform=linux/arm64 node:22-alpine3.22 AS builder
 
 # Update packages to patch vulnerabilities
 RUN apk upgrade --no-cache && \
@@ -33,7 +33,7 @@ COPY docker/*.ts ./docker/
 RUN npm run build
 
 # Stage 2: Production stage
-FROM --platform=linux/arm64 node:current-alpine3.22
+FROM --platform=linux/arm64 node:22-alpine3.22
 
 # Update packages to patch vulnerabilities
 RUN apk upgrade --no-cache
