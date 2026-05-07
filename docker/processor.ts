@@ -49,7 +49,8 @@ import {
   TargetApiErrorEventProcessor
 } from 'integration-huron-person';
 import type { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
-import { ChunkMetadata, getChunkMetadata } from '../src/merging/MergerSubscriber';
+import { ChunkMetadata } from '../src/merging/MergerSubscriber';
+import { MetadataManager } from '../src/chunking/Metadata';
 import { getRetryStrategy } from '../src/processing/ApiErrorRetryStrategy';
 import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/processing/ApiErrorTracking';
 import { NextChunk, QueueReader } from '../src/Queue';
@@ -180,43 +181,22 @@ export const readChunkMetadata = async (
   s3Key: string,
   region?: string
 ): Promise<Partial<ChunkMetadata>> => {
-  try {
-    // Derive chunk directory from chunk key
-    // "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0000.ndjson" -> "chunks/person-full/2026-03-03T19:58:41.277Z"
-    const chunkDirectory = s3Key.substring(0, s3Key.lastIndexOf('/'));
-    
-    console.log(`Reading metadata from chunk directory: ${chunkDirectory}`);
-    
-    // Reuse shared getChunkMetadata function from MergerSubscriber
-    const metadata = await getChunkMetadata(chunkDirectory, bucketName, region);
-    
-    if (metadata) {
-      console.log(`✓ Metadata loaded: ${JSON.stringify(metadata)}`);
-      
-      if(metadata.bulkReset === undefined) {
-        console.warn('⚠️ bulkReset value not found in metadata, defaulting to false');
-      }
-      if(metadata.chunkCount === undefined) {
-        console.warn('⚠️ chunkCount value not found in metadata, defaulting to 0');
-      }
-      if(metadata.totalRecords === undefined) {
-        console.warn('⚠️ totalRecords value not found in metadata, defaulting to 0');
-      }
-      if(metadata.deltaStoragePath === undefined) {
-        console.warn('⚠️ deltaStoragePath value not found in metadata, defaulting to empty string');
-      }
-      if(metadata.syncPopulation === undefined) {
-        console.warn(`⚠️ syncPopulation value not found in metadata, defaulting to ${SyncPopulation.PersonFull}`);
-      }
-      return metadata;
-    }
-    
-    return {};
-  } catch (error: any) {
-    console.warn(`Warning: Could not read metadata file: ${error.message}`);
-    console.warn('Falling back to environment variables for configuration');
-    return {};
-  }
+  return MetadataManager.readFromChunkKey(bucketName, s3Key, region);
+};
+
+/**
+ * Read flags file from S3
+ * @param bucketName - S3 bucket containing the flags
+ * @param s3Key - Chunk S3 key like "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0124.ndjson"
+ * @param region - AWS region
+ * @returns Flags object with bulkReset and syncPopulation
+ */
+export const readFlagInfo = async (
+  bucketName: string,
+  s3Key: string,
+  region?: string
+): Promise<Partial<import('../src/chunking/Metadata').Flags>> => {
+  return MetadataManager.readFlagsFromChunkKey(bucketName, s3Key, region);
 };
 
 export const validateChunk = (chunk: NextChunk | undefined) => {
@@ -350,12 +330,16 @@ export async function main(queueReader: QueueReader) {
   // Validate required information
   validateChunk(nextChunk);
 
-  // Read chunk metadata to get per-sync configuration (bulkReset, etc.)
-  const metadata = await readChunkMetadata(bucketName!, s3Key!, region);
+  // Read flags file to get per-sync configuration (bulkReset, syncPopulation)
+  const flags = await readFlagInfo(bucketName!, s3Key!, region);
   
-  // Use bulkReset from metadata if available, otherwise fall back to environment variable
-  const bulkReset = metadata.bulkReset ?? (`${BULK_RESET}`.trim().toLowerCase() === 'true');
-  console.log(`Bulk Reset: ${bulkReset}${metadata.bulkReset !== undefined ? ' (from metadata)' : ' (from environment)'}`);
+  // Use bulkReset from flags if available, otherwise fall back to environment variable
+  const bulkReset = flags.bulkReset ?? (`${BULK_RESET}`.trim().toLowerCase() === 'true');
+  console.log(`Bulk Reset: ${bulkReset}${flags.bulkReset !== undefined ? ' (from flags file)' : ' (from environment)'}`);
+
+  // Get syncPopulation from flags if available, otherwise default to PersonFull
+  const syncPopulation = flags.syncPopulation ?? SyncPopulation.PersonFull;
+  console.log(`Sync Population: ${syncPopulation}${flags.syncPopulation !== undefined ? ' (from flags file)' : ' (defaulted)'}`);
 
   // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
   const chunkId = extractChunkId(s3Key!);
@@ -489,7 +473,7 @@ export async function main(queueReader: QueueReader) {
       errorEventProcessor: errorTracker, // Inject error tracker for tracking errors and throttling
       retryStrategy, // Inject retry strategy for handling transient API failures (429, 5xx, network errors)
       cleanupPreviousData,
-      ignoreRemovals: metadata.syncPopulation === SyncPopulation.PersonDelta // Ignore removals in delta computation since chunk processing is only a partial population and merger determines removals at the end of the full sync
+      ignoreRemovals: syncPopulation === SyncPopulation.PersonDelta // Ignore removals in delta computation since chunk processing is only a partial population and merger determines removals at the end of the full sync
     });
     
     /**

@@ -52,12 +52,15 @@ import { S3StorageAdapter } from '../src/storage/S3StorageAdapter';
 import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
 import { HuronPersonCache } from '../src/PersonCache';
 import { SyncPopulation } from './chunkTypes';
+import { MetadataManager } from '../src/merging/MergerSubscriber';
+import { WriteMetadataParams } from '../src/chunking/Metadata';
 
 export type IChunkFromSource = {
   runChunking: (params: ChunkFromParams) => Promise<void>
   noMessagesFromQueue?: boolean
-  getChunkBasePath: () => string
+  getChunkDirectory: () => string
   getBulkResetFlag?: () => boolean  // Optional getter for bulkReset flag from task parameters
+  getSyncPopulation?: () => SyncPopulation  // Optional getter for syncPopulation from task parameters
 }
 
 export type ChunkFromParams = {
@@ -138,57 +141,17 @@ export const grabMessageBodyFromQueue = async (): Promise<any> => {
 /**
  * Write metadata file for merger trigger detection
  */
-export async function writeMetadata(
-  chunksStorage: S3StorageAdapter,
-  chunksBucket: string,
-  chunkBasePath: string,
-  result: { chunkCount: number; totalRecords: number; chunkKeys: string[] },
-  itemsPerChunk: number,
-  source: string,
-  target: string | undefined,
-  dryRun: boolean,
-  bulkReset: boolean,
-  syncPopulation: SyncPopulation
-) {
-  // Write metadata file for merger trigger detection
-  // Path uses the chunk base path: s3://chunks-bucket/chunks/person-full/2026-03-03T19:58:41.277Z/_metadata.json
-  const metadataKey = `${chunkBasePath}/_metadata.json`;
+export async function writeChunkMetadata(params: WriteMetadataParams) {
   
-  // Derive delta storage path from chunk base path
-  // Example: "chunks/person-full/2026-03-03T19:58:41.277Z" -> "deltas/person-full/2026-03-03T19:58:41.277Z"
-  const deltaStoragePath = chunkBasePath.replace(/^chunks\//, 'deltas/');
-  
-  const metadata: any = {
-    chunkCount: result.chunkCount,
-    totalRecords: result.totalRecords,
-    itemsPerChunk,
-    source,
-    chunkDirectory: chunkBasePath,
-    deltaStoragePath,
-    bulkReset,
-    createdAt: new Date().toISOString(),
-    chunkKeys: result.chunkKeys,
-    syncPopulation
-  };
+  await MetadataManager.write(params);
 
-  // Add target if provided
-  if (target) {
-    metadata.target = target;
-  }
+  const { chunkCount, totalRecords, chunkKeys, bucketName } = params;
 
-  const metadataLog = `s3://${chunksBucket}/${metadataKey}: ${JSON.stringify(metadata)}`;
-  if (!dryRun) {
-    await chunksStorage.writeFile(metadataKey, JSON.stringify(metadata, null, 2), 'application/json');
-    console.log(`\n✓ Metadata written: ${metadataLog}`);
-  } else {
-    console.log(`[DRY RUN] Would write metadata to: ${metadataLog}`);
-  }
-
-  // Log results
+  // Log summary
   console.log('\n✓ Chunking completed successfully');
-  console.log(`Created ${result.chunkCount} chunks with ${result.totalRecords} person records`);
+  console.log(`Created ${chunkCount} chunks with ${totalRecords} person records`);
   console.log(`\nChunk files:`);
-  result.chunkKeys.forEach(key => console.log(`  - s3://${chunksBucket}/${key}`));
+  chunkKeys.forEach(key => console.log(`  - s3://${bucketName}/${key}`));
 }
 
 /**
@@ -233,7 +196,8 @@ const getChunkerInstance = async (config: Config): Promise<IChunkFromSource | un
       return new class implements IChunkFromSource {
         runChunking = async (params: ChunkFromParams) => { return; }
         noMessagesFromQueue = true
-        getChunkBasePath = () => ''
+        getChunkDirectory = () => ''
+        getSyncPopulation = () => SyncPopulation.PersonFull
       }();
     }
     
@@ -386,6 +350,21 @@ async function main() {
       chunkFromParams.bulkReset = false;
     }
 
+    // Get syncPopulation from chunker
+    const syncPopulation = chunker.getSyncPopulation?.() || SyncPopulation.PersonFull;
+    console.log(`Sync population type: ${syncPopulation}`);
+
+    // Write flags file BEFORE chunking starts so processor tasks can read it immediately
+    const { MetadataManager: FlagsManager } = await import('../src/chunking/Metadata.js');
+    await FlagsManager.writeFlags({
+      bucketName: chunksBucket,
+      chunkDirectory: chunker.getChunkDirectory(),
+      bulkReset: chunkFromParams.bulkReset,
+      syncPopulation,
+      dryRun: dryRun === 'true',
+      region
+    });
+
     /**
      * Writes the full population from the target API to an S3 file as a cache for lookup during chunk processing.
      */
@@ -394,7 +373,7 @@ async function main() {
       const { CACHE_FILE_NAME } = HuronPersonCache;
       await new HuronPersonCache({ config }).setS3PopulationCache({ 
         bucketName: chunksBucket, 
-        key: chunker.getChunkBasePath() + `/${CACHE_FILE_NAME}`, 
+        key: chunker.getChunkDirectory() + `/${CACHE_FILE_NAME}`, 
         region: region! 
       });
     }

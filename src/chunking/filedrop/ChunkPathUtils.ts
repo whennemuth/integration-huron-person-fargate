@@ -26,7 +26,7 @@ export const ISO_TIMESTAMP_PATTERN = /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3
  * @param inputKey - The S3 key of the input file
  * @returns The chunk directory path with 'chunks/' prefix
  */
-export function extractChunkBasePath(inputKey: string): string {
+export function extractChunkDirectory(inputKey: string): string {
   const lastSlashIndex = inputKey.lastIndexOf('/');
   const directory = lastSlashIndex >= 0 ? inputKey.substring(0, lastSlashIndex) : '';
   const filename = lastSlashIndex >= 0 ? inputKey.substring(lastSlashIndex + 1) : inputKey;

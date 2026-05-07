@@ -41,7 +41,7 @@ import { DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOu
 import { FieldSet, Timer } from 'integration-core';
 import { FieldDefinitions, HashMapMerger } from 'integration-huron-person';
 import { objectExistsInS3 } from '../src/Utils';
-import { extractChunkBasePath } from '../src/chunking/filedrop/ChunkPathUtils';
+import { extractChunkDirectory } from '../src/chunking/filedrop/ChunkPathUtils';
 import { DeferredDeleteHandler } from '../src/merging/DeferredDeleteHandler';
 import { MergeEngine } from '../src/merging/MergeEngine';
 
@@ -121,7 +121,7 @@ async function getTaskParameters(): Promise<TaskParameters | null> {
     console.log('Running in local context - reading task parameters from environment variables');
     return {
       chunksBucket: CHUNKS_BUCKET,
-      chunkDirectory: CHUNK_DIRECTORY || (INPUT_KEY ? extractChunkBasePath(INPUT_KEY) : null),
+      chunkDirectory: CHUNK_DIRECTORY || (INPUT_KEY ? extractChunkDirectory(INPUT_KEY) : null),
     };
   }
 

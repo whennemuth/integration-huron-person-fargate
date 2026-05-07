@@ -1,20 +1,9 @@
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { S3Client, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
-import { SyncPopulation } from '../../docker/chunkTypes';
+import { ChunkMetadata, MetadataManager } from '../chunking/Metadata';
 
-export interface ChunkMetadata {
-  chunkCount: number;
-  totalRecords: number;
-  itemsPerChunk: number;
-  sourceFile: string;
-  chunkDirectory: string;
-  deltaStoragePath: string;
-  bulkReset?: boolean;
-  syncPopulation?: SyncPopulation;
-  createdAt: string;
-  chunkKeys: string[];
-  [key: string]: any; // Allow additional fields like 'source' and 'target'
-}
+// Re-export ChunkMetadata and MetadataManager for backward compatibility
+export { ChunkMetadata, MetadataManager } from '../chunking/Metadata';
 
 const {
   MERGER_QUEUE_URL,
@@ -147,35 +136,25 @@ export async function getChunkMetadata(
     return null;
   }
 
-  const metadataKey = `${chunkDirectory}/_metadata.json`;
-  const client = new S3Client({ region: region || process.env.REGION });
+  const metadata = await MetadataManager.read({
+    bucketName: bucket,
+    chunkDirectory,
+    region: region || process.env.REGION
+  });
 
-  try {
-    const response = await client.send(
-      new GetObjectCommand({
-        Bucket: bucket,
-        Key: metadataKey,
-      })
-    );
-
-    const body = await response.Body?.transformToString();
-    if (!body) {
-      console.log(`No metadata file found at s3://${bucket}/${metadataKey}`);
-      return null;
-    }
-
-    const metadata = JSON.parse(body) as ChunkMetadata;
-    console.log(`Metadata found: ${metadata.chunkCount} chunks expected`);
-    console.log(`Delta storage path from metadata: ${metadata.deltaStoragePath}`);
-    return metadata;
-  } catch (error: any) {
-    if (error.name === 'NoSuchKey') {
-      console.log(`No metadata file found (no active chunking in progress)`);
-      return null;
-    }
-    console.error(`Error reading metadata: ${error.message}`);
+  if (Object.keys(metadata).length === 0) {
     return null;
   }
+
+  // Log additional info specific to merger context
+  if (metadata.chunkCount) {
+    console.log(`Metadata found: ${metadata.chunkCount} chunks expected`);
+  }
+  if (metadata.deltaStoragePath) {
+    console.log(`Delta storage path from metadata: ${metadata.deltaStoragePath}`);
+  }
+
+  return metadata as ChunkMetadata;
 }
 
 /**

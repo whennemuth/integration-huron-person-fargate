@@ -9,7 +9,7 @@ import {
 } from 'integration-huron-person';
 import { IPersonArrayWrapper, PersonArrayWrapper } from "../PersonArrayWrapper";
 import { FileSystemStorageAdapter, IStorageAdapter, S3StorageAdapter } from "../../storage";
-import { extractChunkBasePath } from '../filedrop/ChunkPathUtils';
+import { extractChunkDirectory } from '../filedrop/ChunkPathUtils';
 import { getLocalConfig } from '../../Utils';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 
@@ -388,7 +388,7 @@ if (require.main === module) {
     const syntheticInputKey = `${syncType}/${timestamp}.json`;
     
     // Extract chunk base path (creates: chunks/person-full/2026-04-10T15:28:18.703Z)
-    const clientId = extractChunkBasePath(syntheticInputKey);
+    const clientId = extractChunkDirectory(syntheticInputKey);
 
     switch (MODE) {
       case 'filesystem':

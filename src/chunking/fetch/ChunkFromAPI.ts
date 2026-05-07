@@ -1,11 +1,12 @@
 import { Config, ConfigManager, DataSourceConfig } from "integration-huron-person";
 import { SyncPopulation } from "../../../docker/chunkTypes";
-import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeMetadata } from "../../../docker/chunker";
+import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeChunkMetadata } from "../../../docker/chunker";
 import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
-import { extractChunkBasePath } from "../filedrop/ChunkPathUtils";
+import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig } from "./BigJsonFetch";
+import { WriteMetadataParams } from "../Metadata";
 
 export type TaskParameters = {
   baseUrl: string,
@@ -53,7 +54,7 @@ export type TaskParameters = {
  */
 export class ChunkFromAPI implements IChunkFromSource {
   private taskParameters: TaskParameters;
-  private chunkBasePath: string;
+  private chunkDirectory: string;
 
   public static defaultPopulationType = SyncPopulation.PersonFull;
 
@@ -290,11 +291,11 @@ export class ChunkFromAPI implements IChunkFromSource {
     return key;
   }
 
-  public getChunkBasePath = (): string => {
-    if(!this.chunkBasePath) {
-      this.chunkBasePath = extractChunkBasePath(this.getSyntheticInputKey());
+  public getChunkDirectory = (): string => {
+    if(!this.chunkDirectory) {
+      this.chunkDirectory = extractChunkDirectory(this.getSyntheticInputKey());
     }
-    return this.chunkBasePath;
+    return this.chunkDirectory;
   }
 
   /**
@@ -303,6 +304,14 @@ export class ChunkFromAPI implements IChunkFromSource {
    */
   public getBulkResetFlag = (): boolean => {
     return this.taskParameters?.bulkReset || false;
+  }
+
+  /**
+   * Get the syncPopulation value from task parameters.
+   * Returns the population type (PersonFull or PersonDelta).
+   */
+  public getSyncPopulation = (): SyncPopulation => {
+    return (this.taskParameters?.populationType as SyncPopulation) || ChunkFromAPI.defaultPopulationType;
   }
 
   /**
@@ -329,9 +338,9 @@ export class ChunkFromAPI implements IChunkFromSource {
     }
     
     // Extract chunk base path (creates: chunks/person-full/2026-04-09T15:28:18.703Z)
-    const chunkBasePath = this.getChunkBasePath();
+    const chunkDirectory = this.getChunkDirectory();
 
-    console.log(`Chunks: s3://${chunksBucket}/${chunkBasePath}/`);
+    console.log(`Chunks: s3://${chunksBucket}/${chunkDirectory}/`);
     console.log(`Region: ${region || 'default'}`);
     console.log(`Items per chunk: ${itemsPerChunk}`);
     console.log(`Person ID field: ${personIdField}`);
@@ -349,7 +358,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         itemsPerChunk,
         config: this.config,
         outputStorage: chunksStorage,
-        clientId: chunkBasePath, // Derived from synthetic input key with timestamp
+        clientId: chunkDirectory, // Derived from synthetic input key with timestamp
         personIdField,
         personArrayWrapper,
         sourcePath: undefined, // Not used for API source, as the wrapper will detect the person array path from the API response stream directly
@@ -378,18 +387,21 @@ export class ChunkFromAPI implements IChunkFromSource {
       }
 
       // Write metadata and log results
-      await writeMetadata(
-        chunksStorage,
-        chunksBucket,
-        chunkBasePath,
-        result,
+      await writeChunkMetadata({
+        storage: chunksStorage,
+        bucketName: chunksBucket,
+        chunkDirectory,
+        chunkCount: result.chunkCount,
+        totalRecords: result.totalRecords,
         itemsPerChunk,
-        sourceUrl,
-        targetUrl,
-        fetchConfig.dryRun || false,
+        source: sourceUrl,
+        target: targetUrl,
+        dryRun: fetchConfig.dryRun || false,
         bulkReset,
-        this.taskParameters.populationType as SyncPopulation
-      );
+        syncPopulation: this.taskParameters.populationType as SyncPopulation,
+        region,
+        chunkKeys: result.chunkKeys
+      } satisfies WriteMetadataParams);
 
       // Exit with success
       process.exit(0);
