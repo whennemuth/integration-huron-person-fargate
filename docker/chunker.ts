@@ -51,6 +51,7 @@ import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
 import { S3StorageAdapter } from '../src/storage/S3StorageAdapter';
 import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
 import { HuronPersonCache } from '../src/PersonCache';
+import { SyncPopulation } from './chunkTypes';
 
 export type IChunkFromSource = {
   runChunking: (params: ChunkFromParams) => Promise<void>
@@ -146,7 +147,8 @@ export async function writeMetadata(
   source: string,
   target: string | undefined,
   dryRun: boolean,
-  bulkReset: boolean
+  bulkReset: boolean,
+  syncPopulation: SyncPopulation
 ) {
   // Write metadata file for merger trigger detection
   // Path uses the chunk base path: s3://chunks-bucket/chunks/person-full/2026-03-03T19:58:41.277Z/_metadata.json
@@ -165,7 +167,8 @@ export async function writeMetadata(
     deltaStoragePath,
     bulkReset,
     createdAt: new Date().toISOString(),
-    chunkKeys: result.chunkKeys
+    chunkKeys: result.chunkKeys,
+    syncPopulation
   };
 
   // Add target if provided
@@ -173,11 +176,12 @@ export async function writeMetadata(
     metadata.target = target;
   }
 
+  const metadataLog = `s3://${chunksBucket}/${metadataKey}: ${JSON.stringify(metadata)}`;
   if (!dryRun) {
     await chunksStorage.writeFile(metadataKey, JSON.stringify(metadata, null, 2), 'application/json');
-    console.log(`\n✓ Metadata written: s3://${chunksBucket}/${metadataKey}`);
+    console.log(`\n✓ Metadata written: ${metadataLog}`);
   } else {
-    console.log(`[DRY RUN] Would write metadata to: s3://${chunksBucket}/${metadataKey}`);
+    console.log(`[DRY RUN] Would write metadata to: ${metadataLog}`);
   }
 
   // Log results

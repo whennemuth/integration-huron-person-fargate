@@ -49,12 +49,13 @@ import {
   TargetApiErrorEventProcessor
 } from 'integration-huron-person';
 import type { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
-import { getChunkMetadata } from '../src/merging/MergerSubscriber';
+import { ChunkMetadata, getChunkMetadata } from '../src/merging/MergerSubscriber';
 import { getRetryStrategy } from '../src/processing/ApiErrorRetryStrategy';
 import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/processing/ApiErrorTracking';
 import { NextChunk, QueueReader } from '../src/Queue';
 import { getLocalConfig } from '../src/Utils';
 import { HuronPersonCache } from '../src/PersonCache';
+import { SyncPopulation } from './chunkTypes';
 
 const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
@@ -178,7 +179,7 @@ export const readChunkMetadata = async (
   bucketName: string,
   s3Key: string,
   region?: string
-): Promise<{ bulkReset?: boolean; chunkCount?: number; totalRecords?: number; deltaStoragePath?: string; [key: string]: any }> => {
+): Promise<Partial<ChunkMetadata>> => {
   try {
     // Derive chunk directory from chunk key
     // "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0000.ndjson" -> "chunks/person-full/2026-03-03T19:58:41.277Z"
@@ -190,7 +191,23 @@ export const readChunkMetadata = async (
     const metadata = await getChunkMetadata(chunkDirectory, bucketName, region);
     
     if (metadata) {
-      console.log(`Metadata loaded: bulkReset=${metadata.bulkReset ?? 'not specified'}, chunkCount=${metadata.chunkCount}, totalRecords=${metadata.totalRecords}`);
+      console.log(`✓ Metadata loaded: ${JSON.stringify(metadata)}`);
+      
+      if(metadata.bulkReset === undefined) {
+        console.warn('⚠️ bulkReset value not found in metadata, defaulting to false');
+      }
+      if(metadata.chunkCount === undefined) {
+        console.warn('⚠️ chunkCount value not found in metadata, defaulting to 0');
+      }
+      if(metadata.totalRecords === undefined) {
+        console.warn('⚠️ totalRecords value not found in metadata, defaulting to 0');
+      }
+      if(metadata.deltaStoragePath === undefined) {
+        console.warn('⚠️ deltaStoragePath value not found in metadata, defaulting to empty string');
+      }
+      if(metadata.syncPopulation === undefined) {
+        console.warn(`⚠️ syncPopulation value not found in metadata, defaulting to ${SyncPopulation.PersonFull}`);
+      }
       return metadata;
     }
     
@@ -471,7 +488,8 @@ export async function main(queueReader: QueueReader) {
       lookupPersonInTargetSystemCache, 
       errorEventProcessor: errorTracker, // Inject error tracker for tracking errors and throttling
       retryStrategy, // Inject retry strategy for handling transient API failures (429, 5xx, network errors)
-      cleanupPreviousData
+      cleanupPreviousData,
+      ignoreRemovals: metadata.syncPopulation === SyncPopulation.PersonDelta // Ignore removals in delta computation since chunk processing is only a partial population and merger determines removals at the end of the full sync
     });
     
     /**

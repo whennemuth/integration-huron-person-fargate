@@ -3,11 +3,13 @@ import { BigJsonFile, BigJsonFileConfig } from "./BigJsonFile";
 import { extractChunkBasePath } from './ChunkPathUtils';
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeMetadata } from "../../../docker/chunker";
+import { SyncPopulation } from "../../../docker/chunkTypes";
 
 export type TaskParameters = {
   inputBucket: string,
   inputKey: string,
-  bulkReset: boolean
+  bulkReset: boolean,
+  populationType?: SyncPopulation
 }
 
 /**
@@ -46,6 +48,8 @@ export type TaskParameters = {
 export class ChunkFromS3 implements IChunkFromSource {
   private taskParameters: TaskParameters;
   private chunkBasePath: string;
+
+  public static defaultPopulationType = SyncPopulation.PersonFull;
 
   /**
    * On instantiation, attempt to read task parameters from environment variables 
@@ -118,11 +122,16 @@ export class ChunkFromS3 implements IChunkFromSource {
 
     const { chunksBucket, region, itemsPerChunk, personIdField, bulkReset: bulkResetOverride=false, dryRun } = params;
 
-    let { inputBucket, inputKey, bulkReset } = this.taskParameters!;
+    let { inputBucket, inputKey, bulkReset, populationType } = this.taskParameters!;
     if(bulkReset !== bulkResetOverride && bulkResetOverride === true) {
       console.warn(`Overriding bulkReset flag in task parameters from ${bulkReset} to ${bulkResetOverride} based on message parameters`);
     }
     bulkReset = bulkReset || bulkResetOverride; // Allow override of bulkReset flag from message parameters if needed
+    
+    if( ! populationType) {
+      console.warn(`Population type not specified either POPULATION_TYPE environment variable or message parameters, defaulting to ${ChunkFromS3.defaultPopulationType}`);
+      this.taskParameters.populationType = ChunkFromS3.defaultPopulationType;
+    }
 
     // Extract chunk base path from input key
     // This uses the key path + ISO timestamp (if present) or filename without extension
@@ -132,7 +141,9 @@ export class ChunkFromS3 implements IChunkFromSource {
     console.log(`Chunks: s3://${chunksBucket}/${chunkBasePath}/`);
     console.log(`Region: ${region || 'default'}`);
     console.log(`Items per chunk: ${itemsPerChunk}`);
-    console.log(`Person ID field: ${personIdField}\n`);
+    console.log(`Person ID field: ${personIdField}`);
+    console.log(`Population type: ${this.taskParameters.populationType}\n`);
+    console.log(`Final task parameters: ${JSON.stringify(this.taskParameters)}`);
 
     try {
       // Create storage adapters for input and output
@@ -170,7 +181,8 @@ export class ChunkFromS3 implements IChunkFromSource {
         sourceUrl,
         undefined, // No target for S3 source
         config.dryRun || false,
-        bulkReset
+        bulkReset,
+        this.taskParameters.populationType as SyncPopulation
       );
 
       // Exit with success

@@ -1,5 +1,6 @@
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { S3Client, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
+import { SyncPopulation } from '../../docker/chunkTypes';
 
 export interface ChunkMetadata {
   chunkCount: number;
@@ -9,8 +10,10 @@ export interface ChunkMetadata {
   chunkDirectory: string;
   deltaStoragePath: string;
   bulkReset?: boolean;
+  syncPopulation?: SyncPopulation;
   createdAt: string;
   chunkKeys: string[];
+  [key: string]: any; // Allow additional fields like 'source' and 'target'
 }
 
 const {

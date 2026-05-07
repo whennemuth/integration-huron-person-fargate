@@ -334,7 +334,8 @@ export class ChunkFromAPI implements IChunkFromSource {
     console.log(`Chunks: s3://${chunksBucket}/${chunkBasePath}/`);
     console.log(`Region: ${region || 'default'}`);
     console.log(`Items per chunk: ${itemsPerChunk}`);
-    console.log(`Person ID field: ${personIdField}\n`);
+    console.log(`Person ID field: ${personIdField}`);
+    console.log(`Population type: ${this.taskParameters.populationType}\n`);
     console.log(`Final task parameters: ${JSON.stringify(this.taskParameters)}`);
 
     try {
@@ -386,7 +387,8 @@ export class ChunkFromAPI implements IChunkFromSource {
         sourceUrl,
         targetUrl,
         fetchConfig.dryRun || false,
-        bulkReset
+        bulkReset,
+        this.taskParameters.populationType as SyncPopulation
       );
 
       // Exit with success
