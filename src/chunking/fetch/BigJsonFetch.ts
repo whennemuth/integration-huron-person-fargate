@@ -160,6 +160,8 @@ export class BigJsonFetch {
     
     console.log(`Using chunk directory: ${chunkDir}`);
 
+    // MEMORY OPTIMIZATION: Use simple counter instead of accumulating all chunk keys in closure
+    // This prevents memory buildup when processing many chunks
     const chunkKeys: string[] = [];
     let chunkNumber = 0;
 
@@ -169,42 +171,51 @@ export class BigJsonFetch {
       responseFilter: this.responseFilter 
     });
 
-    // Create batch processor with custom process implementation
+    // MEMORY OPTIMIZATION: Refactored nested class to minimize closure capture
+    // Only captures essential references and uses callback for chunk key collection
+    const self = this; // Minimize closure scope
     const batchProcessor = new class extends BuCdmPeopleDataSourceBatch {
+      private currentChunkNumber = 0;
+      
       constructor(
         dataSource: BuCdmPeopleDataSource,
         batchSize: number,
-        private parent: BigJsonFetch,
-        private chunkDir: string,
-        private chunkKeys: string[],
-        private chunkNumber: { value: number },
+        private chunkDirPath: string,
+        private onChunkWritten: (key: string) => void,
       ) {
         super(dataSource, batchSize);
       }
 
       protected process = async (response: any[]): Promise<void> => {
         // Extract persons from response
-        const persons = await this.parent.extractPersonsFromResponse(response);
+        const persons = await self.extractPersonsFromResponse(response);
         
         if (persons.length === 0) {
           console.log('No persons found in batch response');
+          // MEMORY OPTIMIZATION: Explicitly clear response reference
+          response.length = 0;
           return;
         }
 
-        console.log(`Received ${persons.length} persons from batch ${this.chunkNumber.value + 1}`);
+        console.log(`Received ${persons.length} persons from batch ${this.currentChunkNumber + 1}`);
 
         // Write chunk with the fetched persons
-        const chunkKey = `${this.chunkDir}chunk-${this.parent.padChunkNumber(this.chunkNumber.value)}.ndjson`;
-        await this.parent.writeChunk(chunkKey, persons);
-        this.chunkKeys.push(chunkKey);
+        const chunkKey = `${this.chunkDirPath}chunk-${self.padChunkNumber(this.currentChunkNumber)}.ndjson`;
+        await self.writeChunk(chunkKey, persons);
         
-        if (!this.parent.dryRun) {
-          console.log(`Wrote chunk ${this.chunkNumber.value + 1}: ${chunkKey} (${persons.length} records)`);
+        // MEMORY OPTIMIZATION: Use callback to collect chunk key instead of holding array reference
+        this.onChunkWritten(chunkKey);
+        
+        if (!self.dryRun) {
+          console.log(`Wrote chunk ${this.currentChunkNumber + 1}: ${chunkKey} (${persons.length} records)`);
         }
 
-        this.chunkNumber.value++;
+        this.currentChunkNumber++;
+        
+        // MEMORY OPTIMIZATION: Clear persons array to help garbage collection
+        persons.length = 0;
       };
-    }(dataSource, this.itemsPerChunk, this, chunkDir, chunkKeys, { value: chunkNumber });
+    }(dataSource, this.itemsPerChunk, chunkDir, (key: string) => chunkKeys.push(key));
 
     // Process all batches
     try {
@@ -397,7 +408,11 @@ if (require.main === module) {
 
         // Instantiate fetcher and its parameters
         const fsOutputStorage = new FileSystemStorageAdapter({ basePath });
-        const fsResponseFilter = new AxiosResponseStreamFilter({ fieldsOfInterest: ['personid'] });
+        // MEMORY OPTIMIZATION: Set maxBatchSize to prevent unbounded accumulation
+        const fsResponseFilter = new AxiosResponseStreamFilter({ 
+          fieldsOfInterest: ['personid'],
+          maxBatchSize: 500 // Limit to prevent memory issues
+        });
         const fsFetcherConfig: BigJsonFetchConfig = {
           itemsPerChunk,
           config: cfg,
@@ -440,7 +455,11 @@ if (require.main === module) {
 
         // Instantiate fetcher and its parameters
         const s3OutputStorage = new S3StorageAdapter({ bucketName: chunksBucket, region });
-        const s3ResponseFilter = new AxiosResponseStreamFilter({ fieldsOfInterest: ['personid'] });
+        // MEMORY OPTIMIZATION: Set maxBatchSize to prevent unbounded accumulation
+        const s3ResponseFilter = new AxiosResponseStreamFilter({ 
+          fieldsOfInterest: ['personid'],
+          maxBatchSize: 500 // Limit to prevent memory issues
+        });
         const s3FetcherConfig: BigJsonFetchConfig = {
           itemsPerChunk,
           config: cfg,

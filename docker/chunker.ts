@@ -48,12 +48,11 @@ import { Timer } from 'integration-core';
 import { Config, ConfigManager } from 'integration-huron-person';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
-import { S3StorageAdapter } from '../src/storage/S3StorageAdapter';
-import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
-import { HuronPersonCache } from '../src/PersonCache';
-import { SyncPopulation } from './chunkTypes';
-import { MetadataManager } from '../src/merging/MergerSubscriber';
 import { WriteMetadataParams } from '../src/chunking/Metadata';
+import { MetadataManager } from '../src/merging/MergerSubscriber';
+import { HuronPersonCache } from '../src/PersonCache';
+import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
+import { SyncPopulation } from './chunkTypes';
 
 export type IChunkFromSource = {
   runChunking: (params: ChunkFromParams) => Promise<void>

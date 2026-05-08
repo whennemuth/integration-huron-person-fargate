@@ -40,8 +40,8 @@ describe('HuronPersonCache', () => {
     id: `ID-${sourceIdentifier}`,
     firstName: 'Test',
     lastName: 'Person',
-    employer: { name: 'Test Employer' },
-    organization: { name: 'Test Org' }
+    employer: { hrn: 'hrn:hrs:orgs:test-employer', name: 'Test Employer' },
+    organization: { hrn: 'hrn:hrs:orgs:test-org', name: 'Test Org' }
   });
 
   beforeEach(() => {
