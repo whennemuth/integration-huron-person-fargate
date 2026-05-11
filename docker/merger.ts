@@ -44,6 +44,8 @@ import { objectExistsInS3 } from '../src/Utils';
 import { extractChunkDirectory } from '../src/chunking/filedrop/ChunkPathUtils';
 import { DeferredDeleteHandler } from '../src/merging/DeferredDeleteHandler';
 import { MergeEngine } from '../src/merging/MergeEngine';
+import { MetadataManager } from '../src/chunking/Metadata';
+import { SyncPopulation } from './chunkTypes';
 
 interface TaskParameters {
   chunksBucket: string;
@@ -257,24 +259,38 @@ async function main() {
         // After merge, compare consolidated (current source state) vs baseline (previous state)
         // to identify records truly removed from source and soft-delete them from target API
         if (DeferredDeleteHandler.isConfiguredForDeletes()) {
-          console.log(`\nStep 3.5: Processing deletions`);
-          try {
-            const deleteHandler = await DeferredDeleteHandler.getInstance({
-              region, bucketName, sourceKey, targetKey, primaryKeyFieldNames,
-            });
+          // First check if the population type for this sync is compatible with deletion processing (e.g., PersonDelta). We don't want to run deletion logic for sync types that aren't designed for it.
+          const flags = await MetadataManager.readFlags({ bucketName, chunkDirectory: chunkDir, region });
+          const { syncPopulation } = flags;
+          if(syncPopulation === SyncPopulation.PersonDelta) {
+            console.log(`  Sync population type is PersonDelta - Deletion handling does NOT apply.`);
+            // NOTE: Even if this check were not being carried out, the ignoreRemovals flag would have
+            // already been set to true in the MergerSubscriber when the chunking job was kicked off 
+            // for a PersonDelta sync, which would have prevented any deletions from being included 
+            // in the merged output via use of the appropriate DeltaStrategy decorator 
+            // (ie: src\delta-strategy\IgnoreRemovalsDeltaStrategy.ts). So this is really just an 
+            // additional safeguard to avoid accidentally running deletion logic for an incompatible sync type.
+          }
+          else {
+            console.log(`\nStep 3.5: Processing deletions`);
+            try {
+              const deleteHandler = await DeferredDeleteHandler.getInstance({
+                region, bucketName, sourceKey, targetKey, primaryKeyFieldNames,
+              });
 
-            const deletionResult = await deleteHandler!.processDeletes();
-            console.log(`  ${deletionResult.message}`);
-            if (deletionResult.totalProcessed > 0) {
-              console.log(`  Deleted: ${deletionResult.deletedCount} of ${deletionResult.totalProcessed}`);
-              if (deletionResult.failedCount > 0) {
-                console.warn(`  Failed: ${deletionResult.failedCount} deletions failed`);
+              const deletionResult = await deleteHandler!.processDeletes();
+              console.log(`  ${deletionResult.message}`);
+              if (deletionResult.totalProcessed > 0) {
+                console.log(`  Deleted: ${deletionResult.deletedCount} of ${deletionResult.totalProcessed}`);
+                if (deletionResult.failedCount > 0) {
+                  console.warn(`  Failed: ${deletionResult.failedCount} deletions failed`);
+                }
               }
+            } catch (deleteError: any) {
+              console.error(`  Failed to process deletions: ${deleteError.message}`);
+              // Don't fail the entire merge if deletions fail - log and continue
+              console.warn(`  Continuing with merge despite deletion failure`);
             }
-          } catch (deleteError: any) {
-            console.error(`  Failed to process deletions: ${deleteError.message}`);
-            // Don't fail the entire merge if deletions fail - log and continue
-            console.warn(`  Continuing with merge despite deletion failure`);
           }
         } else {
           console.log(`\nStep 3.5: Deletion handling disabled (skipping)`);

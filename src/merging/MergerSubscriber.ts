@@ -1,9 +1,6 @@
+import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import { S3Client, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
 import { ChunkMetadata, MetadataManager } from '../chunking/Metadata';
-
-// Re-export ChunkMetadata and MetadataManager for backward compatibility
-export { ChunkMetadata, MetadataManager } from '../chunking/Metadata';
 
 const {
   MERGER_QUEUE_URL,

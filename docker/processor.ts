@@ -49,8 +49,7 @@ import {
   TargetApiErrorEventProcessor
 } from 'integration-huron-person';
 import type { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
-import { ChunkMetadata } from '../src/merging/MergerSubscriber';
-import { MetadataManager } from '../src/chunking/Metadata';
+import { MetadataManager, ChunkMetadata, Flags } from '../src/chunking/Metadata';
 import { getRetryStrategy } from '../src/processing/ApiErrorRetryStrategy';
 import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/processing/ApiErrorTracking';
 import { NextChunk, QueueReader } from '../src/Queue';
@@ -195,7 +194,7 @@ export const readFlagInfo = async (
   bucketName: string,
   s3Key: string,
   region?: string
-): Promise<Partial<import('../src/chunking/Metadata').Flags>> => {
+): Promise<Partial<Flags>> => {
   return MetadataManager.readFlagsFromChunkKey(bucketName, s3Key, region);
 };
 

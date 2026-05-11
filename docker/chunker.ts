@@ -49,7 +49,7 @@ import { Config, ConfigManager } from 'integration-huron-person';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
 import { WriteMetadataParams } from '../src/chunking/Metadata';
-import { MetadataManager } from '../src/merging/MergerSubscriber';
+import { MetadataManager } from '../src/chunking/Metadata'
 import { HuronPersonCache } from '../src/PersonCache';
 import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
 import { SyncPopulation } from './chunkTypes';
@@ -354,8 +354,7 @@ async function main() {
     console.log(`Sync population type: ${syncPopulation}`);
 
     // Write flags file BEFORE chunking starts so processor tasks can read it immediately
-    const { MetadataManager: FlagsManager } = await import('../src/chunking/Metadata.js');
-    await FlagsManager.writeFlags({
+    await MetadataManager.writeFlags({
       bucketName: chunksBucket,
       chunkDirectory: chunker.getChunkDirectory(),
       bulkReset: chunkFromParams.bulkReset,
