@@ -160,8 +160,8 @@ export class BigJsonFetch {
     
     console.log(`Using chunk directory: ${chunkDir}`);
 
-    // MEMORY OPTIMIZATION: Use simple counter instead of accumulating all chunk keys in closure
-    // This prevents memory buildup when processing many chunks
+    // MEMORY OPTIMIZATION: ApiClientForApiKey now uses streaming to prevent response buffering.
+    // Keeping simple counter pattern as secondary defense against memory buildup.
     const chunkKeys: string[] = [];
     let chunkNumber = 0;
 
@@ -171,8 +171,8 @@ export class BigJsonFetch {
       responseFilter: this.responseFilter 
     });
 
-    // MEMORY OPTIMIZATION: Refactored nested class to minimize closure capture
-    // Only captures essential references and uses callback for chunk key collection
+    // MEMORY OPTIMIZATION: Refactored to minimize closure capture.
+    // Primary fix: ApiClientForApiKey uses streaming to prevent buffering responses in memory.
     const self = this; // Minimize closure scope
     const batchProcessor = new class extends BuCdmPeopleDataSourceBatch {
       private currentChunkNumber = 0;
@@ -192,7 +192,7 @@ export class BigJsonFetch {
         
         if (persons.length === 0) {
           console.log('No persons found in batch response');
-          // MEMORY OPTIMIZATION: Explicitly clear response reference
+          // MEMORY OPTIMIZATION (Secondary): Explicitly clear response reference
           response.length = 0;
           return;
         }
@@ -203,7 +203,7 @@ export class BigJsonFetch {
         const chunkKey = `${this.chunkDirPath}chunk-${self.padChunkNumber(this.currentChunkNumber)}.ndjson`;
         await self.writeChunk(chunkKey, persons);
         
-        // MEMORY OPTIMIZATION: Use callback to collect chunk key instead of holding array reference
+        // MEMORY OPTIMIZATION (Secondary): Use callback to collect chunk key
         this.onChunkWritten(chunkKey);
         
         if (!self.dryRun) {
@@ -212,7 +212,7 @@ export class BigJsonFetch {
 
         this.currentChunkNumber++;
         
-        // MEMORY OPTIMIZATION: Clear persons array to help garbage collection
+        // MEMORY OPTIMIZATION (Secondary): Clear persons array to help garbage collection
         persons.length = 0;
       };
     }(dataSource, this.itemsPerChunk, chunkDir, (key: string) => chunkKeys.push(key));
