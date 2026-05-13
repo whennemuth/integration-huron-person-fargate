@@ -1,4 +1,4 @@
-import { Config, ConfigManager, DataSourceConfig } from "integration-huron-person";
+import { Config, ConfigManager, DataSourceConfig, AxiosResponseStreamFilter, ResponseProcessor } from "integration-huron-person";
 import { SyncPopulation } from "../../../docker/chunkTypes";
 import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeChunkMetadata } from "../../../docker/chunker";
 import { getLocalConfig } from "../../Utils";
@@ -353,10 +353,29 @@ export class ChunkFromAPI implements IChunkFromSource {
       const chunksStorage = new S3StorageAdapter({ bucketName: chunksBucket, region });
       const personArrayWrapper = new PersonArrayWrapper(chunksStorage, personIdField);
 
+      // MEMORY OPTIMIZATION 3: Create response filter to force streaming mode
+      // This prevents ApiClientForApiKey from buffering entire API response in memory
+      let responseFilter: ResponseProcessor | undefined;
+      const people = this.config.dataSource.people;
+      const fieldsOfInterest = people && 'fieldsOfInterest' in people ? people.fieldsOfInterest : undefined;
+
+      if (fieldsOfInterest && fieldsOfInterest.length > 0) {
+        // Create stream filter to prevent buffering entire API response
+        // This forces responseType: 'stream' in ApiClientForApiKey and filters fields in-flight
+        responseFilter = new AxiosResponseStreamFilter({ 
+          fieldsOfInterest,
+          maxBatchSize: 500 // Limit to 500 objects per batch to prevent unbounded accumulation
+        });
+        console.log(`[MEMORY OPTIMIZATION] Created response filter with ${fieldsOfInterest.length} fields of interest`);
+      } else {
+        console.warn('[MEMORY OPTIMIZATION] WARNING: No fieldsOfInterest configured in dataSource.people - API will buffer entire response in memory! Configure fieldsOfInterest to prevent OOM errors.');
+      }
+
       // Configure fetcher
       const fetchConfig: BigJsonFetchConfig = {
         itemsPerChunk,
         config: this.config,
+        responseFilter, // MEMORY OPTIMIZATION 3: Enable streaming mode
         outputStorage: chunksStorage,
         clientId: chunkDirectory, // Derived from synthetic input key with timestamp
         personIdField,
