@@ -73,6 +73,19 @@ export interface SyncStatistics {
   sourceDescription: string;
 }
 
+/**
+ * Represents a statistics item as stored in DynamoDB.
+ * This is the complete structure written by writeStatistics() and queried by getStatistics().
+ */
+export interface StatisticsItem extends SyncStatistics {
+  integrationTimestamp: string; // PK
+  eventType: string; // SK (always "STATISTICS" for stats items)
+  errorType: string; // GSI PK (always "STATISTICS" for stats items)
+  totalErrors: number;
+  throttleCount: number;
+  errorsByStatus: Record<number, number>;
+}
+
 export abstract class AbstractErrorByStatus {
   protected status: any;
   protected statusText: string | undefined;
@@ -300,7 +313,7 @@ export class TrackingTargetApiErrorProcessor implements TargetApiErrorEventProce
       ...(incidentId && { incidentId }),
       isThrottled,
       ...(detailsObj && { detailsObj: JSON.stringify(detailsObj) }),
-    };
+    } satisfies StatisticsItem; // Type assertion for marshalling
 
     const command = new PutItemCommand({
       TableName: this.tableName,
@@ -324,7 +337,7 @@ export class TrackingTargetApiErrorProcessor implements TargetApiErrorEventProce
       totalErrors: this.totalErrors,
       throttleCount: this.getThrottlingCount(),
       errorsByStatus: Object.fromEntries(this.errorCounts),
-    };
+    } satisfies StatisticsItem; // Type assertion for marshalling
 
     const command = new PutItemCommand({
       TableName: this.tableName,

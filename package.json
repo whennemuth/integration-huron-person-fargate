@@ -58,6 +58,7 @@
     "@aws-sdk/client-s3": "^3.400.0",
     "@aws-sdk/client-sqs": "^3.1013.0",
     "@aws-sdk/client-ssm": "^3.1026.0",
+    "@aws-sdk/lib-dynamodb": "^3.1045.0",
     "@aws-sdk/util-dynamodb": "^3.400.0",
     "aws-cdk-lib": "2.215.0",
     "constructs": "^10.0.0",

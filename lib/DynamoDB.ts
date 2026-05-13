@@ -3,6 +3,11 @@ import { AttributeType, BillingMode, Table, TableEncryption } from 'aws-cdk-lib/
 import { Construct } from 'constructs';
 import { IContext } from '../context/IContext';
 
+export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-statistics`;
+export const DYNAMODB_PARTITION_KEY = 'integrationTimestamp';
+export const DYNAMODB_SECONDARY_PARTITION_KEY = 'errorType';
+export const DYNAMODB_SORT_KEY = 'eventType';
+export const DYNAMODB_GSI_INDEX_NAME = 'errorType-timestamp-index';
 export interface ProcessorStatisticsTableProps {
   context: IContext;
   tags?: { [key: string]: string };
@@ -48,13 +53,13 @@ export class ProcessorStatisticsTable extends Construct {
 
     // Create DynamoDB table with pay-per-request billing
     this.table = new Table(this, 'StatisticsTable', {
-      tableName: `${context.STACK_ID}-statistics`,
+      tableName: DYNAMODB_TABLE_NAME(context),
       partitionKey: {
-        name: 'integrationTimestamp',
+        name: DYNAMODB_PARTITION_KEY,
         type: AttributeType.STRING,
       },
       sortKey: {
-        name: 'eventType',
+        name: DYNAMODB_SORT_KEY,
         type: AttributeType.STRING,
       },
       billingMode: BillingMode.PAY_PER_REQUEST, // No capacity planning needed
@@ -71,11 +76,11 @@ export class ProcessorStatisticsTable extends Construct {
     this.table.addGlobalSecondaryIndex({
       indexName: 'errorType-timestamp-index',
       partitionKey: {
-        name: 'errorType',
+        name: DYNAMODB_SECONDARY_PARTITION_KEY,
         type: AttributeType.STRING,
       },
       sortKey: {
-        name: 'integrationTimestamp',
+        name: DYNAMODB_PARTITION_KEY,
         type: AttributeType.STRING,
       },
     });
