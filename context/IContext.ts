@@ -52,12 +52,14 @@ export interface IContext {
     chunkerTaskDefinition: {
       cpu: number;
       memoryLimitMiB: number;
+      memoryReservationMiB: number;
       logRetentionDays: number;
     };
     /** Processor task definition configuration */
     processorTaskDefinition: {
       cpu: number;
       memoryLimitMiB: number;
+      memoryReservationMiB: number;
       logRetentionDays: number;
       retries?: RetryStrategyConfig;
     };
@@ -65,6 +67,7 @@ export interface IContext {
     mergerTaskDefinition: {
       cpu: number;
       memoryLimitMiB: number;
+      memoryReservationMiB: number;
       logRetentionDays: number;
     };
     /** Processor service auto-scaling configuration */

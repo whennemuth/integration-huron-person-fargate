@@ -12,6 +12,7 @@ export interface ProcessorTaskDefinitionProps {
   imageTag?: string;
   cpu: number;
   memoryLimitMiB: number;
+  memoryReservationMiB: number;
   logRetentionDays: number;
   chunksBucketName: string;
   queueUrl: string;
@@ -36,7 +37,7 @@ export class ProcessorTaskDefinition extends Construct {
 
     const { 
       huronPersonSecrets: { secret, secretArn , secretName } = {}, logRetentionDays, 
-      memoryLimitMiB, cpu, region, queueUrl, dynamoDbTableName, chunksBucketName, 
+      memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, dynamoDbTableName, chunksBucketName, 
       context, repository, imageTag, dryRun, tags 
     } = props;
 
@@ -105,6 +106,8 @@ export class ProcessorTaskDefinition extends Construct {
         streamPrefix: 'processor',
         logGroup,
       }),
+      memoryLimitMiB, // Hard limit for container memory - if the container exceeds this, it will be killed. This is required to prevent runaway memory usage in case of issues.
+      memoryReservationMiB, // Soft limit for container memory - the container can use more memory if available.
       environment,
       secrets, // ECS secrets injected at runtime
     });

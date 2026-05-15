@@ -46,6 +46,7 @@ export class TaskDefinitions extends Construct {
       repository,
       cpu: ctx.ECS.chunkerTaskDefinition.cpu,
       memoryLimitMiB: ctx.ECS.chunkerTaskDefinition.memoryLimitMiB,
+      memoryReservationMiB: ctx.ECS.chunkerTaskDefinition.memoryReservationMiB,
       logRetentionDays: ctx.ECS.chunkerTaskDefinition.logRetentionDays,
       inputBucketName: ctx.S3.inputBucket,
       chunksBucketName: ctx.S3.chunksBucket,
@@ -63,6 +64,7 @@ export class TaskDefinitions extends Construct {
       repository,
       cpu: ctx.ECS.processorTaskDefinition.cpu,
       memoryLimitMiB: ctx.ECS.processorTaskDefinition.memoryLimitMiB,
+      memoryReservationMiB: ctx.ECS.processorTaskDefinition.memoryReservationMiB,
       logRetentionDays: ctx.ECS.processorTaskDefinition.logRetentionDays,
       chunksBucketName: ctx.S3.chunksBucket,
       queueUrl: '', // Will be set after queue is created
@@ -80,6 +82,7 @@ export class TaskDefinitions extends Construct {
       repository,
       cpu: ctx.ECS.mergerTaskDefinition.cpu,
       memoryLimitMiB: ctx.ECS.mergerTaskDefinition.memoryLimitMiB,
+      memoryReservationMiB: ctx.ECS.mergerTaskDefinition.memoryReservationMiB,
       logRetentionDays: ctx.ECS.mergerTaskDefinition.logRetentionDays,
       inputBucketName: ctx.S3.inputBucket,
       chunksBucketName: ctx.S3.chunksBucket,

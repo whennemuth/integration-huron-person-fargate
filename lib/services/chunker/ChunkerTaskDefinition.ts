@@ -11,6 +11,7 @@ export interface ChunkerTaskDefinitionProps {
   imageTag?: string;
   cpu: number;
   memoryLimitMiB: number;
+  memoryReservationMiB: number;
   logRetentionDays: number;
   queueUrl: string;
   inputBucketName: string;
@@ -35,7 +36,7 @@ export class ChunkerTaskDefinition extends Construct {
 
     const { 
       huronPersonSecrets: { secret, secretArn , secretName } = {}, logRetentionDays, 
-      memoryLimitMiB, cpu, region, queueUrl, itemsPerChunk, chunksBucketName, inputBucketName,
+      memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, itemsPerChunk, chunksBucketName, inputBucketName,
       repository, imageTag, dryRun, tags 
     } = props;
 
@@ -79,6 +80,8 @@ export class ChunkerTaskDefinition extends Construct {
         streamPrefix: 'chunker',
         logGroup,
       }),
+      memoryLimitMiB, // Hard limit for container memory - if the container exceeds this, it will be killed. This is required to prevent runaway memory usage in case of issues.
+      memoryReservationMiB, // Soft limit for container memory - the container can use more memory if available.
       environment: {
         DESCRIPTION1: 
           `Container run by a lambda function responding to S3 events when a new large person 

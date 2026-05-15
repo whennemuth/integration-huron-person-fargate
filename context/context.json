@@ -24,11 +24,13 @@
     "chunkerTaskDefinition": {
       "cpu": 2048,
       "memoryLimitMiB": 4096,
+      "memoryReservationMiB": 2048,
       "logRetentionDays": 7
     },
     "processorTaskDefinition": {
       "cpu": 1024,
       "memoryLimitMiB": 2048,
+      "memoryReservationMiB": 1024,
       "logRetentionDays": 7,
       "retries": {
         "retryStrategyType": "THROTTLING_ONLY"
@@ -37,6 +39,7 @@
     "mergerTaskDefinition": {
       "cpu": 1024,
       "memoryLimitMiB": 2048,
+      "memoryReservationMiB": 1024,
       "logRetentionDays": 7
     },
     "processorService": {

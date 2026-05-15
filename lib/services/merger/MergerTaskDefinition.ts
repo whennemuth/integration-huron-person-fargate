@@ -13,6 +13,7 @@ export interface MergerTaskDefinitionProps {
   imageTag?: string;
   cpu: number;
   memoryLimitMiB: number;
+  memoryReservationMiB: number;
   logRetentionDays: number;
   inputBucketName: string;
   chunksBucketName: string;
@@ -36,7 +37,7 @@ export class MergerTaskDefinition extends Construct {
     super(scope, id);
 
     const { 
-      cpu, memoryLimitMiB, region, inputBucketName, sharedDeltaStorageDir, personDeleteType, 
+      cpu, memoryLimitMiB, memoryReservationMiB, region, inputBucketName, sharedDeltaStorageDir, personDeleteType, 
       repository, imageTag, dryRun, tags, logRetentionDays, chunksBucketName,
       dynamoDbTableName, huronPersonSecrets: { secret, secretArn , secretName } = {} 
     } = props;
@@ -78,6 +79,8 @@ export class MergerTaskDefinition extends Construct {
         streamPrefix: 'merger',
         logGroup,
       }),
+      memoryLimitMiB, // Hard limit for container memory - if the container exceeds this, it will be killed. This is required to prevent runaway memory usage in case of issues.
+      memoryReservationMiB, // Soft limit for container memory - the container can use more memory if available.
       environment: {
         REGION: region,
         INPUT_BUCKET: inputBucketName,

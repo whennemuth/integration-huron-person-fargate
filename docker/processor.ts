@@ -39,7 +39,7 @@
  */
 
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { FieldSet, Timer } from 'integration-core';
+import { FieldSet, humanReadableFromMilliseconds, Timer } from 'integration-core';
 import {
   BasicCache,
   Config,
@@ -503,7 +503,7 @@ export async function main(queueReader: QueueReader) {
     console.log(`  - + Added: ${result.addedCount}`);
     console.log(`  - ~ Updated: ${result.updatedCount}`);
     console.log(`  - - Removed: ${result.removedCount}`);
-    console.log(`  - ⧗ Duration: ${result.duration}ms`);
+    console.log(`  - ⧗ Duration: ${humanReadableFromMilliseconds(result.duration ?? 0)}`);
     
     // Verify the math: push results should equal delta operations
     const pushSum = result.successCount + result.failureCount + result.skippedCount;
