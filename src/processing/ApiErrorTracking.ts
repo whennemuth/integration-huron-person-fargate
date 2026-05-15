@@ -71,6 +71,7 @@ export interface SyncStatistics {
   chunkSize: number;
   totalRecords: number;
   sourceDescription: string;
+  chunkId?: string; // Optional chunk identifier for parallel processing
 }
 
 /**
@@ -79,11 +80,12 @@ export interface SyncStatistics {
  */
 export interface StatisticsItem extends SyncStatistics {
   integrationTimestamp: string; // PK
-  eventType: string; // SK (always "STATISTICS" for stats items)
+  eventType: string; // SK ("STATISTICS" for aggregated, "STATISTICS-chunk-0009" for individual chunks)
   errorType: string; // GSI PK (always "STATISTICS" for stats items)
   totalErrors: number;
   throttleCount: number;
   errorsByStatus: Record<number, number>;
+  chunkId?: string; // Optional chunk identifier (also embedded in eventType for chunk-specific records)
 }
 
 export abstract class AbstractErrorByStatus {
@@ -326,13 +328,26 @@ export class TrackingTargetApiErrorProcessor implements TargetApiErrorEventProce
   /**
    * Write statistics record to DynamoDB at the end of processing
    * Should be called once per integration run in the finally block
+   * 
+   * When chunkId is provided in stats, creates a chunk-specific sort key to prevent
+   * parallel chunks from overwriting each other's statistics. This allows:
+   * - Individual chunk statistics to coexist in DynamoDB
+   * - Query all chunks using SK begins_with 'STATISTICS-chunk-'
+   * - Optional aggregated summary with SK = 'STATISTICS' after all chunks complete
    */
   public async writeStatistics(stats: SyncStatistics): Promise<void> {
+    const { chunkId, ...statsWithoutChunkId } = stats;
+    
+    // Use chunk-specific sort key when chunkId is provided to prevent overwrites
+    // Format: "STATISTICS-chunk-0009" for chunks, "STATISTICS" for aggregated/final stats
+    const eventType = chunkId ? `STATISTICS-${chunkId}` : 'STATISTICS';
+    
     const item = {
       integrationTimestamp: this.integrationTimestamp, // PK
-      eventType: 'STATISTICS', // SK
+      eventType, // SK (chunk-specific or aggregated)
       errorType: 'STATISTICS', // GSI PK for querying stats across runs
-      ...stats,
+      ...statsWithoutChunkId,
+      ...(chunkId && { chunkId }), // Include chunkId field if present
       // Include error summary
       totalErrors: this.totalErrors,
       throttleCount: this.getThrottlingCount(),

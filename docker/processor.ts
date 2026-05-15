@@ -499,10 +499,18 @@ export async function main(queueReader: QueueReader) {
     console.log(`  - Total Processed: ${result.totalProcessed}`);
     console.log(`  - ✓ Successful: ${result.successCount}`);
     console.log(`  - ✗ Failed: ${result.failureCount}`);
+    console.log(`  - ⊘ Skipped: ${result.skippedCount}`);
     console.log(`  - + Added: ${result.addedCount}`);
     console.log(`  - ~ Updated: ${result.updatedCount}`);
     console.log(`  - - Removed: ${result.removedCount}`);
     console.log(`  - ⧗ Duration: ${result.duration}ms`);
+    
+    // Verify the math: push results should equal delta operations
+    const pushSum = result.successCount + result.failureCount + result.skippedCount;
+    const deltaSum = result.addedCount + result.updatedCount + result.removedCount;
+    if (pushSum !== deltaSum) {
+      console.warn(`  ⚠️  Math mismatch: Successful(${result.successCount}) + Failed(${result.failureCount}) + Skipped(${result.skippedCount}) = ${pushSum}, but Added(${result.addedCount}) + Updated(${result.updatedCount}) + Removed(${result.removedCount}) = ${deltaSum}`);
+    }
 
     // Create marker file to trigger merger Lambda
     // This prevents S3 event race condition where delta files are deleted before events process
@@ -518,13 +526,17 @@ export async function main(queueReader: QueueReader) {
     if (errorTracker instanceof TrackingTargetApiErrorProcessor) {
       const endTimestamp = new Date().toISOString();
       try {
+        // Extract chunk ID from sourceDescription (format: "chunk-0009")
+        const chunkIdFromDesc = chunkId ? `chunk-${chunkId}` : undefined;
+        
         await errorTracker.writeStatistics({
           startTimestamp,
           endTimestamp,
           chunkCount: 1, // This processor handles 1 chunk per run
           chunkSize: processedRecordCount,
           totalRecords: processedRecordCount,
-          sourceDescription: `chunk-${chunkId || 'unknown'}`
+          sourceDescription: `chunk-${chunkId || 'unknown'}`,
+          chunkId: chunkIdFromDesc // Pass chunk ID to prevent overwrites
         });
 
         // Log statistics summary

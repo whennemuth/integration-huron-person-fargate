@@ -1,8 +1,13 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { BatchWriteCommand, DynamoDBDocumentClient, GetCommand, QueryCommand, QueryCommandOutput, ScanCommand, ScanCommandInput } from '@aws-sdk/lib-dynamodb';
 import { IContext } from '../../context/IContext';
-import { DYNAMODB_PARTITION_KEY, DYNAMODB_SECONDARY_PARTITION_KEY, DYNAMODB_SORT_KEY, DYNAMODB_GSI_INDEX_NAME, DYNAMODB_TABLE_NAME as getTableName } from '../../lib/DynamoDB';
 import { StatisticsItem } from '../processing/ApiErrorTracking';
+
+export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-statistics`;
+export const DYNAMODB_PARTITION_KEY = 'integrationTimestamp';
+export const DYNAMODB_SECONDARY_PARTITION_KEY = 'errorType';
+export const DYNAMODB_SORT_KEY = 'eventType';
+export const DYNAMODB_GSI_INDEX_NAME = 'errorType-timestamp-index';
 
 export class DynamoDBTable {
   private client: DynamoDBDocumentClient;
@@ -146,6 +151,58 @@ export class DynamoDBTable {
       throw error;
     }
   }
+
+  /**
+   * Query items by partition key with optional sort key prefix.
+   * Useful for querying all items with a specific PK and SK pattern.
+   * 
+   * @param partitionKeyValue - Value of the partition key
+   * @param sortKeyPrefix - Optional prefix for sort key (uses begins_with)
+   * @returns Array of all items matching the query
+   */
+  public async queryByPartitionKey(partitionKeyValue: string, sortKeyPrefix?: string): Promise<any[]> {
+    const { client, params: { tableName, partitionKey, sortKey } } = this;
+    
+    if (!sortKey) {
+      throw new Error('queryByPartitionKey requires a sort key to be configured');
+    }
+
+    const items: any[] = [];
+    let lastEvaluatedKey = undefined;
+
+    try {
+      do {
+        const command = new QueryCommand({
+          TableName: tableName,
+          KeyConditionExpression: sortKeyPrefix 
+            ? `#pk = :pkValue AND begins_with(#sk, :skPrefix)`
+            : `#pk = :pkValue`,
+          ExpressionAttributeNames: {
+            '#pk': partitionKey,
+            ...(sortKeyPrefix && { '#sk': sortKey })
+          },
+          ExpressionAttributeValues: {
+            ':pkValue': partitionKeyValue,
+            ...(sortKeyPrefix && { ':skPrefix': sortKeyPrefix })
+          },
+          ExclusiveStartKey: lastEvaluatedKey
+        });
+
+        const result: QueryCommandOutput = await client.send(command);
+        
+        if (result.Items) {
+          items.push(...result.Items);
+        }
+
+        lastEvaluatedKey = result.LastEvaluatedKey;
+      } while (lastEvaluatedKey);
+
+      return items;
+    } catch (error) {
+      console.error(`Error querying ${tableName}:`, error);
+      throw error;
+    }
+  }
 }
 
 export class StatisticsTable {
@@ -153,7 +210,7 @@ export class StatisticsTable {
 
   constructor(private context: IContext) {
     const region = context.REGION;
-    const tableName = getTableName(context);
+    const tableName = DYNAMODB_TABLE_NAME(context);
     const partitionKey = DYNAMODB_PARTITION_KEY;
     const sortKey = DYNAMODB_SORT_KEY;
     this.table = new DynamoDBTable({ region, tableName, partitionKey, sortKey });
@@ -164,12 +221,15 @@ export class StatisticsTable {
   }
 
   /**
-   * Fetch statistics for a specific integration run.
+   * Fetch aggregated statistics for a specific integration run.
    * Retrieves the statistics record using the integrationTimestamp as the partition key
    * and "STATISTICS" as the sort key.
    * 
+   * Note: This only retrieves the aggregated statistics record (SK = 'STATISTICS').
+   * For chunk-specific statistics, use getChunkStatistics() or getAllChunkStatistics().
+   * 
    * @param integrationTimestamp - ISO timestamp of the integration run
-   * @returns The statistics item for that run, or undefined if not found
+   * @returns The aggregated statistics item for that run, or undefined if not found
    */
   public getStatistics = async (integrationTimestamp: string): Promise<StatisticsItem | undefined> => {
     const eventType = 'STATISTICS';
@@ -178,16 +238,44 @@ export class StatisticsTable {
   }
 
   /**
+   * Fetch statistics for a specific chunk within an integration run.
+   * 
+   * @param integrationTimestamp - ISO timestamp of the integration run
+   * @param chunkId - The chunk identifier (e.g., 'chunk-0009')
+   * @returns The statistics item for that chunk, or undefined if not found
+   */
+  public getChunkStatistics = async (integrationTimestamp: string, chunkId: string): Promise<StatisticsItem | undefined> => {
+    const eventType = `STATISTICS-${chunkId}`;
+    const item = await this.table.getItem(integrationTimestamp, eventType);
+    return item as StatisticsItem | undefined;
+  }
+
+  /**
+   * Fetch statistics for all chunks within an integration run.
+   * Queries all records with sort key beginning with 'STATISTICS-chunk-'.
+   * 
+   * @param integrationTimestamp - ISO timestamp of the integration run
+   * @returns Array of statistics items for all chunks, sorted by sort key
+   */
+  public getAllChunkStatistics = async (integrationTimestamp: string): Promise<StatisticsItem[]> => {
+    const items = await this.table.queryByPartitionKey(integrationTimestamp, 'STATISTICS-chunk-');
+    return items as StatisticsItem[];
+  }
+
+  /**
    * Get a list of sync operations, uniquely identified by their integration timestamps.
    * This method queries the existing errorType-timestamp-index GSI to efficiently retrieve
-   * all statistics records (one per integration run).
+   * all statistics records (both aggregated and chunk-specific).
    * 
-   * @returns An array of unique integration timestamps representing different sync runs,
+   * Note: Returns all records with errorType = 'STATISTICS', which includes both
+   * aggregated records (SK = 'STATISTICS') and chunk-specific records (SK = 'STATISTICS-chunk-XXX').
+   * To get only unique integration runs, use getUniqueIntegrationTimestamps().
+   * 
+   * @returns An array of integration timestamps (may include duplicates if chunks exist),
    *          sorted chronologically (ascending)
    */
   public getSyncList = async (): Promise<string[]> => {
     // Query the GSI with errorType = "STATISTICS" to get all statistics records
-    // Each integration run has exactly one statistics record
     const items = await this.table.queryGSI(
       DYNAMODB_GSI_INDEX_NAME,
       DYNAMODB_SECONDARY_PARTITION_KEY,
@@ -197,6 +285,19 @@ export class StatisticsTable {
     // Extract and return the integrationTimestamp from each item
     // Results are already sorted chronologically by the GSI's sort key
     return items.map(item => item.integrationTimestamp as string);
+  }
+
+  /**
+   * Get a list of unique integration timestamps across all sync operations.
+   * This returns deduplicated timestamps, useful for listing distinct integration runs
+   * when chunk-specific statistics exist.
+   * 
+   * @returns An array of unique integration timestamps, sorted chronologically (ascending)
+   */
+  public getUniqueIntegrationTimestamps = async (): Promise<string[]> => {
+    const allTimestamps = await this.getSyncList();
+    // Deduplicate using Set, then sort chronologically
+    return Array.from(new Set(allTimestamps)).sort();
   }
 }
 
@@ -228,12 +329,21 @@ if(require.main === module) {
         }
         break;
       case 'list':
-        const syncList = await statisticsTable.getSyncList();
-        console.log(`Found ${syncList.length} integration run(s):`);
+        const syncList = await statisticsTable.getUniqueIntegrationTimestamps();
+        console.log(`Found ${syncList.length} unique integration run(s):`);
         console.log(JSON.stringify(syncList, null, 2));
         break;
+      case 'chunks':
+        if(!timestamp) {
+          console.error('Missing required STATISTICS_TABLE_INTEGRATION_TIMESTAMP environment variable for chunks task!');
+          process.exit(1);
+        }
+        const chunks = await statisticsTable.getAllChunkStatistics(timestamp);
+        console.log(`Found ${chunks.length} chunk(s) for integration run at ${timestamp}:`);
+        console.log(JSON.stringify(chunks, null, 2));
+        break;
       default:
-        console.error(`Unknown task: ${task}. Supported tasks: truncate, statistics, list`);
+        console.error(`Unknown task: ${task}. Supported tasks: truncate, statistics, list, chunks`);
     }
   })();
 }

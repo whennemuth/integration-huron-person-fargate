@@ -842,6 +842,66 @@ describe('TrackingTargetApiErrorProcessor', () => {
 
       await expect(processor.writeStatistics(stats)).rejects.toThrow('DynamoDB error');
     });
+
+    it('should use chunk-specific sort key when chunkId is provided', async () => {
+      const processor = new TrackingTargetApiErrorProcessor({
+        tableName: 'test-table',
+        integrationTimestamp: '2026-04-15T19:30:00.000Z',
+        logToConsole: false,
+      });
+
+      let capturedItem: any;
+      dynamoMock.on(PutItemCommand).callsFake((input) => {
+        capturedItem = input.Item;
+        return {};
+      });
+
+      const statsWithChunk: SyncStatistics = {
+        startTimestamp: '2026-04-15T19:30:00.000Z',
+        endTimestamp: '2026-04-15T19:35:00.000Z',
+        chunkCount: 1,
+        chunkSize: 1000,
+        totalRecords: 1000,
+        sourceDescription: 'chunk-0009',
+        chunkId: 'chunk-0009' // Provide chunk ID
+      };
+
+      await processor.writeStatistics(statsWithChunk);
+
+      expect(capturedItem).toBeDefined();
+      expect(capturedItem.eventType.S).toBe('STATISTICS-chunk-0009'); // Should use chunk-specific SK
+      expect(capturedItem.chunkId.S).toBe('chunk-0009'); // Should include chunkId field
+    });
+
+    it('should use standard sort key when chunkId is not provided', async () => {
+      const processor = new TrackingTargetApiErrorProcessor({
+        tableName: 'test-table',
+        integrationTimestamp: '2026-04-15T19:30:00.000Z',
+        logToConsole: false,
+      });
+
+      let capturedItem: any;
+      dynamoMock.on(PutItemCommand).callsFake((input) => {
+        capturedItem = input.Item;
+        return {};
+      });
+
+      const statsWithoutChunk: SyncStatistics = {
+        startTimestamp: '2026-04-15T19:30:00.000Z',
+        endTimestamp: '2026-04-15T19:35:00.000Z',
+        chunkCount: 1,
+        chunkSize: 1000,
+        totalRecords: 1000,
+        sourceDescription: 'aggregated-stats'
+        // No chunkId provided
+      };
+
+      await processor.writeStatistics(statsWithoutChunk);
+
+      expect(capturedItem).toBeDefined();
+      expect(capturedItem.eventType.S).toBe('STATISTICS'); // Should use standard SK
+      expect(capturedItem.chunkId).toBeUndefined(); // Should not include chunkId field
+    });
   });
 
   describe('statistics methods', () => {
