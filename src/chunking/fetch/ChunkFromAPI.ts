@@ -413,7 +413,10 @@ export class ChunkFromAPI implements IChunkFromSource {
    * @returns An object containing the limit and offset for the current chunking task.
    */
   public getLimitAndOffset = (): { limit: number; offset: number } => {
-    const maxScalingCapacity = this.context?.ECS.chunkerService?.maxScalingCapacity ?? -1;
+    const envMaxScalingCapacity = process.env.MAX_SCALING_CAPACITY
+      ? parseInt(process.env.MAX_SCALING_CAPACITY, 10)
+      : undefined;
+    const maxScalingCapacity = this.context?.ECS.chunkerService?.maxScalingCapacity ?? envMaxScalingCapacity ?? -1;
     if(!this.taskParameters) {
       console.warn('Task parameters not set, defaulting limit and offset to 0 (process full population in single task)');
       return { limit: 0, offset: 0 };
@@ -426,6 +429,56 @@ export class ChunkFromAPI implements IChunkFromSource {
       return this.getLimitAndOffset();
     }
     return { limit, offset };
+  }
+
+  /**
+   * Bring the desired count of the service to zero to prevent further tasks from starting. This is 
+   * used when there is nothing left to chunk and we need prevent any new tasks from being launched.
+   * The service would eventually scale down on its own after some time, but many new extraneous
+   * tasks will be launched in the meantime if we don't do this.
+   */
+  private setDesiredCountToZero = async (): Promise<void> => {
+    const { ECS_CHUNKER_SERVICE_NAME: serviceName } = process.env;
+    const clusterName = this.context?.ECS.clusterName || process.env.ECS_CLUSTER_NAME;
+    const region = process.env.REGION;
+
+    // Validate required environment variables
+    if (!serviceName) {
+      console.warn('⚠️  ECS_CHUNKER_SERVICE_NAME environment variable not set. Unable to scale down service.');
+      return;
+    }
+
+    if (!clusterName) {
+      console.warn('⚠️  Cluster name not available. Unable to scale down service.');
+      return;
+    }
+
+    if (!region) {
+      console.warn('⚠️  REGION environment variable not set. Unable to scale down service.');
+      return;
+    }
+
+    try {
+      const { ECSClient, UpdateServiceCommand } = await import('@aws-sdk/client-ecs');
+      const ecsClient = new ECSClient({ region });
+
+      const command = new UpdateServiceCommand({
+        cluster: clusterName,
+        service: serviceName,
+        desiredCount: 0,
+      });
+
+      if (process.env.DRY_RUN?.toLowerCase() === 'true') {
+        console.log(`[DRY RUN] Would scale down ECS service: cluster=${clusterName}, service=${serviceName}, desiredCount=0`);
+        return;
+      }
+
+      await ecsClient.send(command);
+      console.log(`✓ Successfully scaled down chunker service to desiredCount=0`);
+    } catch (error: any) {
+      console.error(`⚠️  Failed to scale down chunker service: ${error.message}`);
+      // Non-fatal error - don't fail the chunking job
+    }
   }
 
   /**
@@ -541,6 +594,8 @@ export class ChunkFromAPI implements IChunkFromSource {
           region,
           chunkKeys: result.chunkKeys
         } satisfies WriteMetadataParams);
+
+        await this.setDesiredCountToZero();
       }
       
       // Exit with success

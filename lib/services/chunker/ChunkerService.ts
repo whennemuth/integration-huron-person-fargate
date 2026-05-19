@@ -38,6 +38,10 @@ export interface ChunkerServiceProps extends AbstractServiceProps {
 export class ChunkerService extends AbstractService {
   public schedule?: Schedule;
 
+  public static getServiceLogicalIdStatic(): string {
+    return 'Chunker';
+  }
+
   constructor(scope: Construct, props: ChunkerServiceProps) {
     super(scope, props);
 
@@ -134,7 +138,7 @@ export class ChunkerService extends AbstractService {
   }
   
   public getServiceLogicalId(): string {
-    return 'Chunker';
+    return ChunkerService.getServiceLogicalIdStatic();
   }
 }
 
