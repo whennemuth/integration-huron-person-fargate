@@ -94,6 +94,13 @@ export interface IContext {
       timeoutSeconds: number;
       memorySizeMb: number;
     };
+    /** Processor subscriber Lambda configuration */
+    processorSubscriber: {
+      timeoutSeconds: number;
+      memorySizeMb: number;
+      /** If true, processor subscriber will skip sending messages to queue */
+      pauseMessaging?: boolean;
+    };
     /** Merger subscriber Lambda configuration */
     mergerSubscriber: {
       timeoutSeconds: number;
@@ -136,6 +143,8 @@ export interface IContext {
     lambda?: {
       /** Chunker subscriber lambda - if true, sends messages to SQS without actually triggering tasks */
       chunker?: boolean;
+      /** Processor subscriber lambda - if true, sends no messages to processor queue */
+      processor?: boolean;
       /** Merger subscriber lambda - if true, sends messages to SQS without actually triggering tasks */
       merger?: boolean;
     };

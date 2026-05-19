@@ -57,6 +57,11 @@
       "timeoutSeconds": 60,
       "memorySizeMb": 256
     },
+    "processorSubscriber": {
+      "timeoutSeconds": 60,
+      "memorySizeMb": 256,
+      "pauseMessaging": false
+    },
     "mergerSubscriber": {
       "timeoutSeconds": 60,
       "memorySizeMb": 256,
@@ -70,6 +75,7 @@
   "DRY_RUN": {
     "lambda": {
       "chunker": false,
+      "processor": false,
       "merger": false
     },
     "taskdef": {

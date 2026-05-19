@@ -4,6 +4,7 @@ import { ChunkerSubscribingLambda } from './services/chunker/ChunkerSubscribingL
 import { EcsInfrastructure } from './EcsInfrastructure';
 import { IContext } from '../context/IContext';
 import { MergerSubscribingLambda } from './services/merger/MergerSubscribingLambda';
+import { ProcessorSubscribingLambda } from './services/processor/ProcessorSubscribingLambda';
 
 /**
  * Construct that defines all Lambda functions that are triggered by events (S3 or SQS)
@@ -18,10 +19,10 @@ import { MergerSubscribingLambda } from './services/merger/MergerSubscribingLamb
  * 
  * - Processor
  *      1) Small data "chunk" NDJSON file appears in the chunks bucket at "/chunks/..."
- *      2) S3 event notification of chunks bucket sends associated message to SQS queue DIRECTLY.
- *         (Note: This is different from the chunker/merger trigger flows - the processor trigger 
- *          is S3 → SQS directly, without a Lambda in between - HENCE NO LAMBDA CREATED HERE).
- *      3) QueueProcessingFargateService detects queue depth increase and auto-scales up, 
+ *      2) S3 event notification of chunks bucket triggers ProcessorSubscribingLambda created below.
+ *      3) ProcessorSubscribingLambda forwards the original S3 event payload to SQS queue unless
+ *         PAUSE_MESSAGING=true in its environment.
+ *      4) QueueProcessingFargateService detects queue depth increase and auto-scales up,
  *         launching processor Fargate task(s).
  * 
  * - Merger
@@ -38,23 +39,37 @@ export interface SubscribingLambdasProps {
   ecsInfra: EcsInfrastructure;
   chunksBucket: IBucket;
   chunkerQueueUrl: string;
+  processorQueueUrl: string;
+  processorQueueArn: string;
   mergerQueueUrl: string;
+  stackScope: Construct;
   context: IContext;
   tags?: { [key: string]: string };
 }
 
 /**
  * Wrapper construct for subscribing Lambda functions
- * Groups Chunker and Merger subscribing lambdas
+ * Groups Chunker, Processor and Merger subscribing lambdas
  */
 export class SubscribingLambdas extends Construct {
   public readonly chunker: ChunkerSubscribingLambda;
+  public readonly processor: ProcessorSubscribingLambda;
   public readonly merger: MergerSubscribingLambda;
 
   constructor(scope: Construct, id: string, props: SubscribingLambdasProps) {
     super(scope, id);
 
-    const { ecsInfra, chunksBucket, chunkerQueueUrl, mergerQueueUrl, context: ctx, tags } = props;
+    const {
+      ecsInfra,
+      chunksBucket,
+      chunkerQueueUrl,
+      processorQueueUrl,
+      processorQueueArn,
+      mergerQueueUrl,
+      stackScope,
+      context: ctx,
+      tags
+    } = props;
 
     // Chunker Subscribing Lambda (Phase 1)
     this.chunker = new ChunkerSubscribingLambda(this, 'Chunker', {
@@ -68,7 +83,20 @@ export class SubscribingLambdas extends Construct {
       tags,
     });
 
-    // Processor Subscribing Lambda (Phase 2) - SQS event-driven - implemented in ProcessorService construct
+    // Processor Subscribing Lambda (Phase 2) - S3 event-driven
+    this.processor = new ProcessorSubscribingLambda(this, 'Processor', {
+      vpc: ecsInfra.vpc,
+      chunksBucket,
+      processorQueueUrl,
+      processorQueueArn,
+      region: ctx.REGION,
+      timeoutSeconds: ctx.LAMBDA.processorSubscriber.timeoutSeconds,
+      memorySizeMb: ctx.LAMBDA.processorSubscriber.memorySizeMb,
+      pauseMessaging: ctx.LAMBDA.processorSubscriber.pauseMessaging,
+      dryRun: ctx.DRY_RUN?.lambda?.processor,
+      stackScope,
+      tags,
+    });
 
     // Merger Subscribing Lambda (Phase 3) - S3 event-driven
     this.merger = new MergerSubscribingLambda(this, 'Merger', {

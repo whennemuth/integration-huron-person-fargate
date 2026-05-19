@@ -127,7 +127,10 @@ export class AppConstruct extends Construct {
       ecsInfra: this.ecs,
       chunksBucket: this.chunksBucket,
       chunkerQueueUrl: this.queue.chunkerQueue.queueUrl,
+      processorQueueUrl: this.queue.processorQueue.queueUrl,
+      processorQueueArn: this.queue.processorQueue.queueArn,
       mergerQueueUrl: this.queue.mergerQueue.queueUrl,
+      stackScope: scope,
       context: ctx,
       tags,
     });
@@ -149,8 +152,7 @@ export class AppConstruct extends Construct {
     // Create processor service as child of ECS infrastructure
     this.ecs.createProcessorService(
       this.queue.processorQueue,
-      this.queue.processorDeadLetterQueue,
-      this.chunksBucket
+      this.queue.processorDeadLetterQueue
     );
 
     // ========================================
