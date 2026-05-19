@@ -1,4 +1,4 @@
-import { RemovalPolicy, Tags } from 'aws-cdk-lib';
+import { RemovalPolicy, Stack, Tags } from 'aws-cdk-lib';
 import { IRepository } from 'aws-cdk-lib/aws-ecr';
 import { ContainerImage, CpuArchitecture, Secret as EcsSecret, FargateTaskDefinition, LogDriver, OperatingSystemFamily } from 'aws-cdk-lib/aws-ecs';
 import { Effect, PolicyStatement } from 'aws-cdk-lib/aws-iam';
@@ -168,6 +168,20 @@ export class ChunkerTaskDefinition extends Construct {
     // This is necessary for the application code to access the secret at runtime using the SDK, 
     // even though the secret is also injected as an environment variable.
     secret!.grantRead(this.taskDefinition.taskRole); // Grant read access to the secret for the task role (used by the application code at runtime)
+
+    // Grant SQS SendMessage permission for chunker queue
+    // This allows chunker tasks to send the next message for parallel chunking
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'sqs:SendMessage',
+        ],
+        resources: [
+          `arn:aws:sqs:${region}:${Stack.of(this).account}:*`,
+        ],
+      })
+    );
 
     // Apply any resource-specific tags - tags not defined in IContext.TAGS
     if (tags) {

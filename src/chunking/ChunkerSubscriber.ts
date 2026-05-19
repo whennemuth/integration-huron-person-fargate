@@ -58,6 +58,9 @@ export interface ApiChunkerEvent {
   fetchPath: string;
   populationType: SyncPopulation;
   bulkReset?: boolean;
+  limit?: number;
+  offset?: number;
+  chunkDirectory?: string;
   processingMetadata?: {
     processedAt?: string;
     processorVersion?: string;

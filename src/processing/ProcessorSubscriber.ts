@@ -28,7 +28,7 @@ export async function handler(event: any): Promise<any> {
   }
 
   if (!PROCESSOR_QUEUE_URL) {
-    console.error('Missing required environment variable: PROCESSOR_QUEUE_URL');
+    console.error('✗ Missing required environment variable: PROCESSOR_QUEUE_URL');
     return { statusCode: 500, body: 'Missing PROCESSOR_QUEUE_URL' };
   }
 

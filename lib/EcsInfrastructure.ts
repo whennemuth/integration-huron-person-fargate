@@ -3,7 +3,6 @@ import { IVpc, SubnetType, Vpc } from 'aws-cdk-lib/aws-ec2';
 import { IRepository } from 'aws-cdk-lib/aws-ecr';
 import { Cluster, ClusterProps, ContainerInsights } from 'aws-cdk-lib/aws-ecs';
 import { IFunction } from 'aws-cdk-lib/aws-lambda';
-import { Bucket } from 'aws-cdk-lib/aws-s3';
 import { IQueue } from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import { IContext } from '../context/IContext';
@@ -109,8 +108,7 @@ export class EcsInfrastructure extends Construct {
       vpc: this.vpc,
       queue,
       deadLetterQueue,
-      minScalingCapacity: 0,
-      maxScalingCapacity: 1, // Chunking is less frequent, lower max
+      maxScalingCapacity: this.context.ECS.chunkerService?.maxScalingCapacity ?? 1, // Chunking is less frequent, lower max
       stackScope: this.stackScope,  // Pass stack reference for escape hatches
       tags: this.tags,
       chunkerLambda,
@@ -126,8 +124,7 @@ export class EcsInfrastructure extends Construct {
    */
   public createProcessorService(
     queue: IQueue,
-    deadLetterQueue: IQueue,
-    chunksBucket: Bucket
+    deadLetterQueue: IQueue
   ): ProcessorService {
     this.processorService = new ProcessorService(this.servicesConstruct, {
       cluster: this.cluster,
@@ -135,9 +132,7 @@ export class EcsInfrastructure extends Construct {
       vpc: this.vpc,
       queue,
       deadLetterQueue,
-      chunksBucket,
-      minScalingCapacity: this.context.ECS.processorService.minScalingCapacity,
-      maxScalingCapacity: this.context.ECS.processorService.maxScalingCapacity,
+      maxScalingCapacity: this.context.ECS.processorService?.maxScalingCapacity ?? 1,
       stackScope: this.stackScope,  // Pass stack reference for escape hatches
       tags: this.tags,
     });
@@ -159,7 +154,6 @@ export class EcsInfrastructure extends Construct {
       vpc: this.vpc,
       queue,
       deadLetterQueue,
-      minScalingCapacity: 0,
       maxScalingCapacity: 1, // Merging is less frequent, lower max
       stackScope: this.stackScope,  // Pass stack reference for escape hatches
       tags: this.tags,

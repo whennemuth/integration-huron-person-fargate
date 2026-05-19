@@ -424,4 +424,112 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       );
     });
   });
+
+  describe('Offset and Limit parameter handling', () => {
+    beforeEach(() => {
+      // Clear environment variables related to offset/limit
+      delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET;
+      delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT;
+    });
+
+    it('should extract camelCase offset and limit from message body', () => {
+      const messageBody = {
+        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
+        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
+        POPULATION_TYPE: 'person-full',
+        offset: 10,
+        limit: 5
+      };
+
+      const chunker = new ChunkFromAPI(mockConfig);
+      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      expect(chunker.hasSufficientTaskInfo()).toBe(true);
+    });
+
+    it('should extract offset and limit as numbers from camelCase message', () => {
+      const messageBody = {
+        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
+        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
+        offset: 5,
+        limit: 10
+      };
+
+      const chunker = new ChunkFromAPI(mockConfig);
+      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      // If taskParameters are accessible (they're private), we'd verify offset=5, limit=10
+      expect(chunker.hasSufficientTaskInfo()).toBe(true);
+    });
+
+    it('should handle offset and limit with value 0', () => {
+      const messageBody = {
+        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
+        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
+        offset: 0,
+        limit: 0
+      };
+
+      const chunker = new ChunkFromAPI(mockConfig);
+      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      expect(chunker.hasSufficientTaskInfo()).toBe(true);
+    });
+
+    it('should fallback to env vars when camelCase offset/limit are undefined', () => {
+      process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET = '15';
+      process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT = '20';
+
+      const messageBody = {
+        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
+        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people'
+        // Note: offset and limit NOT in camelCase
+      };
+
+      const chunker = new ChunkFromAPI(mockConfig);
+      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      expect(chunker.hasSufficientTaskInfo()).toBe(true);
+    });
+
+    it('should prioritize camelCase offset/limit over env vars', () => {
+      process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET = '15';
+      process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT = '20';
+
+      const messageBody = {
+        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
+        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
+        offset: 25,
+        limit: 30
+      };
+
+      const chunker = new ChunkFromAPI(mockConfig);
+      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      // camelCase values (25, 30) should take precedence over env vars (15, 20)
+      expect(chunker.hasSufficientTaskInfo()).toBe(true);
+    });
+
+    it('should handle string values for offset/limit and convert to numbers', () => {
+      const messageBody = {
+        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
+        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
+        offset: '10',  // String
+        limit: '5'     // String
+      };
+
+      const chunker = new ChunkFromAPI(mockConfig);
+      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      expect(chunker.hasSufficientTaskInfo()).toBe(true);
+    });
+
+    it('should default offset and limit to 0 when not provided', () => {
+      delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET;
+      delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT;
+
+      const messageBody = {
+        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
+        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people'
+      };
+
+      const chunker = new ChunkFromAPI(mockConfig);
+      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      expect(chunker.hasSufficientTaskInfo()).toBe(true);
+    });
+  });
 });

@@ -1,18 +1,24 @@
-import { Config, ConfigManager, DataSourceConfig, AxiosResponseStreamFilter, ResponseProcessor } from "integration-huron-person";
+import { AxiosResponseStreamFilter, Config, ConfigManager, DataSourceConfig, ResponseProcessor } from "integration-huron-person";
+import { IContext } from "../../../context/IContext";
 import { SyncPopulation } from "../../../docker/chunkTypes";
 import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeChunkMetadata } from "../../../docker/chunker";
 import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
+import { ApiChunkerEvent } from '../ChunkerSubscriber';
+import { WriteMetadataParams } from "../Metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig } from "./BigJsonFetch";
-import { WriteMetadataParams } from "../Metadata";
+import { handleApiEvent } from './ChunkerApiSubscriber';
 
 export type TaskParameters = {
   baseUrl: string,
   fetchPath: string,
   populationType: SyncPopulation,
-  bulkReset: boolean
+  bulkReset: boolean,
+  offset?: number;
+  limit?: number;
+  chunkDirectory?: string;
 };
 
 /**
@@ -55,6 +61,7 @@ export type TaskParameters = {
 export class ChunkFromAPI implements IChunkFromSource {
   private taskParameters: TaskParameters;
   private chunkDirectory: string;
+  private context?: IContext;
 
   public static defaultPopulationType = SyncPopulation.PersonFull;
 
@@ -62,8 +69,10 @@ export class ChunkFromAPI implements IChunkFromSource {
    * On instantiation, attempt to read task parameters from environment variables 
    * (local dev/docker-compose mode)
    * @param config 
+   * @param context Optional context configuration for maxScalingCapacity checks
    */
-  constructor(private config: Config) {
+  constructor(private config: Config, context?: IContext) {
+    this.context = context;
     this.setTaskParametersFromEnvironment();
   }
 
@@ -74,8 +83,11 @@ export class ChunkFromAPI implements IChunkFromSource {
     let {
       POPULATION_SCOPE:scope = 'standard',
       POPULATION_TYPE: populationType,
+      CHUNK_DIRECTORY: chunkDirectory,
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: baseUrl,
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: fetchPath,
+      DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET: offset = '0',
+      DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT: limit = '0',
       BULK_RESET
     } = process.env;
 
@@ -98,11 +110,13 @@ export class ChunkFromAPI implements IChunkFromSource {
         baseUrl: baseUrl,
         fetchPath: fetchPath,
         populationType: (populationType as SyncPopulation) || ChunkFromAPI.defaultPopulationType,
-        bulkReset: BULK_RESET?.toLowerCase() === 'true'
+        bulkReset: BULK_RESET?.toLowerCase() === 'true',
+        offset: offset ? parseInt(offset, 10) : undefined,
+        limit: limit ? parseInt(limit, 10) : undefined,
+        chunkDirectory: chunkDirectory || undefined
       };
     }
   }
-
   /**
    * To avoid having to acquire parameters from the SQS message for local testing, this method allows 
    * us to set parameters from a specific set of environment variables that mimic the message body 
@@ -115,8 +129,11 @@ export class ChunkFromAPI implements IChunkFromSource {
   private setTaskParametersFromTestEnvironment = (): void => {
     let {
       POPULATION_TYPE: populationType,
+      CHUNK_DIRECTORY: chunkDirectory,
       DATASOURCE_ENDPOINTCONFIG_PERSON_BASE_URL: baseUrl,
       DATASOURCE_ENDPOINTCONFIG_PERSON_PATH: fetchPath,
+      DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET: offset = '0',
+      DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT: limit = '0',
       SINGLE_PERSON_BUID: buid,
       BULK_RESET
     } = process.env;
@@ -134,7 +151,10 @@ export class ChunkFromAPI implements IChunkFromSource {
         baseUrl: baseUrl,
         fetchPath: fetchPath,
         populationType: populationType as SyncPopulation,
-        bulkReset: BULK_RESET?.toLowerCase() === 'true'
+        bulkReset: BULK_RESET?.toLowerCase() === 'true',
+        offset: offset ? parseInt(offset, 10) : undefined,
+        limit: limit ? parseInt(limit, 10) : undefined,
+        chunkDirectory: chunkDirectory || undefined
       });
     }
   }
@@ -146,23 +166,41 @@ export class ChunkFromAPI implements IChunkFromSource {
    */
   public setTaskParametersFromQueueMessageBody = (messageBody: any) => {
     // Handle both camelCase (baseUrl) and environment variable style (DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL) property names
+    // camelCase takes precedence over env var style for backwards compatibility
     let { 
       baseUrl = messageBody?.DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL || 'from_config',
       fetchPath = messageBody?.DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH || 'from_config',
       populationType = messageBody?.POPULATION_TYPE || SyncPopulation.PersonFull,
+      offset: camelCaseOffset = messageBody?.offset,
+      limit: camelCaseLimit = messageBody?.limit,
+      chunkDirectory: camelCaseChunkDirectory = messageBody?.chunkDirectory,
       bulkReset = messageBody?.BULK_RESET || false
     } = messageBody || {};
+
+    // Extract offset and limit with camelCase taking precedence over env var names
+    const offset = camelCaseOffset !== undefined 
+      ? camelCaseOffset 
+      : (messageBody?.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET || '0');
+    const limit = camelCaseLimit !== undefined 
+      ? camelCaseLimit 
+      : (messageBody?.DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT || '0');
+    const chunkDirectory = camelCaseChunkDirectory !== undefined
+      ? camelCaseChunkDirectory
+      : (messageBody?.DATASOURCE_ENDPOINTCONFIG_PEOPLE_CHUNK_DIRECTORY || undefined);
 
     this.taskParameters = { 
       baseUrl, 
       fetchPath, 
       populationType, 
+      offset: offset ? parseInt(offset, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+      chunkDirectory,
       bulkReset: typeof bulkReset === 'boolean' ? bulkReset : bulkReset === 'true'
     };
 
     const { dataSource: { people } = {} } = this.config;
     const { 
-      fetchPath: configFetchPath, endpointConfig: { baseUrl: configBaseUrl, apiKey } = {} 
+      fetchPath: configFetchPath, endpointConfig: { baseUrl: configBaseUrl, apiKey } = {},
     } = people as DataSourceConfig;
 
     let overrodeConfig = false;
@@ -292,6 +330,10 @@ export class ChunkFromAPI implements IChunkFromSource {
   }
 
   public getChunkDirectory = (): string => {
+    const { chunkDirectory } = this.taskParameters || {};
+    if(chunkDirectory) {
+      return chunkDirectory;
+    }
     if(!this.chunkDirectory) {
       this.chunkDirectory = extractChunkDirectory(this.getSyntheticInputKey());
     }
@@ -315,6 +357,78 @@ export class ChunkFromAPI implements IChunkFromSource {
   }
 
   /**
+   * Create and send the next SQS message for parallel chunking.
+   * Calculates the next offset (currentOffset + limit) and sends a message to the chunker queue.
+   * This is called BEFORE starting the current chunking task to enable true parallelism.
+   * @param currentOffset Current offset in population
+   * @param limit Number of batches to process per task
+   * @param queueUrl SQS queue URL
+   * @returns true if message sent successfully, false if skipped
+   */
+  public sendNextChunkingMessage = async (
+    queueUrl: string | undefined,
+    dryRun?: boolean
+  ): Promise<boolean> => {
+
+    const { limit, offset: currentOffset } = this.getLimitAndOffset(); 
+
+    // Don't create next message if limit is 0 (process all)
+    if (limit === 0) {
+      console.log('ℹ️  limit=0 (process all). Not creating next message.');
+      return false;
+    }
+
+    if (!queueUrl) {
+      console.warn('⚠️  SQS_QUEUE_URL not available. Unable to send next chunking message.');
+      return false;
+    }
+
+    try {
+
+      const { baseUrl, fetchPath, populationType, bulkReset } = this.taskParameters;
+      const nextOffset = currentOffset + limit;
+      if (dryRun) {
+        console.log(`[DRY RUN] Would send next chunking message to SQS: offset=${nextOffset}, limit=${limit}`);
+        return true;
+      }
+
+      const apiChunkerEvent = {
+        baseUrl, fetchPath, populationType, bulkReset, limit, offset: nextOffset, 
+        chunkDirectory: this.getChunkDirectory()
+      } as ApiChunkerEvent;
+
+      // Send the SQS message
+      await handleApiEvent(apiChunkerEvent, queueUrl);
+
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Get the limit and offset for the current chunking task, taking into account the 
+   * maxScalingCapacity for parallelism control. If maxScalingCapacity is 1, it overrides any
+   * provided limit and offset to process the full population in a single task (no parallelism).
+   * @returns An object containing the limit and offset for the current chunking task.
+   */
+  public getLimitAndOffset = (): { limit: number; offset: number } => {
+    const maxScalingCapacity = this.context?.ECS.chunkerService?.maxScalingCapacity ?? -1;
+    if(!this.taskParameters) {
+      console.warn('Task parameters not set, defaulting limit and offset to 0 (process full population in single task)');
+      return { limit: 0, offset: 0 };
+    }
+    const { offset = 0, limit = 0 } = this.taskParameters;
+    if (maxScalingCapacity === 1 && (limit !== 0 || offset !== 0)) {
+      console.log(`ℹ️  maxScalingCapacity is 1 (parallelism disabled). Overriding offset=0, limit=0 to process full population.`);
+      this.taskParameters.offset = 0;
+      this.taskParameters.limit = 0;
+      return this.getLimitAndOffset();
+    }
+    return { limit, offset };
+  }
+
+  /**
    * Perform the fetch from the API endpoint and chunking operation.
    * @param params 
    */
@@ -322,32 +436,35 @@ export class ChunkFromAPI implements IChunkFromSource {
 
     const { chunksBucket, region, itemsPerChunk, personIdField, bulkReset: bulkResetOverride=false, dryRun } = params;
 
-    let { bulkReset, populationType } = this.taskParameters || { bulkReset: false };
-    if(bulkReset !== bulkResetOverride && bulkResetOverride === true) {
-      console.warn(`Overriding bulkReset flag in task parameters from ${bulkReset} to ${bulkResetOverride} based on message parameters`);
-    }
-    bulkReset = bulkReset || bulkResetOverride; // Allow override of bulkReset flag from message parameters if needed
-    
-    if( ! populationType) {
-      console.warn(`Population type not specified either POPULATION_TYPE environment variable or message parameters, defaulting to ${ChunkFromAPI.defaultPopulationType}`);
-      this.taskParameters.populationType = ChunkFromAPI.defaultPopulationType;
-    }
-
-    if (!this.hasSufficientConfig(true)) {
-      process.exit(1);
-    }
-    
-    // Extract chunk base path (creates: chunks/person-full/2026-04-09T15:28:18.703Z)
-    const chunkDirectory = this.getChunkDirectory();
-
-    console.log(`Chunks: s3://${chunksBucket}/${chunkDirectory}/`);
-    console.log(`Region: ${region || 'default'}`);
-    console.log(`Items per chunk: ${itemsPerChunk}`);
-    console.log(`Person ID field: ${personIdField}`);
-    console.log(`Population type: ${this.taskParameters.populationType}\n`);
-    console.log(`Final task parameters: ${JSON.stringify(this.taskParameters)}`);
-
     try {
+      let { bulkReset, populationType } = this.taskParameters || { bulkReset: false };
+      const { limit, offset } = this.getLimitAndOffset();
+      if(bulkReset !== bulkResetOverride && bulkResetOverride === true) {
+        console.warn(`Overriding bulkReset flag in task parameters from ${bulkReset} to ${bulkResetOverride} based on message parameters`);
+      }
+      bulkReset = bulkReset || bulkResetOverride; // Allow override of bulkReset flag from message parameters if needed
+      
+      if( ! populationType) {
+        console.warn(`Population type not specified either POPULATION_TYPE environment variable or message parameters, defaulting to ${ChunkFromAPI.defaultPopulationType}`);
+        this.taskParameters.populationType = ChunkFromAPI.defaultPopulationType;
+      }
+
+      if (!this.hasSufficientConfig(true)) {
+        process.exit(1);
+      }
+      
+      // Extract chunk base path (creates: chunks/person-full/2026-04-09T15:28:18.703Z)
+      const chunkDirectory = this.getChunkDirectory();
+
+      console.log(`Chunks: s3://${chunksBucket}/${chunkDirectory}/`);
+      console.log(`Region: ${region || 'default'}`);
+      console.log(`Items per chunk: ${itemsPerChunk}`);
+      console.log(`Bulk reset flag: ${bulkReset}`);
+      console.log(`Offset: ${offset}`);
+      console.log(`Limit: ${limit}`);
+      console.log(`Person ID field: ${personIdField}`);
+      console.log(`Population type: ${this.taskParameters.populationType}\n`);
+      console.log(`Final task parameters: ${JSON.stringify(this.taskParameters)}`);
 
       // Create storage adapter for output chunks
       const chunksStorage = new S3StorageAdapter({ bucketName: chunksBucket, region });
@@ -381,6 +498,8 @@ export class ChunkFromAPI implements IChunkFromSource {
         personIdField,
         personArrayWrapper,
         sourcePath: undefined, // Not used for API source, as the wrapper will detect the person array path from the API response stream directly
+        offset, // indicates the "nth" chunk in from the start of the overall sync population. Used in the context of chunking "in parallel".
+        limit, // indicates how many chunks to "chunk out" before stopping. Used in the context of chunking "in parallel".
         dryRun: dryRun.toLowerCase() === 'true'
       };
 
@@ -391,37 +510,39 @@ export class ChunkFromAPI implements IChunkFromSource {
       // Build source and target URLs for metadata
       const { baseUrl, fetchPath } = this.taskParameters;
       const sourceUrl = `${baseUrl}${fetchPath}`;
-      
-      // Build target URL from config if available
-      let targetUrl: string | undefined;
-      try {
-        const targetBaseUrl = this.config.dataTarget?.endpointConfig?.baseUrl;
-        const personsPath = this.config.dataTarget?.personsPath;
-        if (targetBaseUrl && personsPath) {
-          targetUrl = `${targetBaseUrl}${personsPath}`;
+
+      if(result.reachedTheEndOfRecords) {
+        // Build target URL from config if available
+        let targetUrl: string | undefined;
+        try {
+          const targetBaseUrl = this.config.dataTarget?.endpointConfig?.baseUrl;
+          const personsPath = this.config.dataTarget?.personsPath;
+          if (targetBaseUrl && personsPath) {
+            targetUrl = `${targetBaseUrl}${personsPath}`;
+          }
+        } catch (error) {
+          // Target URL is optional, don't fail if not available
+          console.log('Target URL not available in config');
         }
-      } catch (error) {
-        // Target URL is optional, don't fail if not available
-        console.log('Target URL not available in config');
+
+        // Write metadata and log results
+        await writeChunkMetadata({
+          storage: chunksStorage,
+          bucketName: chunksBucket,
+          chunkDirectory,
+          chunkCount: result.chunkCount,
+          totalRecords: result.totalRecords,
+          itemsPerChunk,
+          source: sourceUrl,
+          target: targetUrl,
+          dryRun: fetchConfig.dryRun || false,
+          bulkReset,
+          syncPopulation: this.taskParameters.populationType as SyncPopulation,
+          region,
+          chunkKeys: result.chunkKeys
+        } satisfies WriteMetadataParams);
       }
-
-      // Write metadata and log results
-      await writeChunkMetadata({
-        storage: chunksStorage,
-        bucketName: chunksBucket,
-        chunkDirectory,
-        chunkCount: result.chunkCount,
-        totalRecords: result.totalRecords,
-        itemsPerChunk,
-        source: sourceUrl,
-        target: targetUrl,
-        dryRun: fetchConfig.dryRun || false,
-        bulkReset,
-        syncPopulation: this.taskParameters.populationType as SyncPopulation,
-        region,
-        chunkKeys: result.chunkKeys
-      } satisfies WriteMetadataParams);
-
+      
       // Exit with success
       process.exit(0);
 

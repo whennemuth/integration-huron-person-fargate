@@ -1,6 +1,7 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { S3StorageAdapter } from '../storage/S3StorageAdapter';
 import { SyncPopulation } from '../../docker/chunkTypes';
+import { objectExistsInS3 } from '../Utils';
 
 /**
  * Chunk Metadata Management
@@ -100,6 +101,7 @@ export type WriteMetadataParams = CoreMetadataFields & {
   bucketName: string;
   dryRun?: boolean;
   storage?: S3StorageAdapter;
+  replace?: boolean; // Whether to replace existing metadata file if it exists (default: false)
   region?: string;
 };
 
@@ -120,6 +122,7 @@ export type WriteFlagsParams = Flags & {
   chunkDirectory: string;
   dryRun?: boolean;
   storage?: S3StorageAdapter;
+  replace?: boolean; // Whether to replace existing flags file if it exists (default: false)
   region?: string;
 };
 
@@ -176,7 +179,7 @@ export class MetadataManager {
   public static async write(params: WriteMetadataParams): Promise<void> {
     const { 
       bucketName, chunkDirectory, chunkCount, totalRecords, itemsPerChunk, chunkKeys,
-      source, target, bulkReset, syncPopulation, dryRun = false, storage, region
+      source, target, bulkReset, syncPopulation, dryRun = false, storage, region, replace = false
     } = params;
 
     const metadataKey = MetadataManager.getMetadataKey(chunkDirectory);
@@ -199,11 +202,28 @@ export class MetadataManager {
     if (dryRun) {
       console.log(`[DRY RUN] Would write metadata to: ${metadataLog}`);
       console.log(`[DRY RUN] Content: ${metadataJson}`);
-    } else {
-      // Use provided storage adapter or create S3Client
+    } 
+    else {
+      /**
+       * Don't overwrite existing metadata file. If it exists, this means the first chunking run 
+       * already wrote the metadata, so we should not overwrite it with subsequent runs because 
+       * the metadata is the same for all chunks in the same chunking run and is only meant to be 
+       * written once at the end of the first chunking run when all information is available.
+       */
+      let cancel: boolean = false;
+      if ( ! replace) {
+        cancel = await objectExistsInS3(bucketName, metadataKey, region);
+        if (cancel) {
+          console.warn(`Metadata file already exists at ${metadataLog}. Skipping write.`);
+          return;
+        }
+      }
+
       if (storage) {
+        // Use provided storage adapter or create S3Client
         await storage.writeFile(metadataKey, metadataJson, 'application/json');
-      } else {
+      } 
+      else {
         const s3Client = new S3Client({ region });
         await s3Client.send(new PutObjectCommand({
           Bucket: bucketName,
@@ -223,7 +243,7 @@ export class MetadataManager {
    */
   public static async writeFlags(params: WriteFlagsParams): Promise<void> {
     const {
-      bucketName, chunkDirectory, bulkReset, syncPopulation, dryRun = false, storage, region
+      bucketName, chunkDirectory, bulkReset, syncPopulation, dryRun = false, storage, region, replace = false
     } = params;
 
     const flagsKey = MetadataManager.getFlagsKey(chunkDirectory);
@@ -295,7 +315,7 @@ export class MetadataManager {
       return metadata;
     } catch (error: any) {
       if (error.name === 'NoSuchKey') {
-        console.log(`No metadata file found (no active chunking in progress)`);
+        console.log(`No metadata file found at s3://${bucketName}/${metadataKey}`);
         return {};
       }
       console.warn(`Warning: Could not read metadata file: ${error.message}`);

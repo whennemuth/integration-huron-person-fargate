@@ -42,9 +42,12 @@
       "memoryReservationMiB": 1024,
       "logRetentionDays": 7
     },
-    "processorService": {
-      "minScalingCapacity": 0,
+    "chunkerService": {
       "maxScalingCapacity": 5
+    },
+    "processorService": {
+      "maxScalingCapacity": 5,
+      "chunksPerTask": 3
     }
   },
   "SQS": {

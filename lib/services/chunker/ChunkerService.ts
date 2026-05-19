@@ -16,6 +16,11 @@ export interface ChunkerServiceProps extends AbstractServiceProps {
   chunkerLambda?: IFunction;
   /** Context configuration containing fetchSchedule settings */
   context?: IContext;
+  /**
+   * Optional: Number of chunks each task should process before exiting (default: 0 = process ALL 
+   * of the chunks for ALL of the people in the source system in just one task execution)
+   */
+  chunksPerTask?: number;
 }
 
 /**
@@ -50,7 +55,7 @@ export class ChunkerService extends AbstractService {
    * - fetchSchedule.cronExpression is valid
    */
   private createApiChunkingSchedule(props: ChunkerServiceProps): void {
-    const { chunkerLambda, context } = props;
+    const { chunkerLambda, context, chunksPerTask: limit = 0 } = props;
 
     if (!chunkerLambda || !context) {
       console.log('[ChunkerService] Skipping EventBridge schedule: chunkerLambda or context not provided');
@@ -62,7 +67,17 @@ export class ChunkerService extends AbstractService {
     if (huronConfig.configPath) {
       huronConfig = ConfigManager.getInstance().fromFileSystem(huronConfig.configPath).getConfig('people');
     }
-    const fetchSchedule = huronConfig?.dataSource?.people?.fetchSchedule;
+
+    // Extract API configuration for the event payload
+    const { 
+      dataSource: { 
+        people: {  
+          fetchSchedule, fetchSchedule: { cronExpression, enabled: cronEnabled } = {}, 
+          fetchPath, 
+          endpointConfig: { baseUrl } = {}  
+        } = {} 
+      } = {} 
+    } = huronConfig;
 
     if (!fetchSchedule) {
       console.log('[ChunkerService] Skipping EventBridge schedule: fetchSchedule not configured');
@@ -73,11 +88,6 @@ export class ChunkerService extends AbstractService {
       console.warn('[ChunkerService] Skipping EventBridge schedule: fetchSchedule.cronExpression is missing');
       return;
     }
-
-    // Extract API configuration for the event payload
-    const peopleConfig = huronConfig?.dataSource?.people;
-    const baseUrl = peopleConfig?.endpointConfig?.baseUrl;
-    const fetchPath = peopleConfig?.fetchPath;
     
     if (!baseUrl || !fetchPath) {
       console.warn('[ChunkerService] Skipping EventBridge schedule: baseUrl or fetchPath not configured');
@@ -87,14 +97,16 @@ export class ChunkerService extends AbstractService {
     // Create the EventBridge schedule with cron as a child of the QueueProcessingFargateService
     this.schedule = new Schedule(this.service, 'ApiChunkingSchedule', {
       scheduleName: 'chunker-api-schedule',
-      description: `Triggers API-based chunker on schedule: ${fetchSchedule.cronExpression}`,
-      schedule: ScheduleExpression.expression(fetchSchedule.cronExpression),
-      enabled: fetchSchedule.enabled,
+      description: `Triggers API-based chunker on schedule: ${cronExpression}`,
+      schedule: ScheduleExpression.expression(cronExpression),
+      enabled: cronEnabled,
       target: new LambdaInvoke(chunkerLambda, {
         input: ScheduleTargetInput.fromObject({
           baseUrl,
           fetchPath,
           populationType: SyncPopulation.PersonDelta,
+          limit, 
+          offset: 0,
           bulkReset: false, // Default value; can be overridden by message parameters if needed
           processingMetadata: {
             processedAt: new Date().toISOString(),
@@ -104,7 +116,7 @@ export class ChunkerService extends AbstractService {
       })
     });
 
-    console.log(`[ChunkerService] Created EventBridge schedule: ${fetchSchedule.cronExpression} (enabled: ${fetchSchedule.enabled})`);
+    console.log(`[ChunkerService] Created EventBridge schedule: ${cronExpression} (enabled: ${cronEnabled})`);
   }
   
   /**
@@ -144,7 +156,8 @@ async function startChunkingService() {
     BULK_RESET = 'false',
     POPULATION_TYPE,
     SINGLE_PERSON_BUID: buid,
-    CHUNKER_QUEUE_URL: queueUrl
+    CHUNKER_QUEUE_URL: queueUrl,
+    DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT
   } = process.env;
 
   /** Load configuration. */
@@ -202,6 +215,8 @@ async function startChunkingService() {
     fetchPath,
     populationType: POPULATION_TYPE?.toLowerCase() === PersonDelta ? PersonDelta : PersonFull,
     bulkReset: BULK_RESET.toLowerCase() === 'true',
+    limit: DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT ? parseInt(DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT) : 0,
+    offset: 0,
     processingMetadata: {
       processedAt: new Date().toISOString(),
       processorVersion: '1.0.0'
