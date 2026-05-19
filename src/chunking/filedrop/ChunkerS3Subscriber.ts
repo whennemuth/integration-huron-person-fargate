@@ -102,7 +102,7 @@ export async function handleS3Event(event: S3ChunkerEvent): Promise<any> {
   };
 
   try {
-    console.log('Sending message to chunker queue:', JSON.stringify(message, null, 2));
+    console.log('📤 Sending message to chunker queue:', JSON.stringify(message, null, 2));
     await sqsClient.send(new SendMessageCommand({
       QueueUrl: CHUNKER_QUEUE_URL,
       MessageBody: JSON.stringify(message),
@@ -111,7 +111,7 @@ export async function handleS3Event(event: S3ChunkerEvent): Promise<any> {
     console.log('   QueueProcessingFargateService will auto-scale to process this message');
     return { statusCode: 200, body: 'Message sent to chunker queue' };
   } catch (error) {
-    console.error('Failed to send message to queue:', error);
+    console.error('❌ Failed to send message to queue:', error);
     throw error;
   }
 }

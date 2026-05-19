@@ -48,7 +48,7 @@ import { Timer } from 'integration-core';
 import { Config, ConfigManager } from 'integration-huron-person';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
-import { WriteMetadataParams } from '../src/chunking/Metadata';
+import { ReadMetadataParams, WriteMetadataParams } from '../src/chunking/Metadata';
 import { MetadataManager } from '../src/chunking/Metadata'
 import { HuronPersonCache } from '../src/PersonCache';
 import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
@@ -151,6 +151,39 @@ export async function writeChunkMetadata(params: WriteMetadataParams) {
   console.log(`Created ${chunkCount} chunks with ${totalRecords} person records`);
   console.log(`\nChunk files:`);
   chunkKeys.forEach(key => console.log(`  - s3://${bucketName}/${key}`));
+}
+
+/**
+ * Bail out if this is an extraneous task where the end of chunking was reached after its SQS message 
+ * was created. Presence of the metadata file indicates that the chunking process had already 
+ * completed and the service had already "realized" it had reached the end and scaled down, but due 
+ * to the asynchronous nature of SQS and scaling, we may have some tasks that were triggered by 
+ * messages that were created before the service realized it had reached the end, and these tasks 
+ * should just exit immediately without doing any work.
+ * @param params 
+ * @returns true if chunking has already finished (metadata file exists), false otherwise
+ */
+export async function chunkingAlreadyFinished(params: { 
+  bucketName: string, chunkDirectory: string, region: string | undefined 
+}): Promise<boolean> {
+  const { bucketName, chunkDirectory, region } = params;
+  const metadata = await MetadataManager.read({ 
+    bucketName, chunkDirectory, region 
+  } satisfies ReadMetadataParams);
+
+  let retval = true; // Assume finished unless we can confirm otherwise by finding metadata
+  if(!metadata) {
+    retval = false;
+  }
+
+  if (Object.keys(metadata).length === 0) {
+    retval = false;
+  }
+  
+  if(retval) {
+    console.log(`🔍 Existing metadata found for this chunk directory: ${JSON.stringify(metadata)}`);
+  }
+  return retval;
 }
 
 /**
@@ -331,6 +364,23 @@ async function main() {
       return;
     }
 
+    // Bail out if this is an extraneous task where the chunking has already ended.
+    const alreadyFinished = await chunkingAlreadyFinished({
+      bucketName: chunksBucket, chunkDirectory: chunker?.getChunkDirectory(), region
+    });
+    if (alreadyFinished) {
+      console.log(`⊘ Cancelling. This means this task was based on a SQS message that was created before the service "realized" it had reached the end.`);
+      exitCode = 0;
+      return;
+    };
+
+    if(chunker instanceof ChunkFromAPI) {
+      // Send next chunking message BEFORE starting this task's processing
+      // This enables true parallelism: the next task can start before the current one finishes
+      const { SQS_QUEUE_URL: sqsQueueUrl } = process.env;      
+      await chunker.sendNextChunkingMessage(sqsQueueUrl, dryRun.toLowerCase() === 'true');
+    }
+
     // Check if shared delta storage file exists in S3 to determine if we have a baseline for doing 
     // lookups during chunk processing, or if we need to set the bulkReset flag to true to force lookups 
     // for every record.
@@ -339,7 +389,7 @@ async function main() {
     const bulkResetFromMessage = chunker.getBulkResetFlag?.() || false;
     
     if (bulkResetFromMessage) {
-      console.log('✓ bulkReset=true from SQS message - will create person cache for lookups');
+      console.log('✓ bulkReset=true from SQS message - will create person cache for lookups (if not already created).');
       chunkFromParams.bulkReset = true;
     } else if (!hasHistoricalData) {
       console.log('✓ No historical data found - setting bulkReset=true to force target system lookups');

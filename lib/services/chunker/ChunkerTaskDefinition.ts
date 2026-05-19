@@ -1,4 +1,4 @@
-import { RemovalPolicy, Tags } from 'aws-cdk-lib';
+import { RemovalPolicy, Stack, Tags } from 'aws-cdk-lib';
 import { IRepository } from 'aws-cdk-lib/aws-ecr';
 import { ContainerImage, CpuArchitecture, Secret as EcsSecret, FargateTaskDefinition, LogDriver, OperatingSystemFamily } from 'aws-cdk-lib/aws-ecs';
 import { Effect, PolicyStatement } from 'aws-cdk-lib/aws-iam';
@@ -19,7 +19,10 @@ export interface ChunkerTaskDefinitionProps {
   itemsPerChunk: number;
   sharedDeltaStorageDir: string;
   region: string;
+  ecsClusterName: string;
+  maxScalingCapacity: number;
   huronPersonSecrets: HuronPersonSecrets;
+  ecsChunkerServiceName: string;
   dryRun?: boolean;
   tags?: { [key: string]: string };
 }
@@ -37,7 +40,7 @@ export class ChunkerTaskDefinition extends Construct {
     const { 
       huronPersonSecrets: { secret, secretArn , secretName } = {}, logRetentionDays, 
       memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, itemsPerChunk, chunksBucketName, inputBucketName,
-      repository, imageTag, dryRun, tags 
+      repository, imageTag, ecsClusterName, maxScalingCapacity, ecsChunkerServiceName, dryRun, tags 
     } = props;
 
     // Create CloudWatch log group
@@ -68,7 +71,7 @@ export class ChunkerTaskDefinition extends Construct {
     };
 
     // Add container
-    const container = this.taskDefinition.addContainer('ChunkerContainer', {
+    this.taskDefinition.addContainer('ChunkerContainer', {
       containerName: 'chunker',
       image: ContainerImage.fromEcrRepository(
         repository,
@@ -90,6 +93,8 @@ export class ChunkerTaskDefinition extends Construct {
           `It splits the file into smaller NDJSON chunk files, and writes the chunks back to 
           the ${chunksBucketName} bucket for parallel processing.`,
         REGION: region,
+        ECS_CLUSTER_NAME: ecsClusterName,
+        MAX_SCALING_CAPACITY: maxScalingCapacity.toString(),
         SQS_QUEUE_URL: queueUrl,
         CHUNKS_BUCKET: chunksBucketName,
         SHARED_DELTA_STORAGE_DIR: props.sharedDeltaStorageDir,
@@ -99,6 +104,7 @@ export class ChunkerTaskDefinition extends Construct {
         // INPUT_BUCKET and INPUT_KEY will be provided at runtime by Lambda
         IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
         DRY_RUN: dryRun ? 'true' : 'false',
+        ECS_CHUNKER_SERVICE_NAME: ecsChunkerServiceName,
       },
       secrets
     });
@@ -169,6 +175,34 @@ export class ChunkerTaskDefinition extends Construct {
     // even though the secret is also injected as an environment variable.
     secret!.grantRead(this.taskDefinition.taskRole); // Grant read access to the secret for the task role (used by the application code at runtime)
 
+    // Grant SQS SendMessage permission for chunker queue
+    // This allows chunker tasks to send the next message for parallel chunking
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'sqs:SendMessage',
+        ],
+        resources: [
+          `arn:aws:sqs:${region}:${Stack.of(this).account}:*`,
+        ],
+      })
+    );
+
+    // Grant ECS UpdateService permission for chunker service
+    // This allows chunker tasks to scale down the service when processing completes
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'ecs:UpdateService',
+        ],
+        resources: [
+          `arn:aws:ecs:${region}:${Stack.of(this).account}:service/${ecsClusterName}/${ecsChunkerServiceName}`,
+        ],
+      })
+    );
+
     // Apply any resource-specific tags - tags not defined in IContext.TAGS
     if (tags) {
       Object.entries(tags).forEach(([key, value]) => {
@@ -176,4 +210,5 @@ export class ChunkerTaskDefinition extends Construct {
       });
     }
   }
+
 }

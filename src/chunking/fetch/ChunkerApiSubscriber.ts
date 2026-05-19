@@ -57,11 +57,11 @@ const sqsClient = new SQSClient({ region });
  * @param event - API-based chunker event
  * @returns Response object with status code and message
  */
-export async function handleApiEvent(event: ApiChunkerEvent): Promise<any> {
+export async function handleApiEvent(event: ApiChunkerEvent, chunkerQueueUrl?:string): Promise<any> {
   // Extract API parameters from event
   const { 
-    baseUrl, fetchPath, populationType, bulkReset, 
-    processingMetadata: { processedAt, processorVersion } = {} 
+    baseUrl, fetchPath, populationType, bulkReset, limit = 0, offset = 0,
+    chunkDirectory, processingMetadata: { processedAt, processorVersion } = {} 
   } = event;
 
   const { PersonDelta, PersonFull } = SyncPopulation;
@@ -69,8 +69,10 @@ export async function handleApiEvent(event: ApiChunkerEvent): Promise<any> {
   // Extract environment variables
   const dryRun = DRY_RUN.toLowerCase() === 'true';
 
+  const QueueUrl = chunkerQueueUrl || CHUNKER_QUEUE_URL;
+
   // Validate environment variables
-  if (!CHUNKER_QUEUE_URL) {
+  if (!QueueUrl) {
     console.error('Missing required environment variable: CHUNKER_QUEUE_URL');
     return { statusCode: 500, body: 'Server configuration error, missing CHUNKER_QUEUE_URL environment variable' };
   }
@@ -90,6 +92,7 @@ export async function handleApiEvent(event: ApiChunkerEvent): Promise<any> {
     return { statusCode: 400, body: errMsg };
   }
 
+
   // End early if in dry run mode
   if (dryRun) {
     const msg = `[DRY RUN] Would start Fargate task for API fetch: ${baseUrl}${fetchPath} (${populationType})`;
@@ -107,19 +110,25 @@ export async function handleApiEvent(event: ApiChunkerEvent): Promise<any> {
     fetchPath,
     populationType,
     bulkReset: `${bulkReset}`.toLowerCase() === 'true',
-  };
+    limit,
+    offset,
+  } as any;
+
+  if(chunkDirectory) {
+    message.chunkDirectory = chunkDirectory;
+  }
 
   try {
-    console.log('Sending message to chunker queue:', JSON.stringify(message, null, 2));
+    console.log('📤 Sending message to chunker queue:', JSON.stringify(message));
     await sqsClient.send(new SendMessageCommand({
-      QueueUrl: CHUNKER_QUEUE_URL,
+      QueueUrl,
       MessageBody: JSON.stringify(message),
     }));
     console.log('✅ Message sent to queue successfully');
     console.log('   QueueProcessingFargateService will auto-scale to process this message');
     return { statusCode: 200, body: 'Message sent to chunker queue' };
   } catch (error) {
-    console.error('Failed to send message to queue:', error);
+    console.error('❌ Failed to send message to queue:', error);
     throw error;
   }
 }

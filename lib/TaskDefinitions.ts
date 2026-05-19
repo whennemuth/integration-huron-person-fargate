@@ -2,6 +2,7 @@ import { IRepository } from 'aws-cdk-lib/aws-ecr';
 import { Construct } from 'constructs';
 import { IContext } from '../context/IContext';
 import { ChunkerTaskDefinition } from './services/chunker/ChunkerTaskDefinition';
+import { ChunkerService } from './services/chunker/ChunkerService';
 import { MergerTaskDefinition } from './services/merger/MergerTaskDefinition';
 import { ProcessorTaskDefinition } from './services/processor/ProcessorTaskDefinition';
 import { HuronPersonSecrets } from './Secrets';
@@ -55,6 +56,9 @@ export class TaskDefinitions extends Construct {
       huronPersonSecrets,
       sharedDeltaStorageDir,
       region: ctx.REGION,
+      ecsClusterName: ctx.ECS.clusterName,
+      maxScalingCapacity: ctx.ECS.chunkerService?.maxScalingCapacity ?? 1,
+      ecsChunkerServiceName: ChunkerService.getServiceLogicalIdStatic(),
       dryRun: ctx.DRY_RUN?.taskdef?.chunker,
       tags,
     });

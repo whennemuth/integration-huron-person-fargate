@@ -42,9 +42,12 @@
       "memoryReservationMiB": 1024,
       "logRetentionDays": 7
     },
-    "processorService": {
-      "minScalingCapacity": 0,
+    "chunkerService": {
       "maxScalingCapacity": 5
+    },
+    "processorService": {
+      "maxScalingCapacity": 5,
+      "chunksPerTask": 3
     }
   },
   "SQS": {
@@ -56,6 +59,11 @@
     "chunkerSubscriber": {
       "timeoutSeconds": 60,
       "memorySizeMb": 256
+    },
+    "processorSubscriber": {
+      "timeoutSeconds": 60,
+      "memorySizeMb": 256,
+      "pauseMessaging": false
     },
     "mergerSubscriber": {
       "timeoutSeconds": 60,
@@ -70,6 +78,7 @@
   "DRY_RUN": {
     "lambda": {
       "chunker": false,
+      "processor": false,
       "merger": false
     },
     "taskdef": {

@@ -1,4 +1,4 @@
-import { Duration, Tags } from "aws-cdk-lib";
+import { Tags } from "aws-cdk-lib";
 import { ScalingInterval } from "aws-cdk-lib/aws-applicationautoscaling";
 import { CfnAlarm } from "aws-cdk-lib/aws-cloudwatch";
 import { IVpc } from "aws-cdk-lib/aws-ec2";
@@ -13,7 +13,6 @@ export interface AbstractServiceProps {
   vpc: IVpc;
   queue: IQueue;
   deadLetterQueue: IQueue;
-  minScalingCapacity: number;
   maxScalingCapacity: number;
   stackScope: Construct;  // Stack reference for escape hatches
   tags?: { [key: string]: string };
@@ -36,7 +35,7 @@ export abstract class AbstractService {
       // Use ARM64 platform
       platformVersion: FargatePlatformVersion.LATEST,
       // Start with 0 tasks - only scale up when messages arrive
-      minScalingCapacity: props.minScalingCapacity,
+      minScalingCapacity: 0,
       maxScalingCapacity: props.maxScalingCapacity,
       scalingSteps: this.getScalingSteps(),      
     } satisfies QueueProcessingFargateServiceProps);

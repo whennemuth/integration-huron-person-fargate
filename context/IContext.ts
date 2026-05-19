@@ -72,8 +72,16 @@ export interface IContext {
     };
     /** Processor service auto-scaling configuration */
     processorService: {
-      minScalingCapacity: number;
       maxScalingCapacity: number;
+    };
+    /** Chunker service auto-scaling configuration */
+    chunkerService?: {
+      maxScalingCapacity: number;
+      /**
+       * Optional: Number of chunks each task should process before exiting (default: 0 = process ALL 
+       * of the chunks for ALL of the people in the source system in just one task execution)
+       */
+      chunksPerTask?: number;
     };
   };
 
@@ -93,6 +101,13 @@ export interface IContext {
     chunkerSubscriber: {
       timeoutSeconds: number;
       memorySizeMb: number;
+    };
+    /** Processor subscriber Lambda configuration */
+    processorSubscriber: {
+      timeoutSeconds: number;
+      memorySizeMb: number;
+      /** If true, processor subscriber will skip sending messages to queue */
+      pauseMessaging?: boolean;
     };
     /** Merger subscriber Lambda configuration */
     mergerSubscriber: {
@@ -136,6 +151,8 @@ export interface IContext {
     lambda?: {
       /** Chunker subscriber lambda - if true, sends messages to SQS without actually triggering tasks */
       chunker?: boolean;
+      /** Processor subscriber lambda - if true, sends no messages to processor queue */
+      processor?: boolean;
       /** Merger subscriber lambda - if true, sends messages to SQS without actually triggering tasks */
       merger?: boolean;
     };
