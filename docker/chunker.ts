@@ -53,6 +53,7 @@ import { MetadataManager } from '../src/chunking/Metadata'
 import { HuronPersonCache } from '../src/PersonCache';
 import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
 import { SyncPopulation } from './chunkTypes';
+import { TaskProtection } from '../src/TaskProtection';
 
 export type IChunkFromSource = {
   runChunking: (params: ChunkFromParams) => Promise<void>
@@ -317,6 +318,9 @@ async function main() {
   timer.start();
 
   try {
+    // Enable task protection for 4 hours (protects from sigkills by ECS during scale-in)
+    await new TaskProtection(60 * 4).enable();
+
     // Read additional configuration from environment
     const {
       CHUNKS_BUCKET: chunksBucket,
@@ -439,6 +443,7 @@ async function main() {
     } else {
       timer.logElapsed('\n✗ Chunker process failed');
     }
+    await new TaskProtection().disable();
     process.exit(exitCode);
   }
 }

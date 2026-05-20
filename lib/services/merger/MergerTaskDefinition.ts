@@ -153,6 +153,19 @@ export class MergerTaskDefinition extends Construct {
       })
     );
 
+    // Grant ECS task protection permissions
+    // This allows the running task to enable/disable scale-in protection via ECS agent endpoint
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'ecs:GetTaskProtection',
+          'ecs:UpdateTaskProtection',
+        ],
+        resources: ['*'],
+      })
+    );
+
     // Grant Secrets Manager read access for huron-person configuration
     // IMPORTANT: Secrets are retrieved by the EXECUTION ROLE at container startup,
     // not the task role. The execution role is used by ECS agent to pull images,

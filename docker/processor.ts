@@ -56,6 +56,7 @@ import { NextChunk, QueueReader } from '../src/Queue';
 import { getLocalConfig } from '../src/Utils';
 import { HuronPersonCache } from '../src/PersonCache';
 import { SyncPopulation } from './chunkTypes';
+import { TaskProtection } from '../src/TaskProtection';
 
 const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
@@ -295,6 +296,9 @@ export async function main(queueReader: QueueReader) {
   const timer = new Timer();
   timer.start();
 
+  // Enable task protection for 4 hours (protects from sigkills by ECS during scale-in)
+  await new TaskProtection(60 * 4).enable();
+
   console.log(`=== ${dryRun ? 'DRY RUN: ' : ''}Phase 2: Processor (using HuronPersonIntegration) ===\n`);
   console.log(`Chunks bucket: ${chunksBucket || 'from SQS messages'}`);
   console.log(`Chunk key: ${chunkKey || 'from SQS messages'}`);
@@ -523,35 +527,39 @@ export async function main(queueReader: QueueReader) {
     console.error(error.stack);
   } finally {
     // Write statistics to DynamoDB
-    if (errorTracker instanceof TrackingTargetApiErrorProcessor) {
-      const endTimestamp = new Date().toISOString();
-      try {
-        // Extract chunk ID from sourceDescription (format: "chunk-0009")
-        const chunkIdFromDesc = chunkId ? `chunk-${chunkId}` : undefined;
-        
-        await errorTracker.writeStatistics({
-          startTimestamp,
-          endTimestamp,
-          chunkCount: 1, // This processor handles 1 chunk per run
-          chunkSize: processedRecordCount,
-          totalRecords: processedRecordCount,
-          sourceDescription: `chunk-${chunkId || 'unknown'}`,
-          chunkId: chunkIdFromDesc // Pass chunk ID to prevent overwrites
-        });
+    try {
+      if (errorTracker instanceof TrackingTargetApiErrorProcessor) {
+        const endTimestamp = new Date().toISOString();
+          // Extract chunk ID from sourceDescription (format: "chunk-0009")
+          const chunkIdFromDesc = chunkId ? `chunk-${chunkId}` : undefined;
+          
+          await errorTracker.writeStatistics({
+            startTimestamp,
+            endTimestamp,
+            chunkCount: 1, // This processor handles 1 chunk per run
+            chunkSize: processedRecordCount,
+            totalRecords: processedRecordCount,
+            sourceDescription: `chunk-${chunkId || 'unknown'}`,
+            chunkId: chunkIdFromDesc // Pass chunk ID to prevent overwrites
+          });
 
-        // Log statistics summary
-        const stats = errorTracker.getStatisticsSummary();
-        console.log('\n=== Processing Statistics ===');
-        console.log(`Total errors: ${stats.totalErrors}`);
-        console.log(`Throttle events: ${stats.throttleCount}`);
-        console.log(`Errors by status:`, stats.errorsByStatus);
-      } catch (statsError: any) {
-        console.error('Failed to write statistics to DynamoDB:', statsError);
-        // Don't fail the entire process if statistics write fails
+          // Log statistics summary
+          const stats = errorTracker.getStatisticsSummary();
+          console.log('\n=== Processing Statistics ===');
+          console.log(`Total errors: ${stats.totalErrors}`);
+          console.log(`Throttle events: ${stats.throttleCount}`);
+          console.log(`Errors by status:`, stats.errorsByStatus);
       }
+      timer.stop();
+      timer.logElapsed('Total processing time');
+    } 
+    catch (statsError: any) {
+      console.error('Failed to write statistics to DynamoDB:', statsError);
+      // Don't fail the entire process if statistics write fails
     }
-    timer.stop();
-    timer.logElapsed('Total processing time');
+    finally {
+      await new TaskProtection().disable();
+    }
   }
   
   // Exit after finally block completes

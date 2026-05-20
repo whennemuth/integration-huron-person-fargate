@@ -104,7 +104,7 @@ export class ChunkerTaskDefinition extends Construct {
         // INPUT_BUCKET and INPUT_KEY will be provided at runtime by Lambda
         IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
         DRY_RUN: dryRun ? 'true' : 'false',
-        ECS_CHUNKER_SERVICE_NAME: ecsChunkerServiceName,
+        ECS_CHUNKER_SERVICE_NAME: ecsChunkerServiceName
       },
       secrets
     });
@@ -200,6 +200,19 @@ export class ChunkerTaskDefinition extends Construct {
         resources: [
           `arn:aws:ecs:${region}:${Stack.of(this).account}:service/${ecsClusterName}/${ecsChunkerServiceName}`,
         ],
+      })
+    );
+
+    // Grant ECS task protection permissions
+    // This allows the running task to enable/disable scale-in protection via ECS agent endpoint
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'ecs:GetTaskProtection',
+          'ecs:UpdateTaskProtection',
+        ],
+        resources: ['*'],
       })
     );
 

@@ -536,9 +536,9 @@ export class ChunkFromAPI implements IChunkFromSource {
           fieldsOfInterest,
           maxBatchSize: 500 // Limit to 500 objects per batch to prevent unbounded accumulation
         });
-        console.log(`[MEMORY OPTIMIZATION] Created response filter with ${fieldsOfInterest.length} fields of interest`);
+        console.log(`Created response filter with ${fieldsOfInterest.length} fields of interest`);
       } else {
-        console.warn('[MEMORY OPTIMIZATION] WARNING: No fieldsOfInterest configured in dataSource.people - API will buffer entire response in memory! Configure fieldsOfInterest to prevent OOM errors.');
+        console.warn('WARNING: No fieldsOfInterest configured in dataSource.people - API will buffer entire response in memory! Configure fieldsOfInterest to prevent OOM errors.');
       }
 
       // Configure fetcher

@@ -46,6 +46,7 @@ import { DeferredDeleteHandler } from '../src/merging/DeferredDeleteHandler';
 import { MergeEngine } from '../src/merging/MergeEngine';
 import { MetadataManager } from '../src/chunking/Metadata';
 import { SyncPopulation } from './chunkTypes';
+import { TaskProtection } from '../src/TaskProtection';
 
 interface TaskParameters {
   chunksBucket: string;
@@ -138,40 +139,44 @@ async function main() {
   const timer = new Timer();
   timer.start();
   let exitCode = 0;
-
-  // Get task parameters from SQS or environment
-  const taskParams = await getTaskParameters();
-
-  if (!taskParams || !taskParams.chunkDirectory) {
-    console.error('ERROR: No task parameters available (checked SQS queue and environment variables)');
-    exitCode = 1;
-    return;
-  }
-
-  const { chunksBucket: bucketName, chunkDirectory: chunkDir, createdAt } = taskParams;
-
-  // Read additional configuration from environment
-  const {
-    REGION: region,
-    SHARED_DELTA_STORAGE_DIR='delta-storage',
-    DRY_RUN='false'
-  } = process.env;
-
-  // Parse chunking start time from task parameters (provided by MergerSubscriber lambda)
-  const chunkingStartTime = createdAt ? new Date(createdAt) : null;
-  if (chunkingStartTime) {
-    console.log(`\nChunking started at: ${createdAt}`);
-  }
-  const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
-  
-  // Extract primary key field names from the same FieldDefinitions used when writing delta files.
-  // This ensures consistency between delta file writing (processor.ts → SyncPeople.ts → EndToEnd.ts → 
-  // InputUtils.getKeyAndHashFieldSets) and merging (this file). Both use the isPrimaryKey flag from 
-  // DataMapper._fieldDefinitions (exported as FieldDefinitions).
-  const primaryKeyFieldNames = FieldDefinitions.filter(fd => fd.isPrimaryKey).map(fd => fd.name);
-  const primaryKeyFieldSet = new Set(primaryKeyFieldNames);
+  let chunkingStartTime: Date | null = null;
 
   try {
+    // Enable task protection for 1 hour (protects from sigkills by ECS during scale-in)
+    await new TaskProtection(60).enable();
+
+    // Get task parameters from SQS or environment
+    const taskParams = await getTaskParameters();
+
+    if (!taskParams || !taskParams.chunkDirectory) {
+      console.error('ERROR: No task parameters available (checked SQS queue and environment variables)');
+      exitCode = 1;
+      return;
+    }
+
+    const { chunksBucket: bucketName, chunkDirectory: chunkDir, createdAt } = taskParams;
+
+    // Read additional configuration from environment
+    const {
+      REGION: region,
+      SHARED_DELTA_STORAGE_DIR='delta-storage',
+      DRY_RUN='false'
+    } = process.env;
+
+    // Parse chunking start time from task parameters (provided by MergerSubscriber lambda)
+    chunkingStartTime = createdAt ? new Date(createdAt) : null;
+    if (chunkingStartTime) {
+      console.log(`\nChunking started at: ${createdAt}`);
+    }
+    const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
+    
+    // Extract primary key field names from the same FieldDefinitions used when writing delta files.
+    // This ensures consistency between delta file writing (processor.ts → SyncPeople.ts → EndToEnd.ts → 
+    // InputUtils.getKeyAndHashFieldSets) and merging (this file). Both use the isPrimaryKey flag from 
+    // DataMapper._fieldDefinitions (exported as FieldDefinitions).
+    const primaryKeyFieldNames = FieldDefinitions.filter(fd => fd.isPrimaryKey).map(fd => fd.name);
+    const primaryKeyFieldSet = new Set(primaryKeyFieldNames);
+
     // Convert chunk directory to delta directory
     // Example: "chunks/person-full/2026-03-03T19:58:41.277Z" -> "deltas/person-full/2026-03-03T19:58:41.277Z"
     const deltaDir = chunkDir.replace(/^chunks\//, 'deltas/');
@@ -348,7 +353,7 @@ async function main() {
     } else {
       timer.logElapsed('\n✗ Duration until failure');
     }
-    
+    await new TaskProtection().disable();
     process.exit(exitCode);
   }
 }
