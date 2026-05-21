@@ -1,4 +1,4 @@
-import { Tags } from "aws-cdk-lib";
+import { Duration, Tags } from "aws-cdk-lib";
 import { ScalingInterval } from "aws-cdk-lib/aws-applicationautoscaling";
 import { CfnAlarm } from "aws-cdk-lib/aws-cloudwatch";
 import { IVpc } from "aws-cdk-lib/aws-ec2";
@@ -28,6 +28,7 @@ export abstract class AbstractService {
     this.service = new QueueProcessingFargateService(scope, this.getServiceLogicalId(), {
       serviceName: this.getServiceLogicalId(),
       cluster: props.cluster,
+      cooldown: Duration.seconds(10),
       taskDefinition: props.taskDefinition,
       disableCpuBasedScaling: true,
       assignPublicIp: false,  // Use private subnets with NAT gateway - no public IP needed
