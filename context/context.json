@@ -43,11 +43,11 @@
       "logRetentionDays": 7
     },
     "chunkerService": {
-      "maxScalingCapacity": 5
-    },
-    "processorService": {
       "maxScalingCapacity": 5,
       "chunksPerTask": 3
+    },
+    "processorService": {
+      "maxScalingCapacity": 5
     }
   },
   "SQS": {

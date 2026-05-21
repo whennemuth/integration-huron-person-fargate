@@ -112,6 +112,7 @@ export class EcsInfrastructure extends Construct {
       stackScope: this.stackScope,  // Pass stack reference for escape hatches
       tags: this.tags,
       chunkerLambda,
+      chunksPerTask: this.context.ECS.chunkerService?.chunksPerTask ?? 0,
       context,
     });
 
