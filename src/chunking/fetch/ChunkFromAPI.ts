@@ -1,4 +1,4 @@
-import { AxiosResponseStreamFilter, Config, ConfigManager, DataSourceConfig, ResponseProcessor } from "integration-huron-person";
+import { AxiosResponseStreamFilter, Config, ConfigManager, DataSourceConfig, error, ResponseProcessor } from "integration-huron-person";
 import { IContext } from "../../../context/IContext";
 import { SyncPopulation } from "../../../docker/chunkTypes";
 import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeChunkMetadata } from "../../../docker/chunker";
@@ -10,6 +10,7 @@ import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig } from "./BigJsonFetch";
 import { handleApiEvent } from './ChunkerApiSubscriber';
+import { ChunkConfigOverride } from "./ChunkConfigOverride";
 
 export type TaskParameters = {
   baseUrl: string,
@@ -198,39 +199,11 @@ export class ChunkFromAPI implements IChunkFromSource {
       bulkReset: typeof bulkReset === 'boolean' ? bulkReset : bulkReset === 'true'
     };
 
-    const { dataSource: { people } = {} } = this.config;
-    const { 
-      fetchPath: configFetchPath, endpointConfig: { baseUrl: configBaseUrl, apiKey } = {},
-    } = people as DataSourceConfig;
-
-    let overrodeConfig = false;
-    const overrideConfig = (cfg:string|undefined, msg:string|undefined): boolean => {
-      if(cfg && cfg !== 'from_config') {
-        if(msg && msg !== cfg) {
-          overrodeConfig = true;
-          return true;
-        }
-      }
-      return false;
-    }
-
-    if(overrideConfig(configBaseUrl, baseUrl)) {
-      console.log(`Overriding config baseUrl (${configBaseUrl}) with value from message parameters (${baseUrl})`);
-      (this.config.dataSource.people as DataSourceConfig).endpointConfig.baseUrl = baseUrl;
-    }
-
-    if(overrideConfig(configFetchPath, fetchPath)) {
-      console.log(`Overriding config fetchPath (${configFetchPath}) with value from message parameters (${fetchPath})`);
-      (this.config.dataSource.people as DataSourceConfig).fetchPath = fetchPath;
-    }
-
-    if (apiKey && overrodeConfig) {
-      const maskedApiKey = apiKey.length > 4 ? `${apiKey.slice(0, 2)}${apiKey.split('').map(c => '*').join('').substr(4)}${apiKey.slice(-2)}` : '****';
-      console.log(
-        `NOTE: One or more of the standard source API parameters have been overridden by sqs ` +
-        `message details. This assumes that the configured apiKey (${maskedApiKey}) is still valid ` +
-        `for the alternate endpoint`);
-    }
+    // The baseUrl and/or fetchPath values of the message may be different from the ones in the 
+    // config file. If so, we need to override the config values with the ones from the message 
+    // parameters so that the chunking process will use the correct endpoint and apiKey.
+    const chunkConfigOverride = new ChunkConfigOverride(this.config, this.taskParameters);
+    this.config = chunkConfigOverride.getOverridenConfig();
   }
 
   private setTaskParametersFromConfig = (): void => {
@@ -601,9 +574,8 @@ export class ChunkFromAPI implements IChunkFromSource {
       // Exit with success
       process.exit(0);
 
-    } catch (error: any) {
-      console.error('\n✗ API fetch and chunk failed:', error.message);
-      console.error(error.stack);
+    } catch (e: any) {
+      error({ msg: '\n✗ API fetch and chunk failed', o: e, flat: true });
       process.exit(1);
     }
   }  

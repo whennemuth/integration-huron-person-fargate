@@ -194,7 +194,7 @@ export class BigJsonFetch {
       batchSize: this.itemsPerChunk, 
       chunkDirPath: chunkDir, 
       offset: this.offset,
-      limit: this.limit,
+      limit: this.isNotBatchable(dataSource) ? -1 : this.limit,
       onChunkWritten: (key: string) => chunkKeys.push(key) 
     };
     const batchProcessor = new class extends BuCdmPeopleDataSourceBatch {
@@ -269,6 +269,28 @@ export class BigJsonFetch {
       chunkCount: chunkKeys.length,
       reachedTheEndOfRecords
     };
+  }
+
+  /**
+   * If the fetch URL contains a 'buid' query parameter, we consider it non-batchable because it's 
+   * likely targeting a specific record rather than supporting offset-based pagination.
+   * @param dataSource 
+   * @returns 
+   */
+  private isNotBatchable = (dataSource: BuCdmPeopleDataSource): boolean => {
+    // Person-mode endpoints are single-record oriented and should never receive batch pagination params.
+    if (this.config.executionMode === 'person') {
+      return true;
+    }
+
+    const fetchUrl = dataSource.getFetchUrl();
+    try {
+      const urlObj = new URL(fetchUrl);
+      return urlObj.searchParams.get('buid') !== null;
+    } catch {
+      // Conservative fallback: if URL parsing fails, do not force non-batchable mode.
+      return false;
+    }
   }
 
   /**
