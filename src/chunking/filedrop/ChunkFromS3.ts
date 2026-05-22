@@ -10,6 +10,7 @@ export type TaskParameters = {
   inputBucket: string,
   inputKey: string,
   bulkReset: boolean,
+  trustPreviousStorage: boolean,
   populationType?: SyncPopulation
 }
 
@@ -57,13 +58,14 @@ export class ChunkFromS3 implements IChunkFromSource {
    * (local dev/docker-compose mode)
    */
   constructor() {
-    const { INPUT_BUCKET, INPUT_KEY, BULK_RESET } = process.env;
+    const { INPUT_BUCKET, INPUT_KEY, BULK_RESET, TRUST_PREVIOUS_STORAGE = 'false' } = process.env;
     if (INPUT_BUCKET && INPUT_KEY) {
       console.log('Running in local context - task parameters come from environment variables');
       this.taskParameters = {
         inputBucket: INPUT_BUCKET,
         inputKey: INPUT_KEY,
-        bulkReset: BULK_RESET?.toLowerCase() === 'true'
+        bulkReset: BULK_RESET?.toLowerCase() === 'true',
+        trustPreviousStorage: TRUST_PREVIOUS_STORAGE?.toLowerCase() === 'true'
       };
     }
   }
@@ -81,7 +83,10 @@ export class ChunkFromS3 implements IChunkFromSource {
     this.taskParameters = {
       inputBucket: messageBody.inputBucket,
       inputKey: messageBody.inputKey,
-      bulkReset: typeof messageBody.bulkReset === 'boolean' ? messageBody.bulkReset : messageBody.bulkReset === 'true'
+      bulkReset: typeof messageBody.bulkReset === 'boolean' ? messageBody.bulkReset : messageBody.bulkReset === 'true',
+      trustPreviousStorage: typeof messageBody.trustPreviousStorage === 'boolean'
+        ? messageBody.trustPreviousStorage
+        : messageBody.trustPreviousStorage === 'true'
     };
   }
 
@@ -113,6 +118,14 @@ export class ChunkFromS3 implements IChunkFromSource {
   }
 
   /**
+   * Get the trustPreviousStorage flag from task parameters.
+   * Returns true if previous storage should be trusted, false otherwise.
+   */
+  public getTrustPreviousStorageFlag = (): boolean => {
+    return this.taskParameters?.trustPreviousStorage || false;
+  }
+
+  /**
    * Get the syncPopulation value from task parameters.
    * Returns the population type (PersonFull or PersonDelta).
    */
@@ -129,13 +142,22 @@ export class ChunkFromS3 implements IChunkFromSource {
       process.exit(1);
     }
 
-    const { chunksBucket, region, itemsPerChunk, personIdField, bulkReset: bulkResetOverride=false, dryRun } = params;
+    const {
+      chunksBucket,
+      region,
+      itemsPerChunk,
+      personIdField,
+      bulkReset: bulkResetOverride = false,
+      trustPreviousStorage: trustPreviousStorageOverride = false,
+      dryRun
+    } = params;
 
-    let { inputBucket, inputKey, bulkReset, populationType } = this.taskParameters!;
+    let { inputBucket, inputKey, bulkReset, trustPreviousStorage, populationType } = this.taskParameters!;
     if(bulkReset !== bulkResetOverride && bulkResetOverride === true) {
       console.warn(`Overriding bulkReset flag in task parameters from ${bulkReset} to ${bulkResetOverride} based on message parameters`);
     }
     bulkReset = bulkReset || bulkResetOverride; // Allow override of bulkReset flag from message parameters if needed
+    trustPreviousStorage = trustPreviousStorage || trustPreviousStorageOverride;
     
     if( ! populationType) {
       console.warn(`Population type not specified either POPULATION_TYPE environment variable or message parameters, defaulting to ${ChunkFromS3.defaultPopulationType}`);
@@ -192,6 +214,7 @@ export class ChunkFromS3 implements IChunkFromSource {
         target: undefined,
         dryRun: config.dryRun || false,
         bulkReset,
+        trustPreviousStorage,
         syncPopulation: this.taskParameters.populationType as SyncPopulation,
         region,
         chunkKeys: result.chunkKeys

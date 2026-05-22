@@ -60,6 +60,7 @@ export type IChunkFromSource = {
   noMessagesFromQueue?: boolean
   getChunkDirectory: () => string
   getBulkResetFlag?: () => boolean  // Optional getter for bulkReset flag from task parameters
+  getTrustPreviousStorageFlag?: () => boolean  // Optional getter for trustPreviousStorage flag from task parameters
   getSyncPopulation?: () => SyncPopulation  // Optional getter for syncPopulation from task parameters
 }
 
@@ -69,6 +70,7 @@ export type ChunkFromParams = {
   itemsPerChunk: number,
   personIdField: string,
   bulkReset?: boolean, // To override the bulkReset flag set in the TaskParameters of the chunker instance.
+  trustPreviousStorage?: boolean, // Controls whether previous delta storage is trusted for create-vs-patch decisions.
   dryRun: string
 }
 
@@ -403,6 +405,9 @@ async function main() {
       chunkFromParams.bulkReset = false;
     }
 
+    chunkFromParams.trustPreviousStorage = chunker.getTrustPreviousStorageFlag?.() || false;
+    console.log(`Trust previous storage flag: ${chunkFromParams.trustPreviousStorage}`);
+
     // Get syncPopulation from chunker
     const syncPopulation = chunker.getSyncPopulation?.() || SyncPopulation.PersonFull;
     console.log(`Sync population type: ${syncPopulation}`);
@@ -412,6 +417,7 @@ async function main() {
       bucketName: chunksBucket,
       chunkDirectory: chunker.getChunkDirectory(),
       bulkReset: chunkFromParams.bulkReset,
+      trustPreviousStorage: chunkFromParams.trustPreviousStorage,
       syncPopulation,
       dryRun: dryRun === 'true',
       region
@@ -420,7 +426,7 @@ async function main() {
     /**
      * Writes the full population from the target API to an S3 file as a cache for lookup during chunk processing.
      */
-    if(chunkFromParams.bulkReset) {
+    if(chunkFromParams.bulkReset || !chunkFromParams.trustPreviousStorage) {
       const config = await getConfig();
       const { CACHE_FILE_NAME } = HuronPersonCache;
       await new HuronPersonCache({ config }).setS3PopulationCache({ 

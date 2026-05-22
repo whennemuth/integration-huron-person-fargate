@@ -75,6 +75,7 @@
     "configPath": "../integration-huron-person/config.json"
   },
   "BULK_RESET": true,
+  "TRUST_PREVIOUS_STORAGE": false,
   "DRY_RUN": {
     "lambda": {
       "chunker": false,

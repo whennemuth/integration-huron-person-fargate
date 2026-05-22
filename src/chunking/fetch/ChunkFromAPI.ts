@@ -17,6 +17,7 @@ export type TaskParameters = {
   fetchPath: string,
   populationType: SyncPopulation,
   bulkReset: boolean,
+  trustPreviousStorage: boolean,
   offset?: number;
   limit?: number;
   chunkDirectory?: string;
@@ -89,6 +90,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: fetchPath,
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET: offset = '0',
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT: limit = '0',
+      TRUST_PREVIOUS_STORAGE = 'false',
       BULK_RESET
     } = process.env;
 
@@ -112,6 +114,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         fetchPath: fetchPath,
         populationType: (populationType as SyncPopulation) || ChunkFromAPI.defaultPopulationType,
         bulkReset: BULK_RESET?.toLowerCase() === 'true',
+        trustPreviousStorage: TRUST_PREVIOUS_STORAGE?.toLowerCase() === 'true',
         offset: offset ? parseInt(offset, 10) : undefined,
         limit: limit ? parseInt(limit, 10) : undefined,
         chunkDirectory: chunkDirectory || undefined
@@ -136,6 +139,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET: offset = '0',
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT: limit = '0',
       SINGLE_PERSON_BUID: buid,
+      TRUST_PREVIOUS_STORAGE = 'false',
       BULK_RESET
     } = process.env;
 
@@ -153,6 +157,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         fetchPath: fetchPath,
         populationType: populationType as SyncPopulation,
         bulkReset: BULK_RESET?.toLowerCase() === 'true',
+        trustPreviousStorage: TRUST_PREVIOUS_STORAGE?.toLowerCase() === 'true',
         offset: offset ? parseInt(offset, 10) : undefined,
         limit: limit ? parseInt(limit, 10) : undefined,
         chunkDirectory: chunkDirectory || undefined
@@ -175,7 +180,8 @@ export class ChunkFromAPI implements IChunkFromSource {
       offset: camelCaseOffset = messageBody?.offset,
       limit: camelCaseLimit = messageBody?.limit,
       chunkDirectory: camelCaseChunkDirectory = messageBody?.chunkDirectory,
-      bulkReset = messageBody?.BULK_RESET || false
+      bulkReset = messageBody?.BULK_RESET || false,
+      trustPreviousStorage: camelCaseTrustPreviousStorage = messageBody?.trustPreviousStorage
     } = messageBody || {};
 
     // Extract offset and limit with camelCase taking precedence over env var names
@@ -188,6 +194,9 @@ export class ChunkFromAPI implements IChunkFromSource {
     const chunkDirectory = camelCaseChunkDirectory !== undefined
       ? camelCaseChunkDirectory
       : (messageBody?.DATASOURCE_ENDPOINTCONFIG_PEOPLE_CHUNK_DIRECTORY || undefined);
+    const trustPreviousStorage = camelCaseTrustPreviousStorage !== undefined
+      ? camelCaseTrustPreviousStorage
+      : (messageBody?.TRUST_PREVIOUS_STORAGE || false);
 
     this.taskParameters = { 
       baseUrl, 
@@ -196,7 +205,10 @@ export class ChunkFromAPI implements IChunkFromSource {
       offset: offset ? parseInt(offset, 10) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
       chunkDirectory,
-      bulkReset: typeof bulkReset === 'boolean' ? bulkReset : bulkReset === 'true'
+      bulkReset: typeof bulkReset === 'boolean' ? bulkReset : bulkReset === 'true',
+      trustPreviousStorage: typeof trustPreviousStorage === 'boolean'
+        ? trustPreviousStorage
+        : trustPreviousStorage === 'true'
     };
 
     // The baseUrl and/or fetchPath values of the message may be different from the ones in the 
@@ -322,6 +334,14 @@ export class ChunkFromAPI implements IChunkFromSource {
   }
 
   /**
+   * Get the trustPreviousStorage flag from task parameters.
+   * Returns true if previous storage should be trusted, false otherwise.
+   */
+  public getTrustPreviousStorageFlag = (): boolean => {
+    return this.taskParameters?.trustPreviousStorage || false;
+  }
+
+  /**
    * Get the syncPopulation value from task parameters.
    * Returns the population type (PersonFull or PersonDelta).
    */
@@ -358,7 +378,7 @@ export class ChunkFromAPI implements IChunkFromSource {
 
     try {
 
-      const { baseUrl, fetchPath, populationType, bulkReset } = this.taskParameters;
+      const { baseUrl, fetchPath, populationType, bulkReset, trustPreviousStorage } = this.taskParameters;
       const nextOffset = currentOffset + limit;
       if (dryRun) {
         console.log(`[DRY RUN] Would send next chunking message to SQS: offset=${nextOffset}, limit=${limit}`);
@@ -366,7 +386,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       }
 
       const apiChunkerEvent = {
-        baseUrl, fetchPath, populationType, bulkReset, limit, offset: nextOffset, 
+        baseUrl, fetchPath, populationType, bulkReset, trustPreviousStorage, limit, offset: nextOffset, 
         chunkDirectory: this.getChunkDirectory()
       } as ApiChunkerEvent;
 
@@ -460,15 +480,27 @@ export class ChunkFromAPI implements IChunkFromSource {
    */
   public runChunking = async (params: ChunkFromParams) => {
 
-    const { chunksBucket, region, itemsPerChunk, personIdField, bulkReset: bulkResetOverride=false, dryRun } = params;
+    const {
+      chunksBucket,
+      region,
+      itemsPerChunk,
+      personIdField,
+      bulkReset: bulkResetOverride = false,
+      trustPreviousStorage: trustPreviousStorageOverride = false,
+      dryRun
+    } = params;
 
     try {
-      let { bulkReset, populationType } = this.taskParameters || { bulkReset: false };
+      let { bulkReset, trustPreviousStorage, populationType } = this.taskParameters || {
+        bulkReset: false,
+        trustPreviousStorage: false
+      };
       const { limit, offset } = this.getLimitAndOffset();
       if(bulkReset !== bulkResetOverride && bulkResetOverride === true) {
         console.warn(`Overriding bulkReset flag in task parameters from ${bulkReset} to ${bulkResetOverride} based on message parameters`);
       }
       bulkReset = bulkReset || bulkResetOverride; // Allow override of bulkReset flag from message parameters if needed
+      trustPreviousStorage = trustPreviousStorage || trustPreviousStorageOverride;
       
       if( ! populationType) {
         console.warn(`Population type not specified either POPULATION_TYPE environment variable or message parameters, defaulting to ${ChunkFromAPI.defaultPopulationType}`);
@@ -486,6 +518,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       console.log(`Region: ${region || 'default'}`);
       console.log(`Items per chunk: ${itemsPerChunk}`);
       console.log(`Bulk reset flag: ${bulkReset}`);
+      console.log(`Trust previous storage: ${trustPreviousStorage}`);
       console.log(`Offset: ${offset}`);
       console.log(`Limit: ${limit}`);
       console.log(`Person ID field: ${personIdField}`);
@@ -563,6 +596,7 @@ export class ChunkFromAPI implements IChunkFromSource {
           target: targetUrl,
           dryRun: fetchConfig.dryRun || false,
           bulkReset,
+          trustPreviousStorage,
           syncPopulation: this.taskParameters.populationType as SyncPopulation,
           region,
           chunkKeys: result.chunkKeys

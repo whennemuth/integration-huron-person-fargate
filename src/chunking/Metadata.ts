@@ -66,6 +66,7 @@ import { objectExistsInS3 } from '../Utils';
 
 export type Flags = {
   bulkReset: boolean;
+  trustPreviousStorage: boolean;
   syncPopulation: SyncPopulation;
   [key: string]: any; // Allow additional fields for flexibility
 }
@@ -179,7 +180,7 @@ export class MetadataManager {
   public static async write(params: WriteMetadataParams): Promise<void> {
     const { 
       bucketName, chunkDirectory, chunkCount, totalRecords, itemsPerChunk, chunkKeys,
-      source, target, bulkReset, syncPopulation, dryRun = false, storage, region, replace = false
+      source, target, bulkReset, trustPreviousStorage, syncPopulation, dryRun = false, storage, region, replace = false
     } = params;
 
     const metadataKey = MetadataManager.getMetadataKey(chunkDirectory);
@@ -187,7 +188,7 @@ export class MetadataManager {
 
     const metadata: ChunkMetadata = {
       chunkCount, totalRecords, itemsPerChunk, source, chunkDirectory,
-      deltaStoragePath, bulkReset, syncPopulation, createdAt: new Date().toISOString(),
+      deltaStoragePath, bulkReset, trustPreviousStorage, syncPopulation, createdAt: new Date().toISOString(),
       chunkKeys
     };
 
@@ -243,12 +244,13 @@ export class MetadataManager {
    */
   public static async writeFlags(params: WriteFlagsParams): Promise<void> {
     const {
-      bucketName, chunkDirectory, bulkReset, syncPopulation, dryRun = false, storage, region, replace = false
+      bucketName, chunkDirectory, bulkReset, trustPreviousStorage, syncPopulation, dryRun = false, storage, region, replace = false
     } = params;
 
     const flagsKey = MetadataManager.getFlagsKey(chunkDirectory);
     const flags: Flags = {
       bulkReset,
+      trustPreviousStorage,
       syncPopulation
     };
 

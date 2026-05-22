@@ -60,6 +60,7 @@ export class ChunkerService extends AbstractService {
    */
   private createApiChunkingSchedule(props: ChunkerServiceProps): void {
     const { chunkerLambda, context, chunksPerTask: limit = 0 } = props;
+    const trustPreviousStorage = context?.TRUST_PREVIOUS_STORAGE ?? false;
 
     if (!chunkerLambda || !context) {
       console.log('[ChunkerService] Skipping EventBridge schedule: chunkerLambda or context not provided');
@@ -112,6 +113,7 @@ export class ChunkerService extends AbstractService {
           limit, 
           offset: 0,
           bulkReset: false, // Default value; can be overridden by message parameters if needed
+          trustPreviousStorage,
           processingMetadata: {
             processedAt: new Date().toISOString(),
             processorVersion: '1.0.0'
@@ -161,7 +163,8 @@ async function startChunkingService() {
     POPULATION_TYPE,
     SINGLE_PERSON_BUID: buid,
     CHUNKER_QUEUE_URL: queueUrl,
-    DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT
+    DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT,
+    TRUST_PREVIOUS_STORAGE = 'false'
   } = process.env;
 
   /** Load configuration. */
@@ -219,6 +222,7 @@ async function startChunkingService() {
     fetchPath,
     populationType: POPULATION_TYPE?.toLowerCase() === PersonDelta ? PersonDelta : PersonFull,
     bulkReset: BULK_RESET.toLowerCase() === 'true',
+    trustPreviousStorage: TRUST_PREVIOUS_STORAGE.toLowerCase() === 'true',
     limit: DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT ? parseInt(DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT) : 0,
     offset: 0,
     processingMetadata: {

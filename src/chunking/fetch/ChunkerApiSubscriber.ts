@@ -60,7 +60,7 @@ const sqsClient = new SQSClient({ region });
 export async function handleApiEvent(event: ApiChunkerEvent, chunkerQueueUrl?:string): Promise<any> {
   // Extract API parameters from event
   const { 
-    baseUrl, fetchPath, populationType, bulkReset, limit = 0, offset = 0,
+    baseUrl, fetchPath, populationType, bulkReset, trustPreviousStorage = false, limit = 0, offset = 0,
     chunkDirectory, processingMetadata: { processedAt, processorVersion } = {} 
   } = event;
 
@@ -110,6 +110,7 @@ export async function handleApiEvent(event: ApiChunkerEvent, chunkerQueueUrl?:st
     fetchPath,
     populationType,
     bulkReset: `${bulkReset}`.toLowerCase() === 'true',
+    trustPreviousStorage: `${trustPreviousStorage}`.toLowerCase() === 'true',
     limit,
     offset,
   } as any;

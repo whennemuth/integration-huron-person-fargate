@@ -333,12 +333,16 @@ export async function main(queueReader: QueueReader) {
   // Validate required information
   validateChunk(nextChunk);
 
-  // Read flags file to get per-sync configuration (bulkReset, syncPopulation)
+  // Read flags file to get per-sync configuration (bulkReset, syncPopulation, trustPreviousStorage)
   const flags = await readFlagInfo(bucketName!, s3Key!, region);
   
   // Use bulkReset from flags if available, otherwise fall back to environment variable
   const bulkReset = flags.bulkReset ?? (`${BULK_RESET}`.trim().toLowerCase() === 'true');
   console.log(`Bulk Reset: ${bulkReset}${flags.bulkReset !== undefined ? ' (from flags file)' : ' (from environment)'}`);
+
+  // Get trustPreviousStorage from flags if available, otherwise default to true (trust by default)
+  const trustPreviousStorage = flags.trustPreviousStorage ?? true;
+  console.log(`Trust Previous Storage: ${trustPreviousStorage}${flags.trustPreviousStorage !== undefined ? ' (from flags file)' : ' (defaulted)'}`);
 
   // Get syncPopulation from flags if available, otherwise default to PersonFull
   const syncPopulation = flags.syncPopulation ?? SyncPopulation.PersonFull;
@@ -471,6 +475,7 @@ export async function main(queueReader: QueueReader) {
       config,  // Pass pre-built config with S3 or API data source
       staticMapUsage, // Pass through static map usage from environment variable
       bulkReset, // Pass through bulk reset flag from environment variable
+      trustPreviousStorage, // Pass through trust flag - cache is used when false to force upsert lookup path
       cache, // Shared cache for JWT tokens
       lookupPersonInTargetSystemCache, 
       errorEventProcessor: errorTracker, // Inject error tracker for tracking errors and throttling
