@@ -46,6 +46,14 @@ export async function handler(event: any): Promise<any> {
   console.log('=== Merger Trigger (S3 Event) ===');
   console.log('Event:', JSON.stringify(event, null, 2));
 
+  const {
+    CHUNKS_BUCKET_NAME, REGION, MERGER_QUEUE_URL, DRY_RUN = 'false'
+  } = process.env; // Destructure env vars here for easier reference and potential validation/logging
+
+  console.log(`Environment Variables - ${JSON.stringify({ 
+    CHUNKS_BUCKET_NAME, REGION, MERGER_QUEUE_URL, DRY_RUN 
+  }, null, 2)}`);
+
   // Extract marker file info from S3 event
   const records = event.Records || [];
   if (records.length === 0) {
@@ -102,6 +110,12 @@ export async function handler(event: any): Promise<any> {
     console.warn(
       `⚠️  More delta chunks than expected: ${actualChunks} > ${expectedChunks} (possible stale data)`
     );
+  }
+
+  const dryRun = DRY_RUN.toLowerCase().trim() === 'true';
+  if(dryRun) {
+    console.log('DRY_RUN mode enabled - skipping merger trigger');
+    return { statusCode: 200, body: 'DRY_RUN - Merger trigger skipped' };
   }
 
   // Step 4: All chunks ready - trigger merger
