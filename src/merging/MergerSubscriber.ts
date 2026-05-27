@@ -85,30 +85,35 @@ export async function handler(event: any): Promise<any> {
   console.log(`Delta storage path: ${deltaStoragePath}`);
   console.log(`Chunk directory: ${chunkDirectory}`);
 
-  // Step 1: Get expected chunk count from metadata
-  const metadata = await getChunkMetadata(chunkDirectory, bucket, region);
+  // Step 1: Validate contiguous marker ordinals to determine completion
+  // This replaces the metadata.chunkCount gate with marker-based validation.
+  // Merger is triggered only when markers form uninterrupted sequence 0..N.
+  const { isComplete, actualChunks, maxOrdinal, hasGaps } = await validateContiguousMarkerOrdinals(
+    deltaStoragePath,
+    markerFileKey
+  );
 
-  if (!metadata) {
-    console.log('No metadata file found - cannot determine completion');
-    return { statusCode: 200, body: 'No metadata found' };
-  }
-
-  const expectedChunks = metadata.chunkCount;
-
-  // Step 2: Count actual marker files in S3 (one per completed chunk)
-  const actualChunks = await countCompletedChunks(deltaStoragePath);
-
-  // Step 3: Check if all chunks are ready
-  if (actualChunks < expectedChunks) {
-    console.log(
-      `⏳ Waiting for more delta chunks: ${actualChunks}/${expectedChunks} ready`
-    );
+  if (!isComplete) {
+    if (hasGaps) {
+      console.log(
+        `⏳ Marker gap detected: ${actualChunks} markers found but ordinals not contiguous (max: ${maxOrdinal})`
+      );
+    } else {
+      console.log(
+        `⏳ Waiting for markers: only ${actualChunks} markers found starting from 0`
+      );
+    }
     return { statusCode: 200, body: 'Still processing' };
   }
 
-  if (actualChunks > expectedChunks) {
+  // Step 2: All markers are contiguous - get metadata for context and audit trail
+  const metadata = await getChunkMetadata(chunkDirectory, bucket, region);
+  
+  if (!metadata) {
+    console.log('Note: metadata file not found, but marker ordinals are contiguous - proceeding with merger');
+  } else if (metadata.chunkCount && actualChunks !== metadata.chunkCount) {
     console.warn(
-      `⚠️  More delta chunks than expected: ${actualChunks} > ${expectedChunks} (possible stale data)`
+      `⚠️  Metadata mismatch: metadata says ${metadata.chunkCount} chunks but markers show ${actualChunks} (using marker count)`
     );
   }
 
@@ -118,10 +123,13 @@ export async function handler(event: any): Promise<any> {
     return { statusCode: 200, body: 'DRY_RUN - Merger trigger skipped' };
   }
 
-  // Step 4: All chunks ready - trigger merger
-  console.log(`✅ All delta chunks ready: ${actualChunks}/${expectedChunks}`);
+  // Step 3: All markers contiguous - trigger merger
+  console.log(`✅ All markers contiguous (${actualChunks} total): 0..${maxOrdinal}`);
 
-  const triggered = await triggerMerger(chunkDirectory, metadata.createdAt);
+  const triggered = await triggerMerger(
+    chunkDirectory, 
+    metadata?.createdAt || new Date().toISOString()
+  );
 
   if (triggered) {
     return { statusCode: 200, body: 'Merger triggered' };
@@ -169,10 +177,101 @@ export async function getChunkMetadata(
 }
 
 /**
+ * Validates that marker files form a contiguous ordinal sequence starting from 0.
+ * This replaces metadata.chunkCount as the authoritative completion signal.
+ * 
+ * Returns true only when markers present: 0, 1, 2, ..., N with no gaps.
+ * Failed-status markers still count as terminal (merger proceeds regardless of failure).
+ * Handles S3 pagination for 1000+ markers.
+ * 
+ * @param deltaStoragePath - The delta storage path (e.g., "deltas/person-full/2026-03-03T19:58:41.277Z")
+ * @param currentMarkerKey - The current marker file that triggered this check (to avoid stale-run issues)
+ */
+async function validateContiguousMarkerOrdinals(
+  deltaStoragePath: string,
+  currentMarkerKey: string
+): Promise<{ isComplete: boolean; actualChunks: number; maxOrdinal: number; hasGaps: boolean }> {
+  if (!CHUNKS_BUCKET_NAME) {
+    return { isComplete: false, actualChunks: 0, maxOrdinal: -1, hasGaps: true };
+  }
+
+  const prefix = `${deltaStoragePath}/`;
+  const markerOrdinals: Set<number> = new Set();
+  let continuationToken: string | undefined;
+
+  try {
+    // List all marker files with pagination support
+    do {
+      const response = await s3Client.send(
+        new ListObjectsV2Command({
+          Bucket: CHUNKS_BUCKET_NAME,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        })
+      );
+
+      // Extract ordinals from marker file names
+      if (response.Contents) {
+        for (const obj of response.Contents) {
+          const key = obj.Key!;
+          // Match: chunk-NNNN_processing_complete.json
+          const match = key.match(/chunk-(\d+)_processing_complete\.json$/);
+          if (match) {
+            const ordinal = parseInt(match[1], 10);
+            markerOrdinals.add(ordinal);
+          }
+        }
+      }
+
+      // Handle pagination
+      if (response.IsTruncated) {
+        continuationToken = response.NextContinuationToken;
+      } else {
+        continuationToken = undefined;
+      }
+    } while (continuationToken);
+
+    // Check for contiguous sequence starting at 0
+    const actualChunks = markerOrdinals.size;
+    
+    if (actualChunks === 0) {
+      console.log(`No marker files found in s3://${CHUNKS_BUCKET_NAME}/${prefix}`);
+      return { isComplete: false, actualChunks: 0, maxOrdinal: -1, hasGaps: true };
+    }
+
+    // Find max ordinal
+    const maxOrdinal = Math.max(...Array.from(markerOrdinals));
+
+    // Validate contiguity: all numbers from 0 to maxOrdinal must be present
+    const hasGaps = actualChunks !== (maxOrdinal + 1);
+    
+    if (hasGaps) {
+      // Log which ordinals are missing for diagnostics
+      const missing: number[] = [];
+      for (let i = 0; i <= maxOrdinal; i++) {
+        if (!markerOrdinals.has(i)) {
+          missing.push(i);
+        }
+      }
+      console.log(`Markers found: ${Array.from(markerOrdinals).sort((a, b) => a - b).join(', ')}`);
+      console.log(`Missing ordinals: ${missing.join(', ')}`);
+      return { isComplete: false, actualChunks, maxOrdinal, hasGaps: true };
+    }
+
+    // Contiguous sequence 0..maxOrdinal confirmed
+    console.log(`✓ Contiguous marker ordinals validated: 0..${maxOrdinal} (${actualChunks} total)`);
+    return { isComplete: true, actualChunks, maxOrdinal, hasGaps: false };
+
+  } catch (error: any) {
+    console.error(`Error validating marker ordinals: ${error.message}`);
+    return { isComplete: false, actualChunks: 0, maxOrdinal: -1, hasGaps: true };
+  }
+}
+
+/**
  * Counts completed chunks by counting marker files in S3.
- * Each marker file indicates a chunk has finished processing.
- * This approach prevents the race condition where delta files are counted
- * but then deleted before the merger can run.
+ * DEPRECATED: Use validateContiguousMarkerOrdinals() instead.
+ * This function is kept for backwards compatibility but should not be used for merger gating.
  * 
  * @param deltaStoragePath - The delta storage path (e.g., "deltas/person-full/2026-03-03T19:58:41.277Z")
  */

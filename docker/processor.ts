@@ -218,24 +218,22 @@ export const validateChunk = (chunk: NextChunk | undefined) => {
 /**
  * Creates a _processing_complete marker file to trigger the merger Lambda.
  * 
- * This solves the S3 event race condition where delta files created and deleted
- * within 6-15 seconds can prevent S3 event notifications from being sent.
- * 
- * Timeline that caused the issue:
- * - 20:44:45.333Z: Delta file created → S3 begins internal event processing
- * - 20:44:51.771Z: Delta file deleted (6.4s later) → S3 event processing aborted
- * - Result: Lambda never invoked (no log stream)
- * 
- * Solution: Create marker file AFTER processing completes. Marker file:
- * - Never deleted (remains for audit trail)
- * - Guarantees S3 event will trigger because file persists
- * - Contains metadata about the completed chunk for debugging
+ * Marker is always written (success or failure) from finally block to guarantee
+ * merger knows this chunk has completed processing, regardless of outcome.
  * 
  * @param bucketName - S3 bucket containing chunks
- * @param chunkKey - S3 key of the processed chunk (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0042.ndjson")
+ * @param chunkKey - S3 key of the processed chunk
+ * @param status - Terminal status: 'success' or 'failed'
+ * @param errorMessage - Optional error message if status is 'failed'
  * @param region - AWS region
  */
-async function createProcessingCompleteMarker(bucketName: string, chunkKey: string, region?: string): Promise<void> {
+async function createProcessingCompleteMarker(
+  bucketName: string,
+  chunkKey: string,
+  status: 'success' | 'failed',
+  errorMessage?: string,
+  region?: string
+): Promise<void> {
   // Derive delta storage path from chunk key
   // Example: "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0042.ndjson" 
   //       -> "deltas/person-full/2026-03-03T19:58:41.277Z"
@@ -250,15 +248,20 @@ async function createProcessingCompleteMarker(bucketName: string, chunkKey: stri
   // Create marker file path: deltas/person-full/2026-03-03T19:58:41.277Z/chunk-0042_processing_complete.json
   const markerKey = `${deltaStoragePath}/chunk-${chunkId}_processing_complete.json`;
   
-  const markerContent = {
+  const markerContent: any = {
     chunkId,
     chunkKey,
     deltaStoragePath,
     processedAt: new Date().toISOString(),
-    status: 'complete'
+    status
   };
   
-  console.log(`Creating marker file: s3://${bucketName}/${markerKey}`);
+  // Include error message if processing failed
+  if (status === 'failed' && errorMessage) {
+    markerContent.errorMessage = errorMessage;
+  }
+  
+  console.log(`Creating marker file with status='${status}': s3://${bucketName}/${markerKey}`);
   
   const s3Client = new S3Client({ region });
   try {
@@ -268,9 +271,9 @@ async function createProcessingCompleteMarker(bucketName: string, chunkKey: stri
       Body: JSON.stringify(markerContent, null, 2),
       ContentType: 'application/json'
     }));
-    console.log(`✓ Marker file created successfully`);
+    console.log(`Marker file created successfully with status='${status}'`);
   } catch (error: any) {
-    console.error(`Failed to create marker file: ${error.message}`);
+    console.error(`CRITICAL: Failed to create marker file: ${error.message}`);
     throw error;
   }
 }
@@ -384,6 +387,7 @@ export async function main(queueReader: QueueReader) {
 
   const startTimestamp = new Date().toISOString();
   let processedRecordCount = 0;
+  let processingError: Error | null = null;
 
   try {
     // Build config with S3 data source pointing to this chunk
@@ -521,16 +525,38 @@ export async function main(queueReader: QueueReader) {
       console.warn(`  ⚠️  Math mismatch: Successful(${result.successCount}) + Failed(${result.failureCount}) + Skipped(${result.skippedCount}) = ${pushSum}, but Added(${result.addedCount}) + Updated(${result.updatedCount}) + Removed(${result.removedCount}) = ${deltaSum}`);
     }
 
-    // Create marker file to trigger merger Lambda
-    // This prevents S3 event race condition where delta files are deleted before events process
-    await createProcessingCompleteMarker(bucketName!, s3Key!, region);
-
     console.log('\n✓ Chunk processing completed successfully');
 
   } catch (error: any) {
     console.error(`\n✗ Processing chunk: s3://${bucketName}/${s3Key} failed:`, error.message);
     console.error(error.stack);
+    // Store error for marker creation in finally block
+    processingError = error;
   } finally {
+    // Create terminal marker file - ALWAYS executed (success or failure)
+    // This guarantees merger knows this chunk has been processed
+    if (bucketName && s3Key) {
+      try {
+        const markerStatus = processingError ? 'failed' : 'success';
+        const errorMsg = processingError?.message || undefined;
+        await createProcessingCompleteMarker(bucketName, s3Key, markerStatus, errorMsg, region);
+      } catch (markerError: any) {
+        // Marker write failure is CRITICAL - prevents merger trigger
+        // Log and exit with error code
+        console.error(`\nCRITICAL FAILURE: Could not create processing marker`);
+        console.error(`Error: ${markerError.message}`);
+        console.error(`This will cause the sync to stall as merger will not be triggered.`);
+        
+        // Try to clean up and exit immediately
+        try {
+          await new TaskProtection().disable();
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+        process.exit(1); // Non-zero exit to signal critical failure
+      }
+    }
+
     // Write statistics to DynamoDB
     try {
       if (errorTracker instanceof TrackingTargetApiErrorProcessor) {

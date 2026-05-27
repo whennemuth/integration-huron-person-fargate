@@ -144,16 +144,8 @@ export const grabMessageBodyFromQueue = async (): Promise<any> => {
  * Write metadata file for merger trigger detection
  */
 export async function writeChunkMetadata(params: WriteMetadataParams) {
-  
   await MetadataManager.write(params);
-
-  const { chunkCount, totalRecords, chunkKeys, bucketName } = params;
-
-  // Log summary
-  console.log('\n✓ Chunking completed successfully');
-  console.log(`Created ${chunkCount} chunks with ${totalRecords} person records`);
-  console.log(`\nChunk files:`);
-  chunkKeys.forEach(key => console.log(`  - s3://${bucketName}/${key}`));
+  console.log('\n✓ Metadata file written to S3');
 }
 
 /**

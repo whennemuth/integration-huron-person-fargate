@@ -5,7 +5,7 @@ import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeChunk
 import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { ApiChunkerEvent } from '../ChunkerSubscriber';
-import { WriteMetadataParams } from "../Metadata";
+import { MetadataManager, WriteMetadataParams } from "../Metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig } from "./BigJsonFetch";
@@ -584,13 +584,50 @@ export class ChunkFromAPI implements IChunkFromSource {
           console.log('Target URL not available in config');
         }
 
-        // Write metadata and log results
+        // Build aggregated metadata from run-level S3 state
+        // This ensures metadata reflects ALL chunks across all parallel tasks, not just this task's local slice
+        let aggregatedChunkCount = result.chunkCount;
+        let aggregatedTotalRecords = result.totalRecords;
+        let aggregatedChunkKeys = result.chunkKeys;
+
+        try {
+          const { chunkCount, totalRecords, chunkKeys } = await MetadataManager.buildAggregatedMetadata(
+            chunksBucket,
+            chunkDirectory,
+            region
+          );
+          aggregatedChunkCount = chunkCount;
+          aggregatedTotalRecords = totalRecords;
+          aggregatedChunkKeys = chunkKeys;
+
+          // Log comparison: show local result vs aggregated state
+          if (result.chunkCount !== aggregatedChunkCount || result.totalRecords !== aggregatedTotalRecords) {
+            console.log(`📊 Parallel chunking detected:`);
+            console.log(`   Local result: chunkCount=${result.chunkCount}, totalRecords=${result.totalRecords}, chunkKeys=${result.chunkKeys.length}`);
+            console.log(`   Aggregated: chunkCount=${aggregatedChunkCount}, totalRecords=${aggregatedTotalRecords}, chunkKeys=${aggregatedChunkKeys.length}`);
+          }
+        } catch (aggError: any) {
+          console.error(`⚠️  Failed to build aggregated metadata: ${aggError.message}`);
+          console.log(`Falling back to local result stats: chunkCount=${result.chunkCount}, totalRecords=${result.totalRecords}`);
+          // Continue with local stats if aggregation fails; don't fail the entire chunking job
+        }
+
+        // Log aggregate statistics (informational only)
+        // NOTE: These values are not persisted to metadata. Merger completion is determined 
+        // by contiguous marker ordinals (0..N), not by metadata.chunkCount.
+        console.log('\n✓ Chunking completed successfully');
+        console.log(`Created ${aggregatedChunkCount} chunks with ${aggregatedTotalRecords} person records`);
+        if (aggregatedChunkKeys && aggregatedChunkKeys.length > 0) {
+          console.log(`\nChunk files:`);
+          aggregatedChunkKeys.forEach(key => console.log(`  - s3://${chunksBucket}/${key}`));
+        }
+
+        // Write metadata manifest (source, target, paths, timestamps, flags)
+        // Merger will verify completion via contiguous marker ordinals, not metadata fields
         await writeChunkMetadata({
           storage: chunksStorage,
           bucketName: chunksBucket,
           chunkDirectory,
-          chunkCount: result.chunkCount,
-          totalRecords: result.totalRecords,
           itemsPerChunk,
           source: sourceUrl,
           target: targetUrl,
@@ -598,9 +635,13 @@ export class ChunkFromAPI implements IChunkFromSource {
           bulkReset,
           trustPreviousStorage,
           syncPopulation: this.taskParameters.populationType as SyncPopulation,
-          region,
-          chunkKeys: result.chunkKeys
+          region
         } satisfies WriteMetadataParams);
+
+        console.log(`\n✓ Chunking complete with aggregated metadata:`);
+        console.log(`   Total chunks: ${aggregatedChunkCount}`);
+        console.log(`   Total records: ${aggregatedTotalRecords}`);
+        console.log(`\n📝 Note: Merger will verify completion via contiguous marker ordinals (0..${aggregatedChunkCount - 1}), not metadata.chunkCount`);
 
         await this.setDesiredCountToZero();
       }

@@ -1,4 +1,4 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { S3StorageAdapter } from '../storage/S3StorageAdapter';
 import { SyncPopulation } from '../../docker/chunkTypes';
 import { objectExistsInS3 } from '../Utils';
@@ -28,21 +28,24 @@ import { objectExistsInS3 } from '../Utils';
  * 
  * ## 2. Metadata File (_metadata.json)
  * 
- * **Purpose:** Provides complete chunking results and coordinates merger trigger.
+ * **Purpose:** Provides run manifest and configuration for post-run diagnostics and audit.
+ * Merger completion is now determined by contiguous processing-complete marker files, not metadata.
  * 
  * **Written:** By the chunker task (Phase 1) AFTER chunking completes.
  * 
- * **Read by:** Merger subscriber (Phase 3) to determine when all chunks have been processed
- * and merging can begin. The merger subscriber is triggered every time a delta chunk is written
- * to the bucket, and the information in the metadata file is used to determine if that was
- * the last chunk and the way is clear to start the merging phase.
+ * **Read by:** Diagnostic/audit tools to understand run context and source/target configuration.
  * 
  * **Contains:**
- * - All flags (bulkReset, syncPopulation)
- * - Chunking results (chunkCount, totalRecords, itemsPerChunk)
- * - File paths (chunkDirectory, deltaStoragePath, chunkKeys)
+ * - All flags (bulkReset, trustPreviousStorage, syncPopulation)
+ * - File paths (chunkDirectory, deltaStoragePath)
  * - Source/target information
- * - Timestamps
+ * - Timestamps (createdAt)
+ * - Optional: itemsPerChunk for reference
+ * 
+ * **Does NOT contain (informational only via logs):**
+ * - chunkCount (determined by contiguous marker ordinals 0..N)
+ * - totalRecords (computed from marker presence, not persisted)
+ * - chunkKeys (full list determined by marker file enumeration)
  * 
  * **Location:** `s3://{bucket}/chunks/{populationType}/{timestamp}/_metadata.json`
  * 
@@ -79,10 +82,7 @@ type CoreMetadataFields = Flags & {
   source: string;
   target?: string;
   chunkDirectory: string;
-  chunkCount: number;
-  chunkKeys: string[];
   itemsPerChunk: number;
-  totalRecords: number;
 };
 
 /**
@@ -97,6 +97,10 @@ export type ChunkMetadata = CoreMetadataFields & {
 /**
  * Input parameters for writing metadata.
  * Extends core fields with write-specific operational parameters.
+ * 
+ * Note: chunkCount, totalRecords, and chunkKeys are NOT included here.
+ * These are informational only and should be computed on-demand from marker files
+ * rather than persisted. Callers should log these values separately if needed.
  */
 export type WriteMetadataParams = CoreMetadataFields & {
   bucketName: string;
@@ -175,11 +179,13 @@ export class MetadataManager {
 
   /**
    * Write chunk metadata to S3.
-   * Replaces the sprawling writeMetadata function with cleaner parameter object.
+   * Persists only the run manifest (flags, paths, timestamps).
+   * Parameters like chunkCount, totalRecords, chunkKeys are accepted for caller convenience but NOT persisted.
+   * These values are now determined from contiguous marker files and S3 state, not from metadata.
    */
   public static async write(params: WriteMetadataParams): Promise<void> {
     const { 
-      bucketName, chunkDirectory, chunkCount, totalRecords, itemsPerChunk, chunkKeys,
+      bucketName, chunkDirectory, itemsPerChunk,
       source, target, bulkReset, trustPreviousStorage, syncPopulation, dryRun = false, storage, region, replace = false
     } = params;
 
@@ -187,9 +193,8 @@ export class MetadataManager {
     const deltaStoragePath = MetadataManager.deriveDeltaStoragePath(chunkDirectory);
 
     const metadata: ChunkMetadata = {
-      chunkCount, totalRecords, itemsPerChunk, source, chunkDirectory,
-      deltaStoragePath, bulkReset, trustPreviousStorage, syncPopulation, createdAt: new Date().toISOString(),
-      chunkKeys
+      itemsPerChunk, source, chunkDirectory,
+      deltaStoragePath, bulkReset, trustPreviousStorage, syncPopulation, createdAt: new Date().toISOString()
     };
 
     // Add optional target field
@@ -392,20 +397,20 @@ export class MetadataManager {
   }
 
   /**
-   * Validate metadata and log warnings for missing fields
+   * Validate metadata and log warnings for missing fields.
+   * Note: chunkCount, totalRecords, chunkKeys are no longer persisted in metadata.
+   * They are now determined from contiguous marker files.
    */
   private static validateMetadata(metadata: Partial<ChunkMetadata>): void {
     const requiredFields: (keyof ChunkMetadata)[] = [
-      'bulkReset', 'chunkCount', 'totalRecords', 'deltaStoragePath', 'syncPopulation'
+      'bulkReset', 'deltaStoragePath', 'syncPopulation'
     ];
 
     for (const field of requiredFields) {
       if (metadata[field] === undefined) {
         const defaultValue = field === 'syncPopulation' 
           ? SyncPopulation.PersonFull 
-          : field === 'bulkReset' 
-            ? false 
-            : 0;
+          : false;
         console.warn(`⚠️ ${field} value not found in metadata, defaulting to ${defaultValue}`);
       }
     }
@@ -428,5 +433,146 @@ export class MetadataManager {
     const chunkDirectory = chunkS3Key.substring(0, chunkS3Key.lastIndexOf('/'));
     
     return MetadataManager.read({ bucketName, chunkDirectory, region });
+  }
+
+  /**
+   * List all chunk files in a directory with pagination support.
+   * Returns sorted array of chunk file keys matching chunk-*.ndjson pattern.
+   * Handles S3 pagination to support 1000+ chunk files.
+   * 
+   * @param bucketName - S3 bucket name
+   * @param chunkDirectory - Chunk directory path (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z")
+   * @param region - AWS region
+   * @returns Array of chunk file keys sorted by chunk number
+   */
+  public static async listChunkFiles(
+    bucketName: string,
+    chunkDirectory: string,
+    region?: string
+  ): Promise<string[]> {
+    const s3Client = new S3Client({ region });
+    const prefix = `${chunkDirectory}/`;
+    const chunkFiles: string[] = [];
+    let continuationToken: string | undefined;
+
+    try {
+      do {
+        const response = await s3Client.send(
+          new ListObjectsV2Command({
+            Bucket: bucketName,
+            Prefix: prefix,
+            ContinuationToken: continuationToken,
+          })
+        );
+
+        // Filter for chunk-*.ndjson files
+        if (response.Contents) {
+          for (const obj of response.Contents) {
+            if (obj.Key && /chunk-\d+\.ndjson$/.test(obj.Key)) {
+              chunkFiles.push(obj.Key);
+            }
+          }
+        }
+
+        // Handle pagination
+        if (response.IsTruncated) {
+          continuationToken = response.NextContinuationToken;
+        } else {
+          continuationToken = undefined;
+        }
+      } while (continuationToken);
+
+      // Sort by chunk number to ensure deterministic ordering
+      chunkFiles.sort((a, b) => {
+        const numA = parseInt(a.match(/chunk-(\d+)\.ndjson$/)?.[1] || '0', 10);
+        const numB = parseInt(b.match(/chunk-(\d+)\.ndjson$/)?.[1] || '0', 10);
+        return numA - numB;
+      });
+
+      console.log(`✓ Listed ${chunkFiles.length} chunk files from s3://${bucketName}/${prefix}`);
+      return chunkFiles;
+    } catch (error: any) {
+      console.error(`Error listing chunk files: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Compute total records by summing NDJSON line counts across chunk files.
+   * Streams each file to avoid buffering large payloads.
+   * 
+   * @param bucketName - S3 bucket name
+   * @param chunkKeys - Array of chunk file S3 keys
+   * @param region - AWS region
+   * @returns Total record count across all chunks
+   */
+  public static async computeTotalRecords(
+    bucketName: string,
+    chunkKeys: string[],
+    region?: string
+  ): Promise<number> {
+    const s3Client = new S3Client({ region });
+    let totalRecords = 0;
+
+    for (const chunkKey of chunkKeys) {
+      try {
+        const response = await s3Client.send(
+          new GetObjectCommand({
+            Bucket: bucketName,
+            Key: chunkKey,
+          })
+        );
+
+        const body = await response.Body?.transformToString();
+        if (body) {
+          // Count non-empty lines (each NDJSON line is one record)
+          const lineCount = body.split('\n').filter(line => line.trim().length > 0).length;
+          totalRecords += lineCount;
+        }
+      } catch (error: any) {
+        console.warn(`Warning: Could not read chunk file ${chunkKey}: ${error.message}`);
+        // Continue with other chunks even if one fails
+      }
+    }
+
+    console.log(`✓ Computed total records: ${totalRecords} across ${chunkKeys.length} chunks`);
+    return totalRecords;
+  }
+
+  /**
+   * Build aggregated metadata from run-level S3 state.
+   * Discovers all chunk files in the directory and computes aggregate totals.
+   * Used when finalizing metadata at end-of-run to ensure all chunks are reflected.
+   * 
+   * @param bucketName - S3 bucket name
+   * @param chunkDirectory - Chunk directory path
+   * @param region - AWS region
+   * @returns Aggregated metadata with full chunk list and totals
+   */
+  public static async buildAggregatedMetadata(
+    bucketName: string,
+    chunkDirectory: string,
+    region?: string
+  ): Promise<{ chunkKeys: string[]; totalRecords: number; chunkCount: number }> {
+    try {
+      // Discover all chunk files
+      const chunkKeys = await MetadataManager.listChunkFiles(bucketName, chunkDirectory, region);
+
+      if (chunkKeys.length === 0) {
+        throw new Error(`No chunk files found in ${chunkDirectory}`);
+      }
+
+      // Compute total records
+      const totalRecords = await MetadataManager.computeTotalRecords(bucketName, chunkKeys, region);
+
+      const chunkCount = chunkKeys.length;
+
+      console.log(`✓ Aggregated metadata: chunkCount=${chunkCount}, totalRecords=${totalRecords}`);
+
+      return { chunkKeys, totalRecords, chunkCount };
+    } catch (error: any) {
+      console.error(`Failed to build aggregated metadata: ${error.message}`);
+      throw error;
+    }
   }
 }
