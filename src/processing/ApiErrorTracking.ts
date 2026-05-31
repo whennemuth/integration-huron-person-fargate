@@ -54,6 +54,7 @@
  * - GSI: errorType-timestamp-index for cross-run queries
  */
 
+import { TestEnvironment } from 'integration-core';
 import { ConfigManager, ReadPerson, getLocalConfig, TargetApiErrorEventProcessor } from "integration-huron-person";
 import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb';
 import { marshall } from '@aws-sdk/util-dynamodb';
@@ -412,6 +413,15 @@ export const alertIfThrottlingEvent = (error: any): void => {
  */
 if (require.main === module) {
   (async () => {
+    const testEnvironment = TestEnvironment('API_ERROR_TRACKING');
+    [
+      'HURON_PERSON_CONFIG_PATH',
+      'SECRET_ARN',
+      'HURON_PERSON_CONFIG_JSON',
+      'CACHE_ENABLED',
+      'CACHE_PATH'
+    ].forEach(testEnvironment.getVar);
+
     // Load env vars
     const { HURON_PERSON_CONFIG_PATH, SECRET_ARN } = process.env;
 

@@ -1,4 +1,5 @@
 import { S3 } from '@aws-sdk/client-s3';
+import { TestEnvironment } from 'integration-core';
 import { BasicCache, Config, ConfigManager, getLocalConfig, HuronPerson, ListPeople } from "integration-huron-person";
 
 /**
@@ -190,6 +191,18 @@ export class HuronPersonCache {
 
 if (require.main === module) {
   (async () => {
+    const testEnvironment = TestEnvironment('PERSON_CACHE');
+    [
+      'PERSON_CACHE_BUCKET_NAME',
+      'PERSON_CACHE_KEY',
+      'REGION',
+      'SECRET_ARN',
+      'HURON_PERSON_CONFIG_PATH',
+      'HURON_PERSON_CONFIG_JSON',
+      'CACHE_ENABLED',
+      'CACHE_PATH'
+    ].forEach(testEnvironment.getVar);
+
     const personCache = new HuronPersonCache();
     // const people = await personCache.getFullPopulationFromTargetAPI();
     // console.log(`Retrieved ${people.length} people from target API`);

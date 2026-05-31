@@ -1,3 +1,4 @@
+import { TestEnvironment } from 'integration-core';
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { BigJsonFile, BigJsonFileConfig } from "./BigJsonFile";
 import { extractChunkDirectory } from './ChunkPathUtils';
@@ -238,13 +239,25 @@ if (require.main === module) {
    * We don't need any secrets since all activity is against s3, and security is handled on the 
    * basis of the task role's permissions to the relevant bucket(s).
    */
-  const {
-    CHUNKS_BUCKET: chunksBucket = '',
-    REGION: region,
-    ITEMS_PER_CHUNK: itemsPerChunkStr = '200',
-    PERSON_ID_FIELD: personIdField = 'personid',
-    DRY_RUN: dryRun = 'false'
-  } = process.env;
+  const testEnvironment = TestEnvironment('CHUNK_FROM_S3');
+  [
+    'CHUNKS_BUCKET',
+    'REGION',
+    'ITEMS_PER_CHUNK',
+    'PERSON_ID_FIELD',
+    'DRY_RUN',
+    'INPUT_BUCKET',
+    'INPUT_KEY',
+    'BULK_RESET',
+    'TRUST_PREVIOUS_STORAGE',
+    'SQS_QUEUE_URL'
+  ].forEach(testEnvironment.getVar);
+
+  const chunksBucket = testEnvironment.getVarOrEmptyString('CHUNKS_BUCKET');
+  const region = testEnvironment.getVar('REGION');
+  const itemsPerChunkStr = testEnvironment.getVar('ITEMS_PER_CHUNK') || '200';
+  const personIdField = testEnvironment.getVar('PERSON_ID_FIELD') || 'personid';
+  const dryRun = testEnvironment.getVar('DRY_RUN') || 'false';
 
   // Validate bucket name required for output is provided.
   if (!chunksBucket) {

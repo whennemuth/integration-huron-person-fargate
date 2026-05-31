@@ -4,7 +4,7 @@ import { pick } from 'stream-json/filters/Pick';
 import { streamArray } from 'stream-json/streamers/StreamArray';
 import { IStorageAdapter, S3StorageAdapter, FileSystemStorageAdapter } from '../../storage';
 import { IPersonArrayWrapper, PersonArrayWrapper } from '../PersonArrayWrapper';
-import { Timer } from 'integration-core'
+import { Timer, TestEnvironment } from 'integration-core';
 
 /**
  * Configuration for BigJsonFile chunking operations
@@ -427,6 +427,17 @@ export class BigJsonFile {
 if (require.main === module) {
   (async () => {
     console.log('=== BigJsonFile Test Harness ===\n');
+
+    const testEnvironment = TestEnvironment('BIG_JSON_FILE');
+    [
+      'MODE',
+      'ITEMS_PER_CHUNK',
+      'FILE_BASE_PATH',
+      'FILE_NAME',
+      'INPUT_BUCKET',
+      'INPUT_KEY',
+      'REGION'
+    ].forEach(testEnvironment.getVar);
 
     const { MODE, ITEMS_PER_CHUNK='200' } = process.env;
     const itemsPerChunk = parseInt(ITEMS_PER_CHUNK, 10);

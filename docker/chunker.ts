@@ -44,7 +44,7 @@
  */
 
 import { DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
-import { Timer } from 'integration-core';
+import { Timer, TestEnvironment } from 'integration-core';
 import { Config, ConfigManager } from 'integration-huron-person';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
@@ -448,5 +448,35 @@ async function main() {
 
 // Run if executed directly
 if (require.main === module) {
+  const testEnvironment = TestEnvironment('DOCKER_CHUNKER');
+
+  [
+    'CHUNKS_BUCKET',
+    'REGION',
+    'ITEMS_PER_CHUNK',
+    'PERSON_ID_FIELD',
+    'DRY_RUN',
+    'SQS_QUEUE_URL',
+    'SHARED_DELTA_STORAGE_DIR',
+    'IS_ECS_TASK',
+    'ECS_AGENT_URI',
+    'HURON_PERSON_CONFIG_PATH',
+    'SECRET_ARN',
+    'HURON_PERSON_CONFIG_JSON',
+    'POPULATION_SCOPE',
+    'POPULATION_TYPE',
+    'CHUNK_DIRECTORY',
+    'SINGLE_PERSON_BUID',
+    'INPUT_BUCKET',
+    'INPUT_KEY',
+    'BULK_RESET',
+    'TRUST_PREVIOUS_STORAGE',
+    'MAX_SCALING_CAPACITY',
+    'ECS_CHUNKER_SERVICE_NAME',
+    'ECS_CLUSTER_NAME',
+    'CACHE_ENABLED',
+    'CACHE_PATH'
+  ].forEach(testEnvironment.getVar);
+
   main();
 }

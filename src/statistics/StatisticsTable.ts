@@ -1,5 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { BatchWriteCommand, DynamoDBDocumentClient, GetCommand, QueryCommand, QueryCommandOutput, ScanCommand, ScanCommandInput } from '@aws-sdk/lib-dynamodb';
+import { TestEnvironment } from 'integration-core';
 import { IContext } from '../../context/IContext';
 import { StatisticsItem } from '../processing/ApiErrorTracking';
 
@@ -303,6 +304,13 @@ export class StatisticsTable {
 
 
 if(require.main === module) {
+  const testEnvironment = TestEnvironment('STATISTICS_TABLE');
+  [
+    'STATISTICS_TABLE_TASK',
+    'STATISTICS_TABLE_INTEGRATION_TIMESTAMP',
+    'TRUNCATE_CHUNK_SIZE'
+  ].forEach(testEnvironment.getVar);
+
   const { 
     STATISTICS_TABLE_TASK: task, STATISTICS_TABLE_INTEGRATION_TIMESTAMP: timestamp,
     TRUNCATE_CHUNK_SIZE

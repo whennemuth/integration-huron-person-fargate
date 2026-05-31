@@ -1,3 +1,4 @@
+import { TestEnvironment } from 'integration-core';
 import { AxiosResponseStreamFilter, Config, ConfigManager, DataSourceConfig, error, ResponseProcessor } from "integration-huron-person";
 import { IContext } from "../../../context/IContext";
 import { SyncPopulation } from "../../../docker/chunkTypes";
@@ -658,16 +659,21 @@ export class ChunkFromAPI implements IChunkFromSource {
 
 
 if(require.main === module) {
+  /** 
+   * This is an environment utility that is based on the prefix we will use for all environment variables 
+   * related to this service, to avoid conflicts with other services and make it clear which variables 
+   * are intended for this service 
+   */
+  const testEnvironment = TestEnvironment('CHUNK_FROM_API');
+
   // Read additional configuration from environment
-  const {
-    HURON_PERSON_CONFIG_PATH, 
-    SECRET_ARN,
-    CHUNKS_BUCKET: chunksBucket = '',
-    REGION: region,
-    ITEMS_PER_CHUNK: itemsPerChunkStr = '200',
-    PERSON_ID_FIELD: personIdField = 'personid',
-    DRY_RUN: dryRun = 'false'
-  } = process.env;
+  const configPath = testEnvironment.getVar('HURON_PERSON_CONFIG_PATH');
+  const secretArn = testEnvironment.getVar('SECRET_ARN');
+  const chunksBucket = testEnvironment.getVarOrEmptyString('CHUNKS_BUCKET');
+  const region = testEnvironment.getVar('REGION');
+  const itemsPerChunkStr = testEnvironment.getVar('ITEMS_PER_CHUNK') || '200';
+  const personIdField = testEnvironment.getVar('PERSON_ID_FIELD') || 'personid';
+  const dryRun = testEnvironment.getVar('DRY_RUN') || 'false';
 
   // Validate bucket name required for output is provided.
   if (!chunksBucket) {
@@ -685,11 +691,11 @@ if(require.main === module) {
   (async () => {
     // Load configuration.
     const configManager = ConfigManager.getInstance();
-    const localConfigPath = HURON_PERSON_CONFIG_PATH || getLocalConfig();
+    const localConfigPath = configPath || getLocalConfig();
     const config = await configManager
       .reset()
       .fromJsonString('HURON_PERSON_CONFIG_JSON')   // ← TaskDef secret injection
-      .fromSecretManager(SECRET_ARN)                // ← Fallback to Secrets Manager
+      .fromSecretManager(secretArn)                // ← Fallback to Secrets Manager
       .fromEnvironment()                            // ← Fallback to individual env var overrides
       .fromFileSystem(localConfigPath)              // ← Local dev only
       .getConfigAsync('people');

@@ -1,5 +1,5 @@
 import { S3 } from '@aws-sdk/client-s3';
-import { FieldSet } from "integration-core";
+import { FieldSet, TestEnvironment } from "integration-core";
 import { BasicCache, Cache, Config, ConfigManager, FieldDefinitions, HuronPersonDataTarget, ReadPerson, TargetPersonDeleteType } from "integration-huron-person";
 import * as readline from 'readline';
 import { Readable } from 'stream';
@@ -469,6 +469,21 @@ export class DeferredDeleteHandler {
 
 if(require.main === module) {
   (async () => {
+    const testEnvironment = TestEnvironment('DEFERRED_DELETE');
+    [
+      'CHUNKS_BUCKET',
+      'REGION',
+      'MERGED_NDJSON_KEY',
+      'BASELINE_NDJSON_KEY',
+      'PERSON_DELETE_TYPE',
+      'HURON_PERSON_CONFIG_PATH',
+      'SECRET_ARN',
+      'HURON_PERSON_CONFIG_JSON',
+      'DYNAMODB_TABLE_NAME',
+      'CACHE_ENABLED',
+      'CACHE_PATH'
+    ].forEach(testEnvironment.getVar);
+
     const { 
       CHUNKS_BUCKET:bucketName, REGION:region, MERGED_NDJSON_KEY: 
       sourceKey, BASELINE_NDJSON_KEY: targetKey  

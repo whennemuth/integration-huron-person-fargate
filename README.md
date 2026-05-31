@@ -49,6 +49,40 @@ When dry run is enabled:
 
 **Important**: Dry run mode affects all parallel processing chunks, so the entire batch runs in test mode.
 
+## Test Harnesses
+
+Test harnesses are executable modules that verify individual components using environment-based configuration via the `TestEnvironment` utility from `integration-core`. Each harness loads its own prefixed environment variables and validates component behavior in isolation.
+
+Harness configuration is documented in [example-env.md](./example-env.md). The file contains grouped environment variables for test harnesses covering the major processing pipelines:
+
+- **CDK Service Layer**: `ChunkerService` (Lambda-based chunking orchestration)
+- **Chunking Pipeline**: `ChunkFromAPI`, `ChunkFromS3`, `BigJsonFetch`, `BigJsonFile`, `PersonArrayWrapper`
+- **Merging Pipeline**: `DeferredDeleteHandler`, `PersonCache`, `StatisticsTable`
+- **Docker Entry Points**: `chunker.ts`, `processor.ts`, `merger.ts`
+- **Storage & Error Handling**: `S3StorageAdapter`, `ApiErrorTracking`, `EcrChecker`
+
+### Running Test Harnesses
+
+**Option 1: Using VS Code Launch Configuration (Recommended)**
+
+1. Open the harness file in the editor (e.g., `src/chunking/fetch/ChunkFromAPI.ts`)
+2. Press `F5` or go to **Run > Start Debugging**
+3. Select "Debug current file" from the launch configuration dropdown
+4. The harness will execute with your `.env` file automatically loaded
+
+**Option 2: Command Line with npx**
+
+```bash
+# Example: Run the ChunkFromAPI harness
+npx ts-node src/chunking/fetch/ChunkFromAPI.ts
+
+# Example: Run the PersonCache harness
+npx ts-node src/PersonCache.ts
+
+# Example: Run the docker chunker harness
+npx ts-node docker/chunker.ts
+```
+
 ## Useful commands
 
 * `npm run build`   compile typescript to js

@@ -4,6 +4,7 @@ import { Schedule, ScheduleExpression, ScheduleTargetInput } from 'aws-cdk-lib/a
 import { LambdaInvoke } from 'aws-cdk-lib/aws-scheduler-targets';
 import { Construct } from 'constructs';
 import { ConfigManager, DataSourceConfig } from 'integration-huron-person';
+import { TestEnvironment } from 'integration-core';
 import { IContext } from '../../../context/IContext';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 import { ApiChunkerEvent } from '../../../src/chunking/ChunkerSubscriber';
@@ -155,26 +156,34 @@ export class ChunkerService extends AbstractService {
  * 
  */
 async function startChunkingService() {
+  /** 
+   * This is an environment utility that is based on the prefix we will use for all environment variables 
+   * related to this service, to avoid conflicts with other services and make it clear which variables 
+   * are intended for this service 
+   */
+  const testEnvironment = TestEnvironment('CHUNK_SERVICE');
+
   /** Read additional configuration from environment */
   const {
-    HURON_PERSON_CONFIG_PATH, 
-    SECRET_ARN,
-    BULK_RESET = 'false',
-    POPULATION_TYPE,
-    SINGLE_PERSON_BUID: buid,
+    SECRET_ARN: secretArn,
+    HURON_PERSON_CONFIG_PATH: configPath,
     CHUNKER_QUEUE_URL: queueUrl,
-    DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT,
-    TRUST_PREVIOUS_STORAGE = 'false'
+    POPULATION_TYPE: populationType,
+    DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT: peopleLimit,
+    SINGLE_PERSON_BUID: buid,
+    REGION: region,
+    BULK_RESET: bulkReset,
+    TRUST_PREVIOUS_STORAGE: trustPreviousStorage
   } = process.env;
 
   /** Load configuration. */
   const configManager = ConfigManager.getInstance();
-  const localConfigPath = HURON_PERSON_CONFIG_PATH || getLocalConfig();
+  const localConfigPath = configPath || getLocalConfig();
   const config = await configManager
     .reset()
     .fromFileSystem(localConfigPath)              // ← Local dev only
     .fromJsonString('HURON_PERSON_CONFIG_JSON')   // ← TaskDef secret injection
-    .fromSecretManager(SECRET_ARN)                // ← Fallback to Secrets Manager
+    .fromSecretManager(secretArn)                // ← Fallback to Secrets Manager
     .fromEnvironment()                            // ← Fallback to individual env var overrides
     .getConfigAsync(buid ? 'person' : 'people');
 
@@ -220,10 +229,10 @@ async function startChunkingService() {
   const apiChunkerEvent = {
     baseUrl,
     fetchPath,
-    populationType: POPULATION_TYPE?.toLowerCase() === PersonDelta ? PersonDelta : PersonFull,
-    bulkReset: BULK_RESET.toLowerCase() === 'true',
-    trustPreviousStorage: TRUST_PREVIOUS_STORAGE.toLowerCase() === 'true',
-    limit: DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT ? parseInt(DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT) : 0,
+    populationType: populationType?.toLowerCase() === PersonDelta ? PersonDelta : PersonFull,
+    bulkReset: bulkReset?.toLowerCase() === 'true',
+    trustPreviousStorage: trustPreviousStorage?.toLowerCase() === 'true',
+    limit: peopleLimit ? parseInt(peopleLimit) : 0,
     offset: 0,
     processingMetadata: {
       processedAt: new Date().toISOString(),
@@ -237,5 +246,22 @@ async function startChunkingService() {
 
 // Run if executed directly
 if (require.main === module) {
+  const testEnvironment = TestEnvironment('CHUNK_SERVICE');
+
+  [
+    'HURON_PERSON_CONFIG_PATH',
+    'SECRET_ARN',
+    'CHUNKER_QUEUE_URL',
+    'POPULATION_TYPE',
+    'DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT',
+    'SINGLE_PERSON_BUID',
+    'REGION'
+  ].forEach(testEnvironment.getVar);
+
+  [
+    'BULK_RESET',
+    'TRUST_PREVIOUS_STORAGE'
+  ].forEach(testEnvironment.getVarOrEmptyString);
+
   startChunkingService();
 }

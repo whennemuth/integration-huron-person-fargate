@@ -38,7 +38,7 @@
 
 import { S3 } from '@aws-sdk/client-s3';
 import { DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
-import { FieldSet, Timer } from 'integration-core';
+import { FieldSet, Timer, TestEnvironment } from 'integration-core';
 import { FieldDefinitions, HashMapMerger } from 'integration-huron-person';
 import { objectExistsInS3 } from '../src/Utils';
 import { extractChunkDirectory } from '../src/chunking/filedrop/ChunkPathUtils';
@@ -360,6 +360,27 @@ async function main() {
 
 // Run if executed directly
 if (require.main === module) {
+  const testEnvironment = TestEnvironment('DOCKER_MERGER');
+
+  [
+    'SQS_QUEUE_URL',
+    'CHUNKS_BUCKET',
+    'CHUNK_DIRECTORY',
+    'INPUT_KEY',
+    'REGION',
+    'SHARED_DELTA_STORAGE_DIR',
+    'DRY_RUN',
+    'IS_ECS_TASK',
+    'ECS_AGENT_URI',
+    'PERSON_DELETE_TYPE',
+    'HURON_PERSON_CONFIG_PATH',
+    'SECRET_ARN',
+    'HURON_PERSON_CONFIG_JSON',
+    'DYNAMODB_TABLE_NAME',
+    'CACHE_ENABLED',
+    'CACHE_PATH'
+  ].forEach(testEnvironment.getVar);
+
   main();
 }
 

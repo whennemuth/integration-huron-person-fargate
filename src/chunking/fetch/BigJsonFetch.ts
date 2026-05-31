@@ -1,4 +1,4 @@
-import { Timer } from 'integration-core';
+import { Timer, TestEnvironment } from 'integration-core';
 import { 
   Config, 
   BuCdmPeopleDataSource, 
@@ -417,6 +417,21 @@ export class BigJsonFetch {
 if (require.main === module) {
   (async () => {
     console.log('=== BigJsonFetch Test Harness ===\n');
+
+    const testEnvironment = TestEnvironment('BIG_JSON_FETCH');
+    [
+      'MODE',
+      'ITEMS_PER_CHUNK',
+      'DRY_RUN',
+      'SECRET_ARN',
+      'SYNC_TYPE',
+      'FILE_BASE_PATH',
+      'CHUNKS_BUCKET',
+      'REGION',
+      'HURON_PERSON_CONFIG_JSON',
+      'CACHE_ENABLED',
+      'CACHE_PATH'
+    ].forEach(testEnvironment.getVar);
 
     const { 
       MODE, ITEMS_PER_CHUNK = '200', DRY_RUN = 'false', 

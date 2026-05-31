@@ -39,7 +39,7 @@
  */
 
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { FieldSet, humanReadableFromMilliseconds, Timer } from 'integration-core';
+import { FieldSet, humanReadableFromMilliseconds, Timer, TestEnvironment } from 'integration-core';
 import {
   BasicCache,
   Config,
@@ -601,5 +601,27 @@ export async function main(queueReader: QueueReader) {
 
 // Run if executed directly
 if (require.main === module) {
+  const testEnvironment = TestEnvironment('DOCKER_PROCESSOR');
+
+  [
+    'REGION',
+    'CHUNKS_BUCKET',
+    'CHUNK_KEY',
+    'SQS_QUEUE_URL',
+    'HURON_PERSON_CONFIG_JSON',
+    'STATIC_MAP_USAGE',
+    'DRY_RUN',
+    'BULK_RESET',
+    'DYNAMODB_TABLE_NAME',
+    'RETRY_STRATEGY',
+    'SHARED_DELTA_STORAGE_DIR',
+    'IS_ECS_TASK',
+    'ECS_AGENT_URI',
+    'HURON_PERSON_CONFIG_PATH',
+    'SECRET_ARN',
+    'CACHE_ENABLED',
+    'CACHE_PATH'
+  ].forEach(testEnvironment.getVar);
+
   main(QueueReader.getInstance());
 }

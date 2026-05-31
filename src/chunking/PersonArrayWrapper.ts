@@ -1,5 +1,6 @@
 
 import { Readable } from 'stream';
+import { TestEnvironment } from 'integration-core';
 
 export type IPersonArrayWrapper = {
   detectPersonArrayPath(key: string): Promise<string | undefined>;
@@ -158,6 +159,18 @@ if (require.main === module) {
 
   (async () => {
     console.log('=== PersonArrayWrapper Test Harness ===\n');
+
+    const testEnvironment = TestEnvironment('PERSON_ARRAY_WRAPPER');
+    [
+      'MODE',
+      'PERSON_ID_FIELD',
+      'MAX_DETECTION_BYTES',
+      'FILE_BASE_PATH',
+      'FILE_NAME',
+      'INPUT_BUCKET',
+      'INPUT_KEY',
+      'REGION'
+    ].forEach(testEnvironment.getVar);
 
     const { MODE, PERSON_ID_FIELD='personid', MAX_DETECTION_BYTES='10240' } = process.env;
     const personIdField = PERSON_ID_FIELD;
