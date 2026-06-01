@@ -106,8 +106,6 @@ export interface IContext {
     processorSubscriber: {
       timeoutSeconds: number;
       memorySizeMb: number;
-      /** If true, processor subscriber will skip sending messages to queue */
-      pauseMessaging?: boolean;
     };
     /** Merger subscriber Lambda configuration */
     mergerSubscriber: {

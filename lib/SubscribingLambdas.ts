@@ -21,7 +21,7 @@ import { ProcessorSubscribingLambda } from './services/processor/ProcessorSubscr
  *      1) Small data "chunk" NDJSON file appears in the chunks bucket at "/chunks/..."
  *      2) S3 event notification of chunks bucket triggers ProcessorSubscribingLambda created below.
  *      3) ProcessorSubscribingLambda forwards the original S3 event payload to SQS queue unless
- *         PAUSE_MESSAGING=true in its environment.
+ *         DRY_RUN=true in its environment.
  *      4) QueueProcessingFargateService detects queue depth increase and auto-scales up,
  *         launching processor Fargate task(s).
  * 
@@ -92,7 +92,6 @@ export class SubscribingLambdas extends Construct {
       region: ctx.REGION,
       timeoutSeconds: ctx.LAMBDA.processorSubscriber.timeoutSeconds,
       memorySizeMb: ctx.LAMBDA.processorSubscriber.memorySizeMb,
-      pauseMessaging: ctx.LAMBDA.processorSubscriber.pauseMessaging,
       dryRun: ctx.DRY_RUN?.lambda?.processor,
       stackScope,
       tags,

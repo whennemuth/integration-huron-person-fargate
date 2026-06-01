@@ -62,8 +62,7 @@
     },
     "processorSubscriber": {
       "timeoutSeconds": 60,
-      "memorySizeMb": 256,
-      "pauseMessaging": false
+      "memorySizeMb": 256
     },
     "mergerSubscriber": {
       "timeoutSeconds": 60,

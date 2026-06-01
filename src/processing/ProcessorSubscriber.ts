@@ -3,7 +3,6 @@ import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 const {
   PROCESSOR_QUEUE_URL,
   REGION: region,
-  PAUSE_MESSAGING = 'false',
   DRY_RUN = 'false',
 } = process.env;
 
@@ -14,22 +13,16 @@ const sqsClient = new SQSClient({ region });
  * The outgoing message body intentionally remains identical to direct S3->SQS delivery.
  */
 export async function handler(event: any): Promise<any> {
-  const pauseMessaging = PAUSE_MESSAGING.toLowerCase() === 'true';
   const dryRun = DRY_RUN.toLowerCase() === 'true';
 
-  if (pauseMessaging) {
-    console.log('⊘ PAUSE_MESSAGING=true; skipping processor queue message creation.');
-    return { statusCode: 200, body: 'Paused: message creation skipped' };
+  if (!PROCESSOR_QUEUE_URL) {
+    console.error('✗ Missing required environment variable: PROCESSOR_QUEUE_URL');
+    return { statusCode: 500, body: 'Missing PROCESSOR_QUEUE_URL' };
   }
 
   if (dryRun) {
     console.log('⊘ DRY_RUN=true; would forward S3 event to processor queue.');
     return { statusCode: 200, body: 'Dry run: message not sent' };
-  }
-
-  if (!PROCESSOR_QUEUE_URL) {
-    console.error('✗ Missing required environment variable: PROCESSOR_QUEUE_URL');
-    return { statusCode: 500, body: 'Missing PROCESSOR_QUEUE_URL' };
   }
 
   try {

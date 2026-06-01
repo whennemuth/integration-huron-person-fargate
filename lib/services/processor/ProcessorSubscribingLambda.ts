@@ -16,7 +16,6 @@ export interface ProcessorSubscribingLambdaProps {
   region: string;
   timeoutSeconds: number;
   memorySizeMb: number;
-  pauseMessaging?: boolean;
   dryRun?: boolean;
   stackScope: Construct;
   tags?: { [key: string]: string };
@@ -31,7 +30,7 @@ export interface ProcessorSubscribingLambdaProps {
  * Flow:
  * - 1) New chunk file lands in chunks bucket under chunks/*.ndjson
  * - 2) S3 notification invokes this Lambda
- * - 3) Lambda optionally skips forwarding when PAUSE_MESSAGING=true
+ * - 3) Lambda optionally skips forwarding when DRY_RUN=true
  * - 4) Lambda forwards the original S3 event payload to processor queue
  */
 export class ProcessorSubscribingLambda extends Construct {
@@ -68,9 +67,8 @@ export class ProcessorSubscribingLambda extends Construct {
       environment: {
         REGION: props.region,
         PROCESSOR_QUEUE_URL: props.processorQueueUrl,
-        PAUSE_MESSAGING: props.pauseMessaging ? 'true' : 'false',
         DRY_RUN: props.dryRun ? 'true' : 'false',
-        DESCRIPTION1: 'Forwards S3 chunk creation events to processor queue unless PAUSE_MESSAGING=true.',
+        DESCRIPTION1: 'Forwards S3 chunk creation events to processor queue unless DRY_RUN=true.',
       },
       bundling: {
         externalModules: [
