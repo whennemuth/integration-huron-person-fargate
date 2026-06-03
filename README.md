@@ -2,6 +2,85 @@
 
 This CDK TypeScript project deploys the Huron Person integration as a serverless ECS Fargate task that processes batches of people synchronization in parallel.
 
+## Repository Boundaries
+
+This project is an independently versioned npm package with its own Git repository.
+
+It depends on other packages (notably `integration-core` and integration pipeline packages) through dependency-level composition. The workspace is a development convenience, not a workspace-level source-control unit.
+
+## Shared Copilot Skills Setup (VS Code Configuration)
+*NOTE: The following assumes a VS Code development environment - adapt as needed for other editors.*
+
+Shared skills are maintained in a separate repository at `integration-workspace-skills/` and discovered by VS Code's Copilot using the `chat.agentSkillsLocations` setting.
+
+Add this setting to your [**`.code-workspace`** file](https://code.visualstudio.com/docs/editing/workspaces/workspaces#_workspace-settings) to enable skill discovery. **Important**: In [**multi-root**](https://code.visualstudio.com/docs/editing/workspaces/workspaces#_multiroot-workspaces) `.code-workspace` configurations, paths in `chat.agentSkillsLocations` are resolved relative to each workspace root folder.
+
+Use this canonical settings entry:
+
+```json
+"chat.agentSkillsLocations": {
+  "../integration-workspace-skills/skills": true
+}
+```
+
+### Scenario 1: Working only on integration-core
+
+```json
+{
+  "folders": [
+    {
+      "path": "integration-workspace-skills",
+      "name": "skills"
+    },
+    {
+      "path": "integration-core",
+      "name": "core"
+    }
+  ],
+  "settings": {
+    "chat.tools.terminal.autoApprove": {
+      "npm test": true
+    },
+    "chat.agentSkillsLocations": {
+      "../integration-workspace-skills/skills": true
+    }
+  }
+}
+```
+
+### Scenario 2: Working on core + person + fargate
+
+```json
+{
+  "folders": [
+    {
+      "path": "integration-workspace-skills",
+      "name": "skills"
+    },
+    {
+      "path": "integration-core",
+      "name": "core"
+    },
+    {
+      "path": "integration-huron-person",
+      "name": "huron-person"
+    },
+    {
+      "path": "integration-huron-person-fargate",
+      "name": "huron-person-fargate"
+    }
+  ],
+  "settings": {
+    "chat.tools.terminal.autoApprove": {
+      "npm test": true
+    },
+    "chat.agentSkillsLocations": {
+      "../integration-workspace-skills/skills": true
+    }
+  }
+}
+```
+
 The `cdk.json` file tells the CDK Toolkit how to execute your app.
 
 ## Architecture
