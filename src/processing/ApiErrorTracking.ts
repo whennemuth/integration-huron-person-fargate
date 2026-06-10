@@ -436,7 +436,7 @@ if (require.main === module) {
       .fromFileSystem(localConfigPath)              // ← Local dev only
       .getConfigAsync('person');
 
-    const reader = new ReadPerson(config);
+    const reader = new ReadPerson({ config });
     
     try {
       await reader.readPersonByHRN('invalid_hrn');

@@ -277,7 +277,8 @@ export class DeferredDeleteHandler {
     }
 
     console.log(`\nEnriching ${removedRecords.length} removed record(s) with HRN...`);
-    const reader = new ReadPerson(this.params.config);
+    const { config } = this.params;
+    const reader = new ReadPerson({ config });
     const enrichedRecords: FieldSet[] = [];
     let enrichedCount = 0;
     let failedCount = 0;
