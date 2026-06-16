@@ -51,6 +51,7 @@
     "typescript": "~5.9.3"
   },
   "dependencies": {
+    "@aws-sdk/client-application-auto-scaling": "^3.1068.0",
     "@aws-sdk/client-dynamodb": "^3.400.0",
     "@aws-sdk/client-ecr": "^3.1012.0",
     "@aws-sdk/client-ecr-public": "^3.1013.0",
