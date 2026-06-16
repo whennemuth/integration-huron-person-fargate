@@ -17,10 +17,11 @@ jest.mock('../docker/chunker', () => ({
     PersonFull: 'person-full',
     PersonDelta: 'person-delta'
   },
-  grabMessageBodyFromQueue: jest.fn(),
-  writeMetadata: jest.fn()
+  popMessageFromQueue: jest.fn(),
+  writeChunkMetadata: jest.fn()
 }));
 
+import { Message } from '@aws-sdk/client-sqs';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
 
 describe('ChunkFromS3 Parameter Gathering', () => {
@@ -133,7 +134,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -145,7 +146,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -157,7 +158,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -169,7 +170,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -180,7 +181,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(false);
     });
 
@@ -191,7 +192,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(false);
     });
 
@@ -199,7 +200,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       const messageBody = {};
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(false);
     });
   });
@@ -225,7 +226,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
       // Message should override environment
     });
@@ -240,7 +241,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -254,7 +255,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
   });
@@ -267,7 +268,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -278,7 +279,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -289,7 +290,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -300,7 +301,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -311,7 +312,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
   });
@@ -373,13 +374,13 @@ describe('ChunkFromS3 Parameter Gathering', () => {
   describe('Edge cases and error handling', () => {
     it('should handle null message body gracefully', () => {
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(null);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(null) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(false);
     });
 
     it('should handle undefined message body gracefully', () => {
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(undefined);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(undefined) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(false);
     });
 
@@ -393,7 +394,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -404,7 +405,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -415,7 +416,7 @@ describe('ChunkFromS3 Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromS3();
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
   });

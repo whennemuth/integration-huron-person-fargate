@@ -9,6 +9,7 @@
  * - Combination scenarios with priority handling
  */
 
+import { Message } from '@aws-sdk/client-sqs';
 import { Config, DataSourceConfig } from 'integration-huron-person';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { SyncPopulation } from '../docker/chunkTypes';
@@ -225,7 +226,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -233,7 +234,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       const messageBody = {};
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       // Should fall back to config
       expect(chunker.hasSufficientConfig()).toBe(true);
     });
@@ -246,7 +247,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -258,7 +259,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -270,7 +271,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       // Should use config for baseUrl
       expect(chunker.hasSufficientConfig()).toBe(true);
     });
@@ -283,7 +284,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       // Should use config for fetchPath
       expect(chunker.hasSufficientConfig()).toBe(true);
     });
@@ -311,7 +312,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
       // Message should override environment
     });
@@ -347,7 +348,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientConfig()).toBe(true);
     });
   });
@@ -442,7 +443,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -455,7 +456,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       // If taskParameters are accessible (they're private), we'd verify offset=5, limit=10
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
@@ -469,7 +470,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -484,7 +485,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -500,7 +501,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       // camelCase values (25, 30) should take precedence over env vars (15, 20)
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
@@ -514,7 +515,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
@@ -528,7 +529,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessageBody(messageBody);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
   });

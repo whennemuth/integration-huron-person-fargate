@@ -46,6 +46,9 @@ export class ChunkerService extends AbstractService {
   constructor(scope: Construct, props: ChunkerServiceProps) {
     super(scope, props);
 
+    // Expand the scaling activity to include invisible messages in the queue (not just visible).
+    super.setupCompositeScaling();
+
     // Create EventBridge schedule for API-based chunking if configured
     this.createApiChunkingSchedule(props);
   }
@@ -135,7 +138,7 @@ export class ChunkerService extends AbstractService {
       // Scale IN: when 0 messages, remove 1 task
       { upper: 0, change: -1 },
     
-      // Scale OUT: when >= 1 message, add 1 task (up to max of 5)
+      // Scale OUT: when >= 1 message, add 1 task (up to the max of set in the service props)
       { lower: 1, change: +1 }
     ];
   }
@@ -156,13 +159,6 @@ export class ChunkerService extends AbstractService {
  * 
  */
 async function startChunkingService() {
-  /** 
-   * This is an environment utility that is based on the prefix we will use for all environment variables 
-   * related to this service, to avoid conflicts with other services and make it clear which variables 
-   * are intended for this service 
-   */
-  const testEnvironment = TestEnvironment('CHUNK_SERVICE');
-
   /** Read additional configuration from environment */
   const {
     SECRET_ARN: secretArn,

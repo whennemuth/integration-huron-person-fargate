@@ -1,4 +1,4 @@
-import { Duration, Tags } from "aws-cdk-lib";
+import { CfnResource, Duration, Tags } from "aws-cdk-lib";
 import { ScalingInterval } from "aws-cdk-lib/aws-applicationautoscaling";
 import { CfnAlarm } from "aws-cdk-lib/aws-cloudwatch";
 import { IVpc } from "aws-cdk-lib/aws-ec2";
@@ -69,7 +69,86 @@ export abstract class AbstractService {
      */
     this.overrideAlarmPeriod(60);
   }
-  
+
+
+  /**
+   * Escape hatch: Override the default scaling metric to use total messages (visible + not visible)
+   * instead of just visible messages. This prevents scale-down during message processing
+   * when messages are invisible but still being worked on.
+   * 
+   * Uses escape hatch to modify the CloudWatch Alarms created by QueueProcessingFargateService.
+   */
+  protected setupCompositeScaling(): void {
+    const { queue } = this.props;
+    
+    // Get the CloudFormation logical ID of the queue resource
+    const queueCfn = queue.node.defaultChild as CfnResource;
+    const queueNameRef = { 'Fn::GetAtt': [queueCfn.logicalId, 'QueueName'] };
+    
+    // Find all CloudWatch Alarms created by QueueProcessingFargateService
+    const alarms = this.service.node.findAll().filter(
+      (child) => child instanceof CfnAlarm
+    ) as CfnAlarm[];
+
+    alarms.forEach((alarm) => {
+      // Get the current alarm properties to preserve threshold and comparison operator
+      const alarmResource = alarm as any;
+      
+      // Remove the single-metric properties (they conflict with Metrics array)
+      alarm.addPropertyDeletionOverride('MetricName');
+      alarm.addPropertyDeletionOverride('Namespace');
+      alarm.addPropertyDeletionOverride('Dimensions');
+      alarm.addPropertyDeletionOverride('Statistic');
+      alarm.addPropertyDeletionOverride('Period');  // Remove outer Period when using Metrics array
+      
+      // Add the Metrics array with composite expression
+      alarm.addPropertyOverride('Metrics', [
+        {
+          Id: 'visible',
+          MetricStat: {
+            Metric: {
+              MetricName: 'ApproximateNumberOfMessagesVisible',
+              Namespace: 'AWS/SQS',
+              Dimensions: [
+                {
+                  Name: 'QueueName',
+                  Value: queueNameRef
+                }
+              ]
+            },
+            Period: 60,
+            Stat: 'Maximum'
+          },
+          ReturnData: false
+        },
+        {
+          Id: 'notVisible',
+          MetricStat: {
+            Metric: {
+              MetricName: 'ApproximateNumberOfMessagesNotVisible',
+              Namespace: 'AWS/SQS',
+              Dimensions: [
+                {
+                  Name: 'QueueName',
+                  Value: queueNameRef
+                }
+              ]
+            },
+            Period: 60,
+            Stat: 'Maximum'
+          },
+          ReturnData: false
+        },
+        {
+          Expression: 'visible + notVisible',
+          Id: 'totalMessages',
+          Label: 'Total Messages (Visible + In-Flight)',
+          ReturnData: true
+        }
+      ]);
+    });
+  }
+
   /**
    * Override the Period property on all CloudWatch Alarms created by QueueProcessingFargateService
    * @param periodSeconds - The period in seconds (minimum 60)

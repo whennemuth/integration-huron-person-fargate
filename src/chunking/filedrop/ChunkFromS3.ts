@@ -1,11 +1,12 @@
+import { Message } from '@aws-sdk/client-sqs';
 import { TestEnvironment } from 'integration-core';
+import { ChunkFromParams, IChunkFromSource, popMessageFromQueue, writeChunkMetadata } from "../../../docker/chunker";
+import { SyncPopulation } from "../../../docker/chunkTypes";
+import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
+import { WriteMetadataParams } from "../Metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { BigJsonFile, BigJsonFileConfig } from "./BigJsonFile";
 import { extractChunkDirectory } from './ChunkPathUtils';
-import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
-import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeChunkMetadata } from "../../../docker/chunker";
-import { SyncPopulation } from "../../../docker/chunkTypes";
-import { WriteMetadataParams } from "../Metadata";
 
 export type TaskParameters = {
   inputBucket: string,
@@ -51,6 +52,7 @@ export type TaskParameters = {
 export class ChunkFromS3 implements IChunkFromSource {
   private taskParameters: TaskParameters;
   private chunkDirectory: string;
+  private messageFromQueue: Message | undefined;
 
   public static defaultPopulationType = SyncPopulation.PersonFull;
 
@@ -71,12 +73,18 @@ export class ChunkFromS3 implements IChunkFromSource {
     }
   }
 
+  public getMessage = (): Message | undefined => {
+    return this.messageFromQueue;
+  }
+
   /**
    * Set task parameters from SQS message body (ECS mode). 
    * This will be called by the main chunker entry point after reading a message from the queue.
    * @param messageBody 
    */
-  public setTaskParametersFromQueueMessageBody = (messageBody: any) => {
+  public setTaskParametersFromQueueMessage = (message: Message | undefined) => {
+    this.messageFromQueue = message;
+    const messageBody = message?.Body ? JSON.parse(message.Body) : undefined;
     if (!messageBody) {
       return;
     }
@@ -279,8 +287,8 @@ if (require.main === module) {
     const chunkFromS3 = new ChunkFromS3();
 
     if (!chunkFromS3.hasSufficientTaskInfo()) {
-      const msgBody = await grabMessageBodyFromQueue();
-      chunkFromS3.setTaskParametersFromQueueMessageBody(msgBody);
+      const message = await popMessageFromQueue();
+      chunkFromS3.setTaskParametersFromQueueMessage(message);
     }
 
     // Run chunking operation

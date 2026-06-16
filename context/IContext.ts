@@ -79,7 +79,8 @@ export interface IContext {
       maxScalingCapacity: number;
       /**
        * Optional: Number of chunks each task should process before exiting (default: 0 = process ALL 
-       * of the chunks for ALL of the people in the source system in just one task execution)
+       * of the chunks for ALL of the people in the source system in just one task execution - used
+       * for testing.)
        */
       chunksPerTask?: number;
     };

@@ -43,21 +43,21 @@
  * ```
  */
 
-import { DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
-import { Timer, TestEnvironment } from 'integration-core';
+import { DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput, Message, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
+import { TestEnvironment, Timer } from 'integration-core';
 import { Config, ConfigManager } from 'integration-huron-person';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
-import { ReadMetadataParams, WriteMetadataParams } from '../src/chunking/Metadata';
-import { MetadataManager } from '../src/chunking/Metadata'
+import { MetadataManager, ReadMetadataParams, WriteMetadataParams } from '../src/chunking/Metadata';
 import { HuronPersonCache } from '../src/PersonCache';
+import { TaskProtection } from '../src/TaskProtection';
 import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
 import { SyncPopulation } from './chunkTypes';
-import { TaskProtection } from '../src/TaskProtection';
 
 export type IChunkFromSource = {
   runChunking: (params: ChunkFromParams) => Promise<void>
   noMessagesFromQueue?: boolean
+  getMessage: () => Message | undefined
   getChunkDirectory: () => string
   getBulkResetFlag?: () => boolean  // Optional getter for bulkReset flag from task parameters
   getTrustPreviousStorageFlag?: () => boolean  // Optional getter for trustPreviousStorage flag from task parameters
@@ -77,67 +77,97 @@ export type ChunkFromParams = {
 const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
 /**
- * Reads task parameters from SQS queue or environment variables.
+ * Reads task parameters from the next message from the SQS queue, and then deletes the message.
  * Priority: SQS message > Environment variables
  */
-export const grabMessageBodyFromQueue = async (): Promise<any> => {
-  const { SQS_QUEUE_URL, REGION } = process.env;
+export const popMessageFromQueue = async (): Promise<Message | undefined> => {
+  const { SQS_QUEUE_URL } = process.env;
 
   if (SQS_QUEUE_URL) {
     console.log(`SQS_QUEUE_URL detected: ${SQS_QUEUE_URL} - reading task parameters from SQS queue`);
-    const sqsClient = new SQSClient({ region: REGION });
 
     try {
-      const command = new ReceiveMessageCommand({
-        QueueUrl: SQS_QUEUE_URL,
-        MaxNumberOfMessages: 1,
-        WaitTimeSeconds: 20,
-      });
+      // Read (lease) message from SQS queue
+      const message: Message | undefined = await receiveMessageFromQueue();
 
-      const response = await sqsClient.send(command);
-      const messages = response.Messages || [];
+      if(message) {
 
-      if (messages.length === 0) {
-        if (isEcsTask()) {
-          console.log('No messages in queue - this probably means that the desired count for the ' +
-            'service has not scaled down yet to zero after processing the last message and deleting ' +
-            'it from  the queue. An empty queue will eventually cause the service to scale down to ' +
-            'zero, but in the meantime we should just exit the task.');
-          console.log('✗ Task cancelled')
-          return null;
-        }
-        console.log('No messages in queue');
-        return null;
+        // Delete message from queue (prevents reprocessing)
+        await deleteMessageFromQueue(message);
+
+        return message;
       }
-
-      const message = messages[0];
-      const body = JSON.parse(message.Body || '{}');
-
-      // Delete message from queue (prevents reprocessing)
-      if (message.ReceiptHandle) {
-        const input = {
-          QueueUrl: SQS_QUEUE_URL,
-          ReceiptHandle: message.ReceiptHandle,
-        } as DeleteMessageCommandInput;
-        console.log(`Deleting message from queue: ${JSON.stringify(input)}`);
-        const output = await sqsClient.send(
-          new DeleteMessageCommand({
-            QueueUrl: SQS_QUEUE_URL,
-            ReceiptHandle: message.ReceiptHandle,
-          })
-        ) as DeleteMessageCommandOutput;
-        output.$metadata.httpStatusCode === 200
-          ? console.log('✓ Message deleted from queue successfully')
-          : console.warn('✗ Failed to delete message from queue:', output);
-      }
-
-      console.log('Task parameters from SQS:', JSON.stringify(body));
-      return body;
+      return undefined;
     } catch (error) {
       console.error('Error reading from SQS queue:', error);
-      return undefined;
     }
   }
+  return undefined;
+}
+
+export const receiveMessageFromQueue = async (): Promise<Message | undefined> => {
+  const { SQS_QUEUE_URL, REGION } = process.env;
+  console.log(`SQS_QUEUE_URL detected: ${SQS_QUEUE_URL} - reading task parameters from SQS queue`);
+  const sqsClient = new SQSClient({ region: REGION });
+
+  try {
+    const command = new ReceiveMessageCommand({
+      QueueUrl: SQS_QUEUE_URL,
+      MaxNumberOfMessages: 1,
+      WaitTimeSeconds: 20,
+    });
+
+    const response = await sqsClient.send(command);
+    const messages = response.Messages || [];
+
+    if (messages.length === 0) {
+      if (isEcsTask()) {
+        console.log('No messages in queue - this probably means that the desired count for the ' +
+          'service has not scaled down yet to zero after processing the last message and deleting ' +
+          'it from  the queue. An empty queue will eventually cause the service to scale down to ' +
+          'zero, but in the meantime we should just exit the task.');
+        console.log('✗ Task cancelled')
+        return undefined;
+      }
+      console.log('No messages in queue');
+      return undefined;
+    }
+
+    const message = messages[0];
+
+    return message;
+  } catch (error) {
+    console.error('Error reading from SQS queue:', error);
+    return undefined;
+  }
+}
+
+/**
+ * Deletes the specified message from the SQS queue to prevent it from being processed again.
+ * @param message 
+ * @returns 
+ */
+export const deleteMessageFromQueue = async (message: Message): Promise<void> => {
+  if (!message.ReceiptHandle) {
+    console.warn('Cannot delete message from queue - missing ReceiptHandle:', JSON.stringify(message));
+    return;
+  }
+  const { SQS_QUEUE_URL, REGION } = process.env;
+  const input = {
+    QueueUrl: SQS_QUEUE_URL,
+    ReceiptHandle: message.ReceiptHandle,
+  } as DeleteMessageCommandInput;
+  console.log(`Deleting message from queue: ${JSON.stringify(input)}`);
+  const sqsClient = new SQSClient({ region: REGION });
+  const output = await sqsClient.send(
+    new DeleteMessageCommand({
+      QueueUrl: SQS_QUEUE_URL,
+      ReceiptHandle: message.ReceiptHandle,
+    })
+  ) as DeleteMessageCommandOutput;
+  output.$metadata.httpStatusCode === 200
+    ? console.log('✓ Message deleted from queue successfully')
+    : console.warn('✗ Failed to delete message from queue:', output);
 }
 
 /**
@@ -216,13 +246,19 @@ const getChunkerInstance = async (config: Config): Promise<IChunkFromSource | un
   if (isEcsTask()) {
     // Fargate execution: Message takes priority over config/environment
     console.log('Running in ECS task - checking SQS message first...');
-    const msgBody = await grabMessageBodyFromQueue();
+
+    // Read message, but do not delete it - it must remain as "in-flight" so it 
+    // (combined with others) can bear upon the desiredCount of the service.
+    const message: Message | undefined = await receiveMessageFromQueue();
+    const msgBody = message ? JSON.parse(message.Body || '{}') : undefined;
+    console.log('Task parameters from SQS:', JSON.stringify(msgBody));
     
-    // If queue is empty, exit immediately (grabMessageBodyFromQueue already logged)
+    // If queue is empty, exit immediately (popMessageBodyFromQueue already logged)
     if (!msgBody) {     
       return new class implements IChunkFromSource {
         runChunking = async (params: ChunkFromParams) => { return; }
         noMessagesFromQueue = true
+        getMessage = () => undefined
         getChunkDirectory = () => ''
         getSyncPopulation = () => SyncPopulation.PersonFull
       }();
@@ -230,7 +266,7 @@ const getChunkerInstance = async (config: Config): Promise<IChunkFromSource | un
     
     // Try S3 chunker with message parameters
     const s3Chunker = new ChunkFromS3();
-    s3Chunker.setTaskParametersFromQueueMessageBody(msgBody);
+    s3Chunker.setTaskParametersFromQueueMessage(message);
     if(s3Chunker.hasSufficientTaskInfo()) {
       console.log('Data source type: S3 (person data will be streamed from S3 bucket)');
       return s3Chunker;
@@ -238,7 +274,7 @@ const getChunkerInstance = async (config: Config): Promise<IChunkFromSource | un
     
     // Try API chunker with message parameters (config provides fallback values)
     const apiChunker = new ChunkFromAPI(config);
-    apiChunker.setTaskParametersFromQueueMessageBody(msgBody);
+    apiChunker.setTaskParametersFromQueueMessage(message);
     if(apiChunker.hasSufficientConfig()) {
       console.log('Data source type: API (person data will be fetched from API endpoint)');
       return apiChunker;
@@ -261,16 +297,18 @@ const getChunkerInstance = async (config: Config): Promise<IChunkFromSource | un
       return apiChunker;
     }
     
-    // Fallback: try reading message if available
-    const msgBody = await grabMessageBodyFromQueue();
+    // Fallback: try reading message if available. It is ok to delete immediately in local 
+    // context since we are not relying on the message for scaling decisions like we are in ECS 
+    // context, and this allows us to test the message-based parameter passing in local dev as well.
+    const message: Message | undefined = await popMessageFromQueue();
     
-    s3Chunker.setTaskParametersFromQueueMessageBody(msgBody);
+    s3Chunker.setTaskParametersFromQueueMessage(message);
     if(s3Chunker.hasSufficientTaskInfo(true)) {
       console.log('Data source type: S3 (person data will be streamed from S3 bucket)');
       return s3Chunker;
     }
     
-    apiChunker.setTaskParametersFromQueueMessageBody(msgBody);
+    apiChunker.setTaskParametersFromQueueMessage(message);
     if(apiChunker.hasSufficientTaskInfo(true)) {
       console.log('Data source type: API (person data will be fetched from API endpoint)');
       return apiChunker;
@@ -307,6 +345,8 @@ const sharedDeltaStorageFileExists = async (bucket: string, region?: string): Pr
 async function main() {
   console.log('=== Phase 1: Chunker ===\n');
 
+  let chunker: IChunkFromSource | undefined;
+  
   let exitCode = 0;
   const timer = new Timer();
   timer.start();
@@ -346,7 +386,7 @@ async function main() {
 
     // Get chunking operation instance based on source type (API or S3)
     const config = await getConfig();
-    const chunker = await getChunkerInstance(config);
+    chunker = await getChunkerInstance(config);
 
     // Bail out if there is some kind of unexpected lapse in configuration or message parameters that leaves us without a clear source of person data to chunk from.
     if(!chunker) {
@@ -357,7 +397,7 @@ async function main() {
 
     // Bail out if there are no messages in the queue (this likely means the service is still scaling down after processing the last message and deleting it from the queue, and we should just exit the task)
     if(chunker.noMessagesFromQueue) {
-      console.log('No messages in queue - exiting');
+      console.log('⊘ No messages in queue - exiting');
       exitCode = 0;
       return;
     }
@@ -435,6 +475,12 @@ async function main() {
     exitCode = 1;
   }
   finally {
+    if(chunker) {
+      if(!chunker.noMessagesFromQueue) {
+        const message = chunker.getMessage();
+        await deleteMessageFromQueue(message!);
+      }
+    }
     timer.stop();
     if(exitCode === 0) {
       timer.logElapsed('\n✓ Chunker process completed successfully');

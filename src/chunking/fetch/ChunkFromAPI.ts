@@ -2,7 +2,7 @@ import { TestEnvironment } from 'integration-core';
 import { AxiosResponseStreamFilter, Config, ConfigManager, DataSourceConfig, error, ResponseProcessor } from "integration-huron-person";
 import { IContext } from "../../../context/IContext";
 import { SyncPopulation } from "../../../docker/chunkTypes";
-import { ChunkFromParams, grabMessageBodyFromQueue, IChunkFromSource, writeChunkMetadata } from "../../../docker/chunker";
+import { ChunkFromParams, popMessageFromQueue, IChunkFromSource, writeChunkMetadata } from "../../../docker/chunker";
 import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { ApiChunkerEvent } from '../ChunkerSubscriber';
@@ -10,8 +10,9 @@ import { MetadataManager, WriteMetadataParams } from "../Metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig } from "./BigJsonFetch";
-import { handleApiEvent } from './ChunkerApiSubscriber';
 import { ChunkConfigOverride } from "./ChunkConfigOverride";
+import { handleApiEvent } from './ChunkerApiSubscriber';
+import { Message } from '@aws-sdk/client-sqs/dist-types/models/models_0';
 
 export type TaskParameters = {
   baseUrl: string,
@@ -65,6 +66,7 @@ export class ChunkFromAPI implements IChunkFromSource {
   private taskParameters: TaskParameters;
   private chunkDirectory: string;
   private context?: IContext;
+  private messageFromQueue: Message | undefined;
 
   public static defaultPopulationType = SyncPopulation.PersonFull;
 
@@ -77,6 +79,10 @@ export class ChunkFromAPI implements IChunkFromSource {
   constructor(private config: Config, context?: IContext) {
     this.context = context;
     this.setTaskParametersFromEnvironment();
+  }
+
+  public getMessage = (): Message | undefined => {
+    return this.messageFromQueue;
   }
 
   /**
@@ -153,7 +159,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       console.log('Running in local context - task parameters come from environment variables');
       // Fake a situation in which we pretend the values we set in the environment variables came from
       // an SQS message body, as if we had received a message from the queue.
-      this.setTaskParametersFromQueueMessageBody({
+      this.setTaskParametersFromQueueMessage({ Body: JSON.stringify({
         baseUrl: baseUrl,
         fetchPath: fetchPath,
         populationType: populationType as SyncPopulation,
@@ -162,7 +168,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         offset: offset ? parseInt(offset, 10) : undefined,
         limit: limit ? parseInt(limit, 10) : undefined,
         chunkDirectory: chunkDirectory || undefined
-      });
+      }) } as Message);
     }
   }
 
@@ -171,7 +177,10 @@ export class ChunkFromAPI implements IChunkFromSource {
    * This will be called by the main chunker entry point after reading a message from the queue.
    * @param messageBody 
    */
-  public setTaskParametersFromQueueMessageBody = (messageBody: any) => {
+  public setTaskParametersFromQueueMessage = (message: Message | undefined) => {
+    this.messageFromQueue = message;
+    const messageBody = message?.Body ? JSON.parse(message.Body) : undefined;
+
     // Handle both camelCase (baseUrl) and environment variable style (DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL) property names
     // camelCase takes precedence over env var style for backwards compatibility
     let { 
@@ -426,56 +435,6 @@ export class ChunkFromAPI implements IChunkFromSource {
   }
 
   /**
-   * Bring the desired count of the service to zero to prevent further tasks from starting. This is 
-   * used when there is nothing left to chunk and we need prevent any new tasks from being launched.
-   * The service would eventually scale down on its own after some time, but many new extraneous
-   * tasks will be launched in the meantime if we don't do this.
-   */
-  private setDesiredCountToZero = async (): Promise<void> => {
-    const { ECS_CHUNKER_SERVICE_NAME: serviceName } = process.env;
-    const clusterName = this.context?.ECS.clusterName || process.env.ECS_CLUSTER_NAME;
-    const region = process.env.REGION;
-
-    // Validate required environment variables
-    if (!serviceName) {
-      console.warn('⚠️  ECS_CHUNKER_SERVICE_NAME environment variable not set. Unable to scale down service.');
-      return;
-    }
-
-    if (!clusterName) {
-      console.warn('⚠️  Cluster name not available. Unable to scale down service.');
-      return;
-    }
-
-    if (!region) {
-      console.warn('⚠️  REGION environment variable not set. Unable to scale down service.');
-      return;
-    }
-
-    try {
-      const { ECSClient, UpdateServiceCommand } = await import('@aws-sdk/client-ecs');
-      const ecsClient = new ECSClient({ region });
-
-      const command = new UpdateServiceCommand({
-        cluster: clusterName,
-        service: serviceName,
-        desiredCount: 0,
-      });
-
-      if (process.env.DRY_RUN?.toLowerCase() === 'true') {
-        console.log(`[DRY RUN] Would scale down ECS service: cluster=${clusterName}, service=${serviceName}, desiredCount=0`);
-        return;
-      }
-
-      await ecsClient.send(command);
-      console.log(`✓ Successfully scaled down chunker service to desiredCount=0`);
-    } catch (error: any) {
-      console.error(`⚠️  Failed to scale down chunker service: ${error.message}`);
-      // Non-fatal error - don't fail the chunking job
-    }
-  }
-
-  /**
    * Perform the fetch from the API endpoint and chunking operation.
    * @param params 
    */
@@ -643,8 +602,6 @@ export class ChunkFromAPI implements IChunkFromSource {
         console.log(`   Total chunks: ${aggregatedChunkCount}`);
         console.log(`   Total records: ${aggregatedTotalRecords}`);
         console.log(`\n📝 Note: Merger will verify completion via contiguous marker ordinals (0..${aggregatedChunkCount - 1}), not metadata.chunkCount`);
-
-        await this.setDesiredCountToZero();
       }
       
       // Exit with success
@@ -703,8 +660,8 @@ if(require.main === module) {
     const chunkFromAPI = new ChunkFromAPI(config);
 
     if (!chunkFromAPI.hasSufficientTaskInfo()) {
-      const msgBody = await grabMessageBodyFromQueue();
-      chunkFromAPI.setTaskParametersFromQueueMessageBody(msgBody);
+      const message: Message | undefined = await popMessageFromQueue();
+      chunkFromAPI.setTaskParametersFromQueueMessage(message);
     }
 
     // Run API fetch and chunking operation.
