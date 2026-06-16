@@ -1,6 +1,7 @@
 module.exports = {
+  preset: 'ts-jest',
   testEnvironment: 'node',
-  roots: ['<rootDir>/test'],
+  roots: ['<rootDir>/src', '<rootDir>/lib', '<rootDir>/docker', '<rootDir>/test'],
   testMatch: ['**/*.test.ts'],
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   moduleNameMapper: {
@@ -8,13 +9,7 @@ module.exports = {
     '^integration-huron-person/(.*)$': '<rootDir>/node_modules/integration-huron-person/dist/types/$1'
   },
   transform: {
-    '^.+\\.tsx?$': ['ts-jest', {
-      isolatedModules: true,
-      tsconfig: {
-        module: 'commonjs',
-        esModuleInterop: true
-      }
-    }]
+    '^.+\\.tsx?$': 'ts-jest'
   },
   transformIgnorePatterns: ['node_modules/']
 };

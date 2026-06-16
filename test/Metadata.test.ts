@@ -194,7 +194,7 @@ describe('Metadata Aggregation Helpers', () => {
       const chunkKeys = ['chunk-0000.ndjson'];
 
       s3Mock.on(GetObjectCommand).resolves({
-        Body: { transformToString: async () => '\n\n   \n' },
+        Body: { transformToString: async () => '\n\n   \n' } as any,
       });
 
       const result = await MetadataManager.computeTotalRecords(bucketName, chunkKeys, region);

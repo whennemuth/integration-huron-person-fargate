@@ -8,12 +8,12 @@ const dynamoMock = mockClient(DynamoDBDocumentClient);
 
 describe('StatisticsTable', () => {
   let statisticsTable: StatisticsTable;
-  const mockContext: IContext = {
+  const mockContext = {
     REGION: 'us-east-1',
     ACCOUNT: '123456789012',
     LANDSCAPE: 'test',
     CLIENT_ID: 'test-client'
-  } as IContext;
+  } as unknown as IContext;
 
   const integrationTimestamp = '2026-05-14T12:00:00.000Z';
 
