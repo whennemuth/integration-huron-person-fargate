@@ -50,7 +50,7 @@ export class ChunkerSubscribingLambda extends Construct {
     // Create Lambda log group
     const logGroup = new LogGroup(this, 'LogGroup', {
       logGroupName: `/aws/lambda/chunker-subscriber`,
-      retention: RetentionDays.ONE_MONTH,
+      retention: RetentionDays.THREE_MONTHS,
       removalPolicy: RemovalPolicy.DESTROY
     });
 

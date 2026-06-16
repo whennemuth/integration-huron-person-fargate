@@ -41,7 +41,7 @@ export class ProcessorSubscribingLambda extends Construct {
 
     const logGroup = new LogGroup(this, 'LogGroup', {
       logGroupName: '/aws/lambda/processor-subscriber',
-      retention: RetentionDays.ONE_MONTH,
+      retention: RetentionDays.THREE_MONTHS,
       removalPolicy: RemovalPolicy.DESTROY
     });
 

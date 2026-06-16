@@ -25,13 +25,13 @@
       "cpu": 2048,
       "memoryLimitMiB": 4096,
       "memoryReservationMiB": 2048,
-      "logRetentionDays": 7
+      "logRetentionDays": 90
     },
     "processorTaskDefinition": {
       "cpu": 1024,
       "memoryLimitMiB": 2048,
       "memoryReservationMiB": 1024,
-      "logRetentionDays": 7,
+      "logRetentionDays": 90,
       "retries": {
         "retryStrategyType": "THROTTLING_ONLY"
       }
@@ -40,7 +40,7 @@
       "cpu": 1024,
       "memoryLimitMiB": 2048,
       "memoryReservationMiB": 1024,
-      "logRetentionDays": 7
+      "logRetentionDays": 90
     },
     "chunkerService": {
       "maxScalingCapacity": 15,
