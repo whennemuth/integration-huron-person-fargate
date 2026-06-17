@@ -1,8 +1,9 @@
 import { Message } from '@aws-sdk/client-sqs';
 import { TestEnvironment } from 'integration-core';
-import { ChunkFromParams, IChunkFromSource, popMessageFromQueue, writeChunkMetadata } from "../../../docker/chunker";
+import { ChunkFromParams, IChunkFromSource, writeChunkMetadata } from "../../../docker/chunker";
 import { SyncPopulation } from "../../../docker/chunkTypes";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
+import { ChunkerQueue } from '../ChunkerQueue';
 import { WriteMetadataParams } from "../Metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { BigJsonFile, BigJsonFileConfig } from "./BigJsonFile";
@@ -148,7 +149,7 @@ export class ChunkFromS3 implements IChunkFromSource {
   public runChunking = async (params: ChunkFromParams) => {
 
     if (!this.hasSufficientTaskInfo(true)) {
-      process.exit(1);
+      throw new Error('Insufficient task parameters to run chunking operation');
     }
 
     const {
@@ -229,13 +230,9 @@ export class ChunkFromS3 implements IChunkFromSource {
         chunkKeys: result.chunkKeys
       } satisfies WriteMetadataParams);
 
-      // Exit with success
-      process.exit(0);
-
     } catch (error: any) {
       console.error('\n✗ S3 chunking failed:', error.message);
-      console.error(error.stack);
-      process.exit(1);
+      throw error;
     }
   }
 }
@@ -269,15 +266,13 @@ if (require.main === module) {
 
   // Validate bucket name required for output is provided.
   if (!chunksBucket) {
-    console.error('ERROR: CHUNKS_BUCKET environment variable is required');
-    process.exit(1);
+    throw new Error('CHUNKS_BUCKET environment variable is required');
   }
 
   // Validate items per chunk is a positive integer
   const itemsPerChunk = parseInt(itemsPerChunkStr, 10);
   if (isNaN(itemsPerChunk) || itemsPerChunk <= 0) {
-    console.error(`ERROR: Invalid ITEMS_PER_CHUNK: ${itemsPerChunkStr}`);
-    process.exit(1);
+    throw new Error(`Invalid ITEMS_PER_CHUNK: ${itemsPerChunkStr}`);
   }
 
   // Run API fetch and chunking operation.
@@ -287,7 +282,8 @@ if (require.main === module) {
     const chunkFromS3 = new ChunkFromS3();
 
     if (!chunkFromS3.hasSufficientTaskInfo()) {
-      const message = await popMessageFromQueue();
+      const chunkerQueue = new ChunkerQueue({ isEcsTask: true });
+      const message = await chunkerQueue.popMessageFromQueue();
       chunkFromS3.setTaskParametersFromQueueMessage(message);
     }
 

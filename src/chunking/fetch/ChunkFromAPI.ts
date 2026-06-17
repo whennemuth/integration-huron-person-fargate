@@ -1,18 +1,17 @@
+import { Message } from '@aws-sdk/client-sqs/dist-types/models/models_0';
 import { TestEnvironment } from 'integration-core';
 import { AxiosResponseStreamFilter, Config, ConfigManager, DataSourceConfig, error, ResponseProcessor } from "integration-huron-person";
 import { IContext } from "../../../context/IContext";
 import { SyncPopulation } from "../../../docker/chunkTypes";
-import { ChunkFromParams, popMessageFromQueue, IChunkFromSource, writeChunkMetadata } from "../../../docker/chunker";
+import { ChunkFromParams, IChunkFromSource, writeChunkMetadata } from "../../../docker/chunker";
 import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
-import { ApiChunkerEvent } from '../ChunkerSubscriber';
+import { ChunkerQueue } from '../ChunkerQueue';
 import { MetadataManager, WriteMetadataParams } from "../Metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig } from "./BigJsonFetch";
 import { ChunkConfigOverride } from "./ChunkConfigOverride";
-import { handleApiEvent } from './ChunkerApiSubscriber';
-import { Message } from '@aws-sdk/client-sqs/dist-types/models/models_0';
 
 export type TaskParameters = {
   baseUrl: string,
@@ -363,50 +362,18 @@ export class ChunkFromAPI implements IChunkFromSource {
    * Create and send the next SQS message for parallel chunking.
    * Calculates the next offset (currentOffset + limit) and sends a message to the chunker queue.
    * This is called BEFORE starting the current chunking task to enable true parallelism.
-   * @param currentOffset Current offset in population
-   * @param limit Number of batches to process per task
-   * @param queueUrl SQS queue URL
+   * @param chunkerQueue The ChunkerQueue instance used to send the next message
+   * @param dryRun If true, will not actually send the message but will log the parameters instead (default: false)
    * @returns true if message sent successfully, false if skipped
    */
-  public sendNextChunkingMessage = async (
-    queueUrl: string | undefined,
-    dryRun?: boolean
-  ): Promise<boolean> => {
-
-    const { limit, offset: currentOffset } = this.getLimitAndOffset(); 
-
-    // Don't create next message if limit is 0 (process all)
-    if (limit === 0) {
-      console.log('ℹ️  limit=0 (process all). Not creating next message.');
-      return false;
-    }
-
-    if (!queueUrl) {
-      console.warn('⚠️  SQS_QUEUE_URL not available. Unable to send next chunking message.');
-      return false;
-    }
-
-    try {
-
-      const { baseUrl, fetchPath, populationType, bulkReset, trustPreviousStorage } = this.taskParameters;
-      const nextOffset = currentOffset + limit;
-      if (dryRun) {
-        console.log(`[DRY RUN] Would send next chunking message to SQS: offset=${nextOffset}, limit=${limit}`);
-        return true;
-      }
-
-      const apiChunkerEvent = {
-        baseUrl, fetchPath, populationType, bulkReset, trustPreviousStorage, limit, offset: nextOffset, 
-        chunkDirectory: this.getChunkDirectory()
-      } as ApiChunkerEvent;
-
-      // Send the SQS message
-      await handleApiEvent(apiChunkerEvent, queueUrl);
-
-      return true;
-    } catch (error) {
-      return false;
-    }
+  public sendNextChunkingMessage = async (chunkerQueue: ChunkerQueue, dryRun: boolean = false): Promise<boolean> => {
+    const { getLimitAndOffset, getChunkDirectory, taskParameters } = this;
+    const { limit, offset } = getLimitAndOffset();
+    const chunkDirectory = getChunkDirectory();
+    
+    return chunkerQueue.sendNextChunkingMessage({ 
+      limit, offset, chunkDirectory, taskParameters, dryRun 
+    });
   }
 
   /**
@@ -468,7 +435,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       }
 
       if (!this.hasSufficientConfig(true)) {
-        process.exit(1);
+        throw new Error('Insufficient task parameters to run chunking operation');
       }
       
       // Extract chunk base path (creates: chunks/person-full/2026-04-09T15:28:18.703Z)
@@ -604,12 +571,9 @@ export class ChunkFromAPI implements IChunkFromSource {
         console.log(`\n📝 Note: Merger will verify completion via contiguous marker ordinals (0..${aggregatedChunkCount - 1}), not metadata.chunkCount`);
       }
       
-      // Exit with success
-      process.exit(0);
-
     } catch (e: any) {
       error({ msg: '\n✗ API fetch and chunk failed', o: e, flat: true });
-      process.exit(1);
+      throw e;
     }
   }  
 }
@@ -634,15 +598,13 @@ if(require.main === module) {
 
   // Validate bucket name required for output is provided.
   if (!chunksBucket) {
-    console.error('ERROR: CHUNKS_BUCKET environment variable is required');
-    process.exit(1);
+    throw new Error('CHUNKS_BUCKET environment variable is required');
   }
 
   // Validate items per chunk is a positive integer
   const itemsPerChunk = parseInt(itemsPerChunkStr, 10);
   if (isNaN(itemsPerChunk) || itemsPerChunk <= 0) {
-    console.error(`ERROR: Invalid ITEMS_PER_CHUNK: ${itemsPerChunkStr}`);
-    process.exit(1);
+    throw new Error(`Invalid ITEMS_PER_CHUNK value: ${itemsPerChunkStr}. Must be a positive integer.`);
   }
 
   (async () => {
@@ -660,7 +622,8 @@ if(require.main === module) {
     const chunkFromAPI = new ChunkFromAPI(config);
 
     if (!chunkFromAPI.hasSufficientTaskInfo()) {
-      const message: Message | undefined = await popMessageFromQueue();
+      const chunkerQueue = new ChunkerQueue({ isEcsTask: true });
+      const message = await chunkerQueue.popMessageFromQueue();
       chunkFromAPI.setTaskParametersFromQueueMessage(message);
     }
 
