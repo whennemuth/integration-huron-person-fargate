@@ -6,7 +6,7 @@ import { EcsInfrastructure } from './EcsInfrastructure';
 import { IContext } from '../context/IContext';
 import { QueueInfrastructure } from './QueueInfrastructure';
 import { SubscribingLambdas } from './SubscribingLambdas';
-import { ProcessorStatisticsTable } from './DynamoDB';
+import { DynamoDbTables } from './DynamoDB';
 import { Config } from 'integration-huron-person';
 
 export interface AppConstructProps {
@@ -25,7 +25,7 @@ export class AppConstruct extends Construct {
   public readonly queue: QueueInfrastructure;
   public readonly chunksBucket: Bucket;
   public readonly subscribingLambdas: SubscribingLambdas;
-  public readonly statisticsTable: ProcessorStatisticsTable;
+  public readonly dynamoDbTables: DynamoDbTables;
 
   constructor(scope: Construct, id: string, props: AppConstructProps) {
     super(scope, id);
@@ -44,10 +44,10 @@ export class AppConstruct extends Construct {
     // ========================================
     // 2. DynamoDB Table for Processor Statistics
     // ========================================
-    this.statisticsTable = new ProcessorStatisticsTable(this, 'DynamoDb', {
+    this.dynamoDbTables = new DynamoDbTables({ scope: this, id: 'DynamoDb', props: {
       context: ctx,
       tags,
-    });
+    }});
 
     // ========================================
     // 3. ECS Infrastructure (Cluster + Task Definitions)
@@ -57,7 +57,7 @@ export class AppConstruct extends Construct {
       context: ctx,
       config,
       stackScope: scope,  // Pass stack reference for escape hatches
-      dynamoDbTableName: this.statisticsTable.table.tableName,
+      dynamoDbTables: this.dynamoDbTables, // Pass DynamoDB tables to ECS infrastructure for task definitions
       tags,
     });
 

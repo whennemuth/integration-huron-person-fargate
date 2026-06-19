@@ -93,7 +93,7 @@ export class IntegrationHuronPersonLambdaStack extends Stack {
     });
 
     new CfnOutput(this, 'StatisticsTableName', {
-      value: app.statisticsTable.table.tableName,
+      value: app.dynamoDbTables.statisticsTable.tableName,
       description: 'DynamoDB table for processor statistics and error tracking',
     });
   }

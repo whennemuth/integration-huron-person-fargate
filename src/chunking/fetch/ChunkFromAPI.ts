@@ -438,7 +438,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         throw new Error('Insufficient task parameters to run chunking operation');
       }
       
-      // Extract chunk base path (creates: chunks/person-full/2026-04-09T15:28:18.703Z)
+      // Extract chunk base path (creates key like: chunks/person-full/2026-04-09T15:28:18.703Z)
       const chunkDirectory = this.getChunkDirectory();
 
       console.log(`Chunks: s3://${chunksBucket}/${chunkDirectory}/`);

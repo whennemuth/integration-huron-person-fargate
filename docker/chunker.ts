@@ -410,6 +410,7 @@ if (require.main === module) {
   [
     'CHUNKS_BUCKET',
     'REGION',
+    'STACK_ID',
     'ITEMS_PER_CHUNK',
     'PERSON_ID_FIELD',
     'DRY_RUN',
@@ -432,7 +433,7 @@ if (require.main === module) {
     'ECS_CHUNKER_SERVICE_NAME',
     'ECS_CLUSTER_NAME',
     'CACHE_ENABLED',
-    'CACHE_PATH'
+    'CACHE_PATH',
   ].forEach(testEnvironment.getVar);
 
   main();

@@ -40,6 +40,13 @@ export class QueueInfrastructure extends Construct {
       queueName: 'huron-person-chunker-queue-dlq',
       retentionPeriod: Duration.days(14),
     });
+    // Or create a fifo queue.
+    // this.chunkerDeadLetterQueue = new Queue(this, 'ChunkerDeadLetterQueue', {
+    //   queueName: 'huron-person-chunker-queue-dlq.fifo',
+    //   retentionPeriod: Duration.days(14),
+    //   fifo: true,
+    //   contentBasedDeduplication: true
+    // });
 
     this.chunkerQueue = new Queue(this, 'ChunkerQueue', {
       queueName: 'huron-person-chunker-queue',

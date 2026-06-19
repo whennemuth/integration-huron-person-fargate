@@ -6,6 +6,7 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { IContext } from '../../../context/IContext';
 import { HuronPersonSecrets } from '../../Secrets';
+import { DynamoDbTables } from '../../DynamoDB';
 
 export interface ProcessorTaskDefinitionProps {
   repository: IRepository;
@@ -16,7 +17,7 @@ export interface ProcessorTaskDefinitionProps {
   logRetentionDays: number;
   chunksBucketName: string;
   queueUrl: string;
-  dynamoDbTableName: string;
+  dynamoDbTables: DynamoDbTables
   context: IContext;
   sharedDeltaStorageDir: string;
   region: string;
@@ -37,7 +38,7 @@ export class ProcessorTaskDefinition extends Construct {
 
     const { 
       huronPersonSecrets: { secret, secretArn , secretName } = {}, logRetentionDays, 
-      memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, dynamoDbTableName, chunksBucketName, 
+      memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, dynamoDbTables, chunksBucketName, 
       context, repository, imageTag, dryRun, tags 
     } = props;
 
@@ -64,7 +65,7 @@ export class ProcessorTaskDefinition extends Construct {
     const environment: { [key: string]: string } = {
       REGION: region,
       SQS_QUEUE_URL: queueUrl,
-      DYNAMODB_TABLE_NAME: dynamoDbTableName,
+      DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbTables.statisticsTable.tableName,
       // CHUNKS_BUCKET and CHUNK_KEY are set from SQS messages at runtime (not env vars)
       STATIC_MAP_USAGE: '{ "orgMap": true, "stateMap": true, "countryMap": true }', // Used by processor to determine which static maps to load in data mapper
       SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
@@ -171,8 +172,25 @@ export class ProcessorTaskDefinition extends Construct {
           'dynamodb:GetItem',
         ],
         resources: [
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTableName}`,
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTableName}/index/*`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.statisticsTable.tableName}`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.statisticsTable.tableName}/index/*`,
+        ],
+      })
+    );
+
+    // Grant DynamoDB permissions for incrementing and reading atomic counters (used for generating unique chunk IDs and other operations)
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'dynamodb:PutItem',
+          'dynamodb:UpdateItem',
+          'dynamodb:Query',
+          'dynamodb:GetItem',
+        ],
+        resources: [
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.atomicCounterTable.tableName}`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.atomicCounterTable.tableName}/index/*`,
         ],
       })
     );

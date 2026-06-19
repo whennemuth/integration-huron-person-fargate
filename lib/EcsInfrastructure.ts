@@ -11,13 +11,14 @@ import { MergerService } from './services/merger/MergerService';
 import { ProcessorService } from './services/processor/ProcessorService';
 import { TaskDefinitions } from './TaskDefinitions';
 import { Config } from 'integration-huron-person';
+import { DynamoDbTables } from './DynamoDB';
 
 export interface EcsInfrastructureProps {
   repository: IRepository;
   context: IContext;
   config?: Config;
   stackScope: Construct;  // Stack reference for escape hatches
-  dynamoDbTableName: string;
+  dynamoDbTables: DynamoDbTables;
   tags?: { [key: string]: string };
 }
 
@@ -40,7 +41,7 @@ export class EcsInfrastructure extends Construct {
   constructor(scope: Construct, id: string, props: EcsInfrastructureProps) {
     super(scope, id);
 
-    const { repository, context: ctx, stackScope, dynamoDbTableName, tags } = props;
+    const { repository, context: ctx, stackScope, dynamoDbTables, tags } = props;
     this.context = ctx;
     this.stackScope = stackScope;
     this.tags = tags;
@@ -87,7 +88,7 @@ export class EcsInfrastructure extends Construct {
     this.taskDefinitions = new TaskDefinitions(this, 'TaskDefs', {
       repository,
       context: ctx,
-      dynamoDbTableName, // Pass DynamoDB table name for processor task definition
+      dynamoDbTables, // Pass DynamoDB table name for processor task definition
       tags,
     });
   }

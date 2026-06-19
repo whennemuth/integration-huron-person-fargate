@@ -1,6 +1,7 @@
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { ApiChunkerEvent } from '../ChunkerSubscriber';
 import { SyncPopulation } from '../../../docker/chunkTypes';
+import { TaskParameters } from './ChunkFromAPI';
 
 const { 
   CHUNKER_QUEUE_URL,
@@ -113,7 +114,7 @@ export async function handleApiEvent(event: ApiChunkerEvent, chunkerQueueUrl?:st
     trustPreviousStorage: `${trustPreviousStorage}`.toLowerCase() === 'true',
     limit,
     offset,
-  } as any;
+  } as TaskParameters;
 
   if(chunkDirectory) {
     message.chunkDirectory = chunkDirectory;

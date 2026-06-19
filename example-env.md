@@ -92,6 +92,18 @@ CHUNK_FROM_API_CHUNKS_BUCKET=huron-person-chunks-dev
 CHUNK_FROM_API_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
 CHUNK_FROM_API_REGION=us-east-2
 
+# ------- Harness Groups for src\chunking\fetch\QueueSeeder.ts ------- #
+QUEUE_SEEDER_BASE_URL=https://prod-buprod-fm.snaplogic.io
+QUEUE_SEEDER_FETCH_PATH=/api/1/rest/feed/run/task/BUProd/Admin-Integration-Services/GenericGets/huronIRBgetPersonByPopulation
+QUEUE_SEEDER_POPULATION_TYPE=person-full
+QUEUE_SEEDER_LIMIT=100
+QUEUE_SEEDER_MESSAGES_TO_SEED=15
+QUEUE_SEEDER_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/<account-id>/huron-person-chunker-queue
+QUEUE_SEEDER_REGION=us-east-2
+QUEUE_SEEDER_BULK_RESET=false
+QUEUE_SEEDER_TRUST_PREVIOUS_STORAGE=false
+QUEUE_SEEDER_DRY_RUN=true
+
 # ------- Harness Groups for src\merging\DeferredDeleteHandler.ts ------- #
 MERGED_NDJSON_KEY=previous-input-testing.ndjson
 BASELINE_NDJSON_KEY=delta-storage/previous-input.ndjson
@@ -113,22 +125,29 @@ S3_STORAGE_ADAPTER_TEST_REGION=us-east-2
 
 # ------- Harness Groups for docker/chunker.ts ------- #
 DOCKER_CHUNKER_CHUNKS_BUCKET=huron-person-chunks-dev
+DOCKER_CHUNKER_STACK_ID=huron-person-fargate-processor
 DOCKER_CHUNKER_REGION=us-east-2
 DOCKER_CHUNKER_ITEMS_PER_CHUNK=200
 DOCKER_CHUNKER_PERSON_ID_FIELD=personid
 DOCKER_CHUNKER_DRY_RUN=false
-DOCKER_CHUNKER_SQS_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/<account-id>/huron-person-chunker-queue
+DOCKER_CHUNKER_SQS_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/770203350335/huron-person-chunker-queue
 DOCKER_CHUNKER_SHARED_DELTA_STORAGE_DIR=delta-storage
 DOCKER_CHUNKER_IS_ECS_TASK=false
+DOCKER_CHUNKER_ECS_AGENT_URI=http://169.254.170.2
 DOCKER_CHUNKER_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config.json
-DOCKER_CHUNKER_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
+DOCKER_CHUNKER_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-LaYGXj
+DOCKER_CHUNKER_HURON_PERSON_CONFIG_JSON=
 DOCKER_CHUNKER_POPULATION_SCOPE=single
 DOCKER_CHUNKER_POPULATION_TYPE=person-full
+DOCKER_CHUNKER_CHUNK_DIRECTORY=
 DOCKER_CHUNKER_SINGLE_PERSON_BUID=U15364542
 DOCKER_CHUNKER_INPUT_BUCKET=huron-person-file-drop-dev
 DOCKER_CHUNKER_INPUT_KEY=person-full/2026-03-03T19:58:41.277Z-people.json
 DOCKER_CHUNKER_BULK_RESET=false
 DOCKER_CHUNKER_TRUST_PREVIOUS_STORAGE=false
+DOCKER_CHUNKER_MAX_SCALING_CAPACITY=1
+DOCKER_CHUNKER_ECS_CHUNKER_SERVICE_NAME=huron-person-fargate-Chunker-QueueServiceE89D6A95-C6N6IiLSv9CC
+DOCKER_CHUNKER_ECS_CLUSTER_NAME=huron-person-fargate-cluster-dev
 DOCKER_CHUNKER_CACHE_ENABLED=true
 DOCKER_CHUNKER_CACHE_PATH=.
 
@@ -136,19 +155,23 @@ DOCKER_CHUNKER_CACHE_PATH=.
 DOCKER_PROCESSOR_REGION=us-east-2
 DOCKER_PROCESSOR_CHUNKS_BUCKET=huron-person-chunks-dev
 DOCKER_PROCESSOR_CHUNK_KEY=chunks/person-full/2026-04-09T15:28:18.703Z/chunk-0000.ndjson
+DOCKER_PROCESSOR_SQS_QUEUE_URL=
+DOCKER_PROCESSOR_HURON_PERSON_CONFIG_JSON=
 DOCKER_PROCESSOR_STATIC_MAP_USAGE={"orgMap":true,"stateMap":true,"countryMap":true}
 DOCKER_PROCESSOR_DRY_RUN=false
 DOCKER_PROCESSOR_BULK_RESET=false
-DOCKER_PROCESSOR_DYNAMODB_TABLE_NAME=huron-person-fargate-statistics
+DOCKER_PROCESSOR_DYNAMODB_STATISTICS_TABLE_NAME=huron-person-fargate-statistics
 DOCKER_PROCESSOR_RETRY_STRATEGY=retry-throttle-and-5xx
 DOCKER_PROCESSOR_SHARED_DELTA_STORAGE_DIR=delta-storage
 DOCKER_PROCESSOR_IS_ECS_TASK=false
+DOCKER_PROCESSOR_ECS_AGENT_URI=http://169.254.170.2
 DOCKER_PROCESSOR_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config.json
-DOCKER_PROCESSOR_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
+DOCKER_PROCESSOR_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-LaYGXj
 DOCKER_PROCESSOR_CACHE_ENABLED=true
 DOCKER_PROCESSOR_CACHE_PATH=.
 
 # ------- Harness Groups for docker/merger.ts ------- #
+DOCKER_MERGER_SQS_QUEUE_URL=
 DOCKER_MERGER_CHUNKS_BUCKET=huron-person-chunks-dev
 DOCKER_MERGER_CHUNK_DIRECTORY=chunks/person-full/2026-05-26T15:04:22.699Z
 DOCKER_MERGER_INPUT_KEY=person-full/2026-03-03T19:58:41.277Z-people.json
@@ -156,10 +179,12 @@ DOCKER_MERGER_REGION=us-east-2
 DOCKER_MERGER_SHARED_DELTA_STORAGE_DIR=delta-storage
 DOCKER_MERGER_DRY_RUN=false
 DOCKER_MERGER_IS_ECS_TASK=false
+DOCKER_MERGER_ECS_AGENT_URI=http://169.254.170.2
 DOCKER_MERGER_PERSON_DELETE_TYPE=soft
 DOCKER_MERGER_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config.json
-DOCKER_MERGER_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
-DOCKER_MERGER_DYNAMODB_TABLE_NAME=huron-person-fargate-statistics
+DOCKER_MERGER_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-LaYGXj
+DOCKER_MERGER_HURON_PERSON_CONFIG_JSON=
+DOCKER_MERGER_DYNAMODB_STATISTICS_TABLE_NAME=huron-person-fargate-statistics
 DOCKER_MERGER_CACHE_ENABLED=true
 DOCKER_MERGER_CACHE_PATH=.
 
@@ -214,7 +239,7 @@ DEFERRED_DELETE_BASELINE_NDJSON_KEY=delta-storage/previous-input.ndjson
 DEFERRED_DELETE_PERSON_DELETE_TYPE=soft
 DEFERRED_DELETE_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config.json
 DEFERRED_DELETE_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
-DEFERRED_DELETE_DYNAMODB_TABLE_NAME=huron-person-fargate-statistics
+DEFERRED_DELETE_DYNAMODB_STATISTICS_TABLE_NAME=huron-person-fargate-statistics
 DEFERRED_DELETE_CACHE_ENABLED=true
 DEFERRED_DELETE_CACHE_PATH=.
 

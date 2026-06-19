@@ -376,7 +376,7 @@ if (require.main === module) {
     'HURON_PERSON_CONFIG_PATH',
     'SECRET_ARN',
     'HURON_PERSON_CONFIG_JSON',
-    'DYNAMODB_TABLE_NAME',
+    'DYNAMODB_STATISTICS_TABLE_NAME',
     'CACHE_ENABLED',
     'CACHE_PATH'
   ].forEach(testEnvironment.getVar);

@@ -5,6 +5,7 @@ import { Effect, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { HuronPersonSecrets } from '../../Secrets';
+import { DynamoDbTables } from '../../DynamoDB';
 
 export interface ChunkerTaskDefinitionProps {
   repository: IRepository;
@@ -16,6 +17,8 @@ export interface ChunkerTaskDefinitionProps {
   queueUrl: string;
   inputBucketName: string;
   chunksBucketName: string;
+  dynamoDbTables: DynamoDbTables;
+  stackId: string;
   itemsPerChunk: number;
   sharedDeltaStorageDir: string;
   region: string;
@@ -38,9 +41,10 @@ export class ChunkerTaskDefinition extends Construct {
     super(scope, id);
 
     const { 
-      huronPersonSecrets: { secret, secretArn , secretName } = {}, logRetentionDays, 
-      memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, itemsPerChunk, chunksBucketName, inputBucketName,
-      repository, imageTag, ecsClusterName, maxScalingCapacity, ecsChunkerServiceName, dryRun, tags 
+      huronPersonSecrets: { secret, secretArn , secretName } = {}, dynamoDbTables, logRetentionDays, 
+      memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, itemsPerChunk, chunksBucketName, 
+      inputBucketName, repository, imageTag, ecsClusterName, maxScalingCapacity, stackId, 
+      ecsChunkerServiceName, dryRun, tags 
     } = props;
 
     // Create CloudWatch log group
@@ -98,8 +102,10 @@ export class ChunkerTaskDefinition extends Construct {
         SQS_QUEUE_URL: queueUrl,
         CHUNKS_BUCKET: chunksBucketName,
         SHARED_DELTA_STORAGE_DIR: props.sharedDeltaStorageDir,
+        DYNAMODB_ATOMIC_COUNTER_TABLE_NAME: dynamoDbTables.atomicCounterTable.tableName,
         ITEMS_PER_CHUNK: itemsPerChunk.toString(),
         PERSON_ID_FIELD: 'personid',
+        STACK_ID: stackId,
         SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
         // INPUT_BUCKET and INPUT_KEY will be provided at runtime by Lambda
         IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
@@ -213,6 +219,24 @@ export class ChunkerTaskDefinition extends Construct {
           'ecs:UpdateTaskProtection',
         ],
         resources: ['*'],
+      })
+    );
+
+    
+    // Grant DynamoDB permissions for reading and incrementing the atomic counter table.
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'dynamodb:PutItem',
+          'dynamodb:UpdateItem',
+          'dynamodb:Query',
+          'dynamodb:GetItem',
+        ],
+        resources: [
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.atomicCounterTable.tableName}`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.atomicCounterTable.tableName}/index/*`,
+        ],
       })
     );
 

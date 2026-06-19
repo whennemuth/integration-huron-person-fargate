@@ -6,6 +6,7 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { TargetPersonDeleteType } from 'integration-huron-person/dist/types/src/config/Config';
 import { HuronPersonSecrets } from '../../Secrets';
+import { DynamoDbTables } from '../../DynamoDB';
 
 
 export interface MergerTaskDefinitionProps {
@@ -19,7 +20,7 @@ export interface MergerTaskDefinitionProps {
   chunksBucketName: string;
   sharedDeltaStorageDir: string;
   personDeleteType: TargetPersonDeleteType;
-  dynamoDbTableName: string;
+  dynamoDbTables: DynamoDbTables;
   huronPersonSecrets: HuronPersonSecrets;
   region: string;
   dryRun?: boolean;
@@ -39,7 +40,7 @@ export class MergerTaskDefinition extends Construct {
     const { 
       cpu, memoryLimitMiB, memoryReservationMiB, region, inputBucketName, sharedDeltaStorageDir, personDeleteType, 
       repository, imageTag, dryRun, tags, logRetentionDays, chunksBucketName,
-      dynamoDbTableName, huronPersonSecrets: { secret, secretArn , secretName } = {} 
+      dynamoDbTables, huronPersonSecrets: { secret, secretArn , secretName } = {} 
     } = props;
 
     // Create CloudWatch log group
@@ -89,7 +90,7 @@ export class MergerTaskDefinition extends Construct {
         IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
         PERSON_DELETE_TYPE: personDeleteType,
         DRY_RUN: dryRun ? 'true' : 'false',
-        DYNAMODB_TABLE_NAME: dynamoDbTableName,
+        DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbTables.statisticsTable.tableName,
         SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
         DESCRIPTION1: 
           `Container run by lambda function responding to S3 events when a new "chunk" 
@@ -147,8 +148,8 @@ export class MergerTaskDefinition extends Construct {
           'dynamodb:GetItem',
         ],
         resources: [
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTableName}`,
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTableName}/index/*`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.statisticsTable.tableName}`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.statisticsTable.tableName}/index/*`,
         ],
       })
     );

@@ -11,6 +11,8 @@ import { ApiChunkerEvent } from '../../../src/chunking/ChunkerSubscriber';
 import { getLocalConfig } from '../../../src/Utils';
 import { AbstractService, AbstractServiceProps } from '../AbstractService';
 import { handleApiEvent } from '../../../src/chunking/fetch/ChunkerApiSubscriber';
+import { QueueSeeder } from '../../../src/chunking/fetch/QueueSeeder';
+import { DesiredCount } from '../../../src/DesiredCount';
 
 export interface ChunkerServiceProps extends AbstractServiceProps {
   /** The ChunkerSubscriber Lambda function to invoke on schedule */
@@ -161,6 +163,7 @@ export class ChunkerService extends AbstractService {
 async function startChunkingService() {
   /** Read additional configuration from environment */
   const {
+    // For configuring the chunking tasks.
     SECRET_ARN: secretArn,
     HURON_PERSON_CONFIG_PATH: configPath,
     CHUNKER_QUEUE_URL: queueUrl,
@@ -168,8 +171,14 @@ async function startChunkingService() {
     DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT: peopleLimit,
     SINGLE_PERSON_BUID: buid,
     REGION: region,
+    STACK_ID: stackId,
     BULK_RESET: bulkReset,
-    TRUST_PREVIOUS_STORAGE: trustPreviousStorage
+    TRUST_PREVIOUS_STORAGE: trustPreviousStorage,
+    // For seeding the queue
+    MESSAGES_TO_PREPOPULATE: messagesToPrepopulate = '0',
+    DESIRED_COUNT,
+    ECS_CLUSTER_NAME: clusterName,
+    ECS_SERVICE_NAME: serviceName
   } = process.env;
 
   /** Load configuration. */
@@ -182,6 +191,18 @@ async function startChunkingService() {
     .fromSecretManager(secretArn)                // ← Fallback to Secrets Manager
     .fromEnvironment()                            // ← Fallback to individual env var overrides
     .getConfigAsync(buid ? 'person' : 'people');
+
+  let desiredCount = DESIRED_COUNT ? parseInt(DESIRED_COUNT) : 0;
+  if(desiredCount > 0) {
+    if( ! clusterName ) {
+      console.error('ECS_CLUSTER_NAME environment variable is required to set desired count.');
+      return;
+    }
+    if( ! serviceName ) {
+      console.error('ECS_SERVICE_NAME environment variable is required to set desired count.');
+      return;
+    }
+  }
 
   /**
    * Single person test?
@@ -219,25 +240,85 @@ async function startChunkingService() {
     console.error('Missing CHUNKER_QUEUE_URL environment variable!');
     return;
   }
-  
-  /** Define the API chunker event */
-  const { PersonDelta, PersonFull } = SyncPopulation;
-  const apiChunkerEvent = {
-    baseUrl,
-    fetchPath,
-    populationType: populationType?.toLowerCase() === PersonDelta ? PersonDelta : PersonFull,
-    bulkReset: bulkReset?.toLowerCase() === 'true',
-    trustPreviousStorage: trustPreviousStorage?.toLowerCase() === 'true',
-    limit: peopleLimit ? parseInt(peopleLimit) : 0,
-    offset: 0,
-    processingMetadata: {
-      processedAt: new Date().toISOString(),
-      processorVersion: '1.0.0'
-    }
-  } satisfies ApiChunkerEvent;
+  if(messagesToPrepopulate && isNaN(Number(messagesToPrepopulate))) {
+    console.error(`Invalid MESSAGES_TO_PREPOPULATE environment variable: ${messagesToPrepopulate}. Must be a number.`);
+    return;
+  }
 
-  // Send the event to the queue to trigger the chunking process.
-  handleApiEvent(apiChunkerEvent);
+  const seedNumber = parseInt(messagesToPrepopulate);
+  const { PersonDelta, PersonFull } = SyncPopulation;
+  const normalizedPopulationType = populationType?.toLowerCase() === PersonDelta ? PersonDelta : PersonFull;
+  
+  if(seedNumber > 0) {
+
+    if(buid) {
+      console.warn(`MESSAGES_TO_PREPOPULATE is set to ${seedNumber} > 0, but SINGLE_PERSON_BUID is also ` +
+        `set (${buid}). Seeding the queue is not appropriate when processing just one person. Cancelling operation`);
+      return;
+    }
+
+    if( ! region) {
+      console.error('REGION environment variable is required to set desired count.');
+      return;
+    }
+    if( ! stackId) {
+      console.error('STACK_ID environment variable is required to set desired count.');
+      return;
+    }
+
+    // Raise the desired count to a level "worthy" of the prepopulation to kick off the processing of the 
+    // seeded messages. This is done after seeding to allow the service to process the initial messages 
+    // as quickly as possible rather than waiting for the scale up to occur first.
+    if(desiredCount > 0) {
+      console.log(`\n🚀 Scaling up ECS service ${serviceName} in cluster ${clusterName} to desired count of ${desiredCount}...\n`);
+      const desiredCountManager = new DesiredCount({ clusterName, serviceName, region });
+      const max = await desiredCountManager.getMax();
+      if(max !== undefined && desiredCount > max) {
+        console.warn(`Desired count of ${desiredCount} exceeds the maximum allowed by the auto-scaling configuration (${max}). ` +
+          `Cancelling operation`);
+        return;
+      }
+      await desiredCountManager.setTo(desiredCount);
+    }
+
+    // Seed the queue with initial messages to enable "hitting the ground running"
+    console.log(`\n🌱 Seeding queue with ${seedNumber} messages...\n`);    
+    const queueSeeder = new QueueSeeder({
+      region,
+      stackId,
+      baseUrl,
+      fetchPath,
+      populationType: normalizedPopulationType,
+      bulkReset: bulkReset?.toLowerCase() === 'true',
+      trustPreviousStorage: trustPreviousStorage?.toLowerCase() === 'true',
+      limit: peopleLimit ? parseInt(peopleLimit) : 0,
+      messagesToSeed: seedNumber,
+      queueUrl: queueUrl!,
+      dryRun: false
+    });
+    await queueSeeder.resetAtomicCounter();
+    await queueSeeder.seedQueue();
+    
+    console.log(`\n✓ Queue seeding complete. Ready to scale up desiredCount to ${seedNumber}.\n`);
+  } else {
+    // Send a single initial message to trigger the chunking process (normal one-in/one-out pattern)
+    const apiChunkerEvent = {
+      baseUrl,
+      fetchPath,
+      populationType: normalizedPopulationType,
+      bulkReset: bulkReset?.toLowerCase() === 'true',
+      trustPreviousStorage: trustPreviousStorage?.toLowerCase() === 'true',
+      limit: peopleLimit ? parseInt(peopleLimit) : 0,
+      offset: 0,
+      processingMetadata: {
+        processedAt: new Date().toISOString(),
+        processorVersion: '1.0.0'
+      }
+    } satisfies ApiChunkerEvent;
+
+    // Send the event to the queue to trigger the chunking process.
+    await handleApiEvent(apiChunkerEvent, queueUrl);
+  }
 }
 
 // Run if executed directly
@@ -251,7 +332,11 @@ if (require.main === module) {
     'POPULATION_TYPE',
     'DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT',
     'SINGLE_PERSON_BUID',
-    'REGION'
+    'REGION',
+    'MESSAGES_TO_PREPOPULATE',
+    'DESIRED_COUNT',
+    'ECS_CLUSTER_NAME',
+    'ECS_SERVICE_NAME'
   ].forEach(testEnvironment.getVar);
 
   [

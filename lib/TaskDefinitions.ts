@@ -8,12 +8,13 @@ import { ProcessorTaskDefinition } from './services/processor/ProcessorTaskDefin
 import { HuronPersonSecrets } from './Secrets';
 import { Config, TargetPersonDeleteType } from 'integration-huron-person';
 import { S3Config as S3FolderConfig } from 'integration-core';
+import { DynamoDbTables } from './DynamoDB';
 
 export interface TaskDefinitionsProps {
   repository: IRepository;
   context: IContext;
   config?: Config;
-  dynamoDbTableName: string;
+  dynamoDbTables: DynamoDbTables;
   tags?: { [key: string]: string };
 }
 
@@ -29,7 +30,7 @@ export class TaskDefinitions extends Construct {
   constructor(scope: Construct, id: string, props: TaskDefinitionsProps) {
     super(scope, id);
 
-    const { config, repository, context: ctx, dynamoDbTableName, tags } = props;
+    const { config, repository, context: ctx, dynamoDbTables, tags } = props;
     let sharedDeltaStorageDir = 'delta-storage'; // Default value
     const { storage, storage: { type: storageType, config: storageConfig } = {} } = props.config || {};
     if(storage && storageType === 's3') {
@@ -52,6 +53,8 @@ export class TaskDefinitions extends Construct {
       inputBucketName: ctx.S3.inputBucket,
       chunksBucketName: ctx.S3.chunksBucket,
       queueUrl: '', // Will be set after queue is created
+      dynamoDbTables,
+      stackId: ctx.STACK_ID,
       itemsPerChunk: ctx.ITEMS_PER_CHUNK,
       huronPersonSecrets,
       sharedDeltaStorageDir,
@@ -72,7 +75,7 @@ export class TaskDefinitions extends Construct {
       logRetentionDays: ctx.ECS.processorTaskDefinition.logRetentionDays,
       chunksBucketName: ctx.S3.chunksBucket,
       queueUrl: '', // Will be set after queue is created
-      dynamoDbTableName, // DynamoDB table for error tracking and statistics
+      dynamoDbTables,
       huronPersonSecrets,
       sharedDeltaStorageDir,
       context: ctx,
@@ -90,7 +93,7 @@ export class TaskDefinitions extends Construct {
       logRetentionDays: ctx.ECS.mergerTaskDefinition.logRetentionDays,
       inputBucketName: ctx.S3.inputBucket,
       chunksBucketName: ctx.S3.chunksBucket,
-      dynamoDbTableName, // DynamoDB table for error tracking and statistics
+      dynamoDbTables,
       huronPersonSecrets,
       sharedDeltaStorageDir,
       personDeleteType: props.config?.dataTarget?.personDeleteType || TargetPersonDeleteType.SOFT,

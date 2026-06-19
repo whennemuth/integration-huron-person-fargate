@@ -289,7 +289,7 @@ export async function main(queueReader: QueueReader) {
     STATIC_MAP_USAGE,
     DRY_RUN,
     BULK_RESET,
-    DYNAMODB_TABLE_NAME: dynamoDbTableName,
+    DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbStatisticsTableName,
     RETRY_STRATEGY,
     SHARED_DELTA_STORAGE_DIR='delta-storage'
   } = process.env;  
@@ -308,7 +308,7 @@ export async function main(queueReader: QueueReader) {
   console.log(`SQS queue URL: ${queueUrl || 'not set, using environment variables for bucket/key'}`);
   console.log(`Huron person config json: ${HURON_PERSON_CONFIG_JSON?.substring(0, 10)}...`);
   console.log(`Static map usage: ${JSON.stringify(staticMapUsage ?? {})}`);
-  console.log(`DynamoDB table: ${dynamoDbTableName || 'not configured'}`);
+  console.log(`DynamoDB table: ${dynamoDbStatisticsTableName || 'not configured'}`);
   
   // Read chunk information from queue or environment
   let nextChunk: NextChunk | undefined;
@@ -372,16 +372,16 @@ export async function main(queueReader: QueueReader) {
 
   // Initialize error tracker for capturing errors and statistics to DynamoDB
   let errorTracker: TargetApiErrorEventProcessor | undefined;
-  if (dynamoDbTableName) {
+  if (dynamoDbStatisticsTableName) {
     errorTracker = new TrackingTargetApiErrorProcessor({
-      tableName: dynamoDbTableName,
+      tableName: dynamoDbStatisticsTableName,
       integrationTimestamp,
       region,
       logToConsole: true
     });
-    console.log(`Error tracker initialized with table: ${dynamoDbTableName}`);
+    console.log(`Error tracker initialized with table: ${dynamoDbStatisticsTableName}`);
   } else {
-    console.warn('WARNING: DYNAMODB_TABLE_NAME not configured - error tracking disabled');
+    console.warn('WARNING: DYNAMODB_STATISTICS_TABLE_NAME not configured - error tracking disabled');
     errorTracker = new LoggingTargetApiErrorProcessor();
   }
 
@@ -612,7 +612,7 @@ if (require.main === module) {
     'STATIC_MAP_USAGE',
     'DRY_RUN',
     'BULK_RESET',
-    'DYNAMODB_TABLE_NAME',
+    'DYNAMODB_STATISTICS_TABLE_NAME',
     'RETRY_STRATEGY',
     'SHARED_DELTA_STORAGE_DIR',
     'IS_ECS_TASK',
