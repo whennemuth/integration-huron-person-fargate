@@ -18,6 +18,8 @@ export class IntegrationHuronPersonLambdaStack extends Stack {
     // Convert tags object to record for CDK
     const tags: Record<string, string> = { ...ctx.TAGS };
 
+    const landscape = ctx.TAGS.Landscape;
+
     // ========================================
     // Top-Level Application Construct
     // ========================================
@@ -50,49 +52,49 @@ export class IntegrationHuronPersonLambdaStack extends Stack {
     // ========================================
     // Stack Outputs
     // ========================================
-    new CfnOutput(this, 'EcrRepositoryUri', {
+    new CfnOutput(this, `EcrRepositoryUri-${landscape}`, {
       value: app.ecr.repositoryUri,
       description: 'ECR repository URI for Docker images',
     });
 
-    new CfnOutput(this, 'EcsClusterName', {
+    new CfnOutput(this, `EcsClusterName-${landscape}`, {
       value: app.ecs.cluster.clusterName,
       description: 'ECS cluster name',
     });
 
-    new CfnOutput(this, 'ChunkerSubsriberLambdaArn', {
+    new CfnOutput(this, `ChunkerSubsriberLambdaArn-${landscape}`, {
       value: app.subscribingLambdas.chunker.function.functionArn,
       description: 'Chunker Subscribing Lambda ARN (for huron-file-drop configuration)',
-      exportName: `${ctx.STACK_ID}-ChunkerSubsriberLambdaArn`,
+      exportName: `${ctx.STACK_ID}-ChunkerSubsriberLambdaArn-${landscape}`,
     });
 
-    new CfnOutput(this, 'ChunkerSubsriberLambdaRoleArn', {
+    new CfnOutput(this, `ChunkerSubsriberLambdaRoleArn-${landscape}`, {
       value: app.subscribingLambdas.chunker.function.role!.roleArn,
       description: 'Chunker Subscribing Lambda execution role ARN (for huron-file-drop configuration)',
-      exportName: `${ctx.STACK_ID}-ChunkerSubsriberLambdaRoleArn`,
+      exportName: `${ctx.STACK_ID}-ChunkerSubsriberLambdaRoleArn-${landscape}`,
     });
 
-    new CfnOutput(this, 'ChunkerTaskDefinitionArn', {
+    new CfnOutput(this, `ChunkerTaskDefinitionArn-${landscape}`, {
       value: app.ecs.taskDefinitions.chunker.taskDefinition.taskDefinitionArn,
       description: 'Chunker task definition ARN',
     });
 
-    new CfnOutput(this, 'ProcessorTaskDefinitionArn', {
+    new CfnOutput(this, `ProcessorTaskDefinitionArn-${landscape}`, {
       value: app.ecs.taskDefinitions.processor.taskDefinition.taskDefinitionArn,
       description: 'Processor task definition ARN',
     });
 
-    new CfnOutput(this, 'ProcessorQueueUrl', {
+    new CfnOutput(this, `ProcessorQueueUrl-${landscape}`, {
       value: app.queue.processorQueue.queueUrl,
       description: 'Processor SQS queue URL',
     });
 
-    new CfnOutput(this, 'ChunksBucketName', {
+    new CfnOutput(this, `ChunksBucketName-${landscape}`, {
       value: app.chunksBucket.bucketName,
       description: 'Chunks S3 bucket name',
     });
 
-    new CfnOutput(this, 'StatisticsTableName', {
+    new CfnOutput(this, `StatisticsTableName-${landscape}`, {
       value: app.dynamoDbTables.statisticsTable.tableName,
       description: 'DynamoDB table for processor statistics and error tracking',
     });
