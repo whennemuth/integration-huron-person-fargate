@@ -4,7 +4,7 @@ import { TestEnvironment } from 'integration-core';
 import { IContext } from '../../context/IContext';
 import { StatisticsItem } from '../processing/ApiErrorTracking';
 
-export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-statistics`;
+export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-statistics-${context.TAGS.Landscape.toLowerCase()}`;
 export const DYNAMODB_PARTITION_KEY = 'integrationTimestamp';
 export const DYNAMODB_SECONDARY_PARTITION_KEY = 'errorType';
 export const DYNAMODB_SORT_KEY = 'eventType';

@@ -1,7 +1,7 @@
+import { ApplicationAutoScalingClient, DescribeScalableTargetsCommand, DescribeScalableTargetsCommandInput } from "@aws-sdk/client-application-auto-scaling";
+import { ECSClient, Service, UpdateServiceCommand } from "@aws-sdk/client-ecs";
 import { TestEnvironment } from "integration-core";
 import { IContext } from "../context/IContext";
-import { Service, ECSClient, UpdateServiceCommand } from "@aws-sdk/client-ecs";
-import { ApplicationAutoScalingClient, DescribeScalableTargetsCommand, DescribeScalableTargetsCommandInput } from "@aws-sdk/client-application-auto-scaling";
 
 export type DesiredCountParams = {
   clusterName?: string;
@@ -163,12 +163,19 @@ async function main() {
     REGION: region 
   } = process.env;
 
-  // Load context.
-  const context = require('../context/context.json') as IContext;
+  if(!task) {
+    throw new Error('TASK environment variable is required. Valid values: get, set, get-max, set-max');
+  }
+  if(!clusterName) {
+    throw new Error('ECS_CLUSTER_NAME environment variable is required');
+  }
+  if(!serviceName) {
+    throw new Error('ECS_SERVICE_NAME environment variable is required');
+  }
+  if(!region) {
+    throw new Error('REGION environment variable is required');
+  }
   
-  clusterName = clusterName || context?.ECS.clusterName;
-  region = region || context?.REGION;
-
   const desiredCount = new DesiredCount({ clusterName, serviceName, region });
 
   switch (task as 'get' | 'set' | 'get-max' | 'set-max') {

@@ -2,13 +2,14 @@ import { IRepository } from 'aws-cdk-lib/aws-ecr';
 import { Construct } from 'constructs';
 import { IContext } from '../context/IContext';
 import { ChunkerTaskDefinition } from './services/chunker/ChunkerTaskDefinition';
-import { ChunkerService } from './services/chunker/ChunkerService';
+import { SERVICE_LOGICAL_ID } from './services/chunker/ChunkerService';
 import { MergerTaskDefinition } from './services/merger/MergerTaskDefinition';
 import { ProcessorTaskDefinition } from './services/processor/ProcessorTaskDefinition';
 import { HuronPersonSecrets } from './Secrets';
 import { Config, TargetPersonDeleteType } from 'integration-huron-person';
 import { S3Config as S3FolderConfig } from 'integration-core';
 import { DynamoDbTables } from './DynamoDB';
+import { CLUSTER_BASE_NAME } from './EcsInfrastructure';
 
 export interface TaskDefinitionsProps {
   repository: IRepository;
@@ -51,7 +52,7 @@ export class TaskDefinitions extends Construct {
       memoryReservationMiB: ctx.ECS.chunkerTaskDefinition.memoryReservationMiB,
       logRetentionDays: ctx.ECS.chunkerTaskDefinition.logRetentionDays,
       inputBucketName: ctx.S3.inputBucket,
-      chunksBucketName: ctx.S3.chunksBucket,
+      chunksBucketName: `${ctx.S3.chunksBucket}-${ctx.TAGS.Landscape.toLowerCase()}`,
       queueUrl: '', // Will be set after queue is created
       dynamoDbTables,
       stackId: ctx.STACK_ID,
@@ -59,9 +60,10 @@ export class TaskDefinitions extends Construct {
       huronPersonSecrets,
       sharedDeltaStorageDir,
       region: ctx.REGION,
-      ecsClusterName: ctx.ECS.clusterName,
+      ecsClusterName: `${CLUSTER_BASE_NAME}-${ctx.TAGS.Landscape.toLowerCase()}`,
       maxScalingCapacity: ctx.ECS.chunkerService?.maxScalingCapacity ?? 1,
-      ecsChunkerServiceName: ChunkerService.getServiceLogicalIdStatic(),
+      ecsChunkerServiceName: SERVICE_LOGICAL_ID,
+      landscape: ctx.TAGS.Landscape.toLowerCase(),
       dryRun: ctx.DRY_RUN?.taskdef?.chunker,
       tags,
     });
@@ -73,13 +75,14 @@ export class TaskDefinitions extends Construct {
       memoryLimitMiB: ctx.ECS.processorTaskDefinition.memoryLimitMiB,
       memoryReservationMiB: ctx.ECS.processorTaskDefinition.memoryReservationMiB,
       logRetentionDays: ctx.ECS.processorTaskDefinition.logRetentionDays,
-      chunksBucketName: ctx.S3.chunksBucket,
+      chunksBucketName: `${ctx.S3.chunksBucket}-${ctx.TAGS.Landscape.toLowerCase()}`,
       queueUrl: '', // Will be set after queue is created
       dynamoDbTables,
       huronPersonSecrets,
       sharedDeltaStorageDir,
       context: ctx,
       region: ctx.REGION,
+      landscape: ctx.TAGS.Landscape.toLowerCase(),
       dryRun: ctx.DRY_RUN?.taskdef?.processor,
       tags,
     });
@@ -92,12 +95,13 @@ export class TaskDefinitions extends Construct {
       memoryReservationMiB: ctx.ECS.mergerTaskDefinition.memoryReservationMiB,
       logRetentionDays: ctx.ECS.mergerTaskDefinition.logRetentionDays,
       inputBucketName: ctx.S3.inputBucket,
-      chunksBucketName: ctx.S3.chunksBucket,
+      chunksBucketName: `${ctx.S3.chunksBucket}-${ctx.TAGS.Landscape.toLowerCase()}`,
       dynamoDbTables,
       huronPersonSecrets,
       sharedDeltaStorageDir,
       personDeleteType: props.config?.dataTarget?.personDeleteType || TargetPersonDeleteType.SOFT,
       region: ctx.REGION,
+      landscape: ctx.TAGS.Landscape.toLowerCase(),
       dryRun: ctx.DRY_RUN?.taskdef?.merger,
       tags,
     });

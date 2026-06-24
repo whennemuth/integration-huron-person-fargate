@@ -36,18 +36,9 @@ export interface IContext {
     deltaExpirationDays: number;
   };
 
-  /** ECR repository configuration */
-  ECR: {
-    /** AWS account ID of the ECR registry */
-    registryId?: string; // Optional because we can check public ECR if not provided
-    /** Name of the ECR repository for Docker images */
-    repositoryName: string;
-  };
-
   /** ECS Fargate configuration */
   ECS: {
-    /** Name of the ECS cluster */
-    clusterName: string;
+    vpcId?: string;
     /** Chunker task definition configuration */
     chunkerTaskDefinition: {
       cpu: number;

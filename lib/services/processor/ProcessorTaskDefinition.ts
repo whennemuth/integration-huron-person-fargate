@@ -21,6 +21,7 @@ export interface ProcessorTaskDefinitionProps {
   context: IContext;
   sharedDeltaStorageDir: string;
   region: string;
+  landscape: string;
   huronPersonSecrets: HuronPersonSecrets;
   dryRun?: boolean;
   tags?: { [key: string]: string };
@@ -39,19 +40,19 @@ export class ProcessorTaskDefinition extends Construct {
     const { 
       huronPersonSecrets: { secret, secretArn , secretName } = {}, logRetentionDays, 
       memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, dynamoDbTables, chunksBucketName, 
-      context, repository, imageTag, dryRun, tags 
+      context, repository, imageTag, landscape, dryRun, tags 
     } = props;
 
     // Create CloudWatch log group
     const logGroup = new LogGroup(this, 'LogGroup', {
-      logGroupName: `/ecs/huron-person-processor`,
+      logGroupName: `/ecs/huron-person-processor-${landscape}`,
       retention: logRetentionDays as RetentionDays,
       removalPolicy: RemovalPolicy.DESTROY,
     });
 
     // Create task definition
     this.taskDefinition = new FargateTaskDefinition(this, 'TaskDefinition', {
-      family: 'Processor',
+      family: `Processor-${landscape}`,
       cpu,
       memoryLimitMiB,
       // Use ARM64 for Graviton2 (20% cost savings)

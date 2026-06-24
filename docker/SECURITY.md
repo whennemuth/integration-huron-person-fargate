@@ -43,7 +43,7 @@ For production deployments:
 
 # View scan results
 aws ecr describe-image-scan-findings \
-  --repository-name huron-person-processor \
+  --repository-name huron-person-integration \
   --image-id imageTag=latest
 ```
 
@@ -93,7 +93,7 @@ Additional AWS Fargate security:
 
 ```bash
 # Set up SNS alerts for critical vulnerabilities
-aws ecr put-lifecycle-policy --repository-name huron-person-processor ...
+aws ecr put-lifecycle-policy --repository-name huron-person-integration ...
 aws cloudwatch put-metric-alarm --alarm-name ecr-critical-vulns ...
 ```
 
@@ -117,10 +117,10 @@ To investigate reported vulnerabilities:
 ```bash
 # Scan image with Trivy
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-  aquasec/trivy image huron-person-processor:latest
+  aquasec/trivy image huron-person-integration:latest
 
 # Check if packages are actually vulnerable at runtime
-docker run --rm huron-person-processor:latest sh -c "apk list --installed | grep <package-name>"
+docker run --rm huron-person-integration:latest sh -c "apk list --installed | grep <package-name>"
 ```
 
 ### Risk Assessment

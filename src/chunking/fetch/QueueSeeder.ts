@@ -9,7 +9,8 @@ import { CHUNKER_COUNTER_NAME } from '../ChunkerQueue';
 
 export type QueueSeederParams = {
   stackId?: string, 
-  region?: string
+  region?: string,
+  landscape?: string;
   baseUrl: string;
   fetchPath: string;
   populationType: SyncPopulation;
@@ -59,18 +60,24 @@ export class QueueSeeder {
   private chunkDirectory?: string;
 
   constructor(private params: QueueSeederParams) {
-    const { REGION, STACK_ID } = process.env;
-    const { stackId=STACK_ID, region=REGION } = params || {};
-    if (stackId && region) {
-      console.log('Atomic counter detected in QueueSeeder constructor');
-      this.atomicCounter = new class extends AbstractAtomicCounter {
-        getCounterName(): string {
-          return CHUNKER_COUNTER_NAME;
-        }
-      }(stackId, region);
-    } else {
-      throw new Error('No stackId or region provided to QueueSeeder constructor - cannot instantiate atomic counter');
+    const { REGION, STACK_ID, LANDSCAPE } = process.env;
+    const { stackId=STACK_ID, region=REGION, landscape=LANDSCAPE } = params || {};
+    if(!stackId) {
+      throw new Error('STACK_ID is required to initialize QueueSeeder');
     }
+    if(!region) {
+      throw new Error('REGION is required to initialize QueueSeeder');
+    }
+    if(!landscape) {
+      throw new Error('LANDSCAPE is required to initialize QueueSeeder');
+    }
+
+    console.log('Atomic counter detected in QueueSeeder constructor');
+    this.atomicCounter = new class extends AbstractAtomicCounter {
+      getCounterName(): string {
+        return CHUNKER_COUNTER_NAME;
+      }
+    }({ stackId, region, landscape });
   }
 
   public resetAtomicCounter = async (): Promise<void> => {

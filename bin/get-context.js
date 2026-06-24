@@ -2,7 +2,7 @@
 
 /**
  * Simple helper to extract values from context.json using dot notation
- * Usage: node bin/get-context.js ECR.repositoryName
+ * Usage: node bin/get-context.js TAGS.Landscape
  */
 
 const fs = require('fs');
@@ -13,11 +13,11 @@ try {
   const contextPath = path.join(__dirname, '..', 'context', 'context.json');
   const context = JSON.parse(fs.readFileSync(contextPath, 'utf8'));
   
-  // Get the path argument (e.g., "ECR.repositoryName")
+  // Get the path argument (e.g., "TAGS.Landscape")
   const dotPath = process.argv[2];
   
   if (!dotPath) {
-    console.error('Error: No path specified. Usage: node bin/get-context.js ECR.repositoryName');
+    console.error('Error: No path specified. Usage: node bin/get-context.js TAGS.Landscape');
     process.exit(1);
   }
   

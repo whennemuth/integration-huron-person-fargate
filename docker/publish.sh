@@ -9,16 +9,22 @@ set -e
 # Configuration
 REGION=${REGION:-us-east-2}
 AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID:-770203350335}
-REPOSITORY_NAME=${REPOSITORY_NAME:-huron-person-processor}
+REPOSITORY_NAME=${REPOSITORY_NAME:-huron-person-integration}
 IMAGE_TAG=${1:-latest}
 
 # Get configuration from context.json using helper script
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 GET_CONTEXT="$SCRIPT_DIR/../bin/get-context.js"
+REPOSITORY_BASE_NAME='huron-person-integration' # FROM lib/EcrRepository.ts
 if [ -f "$GET_CONTEXT" ] && command -v node >/dev/null 2>&1; then
-    REPOSITORY_NAME=$(node "$GET_CONTEXT" ECR.repositoryName 2>/dev/null || echo "$REPOSITORY_NAME")
     AWS_ACCOUNT_ID=$(node "$GET_CONTEXT" ACCOUNT 2>/dev/null || echo "$AWS_ACCOUNT_ID")
     REGION=$(node "$GET_CONTEXT" REGION 2>/dev/null || echo "$REGION")
+    LANDSCAPE=$(node "$GET_CONTEXT" TAGS.Landscape 2>/dev/null)
+    if [ -n "$LANDSCAPE" ]; then
+        REPOSITORY_NAME="${REPOSITORY_BASE_NAME}-${LANDSCAPE,,}"
+    else
+        REPOSITORY_NAME="$REPOSITORY_BASE_NAME"
+    fi
 fi
 
 # Colors for output
@@ -31,6 +37,7 @@ echo "Repository: $REPOSITORY_NAME"
 echo "Tag: $IMAGE_TAG"
 echo "Region: $REGION"
 echo "Account: $AWS_ACCOUNT_ID"
+echo "Landscape: $LANDSCAPE"
 echo ""
 
 # Get ECR repository URI

@@ -26,6 +26,7 @@ export interface ChunkerTaskDefinitionProps {
   maxScalingCapacity: number;
   huronPersonSecrets: HuronPersonSecrets;
   ecsChunkerServiceName: string;
+  landscape: string;
   dryRun?: boolean;
   tags?: { [key: string]: string };
 }
@@ -44,19 +45,19 @@ export class ChunkerTaskDefinition extends Construct {
       huronPersonSecrets: { secret, secretArn , secretName } = {}, dynamoDbTables, logRetentionDays, 
       memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, itemsPerChunk, chunksBucketName, 
       inputBucketName, repository, imageTag, ecsClusterName, maxScalingCapacity, stackId, 
-      ecsChunkerServiceName, dryRun, tags 
+      ecsChunkerServiceName, landscape, dryRun, tags 
     } = props;
 
     // Create CloudWatch log group
     const logGroup = new LogGroup(this, 'LogGroup', {
-      logGroupName: `/ecs/huron-person-chunker`,
+      logGroupName: `/ecs/huron-person-chunker-${landscape}`,
       retention: logRetentionDays as RetentionDays,
       removalPolicy: RemovalPolicy.DESTROY,
     });
 
     // Create task definition
     this.taskDefinition = new FargateTaskDefinition(this, 'TaskDefinition', {
-      family: 'Chunker',
+      family: `Chunker-${landscape}`,
       cpu,
       memoryLimitMiB,
       // Use ARM64 for Graviton2 (20% cost savings)
@@ -106,11 +107,11 @@ export class ChunkerTaskDefinition extends Construct {
         ITEMS_PER_CHUNK: itemsPerChunk.toString(),
         PERSON_ID_FIELD: 'personid',
         STACK_ID: stackId,
+        LANDSCAPE: landscape,
         SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
         // INPUT_BUCKET and INPUT_KEY will be provided at runtime by Lambda
         IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
-        DRY_RUN: dryRun ? 'true' : 'false',
-        ECS_CHUNKER_SERVICE_NAME: ecsChunkerServiceName
+        DRY_RUN: dryRun ? 'true' : 'false'
       },
       secrets
     });

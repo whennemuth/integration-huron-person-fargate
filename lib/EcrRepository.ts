@@ -2,9 +2,10 @@ import { Duration, RemovalPolicy, Tags } from 'aws-cdk-lib';
 import { Repository, TagStatus } from 'aws-cdk-lib/aws-ecr';
 import { Construct } from 'constructs';
 
+export const REPOSITORY_BASE_NAME = 'huron-person-integration';
 export interface EcrRepositoryProps {
   registryId?: string;  // Optional AWS account ID of the ECR registry (if not provided, will check public ECR)
-  repositoryName: string;
+  landscape: string;
   tags?: { [key: string]: string };
 }
 
@@ -19,7 +20,7 @@ export class EcrRepository extends Construct {
 
     // Create ECR repository with lifecycle policy
     this.repository = new Repository(this, 'Repository', {
-      repositoryName: props.repositoryName,
+      repositoryName: `${REPOSITORY_BASE_NAME}-${props.landscape.toLowerCase()}`,
       // Keep last 10 images, remove untagged images after 1 day
       lifecycleRules: [
         {

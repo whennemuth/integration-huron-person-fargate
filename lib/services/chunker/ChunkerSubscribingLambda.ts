@@ -11,6 +11,7 @@ export interface ChunkerSubscribingLambdaProps {
   chunkerQueueUrl: string;
   inputBucketName: string;
   region: string;
+  landscape: string;
   timeoutSeconds: number;
   memorySizeMb: number;
   dryRun?: boolean;
@@ -49,14 +50,14 @@ export class ChunkerSubscribingLambda extends Construct {
 
     // Create Lambda log group
     const logGroup = new LogGroup(this, 'LogGroup', {
-      logGroupName: `/aws/lambda/chunker-subscriber`,
+      logGroupName: `/aws/lambda/chunker-subscriber-${props.landscape}`,
       retention: RetentionDays.THREE_MONTHS,
       removalPolicy: RemovalPolicy.DESTROY
     });
 
     // Create IAM role with predictable name for Lambda function
     const lambdaRole = new Role(this, 'FunctionRole', {
-      roleName: 'chunker-subscriber-lambda-role',
+      roleName: `chunker-subscriber-lambda-role-${props.landscape}`,
       assumedBy: new ServicePrincipal('lambda.amazonaws.com'),
       description: 'Role for subscribing chunker lambda function',
       managedPolicies: [
@@ -66,7 +67,7 @@ export class ChunkerSubscribingLambda extends Construct {
 
     // Create Lambda function
     this.function = new NodejsFunction(this, 'Function', {
-      functionName: 'chunker-subscriber',
+      functionName: `chunker-subscriber-${props.landscape}`,
       description: `Dispatcher for chunker events: S3 file uploads to ${props.inputBucketName} or EventBridge schedule for API fetch (SEE DESCRIPTION environment variable(s) for task performed)`,
       runtime: Runtime.NODEJS_20_X,
       handler: 'handler',

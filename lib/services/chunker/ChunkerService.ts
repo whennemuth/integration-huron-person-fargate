@@ -3,22 +3,21 @@ import { IFunction } from 'aws-cdk-lib/aws-lambda';
 import { Schedule, ScheduleExpression, ScheduleTargetInput } from 'aws-cdk-lib/aws-scheduler';
 import { LambdaInvoke } from 'aws-cdk-lib/aws-scheduler-targets';
 import { Construct } from 'constructs';
-import { ConfigManager, DataSourceConfig } from 'integration-huron-person';
 import { TestEnvironment } from 'integration-core';
-import { IContext } from '../../../context/IContext';
+import { ConfigManager, DataSourceConfig } from 'integration-huron-person';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 import { ApiChunkerEvent } from '../../../src/chunking/ChunkerSubscriber';
-import { getLocalConfig } from '../../../src/Utils';
-import { AbstractService, AbstractServiceProps } from '../AbstractService';
 import { handleApiEvent } from '../../../src/chunking/fetch/ChunkerApiSubscriber';
 import { QueueSeeder } from '../../../src/chunking/fetch/QueueSeeder';
 import { DesiredCount } from '../../../src/DesiredCount';
+import { getLocalConfig } from '../../../src/Utils';
+import { AbstractService, AbstractServiceProps } from '../AbstractService';
+
+export const SERVICE_LOGICAL_ID = 'Chunker';
 
 export interface ChunkerServiceProps extends AbstractServiceProps {
   /** The ChunkerSubscriber Lambda function to invoke on schedule */
   chunkerLambda?: IFunction;
-  /** Context configuration containing fetchSchedule settings */
-  context?: IContext;
   /**
    * Optional: Number of chunks each task should process before exiting (default: 0 = process ALL 
    * of the chunks for ALL of the people in the source system in just one task execution)
@@ -41,8 +40,8 @@ export interface ChunkerServiceProps extends AbstractServiceProps {
 export class ChunkerService extends AbstractService {
   public schedule?: Schedule;
 
-  public static getServiceLogicalIdStatic(): string {
-    return 'Chunker';
+  public getServiceName(): string {
+    return SERVICE_LOGICAL_ID;
   }
 
   constructor(scope: Construct, props: ChunkerServiceProps) {
@@ -65,7 +64,8 @@ export class ChunkerService extends AbstractService {
    * - fetchSchedule.cronExpression is valid
    */
   private createApiChunkingSchedule(props: ChunkerServiceProps): void {
-    const { chunkerLambda, context, chunksPerTask: limit = 0 } = props;
+    const { chunkerLambda, chunksPerTask: limit = 0 } = props;
+    const context = this.props.context;
     const trustPreviousStorage = context?.TRUST_PREVIOUS_STORAGE ?? false;
 
     if (!chunkerLambda || !context) {
@@ -106,8 +106,9 @@ export class ChunkerService extends AbstractService {
     }
 
     // Create the EventBridge schedule with cron as a child of the QueueProcessingFargateService
+    const { Landscape } = context.TAGS;
     this.schedule = new Schedule(this.service, 'ApiChunkingSchedule', {
-      scheduleName: 'chunker-api-schedule',
+      scheduleName: `chunker-api-schedule-${Landscape.toLowerCase()}`,
       description: `Triggers API-based chunker on schedule: ${cronExpression}`,
       schedule: ScheduleExpression.expression(cronExpression),
       enabled: cronEnabled,
@@ -144,10 +145,6 @@ export class ChunkerService extends AbstractService {
       { lower: 1, change: +1 }
     ];
   }
-  
-  public getServiceLogicalId(): string {
-    return ChunkerService.getServiceLogicalIdStatic();
-  }
 }
 
 
@@ -159,6 +156,16 @@ export class ChunkerService extends AbstractService {
  * function to manually trigger the chunking service to start a task off schedule, for example to kick 
  * off an initial chunking run or to test the service.
  * 
+ * NOTE: If you do not want the appearance of new chunk files appearing in the bucket to set off the
+ * processor service, you can set the environment variable DRY_RUN=true for the chunker subscriber
+ * lambda function to prevent the chunker from sending messages to the processor queue. The is most
+ * easily done through the AWS management console, or you can use the AWS CLI:
+ * 
+ * aws lambda update-function-configuration \
+ *  --region us-east-2 \
+ *  --cli-input-json "$(aws lambda get-function-configuration \
+ *     --function-name chunker-subscriber-dev \
+ *     --region us-east-2 | jq '.Environment.Variables += {"DRY_RUN": "true"} | {FunctionName: .FunctionName, Environment: .Environment}')"
  */
 async function startChunkingService() {
   /** Read additional configuration from environment */
@@ -172,6 +179,7 @@ async function startChunkingService() {
     SINGLE_PERSON_BUID: buid,
     REGION: region,
     STACK_ID: stackId,
+    LANDSCAPE: landscape,
     BULK_RESET: bulkReset,
     TRUST_PREVIOUS_STORAGE: trustPreviousStorage,
     // For seeding the queue
@@ -186,10 +194,10 @@ async function startChunkingService() {
   const localConfigPath = configPath || getLocalConfig();
   const config = await configManager
     .reset()
+    .fromEnvironment()                            // ← Environment is first - takes precedence over all.
     .fromFileSystem(localConfigPath)              // ← Local dev only
     .fromJsonString('HURON_PERSON_CONFIG_JSON')   // ← TaskDef secret injection
-    .fromSecretManager(secretArn)                // ← Fallback to Secrets Manager
-    .fromEnvironment()                            // ← Fallback to individual env var overrides
+    .fromSecretManager(secretArn)                 // ← Fallback to Secrets Manager
     .getConfigAsync(buid ? 'person' : 'people');
 
   let desiredCount = DESIRED_COUNT ? parseInt(DESIRED_COUNT) : 0;
@@ -265,6 +273,10 @@ async function startChunkingService() {
       console.error('STACK_ID environment variable is required to set desired count.');
       return;
     }
+    if( ! landscape) {
+      console.error('LANDSCAPE environment variable is required to set desired count.');
+      return;
+    }
 
     // Raise the desired count to a level "worthy" of the prepopulation to kick off the processing of the 
     // seeded messages. This is done after seeding to allow the service to process the initial messages 
@@ -286,6 +298,7 @@ async function startChunkingService() {
     const queueSeeder = new QueueSeeder({
       region,
       stackId,
+      landscape,
       baseUrl,
       fetchPath,
       populationType: normalizedPopulationType,
@@ -296,8 +309,8 @@ async function startChunkingService() {
       queueUrl: queueUrl!,
       dryRun: false
     });
-    await queueSeeder.resetAtomicCounter();
-    await queueSeeder.seedQueue();
+    // await queueSeeder.resetAtomicCounter();
+    // await queueSeeder.seedQueue();
     
     console.log(`\n✓ Queue seeding complete. Ready to scale up desiredCount to ${seedNumber}.\n`);
   } else {
@@ -336,7 +349,8 @@ if (require.main === module) {
     'MESSAGES_TO_PREPOPULATE',
     'DESIRED_COUNT',
     'ECS_CLUSTER_NAME',
-    'ECS_SERVICE_NAME'
+    'ECS_SERVICE_NAME',
+    'STACK_ID',
   ].forEach(testEnvironment.getVar);
 
   [

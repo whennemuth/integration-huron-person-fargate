@@ -28,7 +28,7 @@ CHUNKS_BUCKET=huron-person-chunks-dev
 CHUNK_KEY=chunks/person-full/2026-04-09T15:28:18.703Z/chunk-0000.ndjson
 
 ECR_REGISTRY_ID=<account-id>
-ECR_REPOSITORY_NAME=huron-person-processor
+ECR_REPOSITORY_NAME=huron-person-integration
 DRY_RUN=false
 
 # Huron Person Integration Environment Variables
@@ -130,12 +130,12 @@ DOCKER_CHUNKER_REGION=us-east-2
 DOCKER_CHUNKER_ITEMS_PER_CHUNK=200
 DOCKER_CHUNKER_PERSON_ID_FIELD=personid
 DOCKER_CHUNKER_DRY_RUN=false
-DOCKER_CHUNKER_SQS_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/770203350335/huron-person-chunker-queue
+DOCKER_CHUNKER_SQS_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/770203350335/huron-person-chunker-queue-dev
 DOCKER_CHUNKER_SHARED_DELTA_STORAGE_DIR=delta-storage
 DOCKER_CHUNKER_IS_ECS_TASK=false
 DOCKER_CHUNKER_ECS_AGENT_URI=http://169.254.170.2
 DOCKER_CHUNKER_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config.json
-DOCKER_CHUNKER_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-LaYGXj
+DOCKER_CHUNKER_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-xug4Og
 DOCKER_CHUNKER_HURON_PERSON_CONFIG_JSON=
 DOCKER_CHUNKER_POPULATION_SCOPE=single
 DOCKER_CHUNKER_POPULATION_TYPE=person-full
@@ -146,7 +146,6 @@ DOCKER_CHUNKER_INPUT_KEY=person-full/2026-03-03T19:58:41.277Z-people.json
 DOCKER_CHUNKER_BULK_RESET=false
 DOCKER_CHUNKER_TRUST_PREVIOUS_STORAGE=false
 DOCKER_CHUNKER_MAX_SCALING_CAPACITY=1
-DOCKER_CHUNKER_ECS_CHUNKER_SERVICE_NAME=huron-person-fargate-Chunker-QueueServiceE89D6A95-C6N6IiLSv9CC
 DOCKER_CHUNKER_ECS_CLUSTER_NAME=huron-person-fargate-cluster-dev
 DOCKER_CHUNKER_CACHE_ENABLED=true
 DOCKER_CHUNKER_CACHE_PATH=.
@@ -166,7 +165,7 @@ DOCKER_PROCESSOR_SHARED_DELTA_STORAGE_DIR=delta-storage
 DOCKER_PROCESSOR_IS_ECS_TASK=false
 DOCKER_PROCESSOR_ECS_AGENT_URI=http://169.254.170.2
 DOCKER_PROCESSOR_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config.json
-DOCKER_PROCESSOR_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-LaYGXj
+DOCKER_PROCESSOR_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-xug4Og
 DOCKER_PROCESSOR_CACHE_ENABLED=true
 DOCKER_PROCESSOR_CACHE_PATH=.
 
@@ -182,7 +181,7 @@ DOCKER_MERGER_IS_ECS_TASK=false
 DOCKER_MERGER_ECS_AGENT_URI=http://169.254.170.2
 DOCKER_MERGER_PERSON_DELETE_TYPE=soft
 DOCKER_MERGER_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config.json
-DOCKER_MERGER_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-LaYGXj
+DOCKER_MERGER_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-xug4Og
 DOCKER_MERGER_HURON_PERSON_CONFIG_JSON=
 DOCKER_MERGER_DYNAMODB_STATISTICS_TABLE_NAME=huron-person-fargate-statistics
 DOCKER_MERGER_CACHE_ENABLED=true
@@ -267,5 +266,5 @@ STATISTICS_TABLE_TRUNCATE_CHUNK_SIZE=25
 ECR_CHECKER_AWS_PROFILE=infnprd
 ECR_CHECKER_REGION=us-east-2
 ECR_CHECKER_ECR_REGISTRY_ID=<account-id>
-ECR_CHECKER_ECR_REPOSITORY_NAME=huron-person-processor
+ECR_CHECKER_ECR_REPOSITORY_NAME=huron-person-integration
 ```

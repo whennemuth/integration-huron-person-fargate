@@ -23,6 +23,7 @@ export interface MergerTaskDefinitionProps {
   dynamoDbTables: DynamoDbTables;
   huronPersonSecrets: HuronPersonSecrets;
   region: string;
+  landscape: string;
   dryRun?: boolean;
   tags?: { [key: string]: string };
 }
@@ -39,20 +40,20 @@ export class MergerTaskDefinition extends Construct {
 
     const { 
       cpu, memoryLimitMiB, memoryReservationMiB, region, inputBucketName, sharedDeltaStorageDir, personDeleteType, 
-      repository, imageTag, dryRun, tags, logRetentionDays, chunksBucketName,
+      repository, imageTag, landscape, dryRun, tags, logRetentionDays, chunksBucketName,
       dynamoDbTables, huronPersonSecrets: { secret, secretArn , secretName } = {} 
     } = props;
 
     // Create CloudWatch log group
     const logGroup = new LogGroup(this, 'LogGroup', {
-      logGroupName: `/ecs/huron-person-merger`,
+      logGroupName: `/ecs/huron-person-merger-${landscape}`,
       retention: logRetentionDays as RetentionDays,
       removalPolicy: RemovalPolicy.DESTROY,
     });
 
     // Create task definition
     this.taskDefinition = new FargateTaskDefinition(this, 'TaskDefinition', {
-      family: 'Merger',
+      family: `Merger-${landscape}`,
       cpu,
       memoryLimitMiB,
       // Use ARM64 for Graviton2 (20% cost savings)

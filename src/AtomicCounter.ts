@@ -3,7 +3,7 @@ import { IContext } from "../context/IContext";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { TestEnvironment } from "integration-core";
 
-export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-actomic-counter`;
+export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-atomic-counter-${context.TAGS.Landscape.toLowerCase()}`;
 export const DYNAMODB_PARTITION_KEY = 'counter_name';
 
 /**
@@ -18,15 +18,16 @@ export const DYNAMODB_PARTITION_KEY = 'counter_name';
 export abstract class AbstractAtomicCounter {
   private client: DynamoDBDocumentClient; 
 
-  constructor(private stackId: string, private region: string) {
-    this.client = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
+  constructor(private params: { stackId: string, region: string, landscape: string }) {
+    this.client = DynamoDBDocumentClient.from(new DynamoDBClient({ region: params.region }));
   }
 
   public abstract getCounterName(): string;
 
   public increment = async (incrementBy: number = 1): Promise<number> => {
+    const { stackId: STACK_ID, landscape: Landscape } = this.params;
     const input = {
-      TableName: DYNAMODB_TABLE_NAME({ STACK_ID: this.stackId } as IContext),
+      TableName: DYNAMODB_TABLE_NAME({ STACK_ID, TAGS: { Landscape } } as IContext),
       Key: { [DYNAMODB_PARTITION_KEY]: this.getCounterName() },
       UpdateExpression: 'ADD #counterValue :incrementBy SET LastUpdated = :timestamp',
       ExpressionAttributeNames: {
@@ -44,8 +45,9 @@ export abstract class AbstractAtomicCounter {
   }
 
   public reset = async (): Promise<AbstractAtomicCounter> => {
+    const { stackId: STACK_ID, landscape: Landscape } = this.params;
     const input = {
-      TableName: DYNAMODB_TABLE_NAME({ STACK_ID: this.stackId } as IContext),
+      TableName: DYNAMODB_TABLE_NAME({ STACK_ID, TAGS: { Landscape } } as IContext),
       Key: { [DYNAMODB_PARTITION_KEY]: this.getCounterName() },
       UpdateExpression: 'SET #counterValue = :zero, LastUpdated = :timestamp',
       ExpressionAttributeNames: {
@@ -62,8 +64,9 @@ export abstract class AbstractAtomicCounter {
   }
 
   public getValue = async (): Promise<number> => {
+    const { stackId: STACK_ID, landscape: Landscape } = this.params;
     const input = {
-      TableName: DYNAMODB_TABLE_NAME({ STACK_ID: this.stackId } as IContext),
+      TableName: DYNAMODB_TABLE_NAME({ STACK_ID, TAGS: { Landscape } } as IContext),
       Key: { [DYNAMODB_PARTITION_KEY]: this.getCounterName() },
     };
 
@@ -105,7 +108,7 @@ if (require.main === module) {
       getCounterName(): string {
         return 'test-counter';
       }
-    }(STACK_ID, REGION);
+    }({ stackId: STACK_ID, region: REGION, landscape: 'dev' });
 
     switch (task as TASK) {
       case INCREMENT:

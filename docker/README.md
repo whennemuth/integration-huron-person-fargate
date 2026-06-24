@@ -213,11 +213,11 @@ aws ecr get-login-password --region us-east-2 | \
   docker login --username AWS --password-stdin <account>.dkr.ecr.us-east-2.amazonaws.com
 
 # Tag image
-docker tag huron-person-processor:latest \
-  <account>.dkr.ecr.us-east-2.amazonaws.com/huron-person-processor:latest
+docker tag huron-person-integration:latest \
+  <account>.dkr.ecr.us-east-2.amazonaws.com/huron-person-integration:latest
 
 # Push to ECR
-docker push <account>.dkr.ecr.us-east-2.amazonaws.com/huron-person-processor:latest
+docker push <account>.dkr.ecr.us-east-2.amazonaws.com/huron-person-integration:latest
 ```
 
 ### Task Definitions

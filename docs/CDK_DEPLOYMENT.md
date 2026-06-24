@@ -83,7 +83,7 @@ npm run deploy
 ```
 
 **Resources Created:**
-- ECR Repository: `huron-person-processor`
+- ECR Repository: `huron-person-integration`
 - ECS Cluster: `huron-person-cluster`
 - S3 Bucket: `huron-person-chunks-dev`
 - SQS Queue: `huron-person-chunks-queue` + DLQ

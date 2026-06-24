@@ -40,7 +40,7 @@ aws s3 cp test-data/sample.json s3://huron-person-file-drop-dev/
 
 | Resource | Type | Purpose |
 |----------|------|---------|
-| `huron-person-processor` | ECR Repository | Stores Docker images |
+| `huron-person-integration` | ECR Repository | Stores Docker images |
 | `huron-person-cluster` | ECS Cluster | Runs Fargate tasks |
 | `huron-person-chunks-dev` | S3 Bucket | Stores NDJSON chunks (7-day lifecycle) |
 | `huron-person-chunks-queue` | SQS Queue | Distributes chunks to processors |
@@ -129,7 +129,7 @@ All constructs are in [lib/constructs/](../lib/constructs/):
 aws logs tail /ecs/huron-person-chunker --follow
 
 # Processor logs
-aws logs tail /ecs/huron-person-processor --follow
+aws logs tail /ecs/huron-person-integration --follow
 
 # Lambda logs
 aws logs tail /aws/lambda/*ChunkerTriggerLambda* --follow
@@ -198,7 +198,7 @@ See [CDK_DEPLOYMENT.md](../docs/CDK_DEPLOYMENT.md) for detailed troubleshooting 
 After deployment, key outputs:
 
 ```
-EcrRepositoryUri: 770203350335.dkr.ecr.us-east-2.amazonaws.com/huron-person-processor
+EcrRepositoryUri: 770203350335.dkr.ecr.us-east-2.amazonaws.com/huron-person-integration
 EcsClusterName: huron-person-cluster
 ChunkerTaskDefinitionArn: arn:aws:ecs:...
 ProcessorTaskDefinitionArn: arn:aws:ecs:...

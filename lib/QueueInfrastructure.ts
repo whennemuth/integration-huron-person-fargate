@@ -3,6 +3,8 @@ import { Queue } from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import { IContext } from '../context/IContext';
 
+export const QUEUE_BASE_NAME = 'huron-person';
+
 export interface QueueInfrastructureProps {
   context: IContext;
   tags?: { [key: string]: string };
@@ -32,12 +34,13 @@ export class QueueInfrastructure extends Construct {
     super(scope, id);
 
     const { context: ctx } = props;
+    const { Landscape } = ctx.TAGS;
 
     // ========================================
     // 1. Chunker Queues
     // ========================================
     this.chunkerDeadLetterQueue = new Queue(this, 'ChunkerDeadLetterQueue', {
-      queueName: 'huron-person-chunker-queue-dlq',
+      queueName: `${QUEUE_BASE_NAME}-chunker-queue-dlq-${Landscape.toLowerCase()}`,
       retentionPeriod: Duration.days(14),
     });
     // Or create a fifo queue.
@@ -49,7 +52,7 @@ export class QueueInfrastructure extends Construct {
     // });
 
     this.chunkerQueue = new Queue(this, 'ChunkerQueue', {
-      queueName: 'huron-person-chunker-queue',
+      queueName: `${QUEUE_BASE_NAME}-chunker-queue-${Landscape.toLowerCase()}`,
       visibilityTimeout: Duration.seconds(ctx.SQS.visibilityTimeoutSeconds),
       retentionPeriod: Duration.days(ctx.SQS.retentionPeriodDays),
       deadLetterQueue: {
@@ -62,12 +65,12 @@ export class QueueInfrastructure extends Construct {
     // 2. Processor Queues
     // ========================================
     this.processorDeadLetterQueue = new Queue(this, 'ProcessorDeadLetterQueue', {
-      queueName: 'huron-person-processor-queue-dlq',
+      queueName: `${QUEUE_BASE_NAME}-processor-queue-dlq-${Landscape.toLowerCase()}`,
       retentionPeriod: Duration.days(14),
     });
 
     this.processorQueue = new Queue(this, 'ProcessorQueue', {
-      queueName: 'huron-person-processor-queue',
+      queueName: `${QUEUE_BASE_NAME}-processor-queue-${Landscape.toLowerCase()}`,
       visibilityTimeout: Duration.seconds(ctx.SQS.visibilityTimeoutSeconds),
       retentionPeriod: Duration.days(ctx.SQS.retentionPeriodDays),
       deadLetterQueue: {
@@ -80,12 +83,12 @@ export class QueueInfrastructure extends Construct {
     // 3. Merger Queues
     // ========================================
     this.mergerDeadLetterQueue = new Queue(this, 'MergerDeadLetterQueue', {
-      queueName: 'huron-person-merger-queue-dlq',
+      queueName: `${QUEUE_BASE_NAME}-merger-queue-dlq-${Landscape.toLowerCase()}`,
       retentionPeriod: Duration.days(14),
     });
 
     this.mergerQueue = new Queue(this, 'MergerQueue', {
-      queueName: 'huron-person-merger-queue',
+      queueName: `${QUEUE_BASE_NAME}-merger-queue-${Landscape.toLowerCase()}`,
       visibilityTimeout: Duration.seconds(ctx.SQS.visibilityTimeoutSeconds),
       retentionPeriod: Duration.days(ctx.SQS.retentionPeriodDays),
       deadLetterQueue: {

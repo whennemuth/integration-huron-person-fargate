@@ -1,4 +1,4 @@
-import { Tags } from 'aws-cdk-lib';
+import { RemovalPolicy, Tags } from 'aws-cdk-lib';
 import { IVpc, SubnetType, Vpc } from 'aws-cdk-lib/aws-ec2';
 import { IRepository } from 'aws-cdk-lib/aws-ecr';
 import { Cluster, ClusterProps, ContainerInsights } from 'aws-cdk-lib/aws-ecs';
@@ -12,6 +12,8 @@ import { ProcessorService } from './services/processor/ProcessorService';
 import { TaskDefinitions } from './TaskDefinitions';
 import { Config } from 'integration-huron-person';
 import { DynamoDbTables } from './DynamoDB';
+
+export const CLUSTER_BASE_NAME = 'huron-person-cluster';
 
 export interface EcsInfrastructureProps {
   repository: IRepository;
@@ -49,27 +51,35 @@ export class EcsInfrastructure extends Construct {
     // Create a logical grouping construct for all services
     this.servicesConstruct = new Construct(this, 'Services');
 
-    // Create VPC with private subnets and NAT gateway for security
-    this.vpc = new Vpc(this, 'Vpc', {
-      maxAzs: 2,  // Use 2 AZs for high availability
-      natGateways: 1,  // NAT gateway for private subnet internet access (1 for cost optimization, 2 for HA)
-      subnetConfiguration: [
-        {
-          name: 'Public',
-          subnetType: SubnetType.PUBLIC,
-          cidrMask: 24,
-        },
-        {
-          name: 'Private',
-          subnetType: SubnetType.PRIVATE_WITH_EGRESS,
-          cidrMask: 24,
-        },
-      ],
-    });
+    if(ctx.ECS.vpcId) {
+      // Use existing VPC if vpcId is provided
+      this.vpc = Vpc.fromLookup(this, 'Vpc', { vpcId: ctx.ECS.vpcId });
+    } 
+    else {
+      // Create VPC with private subnets and NAT gateway for security
+      this.vpc = new Vpc(this, 'Vpc', {
+        maxAzs: 2,  // Use 2 AZs for high availability    
+        natGateways: 1,  // NAT gateway for private subnet internet access (1 for cost optimization, 2 for HA)
+        subnetConfiguration: [
+          {
+            name: 'Public',
+            subnetType: SubnetType.PUBLIC,
+            cidrMask: 24,
+          },
+          {
+            name: 'Private',
+            subnetType: SubnetType.PRIVATE_WITH_EGRESS,
+            cidrMask: 24,
+          },
+        ],
+      });
+      this.vpc.applyRemovalPolicy(RemovalPolicy.RETAIN); // Retain VPC on stack deletion for cleanup
+    }
 
     // Create ECS Cluster
+    const { Landscape } = ctx.TAGS;
     this.cluster = new Cluster(this, 'Cluster', {
-      clusterName: ctx.ECS.clusterName,
+      clusterName: `${CLUSTER_BASE_NAME}-${Landscape.toLowerCase()}`,
       vpc: this.vpc,
       containerInsightsV2: ContainerInsights.ENHANCED
     } satisfies ClusterProps);
@@ -100,8 +110,7 @@ export class EcsInfrastructure extends Construct {
   public createChunkerService(
     queue: IQueue,
     deadLetterQueue: IQueue,
-    chunkerLambda?: IFunction,
-    context?: IContext
+    chunkerLambda?: IFunction
   ): ChunkerService {
     this.chunkerService = new ChunkerService(this.servicesConstruct, {
       cluster: this.cluster,
@@ -111,10 +120,10 @@ export class EcsInfrastructure extends Construct {
       deadLetterQueue,
       maxScalingCapacity: this.context.ECS.chunkerService?.maxScalingCapacity ?? 1, // Chunking is less frequent, lower max
       stackScope: this.stackScope,  // Pass stack reference for escape hatches
+      context: this.context,  // Required for AbstractService (landscape suffix)
       tags: this.tags,
       chunkerLambda,
       chunksPerTask: this.context.ECS.chunkerService?.chunksPerTask ?? 0,
-      context,
     });
 
     return this.chunkerService;
@@ -136,6 +145,7 @@ export class EcsInfrastructure extends Construct {
       deadLetterQueue,
       maxScalingCapacity: this.context.ECS.processorService?.maxScalingCapacity ?? 1,
       stackScope: this.stackScope,  // Pass stack reference for escape hatches
+      context: this.context,  // Required for AbstractService (landscape suffix)
       tags: this.tags,
     });
 
@@ -158,6 +168,7 @@ export class EcsInfrastructure extends Construct {
       deadLetterQueue,
       maxScalingCapacity: 1, // Merging is less frequent, lower max
       stackScope: this.stackScope,  // Pass stack reference for escape hatches
+      context: this.context,  // Required for AbstractService (landscape suffix)
       tags: this.tags,
     });
 

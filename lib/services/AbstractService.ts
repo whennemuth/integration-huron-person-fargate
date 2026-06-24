@@ -6,6 +6,7 @@ import { CfnService, FargatePlatformVersion, FargateTaskDefinition, ICluster } f
 import { QueueProcessingFargateService, QueueProcessingFargateServiceProps } from "aws-cdk-lib/aws-ecs-patterns";
 import { IQueue } from "aws-cdk-lib/aws-sqs";
 import { Construct } from "constructs";
+import { IContext } from "../../context/IContext";
 
 export interface AbstractServiceProps {
   cluster: ICluster;
@@ -15,6 +16,7 @@ export interface AbstractServiceProps {
   deadLetterQueue: IQueue;
   maxScalingCapacity: number;
   stackScope: Construct;  // Stack reference for escape hatches
+  context: IContext;  // Context for accessing Landscape and other configuration
   tags?: { [key: string]: string };
 }
 
@@ -25,8 +27,8 @@ export abstract class AbstractService {
     const { queue, deadLetterQueue } = props;
 
     // Create QueueProcessingFargateService
-    this.service = new QueueProcessingFargateService(scope, this.getServiceLogicalId(), {
-      serviceName: this.getServiceLogicalId(),
+    this.service = new QueueProcessingFargateService(scope, this.getServiceName(), {
+      serviceName: this.getServiceName(),
       cluster: props.cluster,
       cooldown: Duration.seconds(10),
       taskDefinition: props.taskDefinition,
@@ -163,7 +165,15 @@ export abstract class AbstractService {
     });
   }
   
-  public abstract getScalingSteps():  ScalingInterval[];
+  /**
+   * Returns scaling step configuration for the service.
+   * Each service type may have different scaling behavior.
+   */
+  public abstract getScalingSteps(): ScalingInterval[];
 
-  public abstract getServiceLogicalId(): string; 
+  /**
+   * Returns the service name used for both CloudFormation logical ID and ECS service name.
+   * Does NOT include landscape suffix - services are scoped within clusters.
+   */
+  public abstract getServiceName(): string;
 }

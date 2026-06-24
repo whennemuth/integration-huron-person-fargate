@@ -31,13 +31,14 @@ export class AppConstruct extends Construct {
     super(scope, id);
 
     const { context: ctx, config, tags } = props;
+    const { S3: { chunksBucket }, TAGS: { Landscape } } = ctx;
 
     // ========================================
     // 1. ECR Repository
     // ========================================
     this.ecr = new EcrRepository(this, 'Ecr', {
-      repositoryName: ctx.ECR.repositoryName,
-      registryId: ctx.ECR.registryId,
+      landscape: Landscape,
+      registryId: ctx.ACCOUNT,
       tags,
     });
 
@@ -87,7 +88,7 @@ export class AppConstruct extends Construct {
     // 5. Chunks Bucket
     // ========================================
     this.chunksBucket = new Bucket(this, 'ChunksBucket', {
-      bucketName: ctx.S3.chunksBucket,
+      bucketName: `${chunksBucket}-${Landscape.toLowerCase()}`,
       // Lifecycle rules:
       // 1. Temporary chunk files (processed immediately) → configured expiration
       // 2. Delta files (merged by merger, but need failsafe) → longer expiration
@@ -138,12 +139,11 @@ export class AppConstruct extends Construct {
     // ========================================
     // 7. Chunker Service (Phase 1)
     // ========================================
-    // Pass chunker lambda and context for EventBridge schedule configuration
+    // Pass chunker lambda for EventBridge schedule configuration
     this.ecs.createChunkerService(
       this.queue.chunkerQueue,
       this.queue.chunkerDeadLetterQueue,
-      this.subscribingLambdas.chunker.function,
-      ctx
+      this.subscribingLambdas.chunker.function
     );
 
     // ========================================

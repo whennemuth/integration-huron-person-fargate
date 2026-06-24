@@ -10,6 +10,7 @@ export type ChunkerQueueParams = {
   isEcsTask: boolean,
   QueueUrl?: string,
   region?: string
+  landscape?: string
 };
 
 export const CHUNKER_COUNTER_NAME = 'chunker-offset-counter';
@@ -22,21 +23,26 @@ export class ChunkerQueue {
   private readonly isEcsTask: boolean;
   private readonly QueueUrl?: string;
   private readonly region?: string;
+  private readonly landscape?: string;
   private atomicCounter: AbstractAtomicCounter | undefined;
 
   private message: Message | undefined;
 
   constructor(params: ChunkerQueueParams) {
-    const { SQS_QUEUE_URL, REGION, STACK_ID, DYNAMODB_ATOMIC_COUNTER_TABLE_NAME } = process.env;
-    const { isEcsTask, QueueUrl = SQS_QUEUE_URL, region = REGION } = params;
+    const { SQS_QUEUE_URL, REGION, STACK_ID, LANDSCAPE, DYNAMODB_ATOMIC_COUNTER_TABLE_NAME } = process.env;
+    const { isEcsTask, QueueUrl = SQS_QUEUE_URL, region = REGION, landscape = LANDSCAPE } = params;
     this.isEcsTask = isEcsTask;
     this.QueueUrl = QueueUrl;
-    this.region = region ?? REGION;
-    if (!this.QueueUrl) {
+    this.region = region;
+    this.landscape = landscape;
+    if (!QueueUrl) {
       throw new Error('SQS_QUEUE_URL is required in environment variables');
     }
-    if (!this.region) {
+    if (!region) {
       throw new Error('REGION is required in environment variables');
+    }
+    if( !landscape) {
+      throw new Error('LANDSCAPE is required in environment variables');
     }
     if (DYNAMODB_ATOMIC_COUNTER_TABLE_NAME && STACK_ID) {
       console.log('Atomic counter detected');
@@ -44,7 +50,7 @@ export class ChunkerQueue {
         getCounterName(): string {
           return CHUNKER_COUNTER_NAME;
         }
-      }(STACK_ID, region!);
+      }({ stackId: STACK_ID, region: region!, landscape });
     }
   }
 

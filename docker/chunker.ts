@@ -430,7 +430,6 @@ if (require.main === module) {
     'BULK_RESET',
     'TRUST_PREVIOUS_STORAGE',
     'MAX_SCALING_CAPACITY',
-    'ECS_CHUNKER_SERVICE_NAME',
     'ECS_CLUSTER_NAME',
     'CACHE_ENABLED',
     'CACHE_PATH',

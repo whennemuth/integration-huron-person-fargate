@@ -23,7 +23,7 @@ services:
       dockerfile: docker/Dockerfile
       platforms:
         - linux/arm64
-    image: huron-person-processor:latest
+    image: huron-person-integration:latest
     container_name: huron-chunker
     command: node dist/docker/chunker.js
     env_file:
@@ -41,7 +41,7 @@ services:
       dockerfile: docker/Dockerfile
       platforms:
         - linux/arm64
-    image: huron-person-processor:latest
+    image: huron-person-integration:latest
     container_name: huron-processor
     command: node dist/docker/processor.js
     env_file:
@@ -61,7 +61,7 @@ services:
       dockerfile: docker/Dockerfile
       platforms:
         - linux/arm64
-    image: huron-person-processor:latest
+    image: huron-person-integration:latest
     container_name: huron-merger
     command: node dist/docker/merger.js
     env_file:
