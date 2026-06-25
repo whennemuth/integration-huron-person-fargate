@@ -64,14 +64,7 @@ export class HuronPersonCache {
     return listPeople.listSourceIdentifiers();
   }
 
-  /**
-   * Sets the S3 population cache with the full population from the target API.
-   * Writes one sourceIdentifier per line to enable efficient streaming reads.
-   * @param params Parameters for the S3 bucket, key, and region.
-   */
-  public setS3PopulationCache = async (params: { bucketName: string, key: string, region: string }) => {
-    const { bucketName, key, region } = params;
-    
+  private getLines = async (): Promise<string[]> => {
     console.log(`\n🔄 Fetching full population from target API...`);
     const people = await this.getFullPopulationFromTargetAPI();
     console.log(`  Retrieved ${people.length} people from target API`);
@@ -79,8 +72,6 @@ export class HuronPersonCache {
     if (people.length === 0) {
       console.warn('  ⚠️  No people retrieved from target API - cache will be empty');
     }
-
-    console.log(`\n📝 Writing population cache to S3: s3://${bucketName}/${key}`);
     
     // Create newline-delimited content from sourceIdentifiers
     const lines: string[] = [];
@@ -99,8 +90,22 @@ export class HuronPersonCache {
       console.warn(`  ⚠️  Skipped ${skippedCount} people without sourceIdentifier`);
     }
 
+    return lines;
+  }
+
+  /**
+   * Sets the S3 population cache with the full population from the target API.
+   * Writes one sourceIdentifier per line to enable efficient streaming reads.
+   * @param params Parameters for the S3 bucket, key, and region.
+   */
+  public setS3PopulationCache = async (params: { bucketName: string, key: string, region: string }) => {
+    const { bucketName, key, region } = params;
+
+    const lines = await this.getLines();
     const content = lines.join('\n');
     const contentBuffer = Buffer.from(content, 'utf-8');
+
+    console.log(`\n📝 Writing population cache to S3: s3://${bucketName}/${key}`);
 
     // Write to S3
     const s3 = new S3({ region });
@@ -186,6 +191,16 @@ export class HuronPersonCache {
       throw new Error(`Failed to read population cache from S3: ${error.message}`);
     }
   }
+
+  public writePopulationToFile = async (filePath: string): Promise<void> => {
+    const lines = await this.getLines();
+    const content = lines.join('\n');
+    const fs = await import('fs');
+    fs.writeFileSync(filePath, content, 'utf-8');
+    console.log(`\n📝 Wrote population cache to file: ${filePath}`);
+    console.log(`  ✅ Successfully wrote ${lines.length} sourceIdentifiers to file`);
+    console.log(`  📊 File size: ${(Buffer.byteLength(content, 'utf-8') / 1024).toFixed(2)} KB`);
+  }
 }
 
 
@@ -200,13 +215,25 @@ if (require.main === module) {
       'HURON_PERSON_CONFIG_PATH',
       'HURON_PERSON_CONFIG_JSON',
       'CACHE_ENABLED',
-      'CACHE_PATH'
+      'CACHE_PATH',
+      'OUTPUT_FILE_PATH'
     ].forEach(testEnvironment.getVar);
 
     const personCache = new HuronPersonCache();
     // const people = await personCache.getFullPopulationFromTargetAPI();
     // console.log(`Retrieved ${people.length} people from target API`);
-    const { PERSON_CACHE_BUCKET_NAME, PERSON_CACHE_KEY, REGION } = process.env;
+    const { PERSON_CACHE_BUCKET_NAME, PERSON_CACHE_KEY, REGION, OUTPUT_FILE_PATH } = process.env;
+
+    if(OUTPUT_FILE_PATH) {
+      // A local file path is provided, so write the population cache to that file instead of S3
+      const outputFilePath = OUTPUT_FILE_PATH.endsWith(HuronPersonCache.CACHE_FILE_NAME) 
+        ? OUTPUT_FILE_PATH
+        : `${OUTPUT_FILE_PATH}/${HuronPersonCache.CACHE_FILE_NAME}`;
+      console.log(`\n📝 Writing population cache to local file: ${outputFilePath}`);
+      const fs = await import('fs');
+      await personCache.writePopulationToFile(outputFilePath);
+      process.exit(0);
+    }
 
     if (!PERSON_CACHE_BUCKET_NAME) {
       console.error('PERSON_CACHE_BUCKET_NAME environment variable is not set. Please set it to the name of the S3 bucket for the population cache.');
