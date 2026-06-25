@@ -77,7 +77,7 @@ Core-only and core+person+fargate workspace examples are documented in this repo
 - Chunking: BigJsonFile.ts, BigJsonFetch.ts, ChunkFromAPI.ts, ChunkFromS3.ts, PersonArrayWrapper.ts
 - Merging: DeferredDeleteHandler.ts, StatisticsTable.ts, PersonCache.ts
 - Error handling: ApiErrorTracking.ts
-- Service layer: lib/services/chunker/ChunkerService.ts
+- Orchestration: Runner.ts (extracted from lib/services/chunker/ChunkerService.ts)
 - Utilities: scrap/EcrChecker.ts
 
 ### Import Pattern
@@ -119,8 +119,8 @@ DATASOURCE_BASE_URL=...
 DATATARGET_BASE_URL=...
 
 # Harness groups by pipeline phase
-# ---------- Use these for lib/services/chunker/ChunkerService.ts ---------- #
-CHUNKER_SERVICE_TIMEOUT=...
+# ---------- Use these for src/Runner.ts ---------- #
+RUNNER_CHUNKER_QUEUE_URL=...
 
 # ---------- Use these for src/chunking/fetch/ChunkFromAPI.ts ---------- #
 CHUNK_FROM_API_BASE_URL=...
@@ -155,7 +155,7 @@ CHUNK_FROM_API_BASE_URL=...
 ## Test Harnesses (14+ total)
 
 **Categories**:
-- **CDK Service Layer** (1): ChunkerService
+- **Orchestration** (1): Runner (Manual chunking service invocation)
 - **Chunking Pipeline** (5): ChunkFromAPI, ChunkFromS3, BigJsonFetch, BigJsonFile, PersonArrayWrapper
 - **Merging Pipeline** (3): DeferredDeleteHandler, PersonCache, StatisticsTable
 - **Docker Entry Points** (3): chunker.ts, processor.ts, merger.ts
@@ -175,7 +175,7 @@ CHUNK_FROM_API_BASE_URL=...
 ```bash
 npx ts-node src/chunking/fetch/ChunkFromAPI.ts
 npx ts-node docker/chunker.ts
-npx ts-node lib/services/chunker/ChunkerService.ts
+npx ts-node src/Runner.ts
 ```
 
 ## CDK Infrastructure Patterns
@@ -188,7 +188,7 @@ Defines infrastructure parameters (VPC, subnet, image URIs, etc.) per deployment
 ### Stack Management
 **Pattern**: `lib/Stack.ts` orchestrates Lambda, ECS, S3, SQS resources
 
-**Harness Testing**: Use ChunkerService harness to validate context loading before cdk deploy
+**Harness Testing**: Use Runner harness (`src/Runner.ts`) to validate chunking orchestration before deployment
 
 ## Patterns to Follow
 

@@ -175,12 +175,14 @@ processorRole.addToPrincipalPolicy(
 
 ## Testing Infrastructure Code
 
-### ChunkerService Harness
-**Validation**: Service can load configuration and execute chunking logic
+### Runner Harness (src/Runner.ts)
+**Validation**: Manual chunking orchestration and queue seeding
 
 ```bash
-npx ts-node lib/services/chunker/ChunkerService.ts
+npx ts-node src/Runner.ts
 ```
+
+See [src/CLAUDE.md](../src/CLAUDE.md) for detailed Runner.ts documentation.
 
 ### CDK Synthesis
 **Validation**: CloudFormation template generates without errors

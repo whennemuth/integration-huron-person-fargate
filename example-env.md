@@ -69,16 +69,22 @@ BULK_RESET=false
 CACHE_ENABLED=true
 CACHE_PATH=.
 
-# ------- Harness Groups for lib\services\chunker\ChunkerService.ts ------- #
-CHUNK_SERVICE_SINGLE_PERSON_BUID=U15364542
-CHUNK_SERVICE_CHUNKER_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/<account-id>/huron-person-chunker-queue
-CHUNK_SERVICE_DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT=10
-CHUNK_SERVICE_POPULATION_TYPE=person-full
-CHUNK_SERVICE_POPULATION_SCOPE=single
-CHUNK_SERVICE_BULK_RESET=false
-CHUNK_SERVICE_TRUST_PREVIOUS_STORAGE=false
-CHUNK_SERVICE_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
-CHUNK_SERVICE_REGION=us-east-2
+# --------- Use these for src\Runner.ts ---------- #
+RUNNER_CHUNKER_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/770203350335/huron-person-chunker-queue-dev
+RUNNER_DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT=10
+RUNNER_POPULATION_TYPE=person-full
+RUNNER_POPULATION_SCOPE=standard
+RUNNER_BULK_RESET=false
+RUNNER_TRUST_PREVIOUS_STORAGE=true
+RUNNER_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-xug4Og
+RUNNER_STACK_ID=huron-person-fargate-processor
+RUNNER_REGION=us-east-2
+# For seeding the queue.
+RUNNER_MESSAGES_TO_PREPOPULATE=15
+RUNNER_ECS_CLUSTER_NAME=huron-person-cluster-dev
+RUNNER_ECS_SERVICE_NAME=Chunker
+RUNNER_DESIRED_COUNT=12
+RUNNER_STACK_ID=huron-person-fargate-processor
 
 # ------- Harness Groups for src\chunking\fetch\ChunkFromAPI.ts ------- #
 CHUNK_FROM_API_SINGLE_PERSON_BUID=U15364542

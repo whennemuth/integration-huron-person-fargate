@@ -134,7 +134,7 @@ Test harnesses are executable modules that verify individual components using en
 
 Harness configuration is documented in [example-env.md](./example-env.md). The file contains grouped environment variables for test harnesses covering the major processing pipelines:
 
-- **CDK Service Layer**: `ChunkerService` (Lambda-based chunking orchestration)
+- **Orchestration**: `Runner` (Manual chunking service invocation, queue seeding)
 - **Chunking Pipeline**: `ChunkFromAPI`, `ChunkFromS3`, `BigJsonFetch`, `BigJsonFile`, `PersonArrayWrapper`
 - **Merging Pipeline**: `DeferredDeleteHandler`, `PersonCache`, `StatisticsTable`
 - **Docker Entry Points**: `chunker.ts`, `processor.ts`, `merger.ts`
@@ -152,6 +152,9 @@ Harness configuration is documented in [example-env.md](./example-env.md). The f
 **Option 2: Command Line with npx**
 
 ```bash
+# Example: Run the Runner harness (manual chunking orchestration)
+npx ts-node src/Runner.ts
+
 # Example: Run the ChunkFromAPI harness
 npx ts-node src/chunking/fetch/ChunkFromAPI.ts
 
@@ -161,6 +164,8 @@ npx ts-node src/PersonCache.ts
 # Example: Run the docker chunker harness
 npx ts-node docker/chunker.ts
 ```
+
+For detailed documentation on the Runner harness, see [src/CLAUDE.md](./src/CLAUDE.md).
 
 ## Useful commands
 
