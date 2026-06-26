@@ -174,51 +174,43 @@ export class ChunkFromAPI implements IChunkFromSource {
   /**
    * Set task parameters from SQS message body (ECS mode). 
    * This will be called by the main chunker entry point after reading a message from the queue.
-   * @param messageBody 
+   * Messages are expected to conform to the TaskParameters type with camelCase properties.
+   * @param message SQS message containing TaskParameters in the Body
    */
   public setTaskParametersFromQueueMessage = (message: Message | undefined) => {
     this.messageFromQueue = message;
     const messageBody = message?.Body ? JSON.parse(message.Body) : undefined;
 
-    // Handle both camelCase (baseUrl) and environment variable style (DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL) property names
-    // camelCase takes precedence over env var style for backwards compatibility
-    let { 
-      baseUrl = messageBody?.DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL || 'from_config',
-      fetchPath = messageBody?.DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH || 'from_config',
-      populationType = messageBody?.POPULATION_TYPE || SyncPopulation.PersonFull,
-      offset: camelCaseOffset = messageBody?.offset,
-      limit: camelCaseLimit = messageBody?.limit,
-      chunkDirectory: camelCaseChunkDirectory = messageBody?.chunkDirectory,
-      bulkReset = messageBody?.BULK_RESET || false,
-      trustPreviousStorage: camelCaseTrustPreviousStorage = messageBody?.trustPreviousStorage
-    } = messageBody || {};
+    if (!messageBody) {
+      return;
+    }
 
-    // Extract offset and limit with camelCase taking precedence over env var names
-    const offset = camelCaseOffset !== undefined 
-      ? camelCaseOffset 
-      : (messageBody?.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET || '0');
-    const limit = camelCaseLimit !== undefined 
-      ? camelCaseLimit 
-      : (messageBody?.DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT || '0');
-    const chunkDirectory = camelCaseChunkDirectory !== undefined
-      ? camelCaseChunkDirectory
-      : (messageBody?.DATASOURCE_ENDPOINTCONFIG_PEOPLE_CHUNK_DIRECTORY || undefined);
-    const trustPreviousStorage = camelCaseTrustPreviousStorage !== undefined
-      ? camelCaseTrustPreviousStorage
-      : (messageBody?.TRUST_PREVIOUS_STORAGE || false);
+    // Extract values from message body, falling back to defaults for missing/falsy values
+    const baseUrl = messageBody.baseUrl || 'from_config';
+    const fetchPath = messageBody.fetchPath || 'from_config';
+    const populationType = messageBody.populationType || SyncPopulation.PersonFull;
+    const offset = messageBody.offset !== undefined ? Number(messageBody.offset) : 0;
+    const limit = messageBody.limit !== undefined ? Number(messageBody.limit) : 0;
+    const chunkDirectory = messageBody.chunkDirectory;
+    const bulkReset = messageBody.bulkReset;
+    const trustPreviousStorage = messageBody.trustPreviousStorage;
 
     this.taskParameters = { 
       baseUrl, 
       fetchPath, 
       populationType, 
-      offset: offset ? parseInt(offset, 10) : undefined,
-      limit: limit ? parseInt(limit, 10) : undefined,
+      offset,
+      limit,
       chunkDirectory,
       bulkReset: typeof bulkReset === 'boolean' ? bulkReset : bulkReset === 'true',
       trustPreviousStorage: typeof trustPreviousStorage === 'boolean'
         ? trustPreviousStorage
         : trustPreviousStorage === 'true'
     };
+
+    if (this.taskParameters.chunkDirectory) {
+      this.chunkDirectory = this.taskParameters.chunkDirectory;
+    }
 
     // The baseUrl and/or fetchPath values of the message may be different from the ones in the 
     // config file. If so, we need to override the config values with the ones from the message 

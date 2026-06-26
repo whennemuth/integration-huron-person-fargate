@@ -219,10 +219,10 @@ describe('ChunkFromAPI Parameter Gathering', () => {
 
     it('should set task parameters from queue message with all fields', () => {
       const messageBody = {
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
-        POPULATION_TYPE: 'person-full',
-        BULK_RESET: 'true'
+        baseUrl: 'https://api.queue.com',
+        fetchPath: '/queue/people',
+        populationType: 'person-full',
+        bulkReset: true
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
@@ -239,11 +239,11 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       expect(chunker.hasSufficientConfig()).toBe(true);
     });
 
-    it('should handle POPULATION_TYPE from message', () => {
+    it('should handle populationType from message', () => {
       const messageBody = {
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
-        POPULATION_TYPE: SyncPopulation.PersonDelta
+        baseUrl: 'https://api.queue.com',
+        fetchPath: '/queue/people',
+        populationType: SyncPopulation.PersonDelta
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
@@ -251,11 +251,11 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
-    it('should default to person-full when POPULATION_TYPE is invalid in message', () => {
+    it('should default to person-full when populationType is invalid in message', () => {
       const messageBody = {
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
-        POPULATION_TYPE: 'invalid-type'
+        baseUrl: 'https://api.queue.com',
+        fetchPath: '/queue/people',
+        populationType: 'invalid-type'
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
@@ -263,11 +263,11 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
-    it('should handle from_config placeholder for DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL', () => {
+    it('should handle from_config placeholder for baseUrl', () => {
       const messageBody = {
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'from_config',
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
-        POPULATION_TYPE: 'person-full'
+        baseUrl: 'from_config',
+        fetchPath: '/queue/people',
+        populationType: 'person-full'
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
@@ -276,11 +276,11 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       expect(chunker.hasSufficientConfig()).toBe(true);
     });
 
-    it('should handle from_config placeholder for DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH', () => {
+    it('should handle from_config placeholder for fetchPath', () => {
       const messageBody = {
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: 'from_config',
-        POPULATION_TYPE: 'person-full'
+        baseUrl: 'https://api.queue.com',
+        fetchPath: 'from_config',
+        populationType: 'person-full'
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
@@ -306,9 +306,9 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH = '/env/people';
 
       const messageBody = {
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
-        POPULATION_TYPE: SyncPopulation.PersonDelta
+        baseUrl: 'https://api.queue.com',
+        fetchPath: '/queue/people',
+        populationType: SyncPopulation.PersonDelta
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
@@ -342,9 +342,9 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH;
 
       const messageBody = {
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
-        // DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH missing, should fall back to config
-        POPULATION_TYPE: 'person-full'
+        baseUrl: 'https://api.queue.com',
+        // fetchPath missing, should fall back to config
+        populationType: 'person-full'
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
@@ -435,9 +435,9 @@ describe('ChunkFromAPI Parameter Gathering', () => {
 
     it('should extract camelCase offset and limit from message body', () => {
       const messageBody = {
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
-        POPULATION_TYPE: 'person-full',
+        baseUrl: 'https://api.queue.com',
+        fetchPath: '/queue/people',
+        populationType: 'person-full',
         offset: 10,
         limit: 5
       };
@@ -449,8 +449,8 @@ describe('ChunkFromAPI Parameter Gathering', () => {
 
     it('should extract offset and limit as numbers from camelCase message', () => {
       const messageBody = {
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
+        baseUrl: 'https://api.queue.com',
+        fetchPath: '/queue/people',
         offset: 5,
         limit: 10
       };
@@ -463,8 +463,8 @@ describe('ChunkFromAPI Parameter Gathering', () => {
 
     it('should handle offset and limit with value 0', () => {
       const messageBody = {
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
+        baseUrl: 'https://api.queue.com',
+        fetchPath: '/queue/people',
         offset: 0,
         limit: 0
       };
@@ -474,14 +474,13 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
-    it('should fallback to env vars when camelCase offset/limit are undefined', () => {
-      process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET = '15';
-      process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT = '20';
+    it('should handle offset and limit when not provided in message', () => {
+      delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET;
+      delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT;
 
       const messageBody = {
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people'
-        // Note: offset and limit NOT in camelCase
+        baseUrl: 'https://api.queue.com',
+        fetchPath: '/queue/people'
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
@@ -489,43 +488,27 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
-    it('should prioritize camelCase offset/limit over env vars', () => {
-      process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET = '15';
-      process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT = '20';
-
+    it('should handle numeric offset and limit values', () => {
       const messageBody = {
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
+        baseUrl: 'https://api.queue.com',
+        fetchPath: '/queue/people',
         offset: 25,
         limit: 30
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
       chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
-      // camelCase values (25, 30) should take precedence over env vars (15, 20)
+      // numeric values (25, 30) should be accepted
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
-    it('should handle string values for offset/limit and convert to numbers', () => {
-      const messageBody = {
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people',
-        offset: '10',  // String
-        limit: '5'     // String
-      };
-
-      const chunker = new ChunkFromAPI(mockConfig);
-      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
-      expect(chunker.hasSufficientTaskInfo()).toBe(true);
-    });
-
-    it('should default offset and limit to 0 when not provided', () => {
+    it('should handle undefined offset and limit in message', () => {
       delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET;
       delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT;
 
       const messageBody = {
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: 'https://api.queue.com',
-        DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: '/queue/people'
+        baseUrl: 'https://api.queue.com',
+        fetchPath: '/queue/people'
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
