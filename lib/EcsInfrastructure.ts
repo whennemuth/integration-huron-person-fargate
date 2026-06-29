@@ -12,12 +12,14 @@ import { ProcessorService } from './services/processor/ProcessorService';
 import { TaskDefinitions } from './TaskDefinitions';
 import { Config } from 'integration-huron-person';
 import { DynamoDbTables } from './DynamoDB';
+import { HuronPersonSecrets } from './Secrets';
 
 export const CLUSTER_BASE_NAME = 'huron-person-cluster';
 
 export interface EcsInfrastructureProps {
   repository: IRepository;
   context: IContext;
+  huronPersonSecrets: HuronPersonSecrets;  
   config?: Config;
   stackScope: Construct;  // Stack reference for escape hatches
   dynamoDbTables: DynamoDbTables;
@@ -32,6 +34,8 @@ export class EcsInfrastructure extends Construct {
   public readonly cluster: Cluster;
   public readonly vpc: IVpc;
   public readonly taskDefinitions: TaskDefinitions;
+  public readonly huronPersonSecrets: HuronPersonSecrets;
+  
   public chunkerService?: ChunkerService;
   public processorService?: ProcessorService;
   public mergerService?: MergerService;
@@ -43,14 +47,48 @@ export class EcsInfrastructure extends Construct {
   constructor(scope: Construct, id: string, props: EcsInfrastructureProps) {
     super(scope, id);
 
-    const { repository, context: ctx, stackScope, dynamoDbTables, tags } = props;
+    const { repository, context: ctx, huronPersonSecrets, stackScope, dynamoDbTables, tags } = props;
     this.context = ctx;
+    this.huronPersonSecrets = huronPersonSecrets;
     this.stackScope = stackScope;
     this.tags = tags;
 
     // Create a logical grouping construct for all services
     this.servicesConstruct = new Construct(this, 'Services');
 
+    /**
+     * IMPORTANT GOTCHA: If you start importing existing vpcs that the CDK formerly created 
+     * (with RETAIN on delete policy), you may run into cloudformation errors like the following:
+     * 
+     * The error message is: Resource handler returned message: "Invalid request provided: 
+     * Error retrieving subnet information for [subnet-0d62741a9b460cc61, 
+     * subnet-058326610d44d9229]: The subnet ID 'subnet-058326610d44d9229' does not exist 
+     * (ErrorCode: InvalidSubnetID.NotFound) (Service: Ecs, Status Code: 400, Request ID: 
+     * ae376d15-f8f6-4a6c-b715-2f1efd5cfa5a) (SDK Attempt Count: 1)" (RequestToken: 
+     * 7815edf1-d718-b924-fe0a-e25209ebad2d, HandlerErrorCode: InvalidRequest)
+     * 
+     * CDK's Vpc.fromLookup() writes results to cdk.context.json and doesn't re-lookup on 
+     * subsequent deployments. So even though you're importing the VPC correctly, CDK is using 
+     * stale subnet information from when those subnets existed.
+     * 
+     * The problem is the CDK is still using the old cached context that references the deleted 
+     * subnets, so you must perform the following remedy:
+     * 
+     * Clear CDK Context
+     * -----------------------------------
+     * Clear the context cache:
+     * cdk context --clear
+     * 
+     * Or delete the specific VPC context:
+     * Look for your VPC in cdk.context.json and remove that entry
+     * Or delete the entire cdk.context.json file
+     * 
+     * Force a fresh lookup:
+     * cdk synth --force
+     * 
+     * Then deploy:
+     * cdk deploy
+     */
     if(ctx.ECS.vpcId) {
       // Use existing VPC if vpcId is provided
       this.vpc = Vpc.fromLookup(this, 'Vpc', { vpcId: ctx.ECS.vpcId });
@@ -98,6 +136,7 @@ export class EcsInfrastructure extends Construct {
     this.taskDefinitions = new TaskDefinitions(this, 'TaskDefs', {
       repository,
       context: ctx,
+      huronPersonSecrets, // Pass HuronPersonSecrets for task definitions
       dynamoDbTables, // Pass DynamoDB table name for processor task definition
       tags,
     });

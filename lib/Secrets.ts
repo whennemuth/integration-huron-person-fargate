@@ -19,7 +19,7 @@ export class HuronPersonSecrets {
 
     const secretName = `${STACK_ID}/integration/_config/${Landscape}`;
 
-    const secret = new Secret(scope, 'huron-person-secret', {
+    const secret = new Secret(scope, 'Secret', {
       secretName,
       description: 'Huron Person integration configuration and secrets for Fargate tasks',
       secretStringValue: SecretValue.unsafePlainText(integrationConfig),

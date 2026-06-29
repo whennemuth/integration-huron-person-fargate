@@ -98,5 +98,20 @@ export class IntegrationHuronPersonLambdaStack extends Stack {
       value: app.dynamoDbTables.statisticsTable.tableName,
       description: 'DynamoDB table for processor statistics and error tracking',
     });
+
+    const { functionUrl } = app.sourceSimulator || {};
+    if(functionUrl) {
+      new CfnOutput(this, 'SourceSimulatorUrl', {
+        value: functionUrl,
+        description: 'URL for the Source Simulator mock API',
+      });
+
+      // Output usage instructions
+      new CfnOutput(this, 'SourceSimulatorUsage', {
+        value: `Set RUNNER_MOCK_API_BASE_URL="${functionUrl.replace(/\/$/, '')}" in Runner.ts environment`,
+        description: 'How to use the Source Simulator in Runner.ts',
+      });
+    }
+
   }
 }

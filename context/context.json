@@ -64,6 +64,13 @@
       "timeoutSeconds": 60,
       "memorySizeMb": 256,
       "pollIntervalMinutes": 2
+    },
+    "sourceSimulator": {
+      "enabled": true,
+      "timeoutSeconds": 60,
+      "memorySizeMb": 256,
+      "mockTotalPopulation": 1000,
+      "simulatedDelaySeconds": 3
     }
   },
   "HURON_PERSON_CONFIG": {

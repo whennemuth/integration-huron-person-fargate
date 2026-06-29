@@ -14,6 +14,7 @@ import { CLUSTER_BASE_NAME } from './EcsInfrastructure';
 export interface TaskDefinitionsProps {
   repository: IRepository;
   context: IContext;
+  huronPersonSecrets: HuronPersonSecrets;
   config?: Config;
   dynamoDbTables: DynamoDbTables;
   tags?: { [key: string]: string };
@@ -31,7 +32,7 @@ export class TaskDefinitions extends Construct {
   constructor(scope: Construct, id: string, props: TaskDefinitionsProps) {
     super(scope, id);
 
-    const { config, repository, context: ctx, dynamoDbTables, tags } = props;
+    const { config, repository, context: ctx, dynamoDbTables, huronPersonSecrets, tags } = props;
     let sharedDeltaStorageDir = 'delta-storage'; // Default value
     const { storage, storage: { type: storageType, config: storageConfig } = {} } = props.config || {};
     if(storage && storageType === 's3') {
@@ -40,9 +41,6 @@ export class TaskDefinitions extends Construct {
         sharedDeltaStorageDir = keyPrefix.endsWith('/') ? keyPrefix.slice(0, -1) : keyPrefix; // Remove trailing slash if present
       }
     }
-
-    // Create Secrets Manager secret for huron-person configuration
-    const huronPersonSecrets = new HuronPersonSecrets(this, props.context);
 
     // Chunker task definition
     this.chunker = new ChunkerTaskDefinition(this, 'chunker', {

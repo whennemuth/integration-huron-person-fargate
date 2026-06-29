@@ -106,6 +106,27 @@ export interface IContext {
       /** How often to poll for chunk completion (in minutes) */
       pollIntervalMinutes: number;
     };
+    /** 
+     * Optional: Source Simulator mock API configuration
+     * When enabled, creates a Lambda Function URL that simulates the source person API
+     * for testing without the 30-minute cooldown constraint of the real API.
+     */
+    sourceSimulator?: {
+      /** Enable/disable creation of the source simulator */
+      enabled: boolean;
+      /** Lambda timeout in seconds */
+      timeoutSeconds: number;
+      /** Lambda memory allocation in MB */
+      memorySizeMb: number;
+      /** Total mock population size (e.g., 10000) */
+      mockTotalPopulation: number;
+      /** Probability of simulated errors (0.0-1.0, default: 0.0) */
+      mockErrorRate?: number;
+      /** Simulated delay in seconds before responding (simulates slow API behavior, default: 0) */
+      simulatedDelaySeconds?: number;
+      /** ARN of Secrets Manager secret containing the API key for validation */
+      secretArn: string;
+    };
   };
 
   /**

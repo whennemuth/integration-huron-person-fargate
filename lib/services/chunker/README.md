@@ -295,16 +295,193 @@ User is not authorized to perform: lambda:InvokeFunction
 
 ---
 
+## Source Simulator (Mock API for Testing)
+
+The **Source Simulator** is an optional Lambda Function URL that simulates the source person API for testing purposes. It eliminates the 30-minute cooldown constraint of the real API, enabling rapid testing and development of the parallel chunking flow.
+
+### Why Use the Source Simulator?
+
+**Problem**: The real source API maintains private state and requires a 30-minute cooldown between calls. It ignores the `offset` parameter and returns chunks in call order, making rapid testing impractical.
+
+**Solution**: A stateless mock API that:
+- ✅ Responds immediately to any `offset` value (no cooldown)
+- ✅ Supports parallel requests (tests actual production flow)
+- ✅ Generates deterministic person IDs using formula-based approach
+- ✅ Returns minimal field set (only fields DataMapper uses)
+- ✅ Validates API key (secure even when public)
+- ✅ Matches real API response structure
+
+### Configuration
+
+Enable in `context/IContext.ts`:
+
+```typescript
+LAMBDA: {
+  // ... other Lambda configs ...
+  sourceSimulator: {
+    enabled: true,                    // Enable source simulator
+    timeoutSeconds: 30,                // Lambda timeout
+    memorySizeMb: 512,                 // Lambda memory
+    mockTotalPopulation: 10000,        // Total mock persons
+    mockErrorRate: 0.0,                // Simulated error rate (0.0-1.0)
+    apiKey: 'your-api-key-here'        // Same key as real API
+  }
+}
+```
+
+After deploying, the CDK will output the Function URL.
+
+### Usage in Runner.ts
+
+Set environment variables to point to the mock API:
+
+```bash
+# In your .env file for Runner.ts harness
+RUNNER_MOCK_API_BASE_URL=https://abc123xyz.lambda-url.us-east-2.on.aws
+RUNNER_MOCK_API_FETCH_PATH=/
+```
+
+Then in Runner.ts code:
+
+```typescript
+const mockApiBaseUrl = testEnvironment.getVar('MOCK_API_BASE_URL');
+const mockApiFetchPath = testEnvironment.getVar('MOCK_API_FETCH_PATH');
+
+if (mockApiBaseUrl) {
+  messageBody.baseUrl = mockApiBaseUrl;
+  messageBody.fetchPath = mockApiFetchPath || '/';
+}
+```
+
+The mock API will automatically be used instead of the real API.
+
+### Query Parameters
+
+The mock API supports the same query parameters as the real API:
+
+- **`recordCount`**: Number of records per batch (default: 200)
+- **`offset`**: Batch number for pagination (default: 0)
+
+Example:
+```
+https://your-function-url.lambda-url.us-east-2.on.aws/?recordCount=500&offset=2
+```
+Returns persons 1000-1499 (offset 2 × 500 records)
+
+### Mock Data Structure
+
+Generated persons include minimal fields for DataMapper:
+
+```json
+{
+  "personid": "U0000001",
+  "bu_id": "00000001",
+  "firstName": "FirstName1",
+  "lastName": "LastName1",
+  "email": "U0000001@bu.edu",
+  "employeeInfo": { ... },      // 33% of population
+  "studentInfo": { ... },        // 33% of population
+  "affiliateInfo": { ... }       // 33% of population
+}
+```
+
+### Health Check
+
+Check simulator status:
+
+```bash
+curl -H "X-API-Key: your-api-key-here" \
+  https://your-function-url.lambda-url.us-east-2.on.aws/health
+```
+
+Response:
+```json
+{
+  "status": "healthy",
+  "totalPopulation": 10000,
+  "errorRate": 0.0
+}
+```
+
+### Test Harness
+
+The Source Simulator includes a test harness for local development and remote testing. Run it directly with `npx ts-node`:
+
+**Local Task** (calls handler directly with mocked event):
+```bash
+# Configure environment variables in .env (see example-env.md)
+SOURCE_SIMULATOR_TASK=local
+SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION=1000
+SOURCE_SIMULATOR_SECRET_ARN=<your-secret-arn>
+SOURCE_SIMULATOR_RECORD_COUNT=10
+SOURCE_SIMULATOR_OFFSET=0
+SOURCE_SIMULATOR_API_KEY=test-api-key
+
+# Run the harness
+npx ts-node src/chunking/fetch/SourceSimulator.ts
+```
+
+**Remote Task** (calls deployed Lambda Function URL):
+```bash
+# Configure environment variables in .env
+SOURCE_SIMULATOR_TASK=remote
+SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION=1000
+SOURCE_SIMULATOR_SECRET_ARN=<your-secret-arn>
+SOURCE_SIMULATOR_FUNCTION_URL=https://your-function-url.lambda-url.us-east-2.on.aws/
+SOURCE_SIMULATOR_API_KEY=<your-api-key>
+SOURCE_SIMULATOR_RECORD_COUNT=10
+SOURCE_SIMULATOR_OFFSET=0
+
+# Run the harness
+npx ts-node src/chunking/fetch/SourceSimulator.ts
+```
+
+Output shows:
+- Query parameters used
+- HTTP status code and headers
+- Parsed response body
+- Number of persons returned
+- Sample person record
+
+### Architecture
+
+```
+Runner.ts (with MOCK_API_BASE_URL)
+  ↓ sends message with mock baseUrl/fetchPath
+ChunkerSubscriber Lambda
+  ↓ puts message on queue
+ChunkFromAPI (reads message)
+  ↓ ChunkConfigOverride mutates config
+BigJsonFetch
+  ↓ BuCdmPeopleDataSource
+    ↓ BuCdmDataSource.fetchRaw()
+      ↓ ApiClientForApiKey.get()
+        ↓ **Source Simulator Lambda** (stateless, offset-based)
+```
+
+### Security
+
+- Function URL is **public** but requires valid API key in headers
+- Supports two authentication methods:
+  - `Authorization: Bearer <api-key>`
+  - `X-API-Key: <api-key>`
+- API key must match `MOCK_API_KEY` environment variable
+- Generates fake data only (no real PII)
+
+---
+
 ## Related Files
 
 - **ChunkerService.ts**: Creates QueueProcessingFargateService and EventBridge schedule
 - **ChunkerSubscribingLambda.ts**: Lambda construct definition
+- **SourceSimulator.ts** (lib): Source Simulator Lambda construct
 - **src/chunking/ChunkerSubscriber.ts**: Lambda handler (dispatcher)
 - **src/chunking/fetch/ChunkerApiSubscriber.ts**: API event handler
 - **src/chunking/filedrop/ChunkerS3Subscriber.ts**: S3 event handler
 - **src/chunker.ts**: Fargate task entry point
 - **src/chunking/fetch/ChunkFromAPI.ts**: API-based chunking implementation
 - **src/chunking/filedrop/ChunkFromS3.ts**: S3-based chunking implementation
+- **src/chunking/fetch/SourceSimulator.ts**: Mock API Lambda handler
 
 ---
 

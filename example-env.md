@@ -273,4 +273,18 @@ ECR_CHECKER_AWS_PROFILE=infnprd
 ECR_CHECKER_REGION=us-east-2
 ECR_CHECKER_ECR_REGISTRY_ID=<account-id>
 ECR_CHECKER_ECR_REPOSITORY_NAME=huron-person-integration
+
+# ------- Harness Groups for src\chunking\fetch\SourceSimulator.ts ------- #
+# Test harness for the Source Simulator Lambda Function URL
+# TASK options: 'local' (mock handler call) or 'remote' (deployed Lambda call)
+SOURCE_SIMULATOR_TASK=local
+SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION=1000
+SOURCE_SIMULATOR_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
+# Optional: Specify query parameters for testing
+SOURCE_SIMULATOR_RECORD_COUNT=10
+SOURCE_SIMULATOR_OFFSET=0
+# Required for REMOTE task only
+SOURCE_SIMULATOR_FUNCTION_URL=<https://your-lambda-function-url.lambda-url.us-east-2.on.aws/>
+SOURCE_SIMULATOR_API_KEY=<your-api-key>
+
 ```

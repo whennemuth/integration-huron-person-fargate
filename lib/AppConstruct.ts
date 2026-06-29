@@ -8,6 +8,8 @@ import { QueueInfrastructure } from './QueueInfrastructure';
 import { SubscribingLambdas } from './SubscribingLambdas';
 import { DynamoDbTables } from './DynamoDB';
 import { Config } from 'integration-huron-person';
+import { SourceSimulator } from './services/chunker/SourceSimulator';
+import { HuronPersonSecrets } from './Secrets';
 
 export interface AppConstructProps {
   context: IContext;
@@ -26,6 +28,8 @@ export class AppConstruct extends Construct {
   public readonly chunksBucket: Bucket;
   public readonly subscribingLambdas: SubscribingLambdas;
   public readonly dynamoDbTables: DynamoDbTables;
+  public readonly sourceSimulator?: SourceSimulator;
+  public readonly huronPersonSecrets: HuronPersonSecrets;
 
   constructor(scope: Construct, id: string, props: AppConstructProps) {
     super(scope, id);
@@ -51,12 +55,18 @@ export class AppConstruct extends Construct {
     }});
 
     // ========================================
-    // 3. ECS Infrastructure (Cluster + Task Definitions)
+    // 3. Secrets Manager Secret for Huron Person Integration
+    // ========================================
+    this.huronPersonSecrets = new HuronPersonSecrets(this, props.context);
+    
+    // ========================================
+    // 4. ECS Infrastructure (Cluster + Task Definitions)
     // ========================================
     this.ecs = new EcsInfrastructure(this, 'Ecs', {
       repository: this.ecr.repository,
       context: ctx,
       config,
+      huronPersonSecrets: this.huronPersonSecrets,
       stackScope: scope,  // Pass stack reference for escape hatches
       dynamoDbTables: this.dynamoDbTables, // Pass DynamoDB tables to ECS infrastructure for task definitions
       tags,
@@ -162,5 +172,26 @@ export class AppConstruct extends Construct {
       this.queue.mergerQueue,
       this.queue.mergerDeadLetterQueue
     );
+
+    
+    // Source Simulator (Optional) - Mock API for testing without 30-minute cooldown
+    if (ctx.LAMBDA.sourceSimulator?.enabled) {
+      this.sourceSimulator = new SourceSimulator(this, 'SourceSimulator', {
+        huronPersonSecrets: this.huronPersonSecrets,
+        landscape: ctx.TAGS.Landscape.toLowerCase(),
+        timeoutSeconds: ctx.LAMBDA.sourceSimulator.timeoutSeconds,
+        memorySizeMb: ctx.LAMBDA.sourceSimulator.memorySizeMb,
+        mockTotalPopulation: ctx.LAMBDA.sourceSimulator.mockTotalPopulation,
+        mockErrorRate: ctx.LAMBDA.sourceSimulator.mockErrorRate,
+        simulatedDelaySeconds: ctx.LAMBDA.sourceSimulator.simulatedDelaySeconds,
+        secretArn: ctx.LAMBDA.sourceSimulator.secretArn,
+        tags,
+      });
+
+      console.log('[SubscribingLambdas] Source Simulator enabled - Function URL will be created');
+    } else {
+      console.log('[SubscribingLambdas] Source Simulator disabled - Skipping creation');
+    }
+    
   }
 }
