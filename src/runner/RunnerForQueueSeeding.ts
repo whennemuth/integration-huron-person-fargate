@@ -140,7 +140,7 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
       populationType,
       bulkReset: env.bulkReset,
       trustPreviousStorage: env.trustPreviousStorage,
-      limit: env.peopleLimit ? parseInt(env.peopleLimit) : 0,
+      limit: env.callLimit ? parseInt(env.callLimit) : 0,
       messagesToSeed: seedNumber,
       queueUrl: env.queueUrl!,
       dryRun: false

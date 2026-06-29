@@ -71,7 +71,7 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
       populationType,
       bulkReset: env.bulkReset,
       trustPreviousStorage: env.trustPreviousStorage,
-      limit: env.peopleLimit ? parseInt(env.peopleLimit) : 0,
+      limit: env.callLimit ? parseInt(env.callLimit) : 0,
       offset: 0,
       processingMetadata: {
         processedAt: new Date().toISOString(),

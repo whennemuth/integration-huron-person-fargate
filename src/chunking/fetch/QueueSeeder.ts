@@ -238,7 +238,7 @@ async function main() {
     BASE_URL: baseUrl,
     FETCH_PATH: fetchPath,
     POPULATION_TYPE: populationType,
-    DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT: limitStr,
+    DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT: limitStr,
     MESSAGES_TO_SEED: messagesToSeedStr,
     SQS_QUEUE_URL: queueUrl,
     BULK_RESET: bulkReset,
@@ -262,7 +262,7 @@ async function main() {
     throw new Error('POPULATION_TYPE is required');
   }
   if (!limitStr) {
-    throw new Error('DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT is required');
+    throw new Error('DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT is required');
   }
   if (!messagesToSeedStr) {
     throw new Error('MESSAGES_TO_SEED is required');
@@ -326,7 +326,7 @@ async function main() {
  * QUEUE_SEEDER_BASE_URL=https://api.bu.edu \
  * QUEUE_SEEDER_FETCH_PATH=/people/v1 \
  * QUEUE_SEEDER_POPULATION_TYPE=person-full \
- * QUEUE_SEEDER_DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT=100 \
+ * QUEUE_SEEDER_DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT=100 \
  * QUEUE_SEEDER_MESSAGES_TO_SEED=15 \
  * QUEUE_SEEDER_SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/123456789/chunker-queue \
  * QUEUE_SEEDER_BULK_RESET=false \
@@ -346,7 +346,7 @@ if (require.main === module) {
     'BASE_URL',
     'FETCH_PATH',
     'POPULATION_TYPE',
-    'DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT',
+    'DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT',
     'MESSAGES_TO_SEED',
     'SQS_QUEUE_URL',
     'STACK_ID',

@@ -430,7 +430,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
     beforeEach(() => {
       // Clear environment variables related to offset/limit
       delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET;
-      delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT;
+      delete process.env.DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT;
     });
 
     it('should extract camelCase offset and limit from message body', () => {
@@ -476,7 +476,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
 
     it('should handle offset and limit when not provided in message', () => {
       delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET;
-      delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT;
+      delete process.env.DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT;
 
       const messageBody = {
         baseUrl: 'https://api.queue.com',
@@ -504,7 +504,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
 
     it('should handle undefined offset and limit in message', () => {
       delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET;
-      delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT;
+      delete process.env.DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT;
 
       const messageBody = {
         baseUrl: 'https://api.queue.com',

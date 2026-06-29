@@ -435,12 +435,12 @@ if (require.main === module) {
 
     const { 
       MODE, ITEMS_PER_CHUNK = '200', DRY_RUN = 'false', 
-      DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT = '0', 
+      DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT = '0', 
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET = '0' 
     } = process.env;
     const itemsPerChunk = parseInt(ITEMS_PER_CHUNK, 10);
     const dryRun = DRY_RUN.toLowerCase() === 'true';
-    const chunksPerTask = parseInt(DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT, 10);
+    const chunksPerTask = parseInt(DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT, 10);
     const chunksOffset = parseInt(DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET, 10);
 
     if (!MODE || (MODE !== 'filesystem' && MODE !== 's3')) {

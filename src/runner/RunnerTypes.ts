@@ -10,7 +10,7 @@ export interface RunnerEnv {
   queueUrl?: string;
   populationType?: string;
   populationScope?: 'standard' | 'single';
-  peopleLimit?: string;
+  callLimit?: string;
   buid?: string;
   region?: string;
   stackId?: string;
@@ -49,7 +49,7 @@ export const extractEnvironment = (): RunnerEnv => {
     HURON_PERSON_CONFIG_PATH: configPath,
     CHUNKER_QUEUE_URL: queueUrl,
     POPULATION_TYPE: populationType,
-    DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT: peopleLimit,
+    DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT: callLimit,
     SINGLE_PERSON_BUID: buid,
     REGION: region,
     STACK_ID: stackId,
@@ -70,7 +70,7 @@ export const extractEnvironment = (): RunnerEnv => {
     configPath,
     queueUrl,
     populationType,
-    peopleLimit,
+    callLimit,
     buid,
     region,
     stackId,
@@ -96,7 +96,7 @@ export const setTestEnvironment = (): void => {
     'SECRET_ARN',
     'CHUNKER_QUEUE_URL',
     'POPULATION_TYPE',
-    'DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT',
+    'DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT',
     'SINGLE_PERSON_BUID',
     'REGION',
     'MESSAGES_TO_PREPOPULATE',

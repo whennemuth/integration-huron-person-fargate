@@ -43,7 +43,7 @@ DATASOURCE_ENDPOINTCONFIG_PERSON_PATH=/api/1/rest/feed-master/queue/BUProd/Admin
 DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL=https://prod-buprod-fm.snaplogic.io
 DATASOURCE_ENDPOINTCONFIG_PEOPLE_API_KEY=<your-people-api-key>
 DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH=/api/1/rest/feed/run/task/BUProd/Admin-Integration-Services/GenericGets/huronIRBgetPersonByPopulation
-DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT=10
+DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT=10
 
 # Current Terms DataSource Configuration (API Key Authentication)
 DATASOURCE_ENDPOINTCONFIG_CURRENT_TERMS_BASE_URL=https://prod-buprod-fm.snaplogic.io
@@ -71,7 +71,7 @@ CACHE_PATH=.
 
 # --------- Use these for src\Runner.ts ---------- #
 RUNNER_CHUNKER_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/770203350335/huron-person-chunker-queue-dev
-RUNNER_DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT=10
+RUNNER_DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT=10
 RUNNER_POPULATION_TYPE=person-full
 RUNNER_BULK_RESET=false
 RUNNER_TRUST_PREVIOUS_STORAGE=true
