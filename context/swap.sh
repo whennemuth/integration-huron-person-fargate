@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# swap_context.sh - Swap between different landscape-specific context configurations
+# swap.sh - Swap between different landscape-specific context configurations
 #
 # Purpose:
 #   This script allows switching the active context.json file between different landscapes
@@ -17,12 +17,12 @@
 #   - The active context.json is always saved before switching
 #
 # Usage:
-#   ./swap_context.sh <landscape>
+#   ./swap.sh <landscape>
 #
 # Examples:
-#   ./swap_context.sh test   # Switch to test landscape
-#   ./swap_context.sh dev    # Switch back to dev landscape
-#   ./swap_context.sh prod   # Switch to prod landscape
+#   ./swap.sh test   # Switch to test landscape
+#   ./swap.sh dev    # Switch back to dev landscape
+#   ./swap.sh prod   # Switch to prod landscape
 #
 # Prerequisites:
 #   - jq must be installed for JSON parsing
@@ -39,8 +39,8 @@ NC='\033[0m' # No Color
 # 1. Check for landscape parameter
 if [ -z "$1" ]; then
     echo -e "${RED}Error: Landscape parameter required${NC}"
-    echo "Usage: ./swap_context.sh <landscape>"
-    echo "Example: ./swap_context.sh test"
+    echo "Usage: ./swap.sh <landscape>"
+    echo "Example: ./swap.sh test"
     exit 1
 fi
 
