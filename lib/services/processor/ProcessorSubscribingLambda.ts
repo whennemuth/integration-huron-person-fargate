@@ -1,4 +1,4 @@
-import { CfnResource, Duration, RemovalPolicy, Tags } from 'aws-cdk-lib';
+import { Duration, RemovalPolicy, Tags } from 'aws-cdk-lib';
 import { IVpc } from 'aws-cdk-lib/aws-ec2';
 import { Effect, ManagedPolicy, PolicyStatement, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import { Runtime } from 'aws-cdk-lib/aws-lambda';
@@ -22,6 +22,8 @@ export interface ProcessorSubscribingLambdaProps {
   tags?: { [key: string]: string };
 }
 
+export const FUNCTION_BASE_NAME = 'processor-subscriber';
+
 /**
  * Creates a Lambda function that forwards S3 chunk notifications to the processor SQS 
  * queue when new person data chunks are deposited into the chunks bucket. This is 
@@ -41,13 +43,13 @@ export class ProcessorSubscribingLambda extends Construct {
     super(scope, id);
 
     const logGroup = new LogGroup(this, 'LogGroup', {
-      logGroupName: `/aws/lambda/processor-subscriber-${props.landscape}`,
+      logGroupName: `/aws/lambda/${FUNCTION_BASE_NAME}-${props.landscape}`,
       retention: RetentionDays.THREE_MONTHS,
       removalPolicy: RemovalPolicy.DESTROY
     });
 
     const lambdaRole = new Role(this, 'FunctionRole', {
-      roleName: `processor-subscriber-lambda-role-${props.landscape}`,
+      roleName: `${FUNCTION_BASE_NAME}-lambda-role-${props.landscape}`,
       assumedBy: new ServicePrincipal('lambda.amazonaws.com'),
       description: 'Role for subscribing processor lambda function',
       managedPolicies: [
@@ -56,7 +58,7 @@ export class ProcessorSubscribingLambda extends Construct {
     });
 
     this.function = new NodejsFunction(this, 'Function', {
-      functionName: `processor-subscriber-${props.landscape}`,
+      functionName: `${FUNCTION_BASE_NAME}-${props.landscape}`,
       description: 'Subscribes to chunks/*.ndjson S3 events and forwards unchanged S3 event payload to processor SQS queue.',
       runtime: Runtime.NODEJS_20_X,
       handler: 'handler',

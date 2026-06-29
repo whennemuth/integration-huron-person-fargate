@@ -469,7 +469,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       // Configure fetcher
       const fetchConfig: BigJsonFetchConfig = {
         itemsPerChunk,
-        config: this.config,
+        config: this.config, // Will have already had its endpointConfig.baseUrl and fetchPath properties overridden by values obtained from the SQS message parameters if they were provided. 
         responseFilter, // MEMORY OPTIMIZATION 3: Enable streaming mode
         outputStorage: chunksStorage,
         clientId: chunkDirectory, // Derived from synthetic input key with timestamp
@@ -581,6 +581,8 @@ if(require.main === module) {
 
   // Read additional configuration from environment
   const configPath = testEnvironment.getVar('HURON_PERSON_CONFIG_PATH');
+  const buid = testEnvironment.getVar('SINGLE_PERSON_BUID');
+  let populationScope = testEnvironment.getVar('POPULATION_SCOPE') || 'standard';
   const secretArn = testEnvironment.getVar('SECRET_ARN');
   const chunksBucket = testEnvironment.getVarOrEmptyString('CHUNKS_BUCKET');
   const region = testEnvironment.getVar('REGION');
@@ -597,6 +599,19 @@ if(require.main === module) {
   const itemsPerChunk = parseInt(itemsPerChunkStr, 10);
   if (isNaN(itemsPerChunk) || itemsPerChunk <= 0) {
     throw new Error(`Invalid ITEMS_PER_CHUNK value: ${itemsPerChunkStr}. Must be a positive integer.`);
+  }
+
+  if (populationScope !== 'single' && populationScope !== 'standard') {
+    console.warn(`Unrecognized POPULATION_SCOPE value: ${populationScope}, defaulting to 'standard'`);
+    populationScope = 'standard';
+  }
+
+  if (populationScope === 'single' && !buid) {
+    throw new Error('SINGLE_PERSON_BUID environment variable is required when POPULATION_SCOPE is set to "single"');
+  }
+  if (populationScope === 'standard' && buid) {
+    process.env.POPULATION_SCOPE = 'single';
+    console.warn(`SINGLE_PERSON_BUID is set but POPULATION_SCOPE is not 'single'. Overriding POPULATION_SCOPE to 'single' for this run.`);
   }
 
   (async () => {

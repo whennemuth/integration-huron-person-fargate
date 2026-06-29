@@ -18,6 +18,8 @@ export interface ChunkerSubscribingLambdaProps {
   tags?: { [key: string]: string };
 }
 
+export const FUNCTION_BASE_NAME = 'chunker-subscriber';
+
 /**
  * Creates a Lambda function that triggers chunker Fargate tasks by sending messages to SQS.
  * 
@@ -50,14 +52,14 @@ export class ChunkerSubscribingLambda extends Construct {
 
     // Create Lambda log group
     const logGroup = new LogGroup(this, 'LogGroup', {
-      logGroupName: `/aws/lambda/chunker-subscriber-${props.landscape}`,
+      logGroupName: `/aws/lambda/${FUNCTION_BASE_NAME}-${props.landscape}`,
       retention: RetentionDays.THREE_MONTHS,
       removalPolicy: RemovalPolicy.DESTROY
     });
 
     // Create IAM role with predictable name for Lambda function
     const lambdaRole = new Role(this, 'FunctionRole', {
-      roleName: `chunker-subscriber-lambda-role-${props.landscape}`,
+      roleName: `${FUNCTION_BASE_NAME}-lambda-role-${props.landscape}`,
       assumedBy: new ServicePrincipal('lambda.amazonaws.com'),
       description: 'Role for subscribing chunker lambda function',
       managedPolicies: [
@@ -67,7 +69,7 @@ export class ChunkerSubscribingLambda extends Construct {
 
     // Create Lambda function
     this.function = new NodejsFunction(this, 'Function', {
-      functionName: `chunker-subscriber-${props.landscape}`,
+      functionName: `${FUNCTION_BASE_NAME}-${props.landscape}`,
       description: `Dispatcher for chunker events: S3 file uploads to ${props.inputBucketName} or EventBridge schedule for API fetch (SEE DESCRIPTION environment variable(s) for task performed)`,
       runtime: Runtime.NODEJS_20_X,
       handler: 'handler',

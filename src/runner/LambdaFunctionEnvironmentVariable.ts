@@ -1,0 +1,83 @@
+import { GetFunctionConfigurationCommand, LambdaClient, UpdateFunctionConfigurationCommand } from "@aws-sdk/client-lambda";
+
+/**
+ * Utility class to get and set environment variables for a specific AWS Lambda function.
+ * 
+ * This class uses the AWS SDK to interact with the Lambda service and manage environment variables.
+ * It provides methods to retrieve and update environment variables while preserving existing ones.
+ */
+export class LambdaFunctionEnvironmentVariable {
+
+  constructor(private params: { lambdaFunctionName: string, region: string }) { }
+
+  /**
+   * Get an environment variable from a Lambda function's configuration.
+   * 
+   * @param name - Name of the environment variable to retrieve
+   * @returns The value of the environment variable, or undefined if not found
+   */
+  public getEnvironmentVariable = async (name: string): Promise<string | undefined> => {
+    const { lambdaFunctionName, region } = this.params;
+    
+    const lambdaClient = new LambdaClient({ region });
+    
+    try {
+      const command = new GetFunctionConfigurationCommand({
+        FunctionName: lambdaFunctionName
+      });
+      
+      const response = await lambdaClient.send(command);
+      
+      return response.Environment?.Variables?.[name];
+    } catch (error) {
+      console.error(`Failed to get environment variable ${name} from Lambda function ${lambdaFunctionName}:`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Set an environment variable on a Lambda function.
+   * 
+   * This updates the Lambda function's configuration with the new environment variable value.
+   * All existing environment variables are preserved.
+   * 
+   * @param name - Name of the environment variable to set
+   * @param val - Value to set for the environment variable
+   */
+  public setEnvironmentVariable = async (name: string, val: string): Promise<void> => {
+    const { lambdaFunctionName, region } = this.params;
+    
+    const lambdaClient = new LambdaClient({ region });
+    
+    try {
+      // First, get the current configuration to preserve existing environment variables
+      const getCommand = new GetFunctionConfigurationCommand({
+        FunctionName: lambdaFunctionName
+      });
+      
+      const currentConfig = await lambdaClient.send(getCommand);
+      const currentVariables = currentConfig.Environment?.Variables || {};
+      
+      // Update with the new variable
+      const updatedVariables = {
+        ...currentVariables,
+        [name]: val
+      };
+      
+      // Apply the update
+      const updateCommand = new UpdateFunctionConfigurationCommand({
+        FunctionName: lambdaFunctionName,
+        Environment: {
+          Variables: updatedVariables
+        }
+      });
+      
+      await lambdaClient.send(updateCommand);
+      
+      console.log(`Successfully set ${name}=${val} on Lambda function ${lambdaFunctionName}`);
+    } catch (error) {
+      console.error(`Failed to set environment variable ${name} on Lambda function ${lambdaFunctionName}:`, error);
+      throw error;
+    }
+  }
+}

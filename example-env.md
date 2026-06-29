@@ -73,12 +73,15 @@ CACHE_PATH=.
 RUNNER_CHUNKER_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/770203350335/huron-person-chunker-queue-dev
 RUNNER_DATASOURCE_ENDPOINTCONFIG_PEOPLE_LIMIT=10
 RUNNER_POPULATION_TYPE=person-full
-RUNNER_POPULATION_SCOPE=standard
 RUNNER_BULK_RESET=false
 RUNNER_TRUST_PREVIOUS_STORAGE=true
 RUNNER_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-xug4Og
 RUNNER_STACK_ID=huron-person-fargate-processor
 RUNNER_REGION=us-east-2
+# For testing purposes, either simulate the source system and/or prevent the processing phase from running. This is useful for testing the chunking phase in isolation.
+RUNNER_SOURCE_SIMULATOR=false
+RUNNER_MESSAGING_ONLY=false
+RUNNER_CHUNKING_ONLY=false
 # For seeding the queue.
 RUNNER_MESSAGES_TO_PREPOPULATE=15
 RUNNER_ECS_CLUSTER_NAME=huron-person-cluster-dev
@@ -287,4 +290,12 @@ SOURCE_SIMULATOR_OFFSET=0
 SOURCE_SIMULATOR_FUNCTION_URL=<https://your-lambda-function-url.lambda-url.us-east-2.on.aws/>
 SOURCE_SIMULATOR_API_KEY=<your-api-key>
 
+# ------- Harness Groups for src\runner\ServiceToggler.ts ------- #
+# Test harness for enabling/disabling CHUNKER or PROCESSOR services via DRY_RUN flag
+# TASK options: CHECK_STATUS | DISABLE | ENABLE
+# SERVICE options: CHUNKER | PROCESSOR
+SERVICE_TOGGLER_TASK=CHECK_STATUS
+SERVICE_TOGGLER_SERVICE=CHUNKER
+SERVICE_TOGGLER_REGION=us-east-2
+SERVICE_TOGGLER_LANDSCAPE=dev
 ```

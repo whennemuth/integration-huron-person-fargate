@@ -21,6 +21,8 @@ export interface MergerSubscribingLambdaProps {
   tags?: { [key: string]: string };
 }
 
+export const FUNCTION_BASE_NAME = 'merger-subscriber';
+
 /**
  * Creates a Lambda function that triggers the merger Fargate task by sending messages to SQS.
  * 
@@ -50,14 +52,14 @@ export class MergerSubscribingLambda extends Construct {
 
     // Create Lambda log group
     const logGroup = new LogGroup(this, 'LogGroup', {
-      logGroupName: `/aws/lambda/merger-subscriber-${props.landscape}`,
+      logGroupName: `/aws/lambda/${FUNCTION_BASE_NAME}-${props.landscape}`,
       retention: RetentionDays.THREE_MONTHS,
       removalPolicy: RemovalPolicy.DESTROY
     });
 
     // Create IAM role with predictable name for Lambda function
     const lambdaRole = new Role(this, 'FunctionRole', {
-      roleName: `merger-subscriber-lambda-role-${props.landscape}`,
+      roleName: `${FUNCTION_BASE_NAME}-lambda-role-${props.landscape}`,
       assumedBy: new ServicePrincipal('lambda.amazonaws.com'),
       description: 'Role for subscribing merger lambda function',
       managedPolicies: [
@@ -67,7 +69,7 @@ export class MergerSubscribingLambda extends Construct {
 
     // Create Lambda function
     this.function = new NodejsFunction(this, 'Function', {
-      functionName: `merger-subscriber-${props.landscape}`,
+      functionName: `${FUNCTION_BASE_NAME}-${props.landscape}`,
       description: 
         `Subscribes to S3 event where a "chunk" file comprising hashed person delta data lands in 
         ${props.chunksBucketName}. (SEE DESCRIPTION environment variable(s) for task performed)`,      runtime: Runtime.NODEJS_20_X,
