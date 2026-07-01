@@ -124,8 +124,6 @@ export interface IContext {
       mockErrorRate?: number;
       /** Simulated delay in seconds before responding (simulates slow API behavior, default: 0) */
       simulatedDelaySeconds?: number;
-      /** ARN of Secrets Manager secret containing the API key for validation */
-      secretArn: string;
     };
   };
 

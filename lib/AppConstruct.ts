@@ -184,7 +184,7 @@ export class AppConstruct extends Construct {
         mockTotalPopulation: ctx.LAMBDA.sourceSimulator.mockTotalPopulation,
         mockErrorRate: ctx.LAMBDA.sourceSimulator.mockErrorRate,
         simulatedDelaySeconds: ctx.LAMBDA.sourceSimulator.simulatedDelaySeconds,
-        secretArn: ctx.LAMBDA.sourceSimulator.secretArn,
+        secretArn: this.huronPersonSecrets.secretArn,
         tags,
       });
 
