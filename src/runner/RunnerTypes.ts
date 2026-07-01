@@ -17,13 +17,16 @@ export interface RunnerEnv {
   landscape?: string;
   bulkReset?: boolean;
   trustPreviousStorage?: boolean;
-  sourceSimulator?: boolean;
   messagesToPrepopulate: string;
   desiredCount: number;
   clusterName?: string;
   serviceName?: string;
   messagingOnly?: boolean;
   chunkingOnly?: boolean;
+  sourceSimulator?: boolean;
+  sourceSimulatorMockTotalPopulation?: number;
+  sourceSimulatorMockSimulatedDelaySeconds?: number;
+  sourceSimulatorMockErrorRate?: number;
 }
 
 /**
@@ -63,6 +66,9 @@ export const extractEnvironment = (): RunnerEnv => {
     ECS_SERVICE_NAME: serviceName,
     MESSAGING_ONLY: messagingOnly,
     CHUNKING_ONLY: chunkingOnly,
+    SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION: sourceSimulatorMockTotalPopulation,
+    SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS: sourceSimulatorMockSimulatedDelaySeconds,
+    SOURCE_SIMULATOR_MOCK_ERROR_RATE: sourceSimulatorMockErrorRate
   } = process.env;
 
   return {
@@ -81,10 +87,13 @@ export const extractEnvironment = (): RunnerEnv => {
     desiredCount: DESIRED_COUNT ? parseInt(DESIRED_COUNT) : 0,
     bulkReset: `${bulkReset}`.toLowerCase().trim() === 'true',
     trustPreviousStorage: `${trustPreviousStorage}`.toLowerCase().trim() === 'true',
-    sourceSimulator: `${sourceSimulator}`.toLowerCase().trim() === 'true',
     messagingOnly: `${messagingOnly}`.toLowerCase().trim() === 'true',
     chunkingOnly: `${chunkingOnly}`.toLowerCase().trim() === 'true',
-    populationScope: buid ? 'single' : 'standard'
+    populationScope: buid ? 'single' : 'standard',
+    sourceSimulator: `${sourceSimulator}`.toLowerCase().trim() === 'true',
+    sourceSimulatorMockTotalPopulation: sourceSimulatorMockTotalPopulation ? parseInt(sourceSimulatorMockTotalPopulation) : undefined,
+    sourceSimulatorMockSimulatedDelaySeconds: sourceSimulatorMockSimulatedDelaySeconds ? parseInt(sourceSimulatorMockSimulatedDelaySeconds) : undefined,
+    sourceSimulatorMockErrorRate: sourceSimulatorMockErrorRate ? parseFloat(sourceSimulatorMockErrorRate) : undefined
   } satisfies RunnerEnv;
 }
 
@@ -104,9 +113,12 @@ export const setTestEnvironment = (): void => {
     'ECS_CLUSTER_NAME',
     'ECS_SERVICE_NAME',
     'STACK_ID',
-    'SOURCE_SIMULATOR',
     'MESSAGING_ONLY',
-    'CHUNKING_ONLY'
+    'CHUNKING_ONLY',
+    'SOURCE_SIMULATOR',
+    'SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION',
+    'SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS',
+    'SOURCE_SIMULATOR_MOCK_ERROR_RATE'
   ].forEach(testEnvironment.getVar);
 
   [

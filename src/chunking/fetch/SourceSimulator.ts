@@ -43,8 +43,18 @@
 
 // Lambda Function URLs use APIGatewayProxyEventV2 format (same as API Gateway HTTP API v2.0)
 // See: https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html
-import { APIGatewayProxyResultV2, APIGatewayProxyEventV2, Context } from 'aws-lambda';
+import { GetFunctionUrlConfigCommand, LambdaClient } from '@aws-sdk/client-lambda';
+import { APIGatewayProxyEventV2, APIGatewayProxyResultV2, Context } from 'aws-lambda';
 import { ConfigManager, DataSourceConfig, EndpointConfigForApiKey } from 'integration-huron-person';
+import { LambdaFunctionEnvironmentVariable } from '../../runner/LambdaFunctionEnvironmentVariable';
+
+export const FUNCTION_BASE_NAME = 'source-simulator';
+export enum ENVIRONMENT_VARIABLES_NAMES {
+  MOCK_TOTAL_POPULATION = 'MOCK_TOTAL_POPULATION',
+  MOCK_ERROR_RATE = 'MOCK_ERROR_RATE',
+  MOCK_SIMULATED_DELAY_SECONDS = 'MOCK_SIMULATED_DELAY_SECONDS',
+  SECRET_ARN = 'SECRET_ARN'
+}
 
 // Cache the API key between Lambda invocations (Lambda reuses execution environments)
 let cachedApiKey: string | null = null;
@@ -294,7 +304,10 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
   const expectedApiKey = await getApiKey();
 
   // Validate API key (for non-health endpoints)
-  if (!validateApiKey(event, expectedApiKey)) {
+  if (validateApiKey(event, expectedApiKey)) {
+    console.log('Valid API key provided');
+  }
+  else {
     console.error('Invalid API key provided');
     return {
       statusCode: 401,
@@ -334,13 +347,10 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
     persons.push(generateMockPerson(i));
   }
 
-  // Match real API response structure: [{ response_code: 200, response: [persons] }]
-  const response = [
-    {
-      response_code: 200,
-      response: persons,
-    },
-  ];
+  // Match real API response structure: { response: [persons] }
+  const response = {
+    response: persons,
+  };
 
   // Simulate API delay if configured (mimics slow real API behavior)
   const simulatedDelaySeconds = parseFloat(process.env.MOCK_SIMULATED_DELAY_SECONDS || '0');
@@ -360,6 +370,63 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
     body: JSON.stringify(response),
   };
 }
+
+
+export class SourceSimulatorFunctionURL {
+  private functionUrl: string;
+  private lookupPerformed: boolean = false;
+  private client: LambdaClient;
+
+  constructor(private readonly params: { landscape: string; region: string }) {
+    this.client = new LambdaClient({ region: params.region });
+  }
+
+  public async getUrl(): Promise<string> {
+    const { 
+      client, functionUrl, lookupPerformed, params: { landscape, region } = {} 
+    } = this;
+    if(functionUrl) {
+      return functionUrl;
+    }
+    if(!lookupPerformed) {
+      this.lookupPerformed = true;
+      const command = new GetFunctionUrlConfigCommand({
+        FunctionName: `${FUNCTION_BASE_NAME}-${landscape}`
+      });
+
+      try {
+        const response = await client.send(command);
+        console.log("Function URL:", response.FunctionUrl);
+        this.functionUrl = response.FunctionUrl!;
+        return response.FunctionUrl!;
+      } catch (error: any) {
+        if (error.name !== "ResourceNotFoundException") {
+          throw error;
+        }
+      }
+    }
+    return this.functionUrl;
+  }
+
+  public async exists(): Promise<boolean> {
+    return !!(await this.getUrl());
+  }
+
+  public getCurrentEnvironmentVariables = async (): Promise<{ [key: string]: string }> => {
+    const { landscape, region } = this.params;
+    const lambda = new LambdaFunctionEnvironmentVariable({
+      lambdaFunctionName: `${FUNCTION_BASE_NAME}-${landscape}`,
+      region: region
+    });
+    return await lambda.getEnvironmentVariables();
+  }
+
+  public getEnvironmentVariable = async (name: string): Promise<string | undefined> => {
+    const variables = await this.getCurrentEnvironmentVariables();
+    return variables[name];
+  }
+}
+
 
 // =====================================================================
 // Test Harness

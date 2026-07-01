@@ -84,6 +84,7 @@ export class QueueSeeder {
     if (!this.atomicCounter) {
       throw new Error('Atomic counter not initialized - cannot reset');
     }
+    console.log(`\n📝 Resetting atomic counter for chunker queue: ${CHUNKER_COUNTER_NAME}\n`);
     await this.atomicCounter.reset();
   }
 

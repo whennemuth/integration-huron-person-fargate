@@ -251,13 +251,17 @@ export class BigJsonFetch {
       await batchProcessor.processBatch();
       reachedTheEndOfRecords = batchProcessor.reachedTheEndOfRecords();
     } catch (error: any) {
-      throw new Error(`Failed to fetch and chunk from API: ${error.message}`);
+      console.error(`Failed to fetch and chunk from API: ${error.message}`);
+      console.error('Stopping overall chunking here due to error');
+      reachedTheEndOfRecords = true; // Treat as end of records to prevent further processing
     }
 
     const totalRecords = batchProcessor.recordsProcessed();
 
     if (totalRecords === 0) {
-      throw new Error('No person records found from API calls');
+      console.warn('No person records found from API calls');
+      console.error('Stopping overall chunking here due to this unexpected condition');
+      reachedTheEndOfRecords = true; // Treat as end of records to prevent further processing
     }
 
     timer.stop();

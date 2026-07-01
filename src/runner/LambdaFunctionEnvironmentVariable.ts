@@ -10,13 +10,7 @@ export class LambdaFunctionEnvironmentVariable {
 
   constructor(private params: { lambdaFunctionName: string, region: string }) { }
 
-  /**
-   * Get an environment variable from a Lambda function's configuration.
-   * 
-   * @param name - Name of the environment variable to retrieve
-   * @returns The value of the environment variable, or undefined if not found
-   */
-  public getEnvironmentVariable = async (name: string): Promise<string | undefined> => {
+  public getEnvironmentVariables = async (): Promise<{ [key: string]: string }> => {
     const { lambdaFunctionName, region } = this.params;
     
     const lambdaClient = new LambdaClient({ region });
@@ -28,9 +22,27 @@ export class LambdaFunctionEnvironmentVariable {
       
       const response = await lambdaClient.send(command);
       
-      return response.Environment?.Variables?.[name];
+      const { Environment: { Variables = {} } = {} } = response;
+      return Variables;
     } catch (error) {
-      console.error(`Failed to get environment variable ${name} from Lambda function ${lambdaFunctionName}:`, error);
+      console.error(`Failed to get environment variables from Lambda function ${lambdaFunctionName}:`, error);
+      throw error;
+    }
+
+  }
+
+  /**
+   * Get an environment variable from a Lambda function's configuration.
+   * 
+   * @param name - Name of the environment variable to retrieve
+   * @returns The value of the environment variable, or undefined if not found
+   */
+  public getEnvironmentVariable = async (name: string): Promise<string | undefined> => {
+    try {
+      const envVars = await this.getEnvironmentVariables();
+      return envVars[name];
+    } catch (error) {
+      console.error(`Failed to get environment variable ${name} from Lambda function ${this.params.lambdaFunctionName}:`, error);
       throw error;
     }
   }

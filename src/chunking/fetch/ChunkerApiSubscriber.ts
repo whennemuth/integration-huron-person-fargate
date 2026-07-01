@@ -3,6 +3,8 @@ import { ApiChunkerEvent } from '../ChunkerSubscriber';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 import { TaskParameters } from './ChunkFromAPI';
 
+export const FUNCTION_BASE_NAME = 'chunker-subscriber';
+
 const { 
   CHUNKER_QUEUE_URL,
   REGION: region,

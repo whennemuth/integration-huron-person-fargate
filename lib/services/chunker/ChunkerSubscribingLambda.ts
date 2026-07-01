@@ -5,6 +5,7 @@ import { Runtime } from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
+import { FUNCTION_BASE_NAME } from '../../../src/chunking/fetch/ChunkerApiSubscriber';
 
 export interface ChunkerSubscribingLambdaProps {
   vpc: IVpc;
@@ -17,8 +18,6 @@ export interface ChunkerSubscribingLambdaProps {
   dryRun?: boolean;
   tags?: { [key: string]: string };
 }
-
-export const FUNCTION_BASE_NAME = 'chunker-subscriber';
 
 /**
  * Creates a Lambda function that triggers chunker Fargate tasks by sending messages to SQS.

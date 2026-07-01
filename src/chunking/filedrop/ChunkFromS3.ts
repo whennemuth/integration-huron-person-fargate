@@ -24,6 +24,14 @@ export type TaskParameters = {
  * It streams a large JSON file containing person records *** FROM AN S3 BUCKET *** and breaks 
  * it up into smaller NDJSON chunk files for parallel processing.
  * 
+ * ----------------------
+ *    No Parallelism:
+ * ----------------------
+ * This chunker was NOT designed to run in parallel across multiple concurrentFargate tasks. 
+ * Streaming a JSON files from S3, even large ones is sufficiently performant for reaching the
+ * end of the JSON file within a reasonable time frame that is short enough to warrant not
+ * involving the complexity of running multiple tasks in parallel. 
+ * 
  * Two modes of operation:
  * 1. ECS Fargate (production): Reads INPUT_BUCKET and INPUT_KEY from SQS message
  * 2. Local development: Reads INPUT_BUCKET and INPUT_KEY from environment variables (fallback)

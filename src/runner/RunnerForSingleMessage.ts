@@ -1,9 +1,10 @@
-import { DataSourceConfig } from 'integration-huron-person';
-import { getFunctionUrl } from '../../lib/services/chunker/SourceSimulator';
+import { Config, DataSourceConfig } from 'integration-huron-person';
+import { AbstractAtomicCounter } from '../AtomicCounter';
+import { CHUNKER_COUNTER_NAME } from '../chunking/ChunkerQueue';
 import { ApiChunkerEvent } from '../chunking/ChunkerSubscriber';
 import { handleApiEvent } from '../chunking/fetch/ChunkerApiSubscriber';
 import { ChunkingServiceRunner } from './AbstractRunner';
-import { Endpoint, NormalizedPopulationType, RunnerEnv } from './RunnerTypes';
+import { Endpoint, NormalizedPopulationType } from './RunnerTypes';
 
 /**
  * Runner for single message execution mode.
@@ -35,27 +36,11 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
     return true;
   }
 
-  public async resolveDataSource(config: any): Promise<Endpoint> {
-    const { env } = this;
+  public async resolveDataSource(config: Config): Promise<Endpoint> {
     let { 
       endpointConfig: { baseUrl } = {}, 
       fetchPath 
     } = config.dataSource?.people as DataSourceConfig || {};
-
-    // Use source simulator if enabled
-    if (env.sourceSimulator) {
-      const functionUrl = await getFunctionUrl({ 
-        landscape: env.landscape!, 
-        region: env.region! 
-      });
-
-      const functionUrlObj = new URL(functionUrl);
-      baseUrl = `${functionUrlObj.protocol}//${functionUrlObj.host}`;
-      fetchPath = functionUrlObj.pathname;
-      
-      console.log(`Using source simulator: ${JSON.stringify({ baseUrl, fetchPath }, null, 2)}`);
-    }
-
     return { baseUrl: baseUrl!, fetchPath: fetchPath! };
   }
 
@@ -64,14 +49,14 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
     config: any, 
     populationType: NormalizedPopulationType
   ): Promise<void> {
-    const { env } = this;
+    const { bulkReset, trustPreviousStorage, callLimit, stackId, region, landscape, queueUrl } = this.env;
     const apiChunkerEvent: ApiChunkerEvent = {
       baseUrl: endpoint.baseUrl,
       fetchPath: endpoint.fetchPath,
       populationType,
-      bulkReset: env.bulkReset,
-      trustPreviousStorage: env.trustPreviousStorage,
-      limit: env.callLimit ? parseInt(env.callLimit) : 0,
+      bulkReset,
+      trustPreviousStorage,
+      limit: callLimit ? parseInt(callLimit) : 0,
       offset: 0,
       processingMetadata: {
         processedAt: new Date().toISOString(),
@@ -79,8 +64,19 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
       }
     };
 
+    // Reset the atomic counter for the chunker queue to ensure a clean state before sending the single person request
+    if( stackId && region && landscape) {
+      console.log(`\n📝 Resetting atomic counter for chunker queue: ${CHUNKER_COUNTER_NAME}\n`);
+      const atomicCounter = new class extends AbstractAtomicCounter {
+        getCounterName(): string {
+          return CHUNKER_COUNTER_NAME;
+        }
+      }({ stackId, region, landscape });
+      await atomicCounter.reset();
+    }
+
     console.log(`\n📨 Sending single initial message to trigger chunking process...\n`);
-    await handleApiEvent(apiChunkerEvent, env.queueUrl!);
+    await handleApiEvent(apiChunkerEvent, queueUrl!);
     console.log(`\n✓ Initial message sent successfully\n`);
   }
 }

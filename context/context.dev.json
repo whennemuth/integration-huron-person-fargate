@@ -17,6 +17,7 @@
     "deltaExpirationDays": 30
   },
   "ECS": {
+    "vpcId": "vpc-0924b18f090419275",
     "chunkerTaskDefinition": {
       "cpu": 2048,
       "memoryLimitMiB": 4096,
@@ -64,6 +65,13 @@
       "timeoutSeconds": 60,
       "memorySizeMb": 256,
       "pollIntervalMinutes": 2
+    },
+    "sourceSimulator": {
+      "enabled": true,
+      "timeoutSeconds": 60,
+      "memorySizeMb": 256,
+      "mockTotalPopulation": 1000,
+      "simulatedDelaySeconds": 3
     }
   },
   "HURON_PERSON_CONFIG": {

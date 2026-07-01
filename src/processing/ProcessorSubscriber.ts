@@ -1,5 +1,7 @@
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 
+export const FUNCTION_BASE_NAME = 'processor-subscriber';
+
 const {
   PROCESSOR_QUEUE_URL,
   REGION: region,

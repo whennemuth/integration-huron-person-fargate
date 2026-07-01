@@ -1,6 +1,6 @@
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand, UpdateCommandInput } from "@aws-sdk/lib-dynamodb";
 import { IContext } from "../context/IContext";
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DescribeTableCommand, DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { TestEnvironment } from "integration-core";
 
 export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-atomic-counter-${context.TAGS.Landscape.toLowerCase()}`;
@@ -23,6 +23,25 @@ export abstract class AbstractAtomicCounter {
   }
 
   public abstract getCounterName(): string;
+
+  /**
+   * Check if the DynamoDB table for the atomic counter exists. This is useful for determining if the counter has been initialized.
+   * @returns A promise that resolves to true if the table exists, false otherwise.
+   */
+  public tableExists = async (tableName?: string): Promise<boolean> => {
+    const { stackId: STACK_ID, landscape: Landscape } = this.params;
+    try {
+      await this.client.send(new DescribeTableCommand({ 
+        TableName: tableName || DYNAMODB_TABLE_NAME({ STACK_ID, TAGS: { Landscape } } as IContext) }));
+      return true;
+    } catch (error) {
+      const { name: errorName } = error as any;
+      if (errorName === 'ResourceNotFoundException') {
+        return false;
+      }
+      return false;
+    }
+  }
 
   public increment = async (incrementBy: number = 1): Promise<number> => {
     const { stackId: STACK_ID, landscape: Landscape } = this.params;
@@ -78,7 +97,8 @@ export abstract class AbstractAtomicCounter {
 enum TASK {
   INCREMENT = 'increment',
   RESET = 'reset',
-  GET_VALUE = 'get-value'
+  GET_VALUE = 'get-value',
+  EXISTS = 'exists'
 }
 
 if (require.main === module) {
@@ -89,7 +109,7 @@ if (require.main === module) {
     'REGION',
   ].forEach(testEnvironment.getVar);
 
-  const { GET_VALUE, INCREMENT, RESET } = TASK;
+  const { GET_VALUE, INCREMENT, RESET, EXISTS } = TASK;
   let { TASK: task = INCREMENT, STACK_ID, REGION } = process.env;
 
   if(!STACK_ID) {
@@ -129,6 +149,10 @@ if (require.main === module) {
       case GET_VALUE:
         let value = await counter.getValue();
         console.log(`Counter value: ${value}`);
+        break;
+      case EXISTS:
+        let exists = await counter.tableExists('bogus');
+        console.log(`Counter table exists: ${exists}`);
         break;
       default:
         console.log(`Unknown task: ${task}`);

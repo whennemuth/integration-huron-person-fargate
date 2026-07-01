@@ -7,6 +7,7 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { EventType, IBucket } from 'aws-cdk-lib/aws-s3';
 import { LambdaDestination } from 'aws-cdk-lib/aws-s3-notifications';
 import { Construct } from 'constructs';
+import { FUNCTION_BASE_NAME } from '../../../src/processing/ProcessorSubscriber';
 
 export interface ProcessorSubscribingLambdaProps {
   vpc: IVpc;
@@ -21,8 +22,6 @@ export interface ProcessorSubscribingLambdaProps {
   stackScope: Construct;
   tags?: { [key: string]: string };
 }
-
-export const FUNCTION_BASE_NAME = 'processor-subscriber';
 
 /**
  * Creates a Lambda function that forwards S3 chunk notifications to the processor SQS 

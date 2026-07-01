@@ -12,6 +12,7 @@ import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig } from "./BigJsonFetch";
 import { ChunkConfigOverride } from "./ChunkConfigOverride";
+import { SourceSimulatorFunctionURL } from './SourceSimulator';
 
 export type TaskParameters = {
   baseUrl: string,
@@ -30,6 +31,15 @@ export type TaskParameters = {
  * This module runs in a Fargate task caused by SQS messages created by ChunkerSubscriber Lambda.
  * It fetches a large JSON file *** FROM AN API ENDPOINT *** containing person records and 
  * breaks it up into smaller NDJSON chunk files for parallel processing.
+ * 
+ * --------------------------------
+ *     Run in Parallel (optional):
+ * --------------------------------
+ * Because the source API is slow in serviceing any single request, the chunker is designed to run in
+ * parallel across multiple Fargate tasks if configured to do so. Each task processes a specific 
+ * range of records based on the offset and limit parameters, allowing for efficient scaling 
+ * and faster processing of large datasets. If parallelism is not configured, it will be run 
+ * in a single task that generates all the chunk files, taking longer - hours.
  * 
  * Two modes of operation:
  * 1. ECS Fargate (production): Reads INPUT_BUCKET and INPUT_KEY from SQS message
@@ -127,6 +137,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       };
     }
   }
+
   /**
    * To avoid having to acquire parameters from the SQS message for local testing, this method allows 
    * us to set parameters from a specific set of environment variables that mimic the message body 
@@ -286,12 +297,16 @@ export class ChunkFromAPI implements IChunkFromSource {
       console.log('Missing required fetchPath in config');
     }
     
-    // If we don't have sufficient config, try to fill in missing values from taskParameters
-    if (!sufficient && this.taskParameters) {
+    // Even if we have sufficient config, try to fill in missing values from taskParameters
+    if (this.taskParameters) {
+      let peopleConfig = this.config?.dataSource?.people as DataSourceConfig;
       const { baseUrl: taskBaseUrl, fetchPath: taskFetchPath } = this.taskParameters;
       // Only use task parameters if they're not 'from_config' defaults
       const effectiveBaseUrl = (taskBaseUrl && taskBaseUrl !== 'from_config') ? taskBaseUrl : configBaseUrl;
+      peopleConfig.endpointConfig.baseUrl = effectiveBaseUrl!;
       const effectiveFetchPath = (taskFetchPath && taskFetchPath !== 'from_config') ? taskFetchPath : configFetchPath;
+      peopleConfig.fetchPath = effectiveFetchPath!;
+      this.config.dataSource.people = peopleConfig;
       sufficient = !!(effectiveBaseUrl && effectiveFetchPath && apiKey);
     }
     
@@ -589,6 +604,9 @@ if(require.main === module) {
   const itemsPerChunkStr = testEnvironment.getVar('ITEMS_PER_CHUNK') || '200';
   const personIdField = testEnvironment.getVar('PERSON_ID_FIELD') || 'personid';
   const dryRun = testEnvironment.getVar('DRY_RUN') || 'false';
+  const sourceSimulatorStr = testEnvironment.getVar('SOURCE_SIMULATOR') || 'false';
+  const sourceSimulator = `${sourceSimulatorStr}`.toLowerCase().trim() === 'true';
+  const landscape = testEnvironment.getVar('LANDSCAPE');
 
   // Validate bucket name required for output is provided.
   if (!chunksBucket) {
@@ -625,6 +643,19 @@ if(require.main === module) {
       .fromEnvironment()                            // ← Fallback to individual env var overrides
       .fromFileSystem(localConfigPath)              // ← Local dev only
       .getConfigAsync('people');
+
+    if (sourceSimulator) {
+      if( ! region || ! landscape) {
+        throw new Error('SOURCE_SIMULATOR is enabled, but REGION and LANDSCAPE environment variables are required');
+      }
+      const functionUrl = await (new SourceSimulatorFunctionURL({ landscape, region })).getUrl();
+      const functionUrlObj = new URL(functionUrl);
+      const baseUrl = `${functionUrlObj.protocol}//${functionUrlObj.host}`;
+      const fetchPath = functionUrlObj.pathname;
+      process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL = baseUrl;
+      process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH = fetchPath;
+      console.log(`SOURCE_SIMULATOR is enabled. Overriding baseUrl to ${baseUrl} and fetchPath to ${fetchPath}`);
+    }
 
     const chunkFromAPI = new ChunkFromAPI(config);
 

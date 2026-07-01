@@ -1,10 +1,10 @@
 import { DataSourceConfig } from 'integration-huron-person';
-import { getFunctionUrl } from '../../lib/services/chunker/SourceSimulator';
 import { DesiredCount } from '../DesiredCount';
 import { QueueSeeder } from '../chunking/fetch/QueueSeeder';
 import { ChunkingServiceRunner } from './AbstractRunner';
 import { Endpoint, NormalizedPopulationType, RunnerEnv } from './RunnerTypes';
-import { env } from 'process';
+import { AbstractAtomicCounter } from '../AtomicCounter';
+import { CHUNKER_COUNTER_NAME } from '../chunking/ChunkerQueue';
 
 /**
  * Runner for queue seeding mode with parallel processing.
@@ -15,40 +15,52 @@ import { env } from 'process';
  */
 export class QueueSeedingRunner extends ChunkingServiceRunner {
   public async validatePrerequisites(): Promise<boolean> {
-    const { env } = this;
-    if (!env.queueUrl) {
+    const { 
+      queueUrl, messagesToPrepopulate, buid, region, stackId, landscape, 
+      desiredCount, clusterName, serviceName 
+    } = this.env;
+
+    if (!queueUrl) {
       console.error('Missing CHUNKER_QUEUE_URL environment variable!');
       return false;
     }
 
-    const seedNumber = parseInt(env.messagesToPrepopulate);
-    
-    if (env.buid) {
-      console.warn(`MESSAGES_TO_PREPOPULATE is set to ${seedNumber} > 0, but SINGLE_PERSON_BUID is also ` +
-        `set (${env.buid}). Seeding the queue is not appropriate when processing just one person. Cancelling operation`);
+    // Validate desiredCount is a valid number if provided
+    if (desiredCount && isNaN(Number(desiredCount))) {
+      console.error(`Invalid DESIRED_COUNT environment variable: ${desiredCount}. Must be a number.`);
       return false;
     }
-
-    if (!env.region) {
+    const seedNumber = parseInt(messagesToPrepopulate);
+    
+    if (buid) {
+      console.warn(`MESSAGES_TO_PREPOPULATE is set to ${seedNumber} > 0, but SINGLE_PERSON_BUID is also ` +
+        `set (${buid}). Seeding the queue is not appropriate when processing just one person. Cancelling operation`);
+      return false;
+    }
+    if (!region) {
       console.error('REGION environment variable is required for queue seeding.');
       return false;
     }
-    if (!env.stackId) {
+    if (!stackId) {
       console.error('STACK_ID environment variable is required for queue seeding.');
       return false;
     }
-    if (!env.landscape) {
+    if (!landscape) {
       console.error('LANDSCAPE environment variable is required for queue seeding.');
       return false;
     }
-
-    if (env.desiredCount > 0) {
-      if (!env.clusterName) {
+    if (desiredCount > 0) {
+      if (!clusterName) {
         console.error('ECS_CLUSTER_NAME environment variable is required to set desired count.');
         return false;
       }
-      if (!env.serviceName) {
+      if (!serviceName) {
         console.error('ECS_SERVICE_NAME environment variable is required to set desired count.');
+        return false;
+      }
+      if (desiredCount > seedNumber) {
+        console.error(`DESIRED_COUNT environment variable (${desiredCount}), if greater than 0, ` +
+          `should not be greater than MESSAGES_TO_PREPOPULATE (${seedNumber}). Cancelling operation`);
         return false;
       }
     }
@@ -56,31 +68,35 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
     return true;
   }
 
+  /**
+   * Lookup the atomic counter in DynamoDB to ensure it exists.
+   * @returns {Promise<boolean>} True if the atomic counter exists, false otherwise.
+   */
+  private async atomicCounterExists(): Promise<boolean> {
+    const { stackId, region, landscape } = this.env;
+    if (!stackId || !region || !landscape) {
+      console.error('STACK_ID, REGION, and LANDSCAPE environment variables are required for atomic counter.');
+      return false;
+    } 
+    const atomicCounter = new class extends AbstractAtomicCounter {
+      getCounterName(): string {
+        return CHUNKER_COUNTER_NAME;
+      }
+    }({ stackId, region, landscape });
+    if (!await atomicCounter.tableExists()) {
+      console.error(`An atomic counter is needed for queue seeding, but atomic counter table ` +
+        `does not exist for stack ${stackId} in region ${region}. Please ensure the chunker ` +
+        `queue has been created.`);
+      return false;
+    }
+    return true;
+  }
+
   public async resolveDataSource(config: any): Promise<Endpoint> {
-    const { env } = this;
     let { 
       endpointConfig: { baseUrl } = {}, 
       fetchPath 
     } = config.dataSource?.people as DataSourceConfig || {};
-
-    // Use source simulator if enabled
-    if (env.sourceSimulator) {
-      if (!env.region || !env.landscape) {
-        throw new Error('REGION and LANDSCAPE are required to use source simulator');
-      }
-
-      const functionUrl = await getFunctionUrl({ 
-        landscape: env.landscape, 
-        region: env.region 
-      });
-
-      const functionUrlObj = new URL(functionUrl);
-      baseUrl = `${functionUrlObj.protocol}//${functionUrlObj.host}`;
-      fetchPath = functionUrlObj.pathname;
-      
-      console.log(`Using source simulator: ${JSON.stringify({ baseUrl, fetchPath }, null, 2)}`);
-    }
-
     return { baseUrl: baseUrl!, fetchPath: fetchPath! };
   }
 
@@ -91,6 +107,11 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
   ): Promise<void> {
     const { env } = this;
     const seedNumber = parseInt(env.messagesToPrepopulate);
+
+    // Bail out if the atomic counter does not exist, as this is a prerequisite for queue seeding.
+    if(!await this.atomicCounterExists()) {
+      return;
+    }
 
     // Scale ECS service if requested
     if (env.desiredCount > 0) {
@@ -146,7 +167,10 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
       dryRun: false
     });
     
+    // Reset the atomic counter to ensure a clean slate for the seeded messages
     await queueSeeder.resetAtomicCounter();
+
+    // Seed the queue with the specified number of messages
     await queueSeeder.seedQueue();
     
     console.log(`\n✓ Queue seeding complete. Ready to scale up desiredCount to ${seedNumber}.\n`);

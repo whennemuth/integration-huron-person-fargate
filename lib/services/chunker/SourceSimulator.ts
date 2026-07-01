@@ -1,10 +1,10 @@
-import { GetFunctionUrlConfigCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { CfnOutput, Duration, RemovalPolicy } from 'aws-cdk-lib';
 import { ManagedPolicy, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import { Architecture, FunctionUrlAuthType, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
+import { ENVIRONMENT_VARIABLES_NAMES, FUNCTION_BASE_NAME } from "../../../src/chunking/fetch/SourceSimulator";
 import { HuronPersonSecrets } from '../../Secrets';
 
 export interface SourceSimulatorProps {
@@ -18,8 +18,6 @@ export interface SourceSimulatorProps {
   secretArn: string;
   tags?: { [key: string]: string };
 }
-
-const FUNCTION_BASE_NAME = 'source-simulator';
 
 /**
  * Creates a Lambda Function URL that simulates the source API for testing purposes.
@@ -75,6 +73,10 @@ export class SourceSimulator extends Construct {
       ],
     });
 
+    const { 
+      MOCK_TOTAL_POPULATION, MOCK_ERROR_RATE, MOCK_SIMULATED_DELAY_SECONDS, SECRET_ARN 
+    } = ENVIRONMENT_VARIABLES_NAMES;
+
     // Create Lambda function with arm64 architecture (Graviton2) for cost savings
     this.function = new NodejsFunction(this, 'Function', {
       functionName: `${FUNCTION_BASE_NAME}-${props.landscape}`,
@@ -88,10 +90,10 @@ export class SourceSimulator extends Construct {
       role: lambdaRole,
       logGroup,
       environment: {
-        MOCK_TOTAL_POPULATION: props.mockTotalPopulation.toString(),
-        MOCK_ERROR_RATE: (props.mockErrorRate || 0.0).toString(),
-        MOCK_SIMULATED_DELAY_SECONDS: (props.simulatedDelaySeconds || 0).toString(),
-        SECRET_ARN: props.secretArn, // ARN of Secrets Manager secret containing API key
+        [MOCK_TOTAL_POPULATION]: props.mockTotalPopulation.toString(),
+        [MOCK_ERROR_RATE]: (props.mockErrorRate || 0.0).toString(),
+        [MOCK_SIMULATED_DELAY_SECONDS]: (props.simulatedDelaySeconds || 0).toString(),
+        [SECRET_ARN]: props.secretArn, // ARN of Secrets Manager secret containing API key
       },
       bundling: {
         externalModules: [
@@ -128,23 +130,5 @@ export class SourceSimulator extends Construct {
       value: `Set RUNNER_MOCK_API_BASE_URL="${this.functionUrl.replace(/\/$/, '')}" in Runner.ts environment`,
       description: 'How to use the Source Simulator in Runner.ts',
     });
-  }
-}
-
-
-export const getFunctionUrl = async (params: { landscape: string; region: string }): Promise<string> => {
-  const client = new LambdaClient({ region: params.region });
-
-  const command = new GetFunctionUrlConfigCommand({
-    FunctionName: `${FUNCTION_BASE_NAME}-${params.landscape}`
-  });
-
-  try {
-    const response = await client.send(command);
-    console.log("Function URL:", response.FunctionUrl);
-    return response.FunctionUrl!;
-  } catch (error) {
-    console.error("Error:", error);
-    throw error;
   }
 }

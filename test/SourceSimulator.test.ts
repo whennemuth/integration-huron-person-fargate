@@ -107,11 +107,9 @@ describe('SourceSimulator Lambda Handler', () => {
 
       expect(response.statusCode).toBe(200);
       const body = parseResponseBody(response);
-      expect(body).toHaveLength(1);
-      expect(body[0].response_code).toBe(200);
-      expect(body[0].response).toHaveLength(200); // Full batch
-      expect(body[0].response[0].personid).toBe('U0000001');
-      expect(body[0].response[199].personid).toBe('U0000200');
+      expect(body.response).toHaveLength(200); // Full batch
+      expect(body.response[0].personid).toBe('U0000001');
+      expect(body.response[199].personid).toBe('U0000200');
     });
 
     it('should return partial batch when near population limit', async () => {
@@ -123,7 +121,7 @@ describe('SourceSimulator Lambda Handler', () => {
 
       expect(response.statusCode).toBe(200);
       const body = parseResponseBody(response);
-      expect(body[0].response).toHaveLength(0); // Past limit
+      expect(body.response).toHaveLength(0); // Past limit
     });
 
     it('should return partial batch at exact boundary', async () => {
@@ -134,9 +132,9 @@ describe('SourceSimulator Lambda Handler', () => {
 
       expect(response.statusCode).toBe(200);
       const body = parseResponseBody(response);
-      expect(body[0].response).toHaveLength(200);
-      expect(body[0].response[0].personid).toBe('U0000801'); // Index 800
-      expect(body[0].response[199].personid).toBe('U0001000'); // Index 999
+      expect(body.response).toHaveLength(200);
+      expect(body.response[0].personid).toBe('U0000801'); // Index 800
+      expect(body.response[199].personid).toBe('U0001000'); // Index 999
     });
 
     it('should return partial batch when last batch is smaller than recordCount', async () => {
@@ -148,7 +146,7 @@ describe('SourceSimulator Lambda Handler', () => {
 
       expect(response.statusCode).toBe(200);
       const body = parseResponseBody(response);
-      expect(body[0].response).toHaveLength(0);
+      expect(body.response).toHaveLength(0);
     });
 
     it('should return empty array when offset * recordCount equals MOCK_TOTAL_POPULATION', async () => {
@@ -158,7 +156,7 @@ describe('SourceSimulator Lambda Handler', () => {
 
       expect(response.statusCode).toBe(200);
       const body = parseResponseBody(response);
-      expect(body[0].response).toHaveLength(0);
+      expect(body.response).toHaveLength(0);
     });
 
     it('should return empty array when offset * recordCount exceeds MOCK_TOTAL_POPULATION', async () => {
@@ -167,7 +165,7 @@ describe('SourceSimulator Lambda Handler', () => {
 
       expect(response.statusCode).toBe(200);
       const body = parseResponseBody(response);
-      expect(body[0].response).toHaveLength(0);
+      expect(body.response).toHaveLength(0);
     });
 
     it('should handle offset=0 correctly', async () => {
@@ -176,9 +174,9 @@ describe('SourceSimulator Lambda Handler', () => {
 
       expect(response.statusCode).toBe(200);
       const body = parseResponseBody(response);
-      expect(body[0].response).toHaveLength(100);
-      expect(body[0].response[0].personid).toBe('U0000001');
-      expect(body[0].response[99].personid).toBe('U0000100');
+      expect(body.response).toHaveLength(100);
+      expect(body.response[0].personid).toBe('U0000001');
+      expect(body.response[99].personid).toBe('U0000100');
     });
 
     it('should simulate real API behavior compatible with processBatch logic', async () => {
@@ -196,7 +194,7 @@ describe('SourceSimulator Lambda Handler', () => {
         });
         const response = assertProxyResult(await handler(event, mockContext));
         const body = parseResponseBody(response);
-        const persons = body[0].response;
+        const persons = body.response;
 
         allPersons = allPersons.concat(persons);
         batchCount++;
@@ -294,14 +292,13 @@ describe('SourceSimulator Lambda Handler', () => {
 
       const body = parseResponseBody(response);
       
-      // Response should be array with one element
-      expect(Array.isArray(body)).toBe(true);
-      expect(body).toHaveLength(1);
+      // Response should be object with response field
+      expect(typeof body).toBe('object');
+      expect(body).not.toBeNull();
       
-      // Element should have response_code and response fields
-      expect(body[0]).toHaveProperty('response_code', 200);
-      expect(body[0]).toHaveProperty('response');
-      expect(Array.isArray(body[0].response)).toBe(true);
+      // Body should have response field with array of persons
+      expect(body).toHaveProperty('response');
+      expect(Array.isArray(body.response)).toBe(true);
     });
 
     it('should generate deterministic person IDs based on index', async () => {
@@ -309,7 +306,7 @@ describe('SourceSimulator Lambda Handler', () => {
       const response = assertProxyResult(await handler(event, mockContext));
 
       const body = parseResponseBody(response);
-      const persons = body[0].response;
+      const persons = body.response;
 
       // offset=2, recordCount=5 means indices 10-14 (persons 11-15)
       expect(persons[0].personid).toBe('U0000011');
@@ -323,7 +320,7 @@ describe('SourceSimulator Lambda Handler', () => {
       const response = assertProxyResult(await handler(event, mockContext));
 
       const body = parseResponseBody(response);
-      const person = body[0].response[0];
+      const person = body.response[0];
 
       expect(person).toHaveProperty('personid');
       expect(person).toHaveProperty('bu_id');
@@ -337,7 +334,7 @@ describe('SourceSimulator Lambda Handler', () => {
       const response = assertProxyResult(await handler(event, mockContext));
 
       const body = parseResponseBody(response);
-      const persons = body[0].response;
+      const persons = body.response;
 
       // Index 0 (person 1) -> personType = 0 % 3 = 0 (employee)
       expect(persons[0]).toHaveProperty('employeeInfo');
@@ -362,7 +359,7 @@ describe('SourceSimulator Lambda Handler', () => {
       const response = assertProxyResult(await handler(event, mockContext));
 
       const body = parseResponseBody(response);
-      expect(body[0].response).toHaveLength(200);
+      expect(body.response).toHaveLength(200);
     });
 
     it('should use default offset of 0 when not provided', async () => {
@@ -370,8 +367,8 @@ describe('SourceSimulator Lambda Handler', () => {
       const response = assertProxyResult(await handler(event, mockContext));
 
       const body = parseResponseBody(response);
-      expect(body[0].response).toHaveLength(50);
-      expect(body[0].response[0].personid).toBe('U0000001'); // Starting from index 0
+      expect(body.response).toHaveLength(50);
+      expect(body.response[0].personid).toBe('U0000001'); // Starting from index 0
     });
 
     it('should use both defaults when no query parameters provided', async () => {
@@ -379,8 +376,8 @@ describe('SourceSimulator Lambda Handler', () => {
       const response = assertProxyResult(await handler(event, mockContext));
 
       const body = parseResponseBody(response);
-      expect(body[0].response).toHaveLength(200);
-      expect(body[0].response[0].personid).toBe('U0000001');
+      expect(body.response).toHaveLength(200);
+      expect(body.response[0].personid).toBe('U0000001');
     });
 
     it('should handle recordCount=0 correctly', async () => {
@@ -388,7 +385,7 @@ describe('SourceSimulator Lambda Handler', () => {
       const response = assertProxyResult(await handler(event, mockContext));
 
       const body = parseResponseBody(response);
-      expect(body[0].response).toHaveLength(0);
+      expect(body.response).toHaveLength(0);
     });
 
     it('should handle very large recordCount', async () => {
@@ -397,7 +394,7 @@ describe('SourceSimulator Lambda Handler', () => {
 
       const body = parseResponseBody(response);
       // Should cap at population size (1000)
-      expect(body[0].response).toHaveLength(1000);
+      expect(body.response).toHaveLength(1000);
     });
   });
 
@@ -452,7 +449,7 @@ describe('SourceSimulator Lambda Handler', () => {
       const response = assertProxyResult(await handler(event, mockContext));
 
       const body = parseResponseBody(response);
-      expect(body[0].response).toHaveLength(10);
+      expect(body.response).toHaveLength(10);
     });
 
     it('should handle population size of 1', async () => {
@@ -461,8 +458,8 @@ describe('SourceSimulator Lambda Handler', () => {
       const response = assertProxyResult(await handler(event, mockContext));
 
       const body = parseResponseBody(response);
-      expect(body[0].response).toHaveLength(1);
-      expect(body[0].response[0].personid).toBe('U0000001');
+      expect(body.response).toHaveLength(1);
+      expect(body.response[0].personid).toBe('U0000001');
     });
 
     it('should handle population size of 0', async () => {
@@ -471,7 +468,7 @@ describe('SourceSimulator Lambda Handler', () => {
       const response = assertProxyResult(await handler(event, mockContext));
 
       const body = parseResponseBody(response);
-      expect(body[0].response).toHaveLength(0);
+      expect(body.response).toHaveLength(0);
     });
 
     it('should return correct Content-Type header', async () => {
@@ -487,7 +484,7 @@ describe('SourceSimulator Lambda Handler', () => {
 
       expect(response.statusCode).toBe(200);
       const body = parseResponseBody(response);
-      expect(body[0].response).toHaveLength(0);
+      expect(body.response).toHaveLength(0);
     });
   });
 });

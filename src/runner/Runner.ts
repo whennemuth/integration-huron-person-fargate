@@ -1,5 +1,8 @@
 import { ChunkingServiceRunner } from './AbstractRunner';
-import { ChunkingOnlyRunnerDecorator, MessagingOnlyRunnerDecorator, RestoreToFullOperationRunnerDecorator } from './Decorators';
+import { ChunkingOnlyRunnerDecorator } from './decorators/ChunkingOnlyRunnerDecorator';
+import { MessagingOnlyRunnerDecorator } from './decorators/MessagingOnlyRunnerDecorator';
+import { RestoreToFullOperationRunnerDecorator } from './decorators/RestoreToFullOperationRunnerDecorator';
+import { SourceSimulatorRunnerDecorator } from './decorators/SourceSimulatorRunnerDecorator';
 import { QueueSeedingRunner } from './RunnerForQueueSeeding';
 import { SingleMessageRunner } from './RunnerForSingleMessage';
 import { SinglePersonRunner } from './RunnerForSinglePerson';
@@ -33,7 +36,7 @@ import { extractEnvironment, setTestEnvironment } from './RunnerTypes';
  */
 async function startChunkingService() {
   // Peek at environment to determine which runner to use
-  const { 
+  let { 
     buid, messagesToPrepopulate, messagingOnly, chunkingOnly, sourceSimulator, populationScope,
   } = extractEnvironment();
   process.env.POPULATION_SCOPE = populationScope; // Set for downstream use in chunking service
@@ -44,11 +47,17 @@ async function startChunkingService() {
     return;
   }
 
+  // Validate that if sourceSimulator is true, chunkingOnly must also be true
+  if (sourceSimulator && !chunkingOnly) {
+    console.warn('Source simulator enabled, but chunking-only mode is not explicitly set. Forcing chunking-only mode.');
+    chunkingOnly = true;
+  }
+
   const seedNumber = parseInt(messagesToPrepopulate);
 
-  // Factory pattern: Select appropriate runner based on environment
   let runner: ChunkingServiceRunner;
 
+  // Factory patterns: Select appropriate runner based on environment
   if (buid) {
     // Single person testing mode
     runner = new SinglePersonRunner();
@@ -60,21 +69,17 @@ async function startChunkingService() {
     runner = new SingleMessageRunner();
   }
 
-  // Decorator pattern: Wrap the runner with messaging-only or chunking-only behavior if specified
+  // Decorator patterns: Wrap the runnner with additional functionality.
   if (messagingOnly) {
     runner = new MessagingOnlyRunnerDecorator(runner);
-  } 
-  else if (chunkingOnly || sourceSimulator) {
-    if( ! chunkingOnly) {
-      // Must prevent source simulator-generated messages from being processed by the processor 
-      // service because this is fake data that should NEVER go to the target system, so force chunking-only mode
-      console.log('Source simulator enabled, but chunking-only mode is not explicitly set. Forcing chunking-only mode.');
-    }
+  }
+  if(chunkingOnly) {
     runner = new ChunkingOnlyRunnerDecorator(runner);
   }
-  else if ( ! messagingOnly && !chunkingOnly && !sourceSimulator) {
-    // Restore all services to normal operation in case they were previously disabled by a messaging-only or chunking-only run
-    console.log('Neither messaging-only nor chunking-only mode specified. Restoring all services to normal operation.');
+  if(sourceSimulator) {
+    runner = new SourceSimulatorRunnerDecorator(runner);
+  }
+  if ( !messagingOnly && !chunkingOnly && !sourceSimulator) {
     runner = new RestoreToFullOperationRunnerDecorator(runner);
   }
 

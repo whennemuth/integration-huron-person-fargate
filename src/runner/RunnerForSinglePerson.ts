@@ -1,7 +1,7 @@
 import { ApiChunkerEvent } from '../chunking/ChunkerSubscriber';
 import { handleApiEvent } from '../chunking/fetch/ChunkerApiSubscriber';
 import { ChunkingServiceRunner } from './AbstractRunner';
-import { Endpoint, NormalizedPopulationType, RunnerEnv } from './RunnerTypes';
+import { Endpoint, NormalizedPopulationType } from './RunnerTypes';
 
 /**
  * Runner for single person testing mode.
@@ -41,14 +41,16 @@ export class SinglePersonRunner extends ChunkingServiceRunner {
     config: any, 
     populationType: NormalizedPopulationType
   ): Promise<void> {
-    const { env } = this;
+    const { 
+      bulkReset, trustPreviousStorage, callLimit, buid, queueUrl 
+    } = this.env;
     const apiChunkerEvent: ApiChunkerEvent = {
       baseUrl: endpoint.baseUrl,
       fetchPath: endpoint.fetchPath,
       populationType,
-      bulkReset: env.bulkReset,
-      trustPreviousStorage: env.trustPreviousStorage,
-      limit: env.callLimit ? parseInt(env.callLimit) : 0,
+      bulkReset,
+      trustPreviousStorage,
+      limit: callLimit ? parseInt(callLimit) : 0,
       offset: 0,
       processingMetadata: {
         processedAt: new Date().toISOString(),
@@ -56,8 +58,8 @@ export class SinglePersonRunner extends ChunkingServiceRunner {
       }
     };
 
-    console.log(`\n📝 Sending single person request for BUID: ${env.buid}\n`);
-    await handleApiEvent(apiChunkerEvent, env.queueUrl!);
+    console.log(`\n📝 Sending single person request for BUID: ${buid}\n`);
+    await handleApiEvent(apiChunkerEvent, queueUrl!);
     console.log(`\n✓ Single person request sent successfully\n`);
   }
 }

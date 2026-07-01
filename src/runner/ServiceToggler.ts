@@ -1,6 +1,6 @@
 import { LambdaFunctionEnvironmentVariable } from "./LambdaFunctionEnvironmentVariable";
-import { FUNCTION_BASE_NAME as chunkerFunctionBaseName } from "../../lib/services/chunker/ChunkerSubscribingLambda";
-import { FUNCTION_BASE_NAME as processorFunctionBaseName } from "../../lib/services/processor/ProcessorSubscribingLambda";
+import { FUNCTION_BASE_NAME as chunkerFunctionBaseName } from "../chunking/fetch/ChunkerApiSubscriber";
+import { FUNCTION_BASE_NAME as processorFunctionBaseName } from "../processing/ProcessorSubscriber";
 import { TestEnvironment } from "integration-core";
 
 export enum ServiceToDisable { CHUNKER, PROCESSOR }
@@ -55,15 +55,25 @@ export class ServiceToggler implements IServiceToggler {
   }
 
   public async disableService(): Promise<void> {
+    const { params: { service, lambdaFunctionName } } = this;
+    const coreMsg = `service: ${ServiceToDisable[service]} (Lambda: ${lambdaFunctionName})`;
     if( ! await this.wrappedToggler.isServiceDisabled()) {
+      console.log(`Disabling ${coreMsg}`);
       await this.wrappedToggler.disableService();
+      return;
     }
+    console.log(`${coreMsg} is already disabled.`);
   }
 
   public async enableService(): Promise<void> {
+    const { params: { service, lambdaFunctionName } } = this;
+    const coreMsg = `service: ${ServiceToDisable[service]} (Lambda: ${lambdaFunctionName})`;
     if(await this.wrappedToggler.isServiceDisabled()) {
+      console.log(`Enabling ${coreMsg}`);
       await this.wrappedToggler.enableService();
+      return;
     }
+    console.log(`${coreMsg} is already enabled.`);
   }
 
   public async isServiceDisabled(): Promise<boolean> {
