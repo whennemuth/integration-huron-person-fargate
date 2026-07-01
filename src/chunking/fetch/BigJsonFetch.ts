@@ -227,7 +227,8 @@ export class BigJsonFetch {
 
         console.log(`Received ${persons.length} persons from batch ${this.currentChunkNumber + 1}`);
 
-        // Write chunk with the fetched persons
+        // Chunk key is derived from chunk number. For API chunking, upstream allocation
+        // semantics determine content uniqueness; this writer only persists the current slice.
         const chunkKey = `${chunkDirPath}chunk-${self.padChunkNumber(this.currentChunkNumber)}.ndjson`;
         await self.writeChunk(chunkKey, persons);
         

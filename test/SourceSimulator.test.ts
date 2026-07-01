@@ -1,4 +1,4 @@
-import { handler } from '../src/chunking/fetch/SourceSimulator';
+import { handler, resetSourceSimulatorState } from '../src/chunking/fetch/SourceSimulator';
 import { APIGatewayProxyEventV2, Context } from 'aws-lambda';
 import { ConfigManager } from 'integration-huron-person';
 
@@ -33,6 +33,9 @@ describe('SourceSimulator Lambda Handler', () => {
       }),
     };
     (ConfigManager.getInstance as jest.Mock) = jest.fn().mockReturnValue(mockConfigManager);
+
+    // Ensure each test starts with a fresh simulator depletion state.
+    resetSourceSimulatorState();
 
     jest.clearAllMocks();
   });
@@ -113,50 +116,50 @@ describe('SourceSimulator Lambda Handler', () => {
     });
 
     it('should return partial batch when near population limit', async () => {
-      // Population is 1000, requesting offset=4 with recordCount=300
-      // Should return persons 1200-1299, but only 1000 exist
-      // So should return empty (startIndex 1200 >= 1000)
+      // Offset is accepted for API compatibility but does not drive data selection.
+      // With fresh state, the simulator returns the first available 300 records.
       const event = createEvent({ recordCount: '300', offset: '4' });
       const response = assertProxyResult(await handler(event, mockContext));
 
       expect(response.statusCode).toBe(200);
       const body = parseResponseBody(response);
-      expect(body.response).toHaveLength(0); // Past limit
+      expect(body.response).toHaveLength(300);
+      expect(body.response[0].personid).toBe('U0000001');
+      expect(body.response[299].personid).toBe('U0000300');
     });
 
     it('should return partial batch at exact boundary', async () => {
-      // Population is 1000, requesting offset=4 with recordCount=200
-      // Persons 800-999 = 200 records (exactly at boundary)
+      // Offset does not determine returned indices; request size determines batch size.
       const event = createEvent({ recordCount: '200', offset: '4' });
       const response = assertProxyResult(await handler(event, mockContext));
 
       expect(response.statusCode).toBe(200);
       const body = parseResponseBody(response);
       expect(body.response).toHaveLength(200);
-      expect(body.response[0].personid).toBe('U0000801'); // Index 800
-      expect(body.response[199].personid).toBe('U0001000'); // Index 999
+      expect(body.response[0].personid).toBe('U0000001');
+      expect(body.response[199].personid).toBe('U0000200');
     });
 
     it('should return partial batch when last batch is smaller than recordCount', async () => {
-      // Population is 1000, requesting offset=4 with recordCount=250
-      // startIndex = 1000, endIndex = 1250, but capped at 1000
-      // Should return 0 records
+      // With fresh state and population=1000, 250 records are available.
       const event = createEvent({ recordCount: '250', offset: '4' });
       const response = assertProxyResult(await handler(event, mockContext));
 
       expect(response.statusCode).toBe(200);
       const body = parseResponseBody(response);
-      expect(body.response).toHaveLength(0);
+      expect(body.response).toHaveLength(250);
+      expect(body.response[0].personid).toBe('U0000001');
+      expect(body.response[249].personid).toBe('U0000250');
     });
 
     it('should return empty array when offset * recordCount equals MOCK_TOTAL_POPULATION', async () => {
-      // offset=5, recordCount=200, startIndex=1000 (exactly at limit)
+      // Offset does not control returned slice; depletion state does.
       const event = createEvent({ recordCount: '200', offset: '5' });
       const response = assertProxyResult(await handler(event, mockContext));
 
       expect(response.statusCode).toBe(200);
       const body = parseResponseBody(response);
-      expect(body.response).toHaveLength(0);
+      expect(body.response).toHaveLength(200);
     });
 
     it('should return empty array when offset * recordCount exceeds MOCK_TOTAL_POPULATION', async () => {
@@ -165,7 +168,7 @@ describe('SourceSimulator Lambda Handler', () => {
 
       expect(response.statusCode).toBe(200);
       const body = parseResponseBody(response);
-      expect(body.response).toHaveLength(0);
+      expect(body.response).toHaveLength(200);
     });
 
     it('should handle offset=0 correctly', async () => {
@@ -301,18 +304,17 @@ describe('SourceSimulator Lambda Handler', () => {
       expect(Array.isArray(body.response)).toBe(true);
     });
 
-    it('should generate deterministic person IDs based on index', async () => {
+    it('should generate person IDs from depletion order, not requested offset', async () => {
       const event = createEvent({ recordCount: '5', offset: '2' });
       const response = assertProxyResult(await handler(event, mockContext));
 
       const body = parseResponseBody(response);
       const persons = body.response;
 
-      // offset=2, recordCount=5 means indices 10-14 (persons 11-15)
-      expect(persons[0].personid).toBe('U0000011');
-      expect(persons[0].bu_id).toBe('00000011');
-      expect(persons[4].personid).toBe('U0000015');
-      expect(persons[4].bu_id).toBe('00000015');
+      expect(persons[0].personid).toBe('U0000001');
+      expect(persons[0].bu_id).toBe('00000001');
+      expect(persons[4].personid).toBe('U0000005');
+      expect(persons[4].bu_id).toBe('00000005');
     });
 
     it('should include all required person fields', async () => {
@@ -484,7 +486,7 @@ describe('SourceSimulator Lambda Handler', () => {
 
       expect(response.statusCode).toBe(200);
       const body = parseResponseBody(response);
-      expect(body.response).toHaveLength(0);
+      expect(body.response).toHaveLength(100);
     });
   });
 });

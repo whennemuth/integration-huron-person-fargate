@@ -179,6 +179,9 @@ export class AppConstruct extends Construct {
       this.sourceSimulator = new SourceSimulator(this, 'SourceSimulator', {
         huronPersonSecrets: this.huronPersonSecrets,
         landscape: ctx.TAGS.Landscape.toLowerCase(),
+        stackId: ctx.STACK_ID,
+        region: ctx.REGION,
+        account: ctx.ACCOUNT,
         timeoutSeconds: ctx.LAMBDA.sourceSimulator.timeoutSeconds,
         memorySizeMb: ctx.LAMBDA.sourceSimulator.memorySizeMb,
         mockTotalPopulation: ctx.LAMBDA.sourceSimulator.mockTotalPopulation,

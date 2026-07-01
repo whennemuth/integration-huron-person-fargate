@@ -5,11 +5,11 @@
  * 30-minute cooldown constraint of the real API.
  * 
  * **Design:**
- * - Stateless: Uses offset and recordCount query params to determine response
- * - Formula: Returns persons from index `(offset * recordCount)` to `(offset * recordCount) + recordCount`
+ * - Stateful depletion model: Every request claims the next contiguous slice of available records
+ * - Non-deterministic by request params: `offset` is accepted for compatibility but does not drive allocation
  * - Validates API key from Secrets Manager against incoming requests
  * - Returns minimal field set (only fields DataMapper uses)
- * - Matches real API response structure: `[{ response_code: 200, response: [persons] }]`
+ * - Matches real API response structure: `{ response: [persons] }`
  * - Simulates slow API: Optional delay before responding via MOCK_SIMULATED_DELAY_SECONDS
  * 
  * **Query Parameters:**
@@ -29,15 +29,12 @@
  * 
  * **Response Format:**
  * ```json
- * [
- *   {
- *     "response_code": 200,
- *     "response": [
- *       { "personid": "U0000001", "bu_id": "00000001", ... },
- *       { "personid": "U0000002", "bu_id": "00000002", ... }
- *     ]
- *   }
- * ]
+ * {
+ *   "response": [
+ *     { "personid": "U0000001", "bu_id": "00000001", ... },
+ *     { "personid": "U0000002", "bu_id": "00000002", ... }
+ *   ]
+ * }
  * ```
  */
 
@@ -47,17 +44,30 @@ import { GetFunctionUrlConfigCommand, LambdaClient } from '@aws-sdk/client-lambd
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2, Context } from 'aws-lambda';
 import { ConfigManager, DataSourceConfig, EndpointConfigForApiKey } from 'integration-huron-person';
 import { LambdaFunctionEnvironmentVariable } from '../../runner/LambdaFunctionEnvironmentVariable';
+import { AbstractAtomicCounter } from '../../AtomicCounter';
 
 export const FUNCTION_BASE_NAME = 'source-simulator';
+export const SIMULATOR_COUNTER_NAME = 'simulator-offset-counter';
 export enum ENVIRONMENT_VARIABLES_NAMES {
   MOCK_TOTAL_POPULATION = 'MOCK_TOTAL_POPULATION',
   MOCK_ERROR_RATE = 'MOCK_ERROR_RATE',
   MOCK_SIMULATED_DELAY_SECONDS = 'MOCK_SIMULATED_DELAY_SECONDS',
-  SECRET_ARN = 'SECRET_ARN'
+  SECRET_ARN = 'SECRET_ARN',
+  STACK_ID = 'STACK_ID',
+  REGION = 'REGION',
+  LANDSCAPE = 'LANDSCAPE'
 }
 
 // Cache the API key between Lambda invocations (Lambda reuses execution environments)
 let cachedApiKey: string | null = null;
+let cachedCounter: AbstractAtomicCounter | null = null;
+let inMemoryNextIndex = 0;
+
+export function resetSourceSimulatorState(): void {
+  cachedApiKey = null;
+  cachedCounter = null;
+  inMemoryNextIndex = 0;
+}
 
 interface MockPerson {
   personid: string;
@@ -242,6 +252,54 @@ async function getApiKey(): Promise<string | null> {
   }
 }
 
+function getSimulatorCounter(): AbstractAtomicCounter | null {
+  if (cachedCounter) {
+    return cachedCounter;
+  }
+
+  const stackId = process.env.STACK_ID;
+  const region = process.env.REGION;
+  const landscape = process.env.LANDSCAPE;
+
+  if (!stackId || !region || !landscape) {
+    return null;
+  }
+
+  cachedCounter = new class extends AbstractAtomicCounter {
+    public getCounterName(): string {
+      return SIMULATOR_COUNTER_NAME;
+    }
+  }({ stackId, region, landscape });
+
+  return cachedCounter;
+}
+
+async function allocateStatefulRange(recordCount: number, totalPopulation: number): Promise<{
+  startIndex: number;
+  endIndex: number;
+  actualCount: number;
+  mode: 'stateful';
+}> {
+  const counter = getSimulatorCounter();
+  if (counter) {
+    const claimedUpperBound = await counter.increment(recordCount);
+    const startIndex = Math.max(0, claimedUpperBound - recordCount);
+    const endIndex = Math.min(startIndex + recordCount, totalPopulation);
+    const actualCount = Math.max(0, endIndex - startIndex);
+
+    return { startIndex, endIndex, actualCount, mode: 'stateful' };
+  }
+
+  // Local/test fallback only: preserve depletion semantics even without DynamoDB-backed counter.
+  // This keeps behavior non-deterministic by offset while avoiding hard dependency on AWS in unit tests.
+  const startIndex = inMemoryNextIndex;
+  inMemoryNextIndex += recordCount;
+  const endIndex = Math.min(startIndex + recordCount, totalPopulation);
+  const actualCount = Math.max(0, endIndex - startIndex);
+
+  return { startIndex, endIndex, actualCount, mode: 'stateful' };
+}
+
 /**
  * Validate API key from request headers.
  * 
@@ -323,6 +381,7 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
   const errorRate = parseFloat(process.env.MOCK_ERROR_RATE || '0.0');
 
   console.log(`Generating mock data: offset=${offset}, recordCount=${recordCount}, totalPopulation=${totalPopulation}`);
+  console.log('Note: offset is accepted for API compatibility but ignored for stateful depletion allocation');
 
   // Simulate errors based on configured error rate
   if (errorRate > 0 && Math.random() < errorRate) {
@@ -334,12 +393,17 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
     };
   }
 
-  // Calculate range of persons to return
-  const startIndex = offset * recordCount;
-  const endIndex = Math.min(startIndex + recordCount, totalPopulation);
-  const actualCount = Math.max(0, endIndex - startIndex);
+  // Depletion model: every request claims the next contiguous range from a shared/global supply.
+  // This intentionally ignores offset for allocation and keeps responses non-deterministic by offset.
+  let startIndex = 0;
+  let endIndex = 0;
+  let actualCount = 0;
+  const statefulAllocation = await allocateStatefulRange(recordCount, totalPopulation);
+  startIndex = statefulAllocation.startIndex;
+  endIndex = statefulAllocation.endIndex;
+  actualCount = statefulAllocation.actualCount;
 
-  console.log(`Returning persons ${startIndex} to ${endIndex - 1} (${actualCount} records)`);
+  console.log(`Returning persons ${startIndex} to ${endIndex - 1} (${actualCount} records), mode=stateful`);
 
   // Generate mock persons for this range
   const persons: MockPerson[] = [];
@@ -538,9 +602,9 @@ if (require.main === module) {
               console.log(`\nBody:`);
               console.log(JSON.stringify(body, null, 2));
               
-              if (Array.isArray(body) && body[0]?.response) {
-                console.log(`\nReturned ${body[0].response.length} persons`);
-                console.log(`First person: ${JSON.stringify(body[0].response[0], null, 2)}`);
+              if (Array.isArray(body?.response)) {
+                console.log(`\nReturned ${body.response.length} persons`);
+                console.log(`First person: ${JSON.stringify(body.response[0], null, 2)}`);
               }
             }
           }
@@ -594,9 +658,9 @@ if (require.main === module) {
           console.log(`\nBody:`);
           console.log(JSON.stringify(body, null, 2));
           
-          if (Array.isArray(body) && body[0]?.response) {
-            console.log(`\nReturned ${body[0].response.length} persons`);
-            console.log(`First person: ${JSON.stringify(body[0].response[0], null, 2)}`);
+          if (Array.isArray(body?.response)) {
+            console.log(`\nReturned ${body.response.length} persons`);
+            console.log(`First person: ${JSON.stringify(body.response[0], null, 2)}`);
           }
 
           break;

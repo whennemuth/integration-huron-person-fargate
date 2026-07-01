@@ -1,15 +1,19 @@
 import { CfnOutput, Duration, RemovalPolicy } from 'aws-cdk-lib';
-import { ManagedPolicy, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
+import { ManagedPolicy, PolicyStatement, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import { Architecture, FunctionUrlAuthType, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { ENVIRONMENT_VARIABLES_NAMES, FUNCTION_BASE_NAME } from "../../../src/chunking/fetch/SourceSimulator";
 import { HuronPersonSecrets } from '../../Secrets';
+import { DYNAMODB_TABLE_NAME } from '../../../src/AtomicCounter';
 
 export interface SourceSimulatorProps {
   huronPersonSecrets: HuronPersonSecrets;  
   landscape: string;
+  stackId: string;
+  region: string;
+  account: string;
   timeoutSeconds: number;
   memorySizeMb: number;
   mockTotalPopulation: number;
@@ -74,7 +78,8 @@ export class SourceSimulator extends Construct {
     });
 
     const { 
-      MOCK_TOTAL_POPULATION, MOCK_ERROR_RATE, MOCK_SIMULATED_DELAY_SECONDS, SECRET_ARN 
+      MOCK_TOTAL_POPULATION, MOCK_ERROR_RATE, MOCK_SIMULATED_DELAY_SECONDS, SECRET_ARN,
+      STACK_ID, REGION, LANDSCAPE
     } = ENVIRONMENT_VARIABLES_NAMES;
 
     // Create Lambda function with arm64 architecture (Graviton2) for cost savings
@@ -94,6 +99,9 @@ export class SourceSimulator extends Construct {
         [MOCK_ERROR_RATE]: (props.mockErrorRate || 0.0).toString(),
         [MOCK_SIMULATED_DELAY_SECONDS]: (props.simulatedDelaySeconds || 0).toString(),
         [SECRET_ARN]: props.secretArn, // ARN of Secrets Manager secret containing API key
+        [STACK_ID]: props.stackId,
+        [REGION]: props.region,
+        [LANDSCAPE]: props.landscape,
       },
       bundling: {
         externalModules: [
@@ -106,6 +114,18 @@ export class SourceSimulator extends Construct {
 
     // Grant Lambda permission to read from Secrets Manager
     props.huronPersonSecrets.secret.grantRead(lambdaRole);
+
+    // Grant simulator permission to use the atomic counter table for stateful depletion allocation.
+    const tableName = DYNAMODB_TABLE_NAME({
+      STACK_ID: props.stackId,
+      TAGS: { Landscape: props.landscape }
+    } as any);
+    lambdaRole.addToPolicy(new PolicyStatement({
+      actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:DescribeTable'],
+      resources: [
+        `arn:aws:dynamodb:${props.region}:${props.account}:table/${tableName}`
+      ]
+    }));
 
     // Create Function URL (public access with API key validation)
     // Note: As of Oct 2025, addFunctionUrl() automatically adds both required permissions:

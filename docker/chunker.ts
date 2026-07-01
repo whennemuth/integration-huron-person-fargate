@@ -314,7 +314,9 @@ export async function main() {
       return;
     }
 
-    // Bail out if this is an extraneous task where the chunking has already ended.
+    // Completion short-circuit: once metadata exists for this chunk directory, this task is obsolete.
+    // In the simulator's stateful depletion model, allocation occurs at execution time from a shared
+    // supply, so remaining late-arriving tasks are expected to return empty payloads and can be skipped.
     const alreadyFinished = await chunkingAlreadyFinished({
       bucketName: chunksBucket, chunkDirectory: chunker?.getChunkDirectory(), region
     });
@@ -322,7 +324,7 @@ export async function main() {
       console.log(`⊘ Cancelling. This means this task was based on a SQS message that was created before the service "realized" it had reached the end.`);
       exitCode = 0;
       return;
-    };
+    }
 
     if(chunker instanceof ChunkFromAPI) {
       // Send next chunking message BEFORE starting this task's processing
