@@ -59,7 +59,7 @@ export interface ApiChunkerEvent {
   populationType: SyncPopulation;
   bulkReset?: boolean;
   trustPreviousStorage?: boolean;
-  limit?: number;
+  iterationLimit?: number;
   offset?: number;
   chunkDirectory?: string;
   processingMetadata?: {

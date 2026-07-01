@@ -84,7 +84,7 @@ export abstract class ChunkingServiceRunner {
    * @param configTotalPopulation 
    */
   protected async logSourceSimulatorPredictions(): Promise<void> {
-    const { landscape, region } = this.env;
+    const { landscape, region,  } = this.env;
 
     // Destructure variables from the stack context.
     const { 

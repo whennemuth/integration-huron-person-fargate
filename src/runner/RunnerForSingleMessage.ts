@@ -49,14 +49,14 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
     config: any, 
     populationType: NormalizedPopulationType
   ): Promise<void> {
-    const { bulkReset, trustPreviousStorage, callLimit, stackId, region, landscape, queueUrl } = this.env;
+    const { bulkReset, trustPreviousStorage, iterationLimit, stackId, region, landscape, queueUrl } = this.env;
     const apiChunkerEvent: ApiChunkerEvent = {
       baseUrl: endpoint.baseUrl,
       fetchPath: endpoint.fetchPath,
       populationType,
       bulkReset,
       trustPreviousStorage,
-      limit: callLimit ? parseInt(callLimit) : 0,
+      iterationLimit: iterationLimit ? iterationLimit : 0,
       offset: 0,
       processingMetadata: {
         processedAt: new Date().toISOString(),

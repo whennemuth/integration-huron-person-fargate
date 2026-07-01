@@ -152,11 +152,11 @@ export class ChunkFromAPI {
     return { chunkCount, totalRecords };
   }
   
-  private async fetchPage(offset: number, limit: number): Promise<Person[]> {
+  private async fetchPage(offset: number, iterationLimit: number): Promise<Person[]> {
     const response = await axios.get(
       `${process.env.DATASOURCE_BASE_URL}/api/persons`,
       {
-        params: { offset, limit },
+        params: { offset, iterationLimit },
         headers: {
           'x-api-key': process.env.DATASOURCE_API_KEY
         },

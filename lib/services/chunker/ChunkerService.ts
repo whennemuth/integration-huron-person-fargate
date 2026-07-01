@@ -58,7 +58,7 @@ export class ChunkerService extends AbstractService {
    * - fetchSchedule.cronExpression is valid
    */
   private createApiChunkingSchedule(props: ChunkerServiceProps): void {
-    const { chunkerLambda, chunksPerTask: limit = 0 } = props;
+    const { chunkerLambda, chunksPerTask: iterationLimit = 0 } = props;
     const context = this.props.context;
     const trustPreviousStorage = context?.TRUST_PREVIOUS_STORAGE ?? false;
 
@@ -111,7 +111,7 @@ export class ChunkerService extends AbstractService {
           baseUrl,
           fetchPath,
           populationType: SyncPopulation.PersonDelta,
-          limit, 
+          iterationLimit, 
           offset: 0,
           bulkReset: false, // Default value; can be overridden by message parameters if needed
           trustPreviousStorage,

@@ -60,7 +60,7 @@ describe('Chunker Main - Message Deletion', () => {
         populationType: 'person-full',
         bulkReset: false,
         trustPreviousStorage: true,
-        limit: 100,
+        iterationLimit: 100,
         offset: 0,
         chunkDirectory: 'test-chunk-dir'
       })

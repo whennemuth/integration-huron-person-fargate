@@ -42,7 +42,7 @@ export class SinglePersonRunner extends ChunkingServiceRunner {
     populationType: NormalizedPopulationType
   ): Promise<void> {
     const { 
-      bulkReset, trustPreviousStorage, callLimit, buid, queueUrl 
+      bulkReset, trustPreviousStorage, iterationLimit, buid, queueUrl 
     } = this.env;
     const apiChunkerEvent: ApiChunkerEvent = {
       baseUrl: endpoint.baseUrl,
@@ -50,7 +50,7 @@ export class SinglePersonRunner extends ChunkingServiceRunner {
       populationType,
       bulkReset,
       trustPreviousStorage,
-      limit: callLimit ? parseInt(callLimit) : 0,
+      iterationLimit: iterationLimit ? iterationLimit : 0,
       offset: 0,
       processingMetadata: {
         processedAt: new Date().toISOString(),

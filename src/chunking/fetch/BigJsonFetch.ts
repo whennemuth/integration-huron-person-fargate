@@ -62,11 +62,11 @@ export interface BigJsonFetchConfig {
   /** Optional source path for context, not used in current implementation */
   sourcePath?: string; 
 
-  /** Optional limit for total chunks to fetch (default: 0 = no limit) */
+  /** Optional limit for total chunks to fetch (default: 0 = no iterationLimit) */
   offset?: number;
 
   /** Optional source path for context, not used in current implementation */
-  limit?: number;
+  iterationLimit?: number;
 
   /** Optional dry run mode (default: false), if true, no files will be written */
   dryRun?: boolean;
@@ -121,7 +121,7 @@ export class BigJsonFetch {
   private readonly personArrayWrapper: IPersonArrayWrapper;
   private readonly sourcePath?: string;
   private readonly offset?: number;
-  private readonly limit?: number;
+  private readonly iterationLimit?: number;
   private readonly dryRun: boolean;
 
   constructor(config: BigJsonFetchConfig) {
@@ -133,7 +133,7 @@ export class BigJsonFetch {
     this.personIdField = config.personIdField || 'personid';
     this.sourcePath = config.sourcePath;
     this.offset = config.offset;
-    this.limit = config.limit;
+    this.iterationLimit = config.iterationLimit;
     this.dryRun = config.dryRun || false;
     
     // Use provided wrapper or default to '0.response' (BU API structure)
@@ -194,7 +194,7 @@ export class BigJsonFetch {
       batchSize: this.itemsPerChunk, 
       chunkDirPath: chunkDir, 
       offset: this.offset,
-      limit: this.isNotBatchable(dataSource) ? -1 : this.limit,
+      iterationLimit: this.isNotBatchable(dataSource) ? -1 : this.iterationLimit,
       onChunkWritten: (key: string) => chunkKeys.push(key) 
     };
     const batchProcessor = new class extends BuCdmPeopleDataSourceBatch {
@@ -205,11 +205,11 @@ export class BigJsonFetch {
         batchSize: number,
         chunkDirPath: string,
         offset?: number,
-        limit?: number,
+        iterationLimit?: number,
         onChunkWritten: (key: string) => void,
       }) {
-        const { dataSource, batchSize, offset = 0, limit = 0 } = params;
-        super({ dataSource, batchSize, offset, limit });
+        const { dataSource, batchSize, offset = 0, iterationLimit = 0 } = params;
+        super({ dataSource, batchSize, offset, iterationLimit });
         this.currentChunkNumber = offset;
       }
 
@@ -440,12 +440,12 @@ if (require.main === module) {
 
     const { 
       MODE, ITEMS_PER_CHUNK = '200', DRY_RUN = 'false', 
-      DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT = '0', 
+      DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT = '0', 
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET = '0' 
     } = process.env;
     const itemsPerChunk = parseInt(ITEMS_PER_CHUNK, 10);
     const dryRun = DRY_RUN.toLowerCase() === 'true';
-    const chunksPerTask = parseInt(DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT, 10);
+    const chunksPerTask = parseInt(DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT, 10);
     const chunksOffset = parseInt(DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET, 10);
 
     if (!MODE || (MODE !== 'filesystem' && MODE !== 's3')) {
@@ -494,7 +494,7 @@ if (require.main === module) {
         });
         const fsFetcherConfig: BigJsonFetchConfig = {
           itemsPerChunk,
-          limit: chunksPerTask,
+          iterationLimit: chunksPerTask,
           offset: chunksOffset,
           config: cfg,
           responseFilter: fsResponseFilter,

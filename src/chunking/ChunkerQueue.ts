@@ -176,13 +176,13 @@ export class ChunkerQueue {
     return undefined;
   }
 
-  private getNextOffset = async (currentOffset: number, limit: number): Promise<number> => {
+  private getNextOffset = async (currentOffset: number, iterationLimit: number): Promise<number> => {
     const { atomicCounter } = this;
     if(atomicCounter) {
-      return await atomicCounter.increment(limit);
+      return await atomicCounter.increment(iterationLimit);
     }
     else {
-      return currentOffset + limit;
+      return currentOffset + iterationLimit;
     }
   }
 
@@ -191,7 +191,7 @@ export class ChunkerQueue {
    * Uses atomic counter (if available) to calculate next offset, preventing collisions.
    * This is called BEFORE starting the current chunking task to enable true parallelism.
    * 
-   * @param params.limit Number of batches to process per task
+   * @param params.iterationLimit Number of batches to process per task
    * @param params.offset Current offset in population
    * @param params.chunkDirectory Directory to store chunk data for this message's chunking task
    * @param params.taskParameters The parameters for the chunking task to process, which will be passed through to the next message
@@ -199,12 +199,12 @@ export class ChunkerQueue {
    * @returns true if message sent successfully, false if skipped
    */
   public sendNextChunkingMessage = async ( params: {
-    limit: number; offset: number, chunkDirectory: string, taskParameters: TaskParameters, dryRun?: boolean
+    iterationLimit: number; offset: number, chunkDirectory: string, taskParameters: TaskParameters, dryRun?: boolean
   }): Promise<boolean> => {
 
     const { QueueUrl } = this;
 
-    const { limit, offset: currentOffset, chunkDirectory, taskParameters, dryRun } = params; 
+    const { iterationLimit, offset: currentOffset, chunkDirectory, taskParameters, dryRun } = params; 
 
     const { 
       baseUrl, 
@@ -214,16 +214,16 @@ export class ChunkerQueue {
       trustPreviousStorage
     } = taskParameters;
 
-    // Don't create next message if limit is 0 (process all)
-    if (limit === 0) {
-      console.log('ℹ️  limit=0 (process all). Not creating next message.');
+    // Don't create next message if iterationLimit is 0 (process all)
+    if (iterationLimit === 0) {
+      console.log('ℹ️  iterationLimit=0 (process all). Not creating next message.');
       return false;
     }
 
     try {
-      const nextOffset = await this.getNextOffset(currentOffset, limit);
+      const nextOffset = await this.getNextOffset(currentOffset, iterationLimit);
       if (dryRun) {
-        console.log(`[DRY RUN] Would send next chunking message to SQS: offset=${nextOffset}, limit=${limit}`);
+        console.log(`[DRY RUN] Would send next chunking message to SQS: offset=${nextOffset}, iterationLimit=${iterationLimit}`);
         return true;
       }
 
@@ -233,7 +233,7 @@ export class ChunkerQueue {
         populationType, 
         bulkReset, 
         trustPreviousStorage, 
-        limit, 
+        iterationLimit, 
         offset: nextOffset, 
         chunkDirectory
       } satisfies ApiChunkerEvent;
@@ -256,7 +256,7 @@ export class ChunkerQueue {
  * 1. Queue has been seeded with 15 messages (offsets 0-140)
  * 2. Atomic counter is at 140
  * 3. A task calls sendNextChunkingMessage with currentOffset=140
- * 4. Expected: Next message should have offset=150 (atomic counter incremented by limit=10)
+ * 4. Expected: Next message should have offset=150 (atomic counter incremented by iterationLimit=10)
  * 
  * To test multiple tasks in parallel (simulating real ECS behavior):
  * - Run this harness multiple times simultaneously
@@ -269,7 +269,7 @@ async function main() {
     BASE_URL: baseUrl,
     FETCH_PATH: fetchPath,
     POPULATION_TYPE: populationType,
-    DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT: limitStr,
+    DATASOURCE_ENDPOINTCONFIG_ITERATION_ITERATION_LIMIT: iterationLimitStr,
     OFFSET: offsetStr,
     CHUNK_DIRECTORY: chunkDirectory,
     BULK_RESET: bulkReset,
@@ -287,8 +287,8 @@ async function main() {
   if (!populationType) {
     throw new Error('POPULATION_TYPE is required');
   }
-  if (!limitStr) {
-    throw new Error('LIMIT is required');
+  if (!iterationLimitStr) {
+    throw new Error('DATASOURCE_ENDPOINTCONFIG_ITERATION is required');
   }
   if (!offsetStr) {
     throw new Error('OFFSET is required (current offset for this task)');
@@ -298,7 +298,7 @@ async function main() {
   }
 
   // Parse numeric parameters
-  const limit = parseInt(limitStr, 10);
+  const iterationLimit = parseInt(iterationLimitStr, 10);
   const offset = parseInt(offsetStr, 10);
 
   // Validate populationType
@@ -311,8 +311,8 @@ async function main() {
   }
 
   // Validate numeric parameters
-  if (isNaN(limit) || limit <= 0) {
-    throw new Error(`Invalid LIMIT: ${limitStr}. Must be a positive integer.`);
+  if (isNaN(iterationLimit) || iterationLimit <= 0) {
+    throw new Error(`Invalid DATASOURCE_ENDPOINTCONFIG_ITERATION_ITERATION_LIMIT: ${iterationLimitStr}. Must be a positive integer.`);
   }
   if (isNaN(offset) || offset < 0) {
     throw new Error(`Invalid OFFSET: ${offsetStr}. Must be a non-negative integer.`);
@@ -321,7 +321,7 @@ async function main() {
   console.log('🔧 ChunkerQueue Test Harness\n');
   console.log(`📋 Configuration:`);
   console.log(`   - Current Offset: ${offset}`);
-  console.log(`   - Limit: ${limit}`);
+  console.log(`   - iterationLimit: ${iterationLimit}`);
   console.log(`   - Population Type: ${normalizedPopulationType}`);
   console.log(`   - Base URL: ${baseUrl}`);
   console.log(`   - Fetch Path: ${fetchPath}`);
@@ -347,7 +347,7 @@ async function main() {
 
     // Call sendNextChunkingMessage (simulates what happens after processing a chunk)
     const success = await chunkerQueue.sendNextChunkingMessage({
-      limit,
+      iterationLimit,
       offset,
       chunkDirectory,
       taskParameters,
@@ -381,7 +381,7 @@ if (require.main === module) {
     'BASE_URL',
     'FETCH_PATH',
     'POPULATION_TYPE',
-    'DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT',
+    'DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT',
     'OFFSET',
     'BULK_RESET',
     'TRUST_PREVIOUS_STORAGE',

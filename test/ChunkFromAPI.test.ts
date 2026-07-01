@@ -426,20 +426,20 @@ describe('ChunkFromAPI Parameter Gathering', () => {
     });
   });
 
-  describe('Offset and Limit parameter handling', () => {
+  describe('Offset and iterationLimit parameter handling', () => {
     beforeEach(() => {
-      // Clear environment variables related to offset/limit
+      // Clear environment variables related to offset/iterationLimit
       delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET;
-      delete process.env.DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT;
+      delete process.env.DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT;
     });
 
-    it('should extract camelCase offset and limit from message body', () => {
+    it('should extract camelCase offset and iterationLimit from message body', () => {
       const messageBody = {
         baseUrl: 'https://api.queue.com',
         fetchPath: '/queue/people',
         populationType: 'person-full',
         offset: 10,
-        limit: 5
+        iterationLimit: 5
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
@@ -447,26 +447,26 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
-    it('should extract offset and limit as numbers from camelCase message', () => {
+    it('should extract offset and iterationLimit as numbers from camelCase message', () => {
       const messageBody = {
         baseUrl: 'https://api.queue.com',
         fetchPath: '/queue/people',
         offset: 5,
-        limit: 10
+        iterationLimit: 10
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
       chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
-      // If taskParameters are accessible (they're private), we'd verify offset=5, limit=10
+      // If taskParameters are accessible (they're private), we'd verify offset=5, iterationLimit=10
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
-    it('should handle offset and limit with value 0', () => {
+    it('should handle offset and iterationLimit with value 0', () => {
       const messageBody = {
         baseUrl: 'https://api.queue.com',
         fetchPath: '/queue/people',
         offset: 0,
-        limit: 0
+        iterationLimit: 0
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
@@ -474,9 +474,9 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
-    it('should handle offset and limit when not provided in message', () => {
+    it('should handle offset and iterationLimit when not provided in message', () => {
       delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET;
-      delete process.env.DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT;
+      delete process.env.DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT;
 
       const messageBody = {
         baseUrl: 'https://api.queue.com',
@@ -488,12 +488,12 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
-    it('should handle numeric offset and limit values', () => {
+    it('should handle numeric offset and iterationLimit values', () => {
       const messageBody = {
         baseUrl: 'https://api.queue.com',
         fetchPath: '/queue/people',
         offset: 25,
-        limit: 30
+        iterationLimit: 30
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
@@ -502,9 +502,9 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
-    it('should handle undefined offset and limit in message', () => {
+    it('should handle undefined offset and iterationLimit in message', () => {
       delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET;
-      delete process.env.DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT;
+      delete process.env.DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT;
 
       const messageBody = {
         baseUrl: 'https://api.queue.com',

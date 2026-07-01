@@ -16,7 +16,7 @@ export type QueueSeederParams = {
   populationType: SyncPopulation;
   bulkReset?: boolean;
   trustPreviousStorage?: boolean;
-  limit: number;
+  iterationLimit: number;
   messagesToSeed: number;
   queueUrl: string;
   dryRun?: boolean;
@@ -38,7 +38,7 @@ export type QueueSeederParams = {
  * 
  * Example:
  * - messagesToSeed: 15 (matching maxScalingCapacity)
- * - limit: 100 (process 100 records per task)
+ * - iterationLimit: 100 (process 100 records per task)
  * - Result: 15 messages with offsets [0, 100, 200, 300, ..., 1400]
  * - All tasks create next messages; atomic counter ensures offsets [1500, 1600, ...]
  * 
@@ -49,7 +49,7 @@ export type QueueSeederParams = {
  *   baseUrl: 'https://api.bu.edu',
  *   fetchPath: '/people/v1',
  *   populationType: SyncPopulation.PersonFull,
- *   limit: 100,
+ *   iterationLimit: 100,
  *   messagesToSeed: 15,
  *   queueUrl: 'https://sqs.us-east-1.amazonaws.com/123456789/chunker-queue'
  * });
@@ -88,13 +88,13 @@ export class QueueSeeder {
     await this.atomicCounter.reset();
   }
 
-  private getNextOffset = async (currentOffset: number, limit: number): Promise<number> => {
+  private getNextOffset = async (currentOffset: number, iterationLimit: number): Promise<number> => {
     const { atomicCounter } = this;
     if(atomicCounter) {
-      return await atomicCounter.increment(limit);
+      return await atomicCounter.increment(iterationLimit);
     }
     else {
-      return currentOffset + limit;
+      return currentOffset + iterationLimit;
     }
   }
 
@@ -140,14 +140,14 @@ export class QueueSeeder {
       populationType,
       bulkReset = false,
       trustPreviousStorage = false,
-      limit,
+      iterationLimit,
       messagesToSeed,
       queueUrl,
     } = this.params;
 
     // Validation
-    if (limit <= 0) {
-      throw new Error('limit must be greater than 0 for parallel chunking');
+    if (iterationLimit <= 0) {
+      throw new Error('iterationLimit must be greater than 0 for parallel chunking');
     }
     if (messagesToSeed <= 0) {
       throw new Error('messagesToSeed must be greater than 0');
@@ -159,7 +159,7 @@ export class QueueSeeder {
     console.log(`   - Base URL: ${baseUrl}`);
     console.log(`   - Fetch Path: ${fetchPath}`);
     console.log(`   - Population Type: ${populationType}`);
-    console.log(`   - Limit: ${limit} records per task`);
+    console.log(`   - iterationLimit: ${iterationLimit} records per task`);
     console.log(`   - Chunk Directory: ${chunkDirectory}`);
     console.log(`   - Bulk Reset: ${bulkReset}`);
     console.log(`   - Trust Previous Storage: ${trustPreviousStorage}`);
@@ -175,7 +175,7 @@ export class QueueSeeder {
 
     for (let i = 0; i < messagesToSeed; i++) {
       // First message starts at 0, subsequent messages use atomic counter
-      const offset = i === 0 ? 0 : await this.getNextOffset(previousOffset, limit);
+      const offset = i === 0 ? 0 : await this.getNextOffset(previousOffset, iterationLimit);
       previousOffset = offset;
 
       const apiChunkerEvent: ApiChunkerEvent = {
@@ -184,7 +184,7 @@ export class QueueSeeder {
         populationType,
         bulkReset,
         trustPreviousStorage,
-        limit,
+        iterationLimit,
         offset,
         chunkDirectory: this.chunkDirectory,
         processingMetadata: {
@@ -239,7 +239,7 @@ async function main() {
     BASE_URL: baseUrl,
     FETCH_PATH: fetchPath,
     POPULATION_TYPE: populationType,
-    DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT: limitStr,
+    DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT: iterationLimitStr,
     MESSAGES_TO_SEED: messagesToSeedStr,
     SQS_QUEUE_URL: queueUrl,
     BULK_RESET: bulkReset,
@@ -262,8 +262,8 @@ async function main() {
   if (!populationType) {
     throw new Error('POPULATION_TYPE is required');
   }
-  if (!limitStr) {
-    throw new Error('DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT is required');
+  if (!iterationLimitStr) {
+    throw new Error('DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT is required');
   }
   if (!messagesToSeedStr) {
     throw new Error('MESSAGES_TO_SEED is required');
@@ -273,7 +273,7 @@ async function main() {
   }
 
   // Parse numeric parameters
-  const limit = parseInt(limitStr, 10);
+  const iterationLimit = parseInt(iterationLimitStr, 10);
   const messagesToSeed = parseInt(messagesToSeedStr, 10);
 
   // Validate populationType
@@ -286,8 +286,8 @@ async function main() {
   }
 
   // Validate numeric parameters
-  if (isNaN(limit) || limit <= 0) {
-    throw new Error(`Invalid LIMIT: ${limitStr}. Must be a positive integer.`);
+  if (isNaN(iterationLimit) || iterationLimit <= 0) {
+    throw new Error(`Invalid DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT: ${iterationLimitStr}. Must be a positive integer.`);
   }
   if (isNaN(messagesToSeed) || messagesToSeed <= 0) {
     throw new Error(`Invalid MESSAGES_TO_SEED: ${messagesToSeedStr}. Must be a positive integer.`);
@@ -304,7 +304,7 @@ async function main() {
         populationType: normalizedPopulationType,
         bulkReset: bulkReset?.toLowerCase() === 'true',
         trustPreviousStorage: trustPreviousStorage?.toLowerCase() === 'true',
-        limit,
+        iterationLimit,
         messagesToSeed,
         queueUrl        
       });
@@ -327,7 +327,7 @@ async function main() {
  * QUEUE_SEEDER_BASE_URL=https://api.bu.edu \
  * QUEUE_SEEDER_FETCH_PATH=/people/v1 \
  * QUEUE_SEEDER_POPULATION_TYPE=person-full \
- * QUEUE_SEEDER_DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT=100 \
+ * QUEUE_SEEDER_DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT=100 \
  * QUEUE_SEEDER_MESSAGES_TO_SEED=15 \
  * QUEUE_SEEDER_SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/123456789/chunker-queue \
  * QUEUE_SEEDER_BULK_RESET=false \
@@ -347,7 +347,7 @@ if (require.main === module) {
     'BASE_URL',
     'FETCH_PATH',
     'POPULATION_TYPE',
-    'DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT',
+    'DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT',
     'MESSAGES_TO_SEED',
     'SQS_QUEUE_URL',
     'STACK_ID',

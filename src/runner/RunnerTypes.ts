@@ -10,7 +10,7 @@ export interface RunnerEnv {
   queueUrl?: string;
   populationType?: string;
   populationScope?: 'standard' | 'single';
-  callLimit?: string;
+  iterationLimit?: number;
   buid?: string;
   region?: string;
   stackId?: string;
@@ -52,7 +52,7 @@ export const extractEnvironment = (): RunnerEnv => {
     HURON_PERSON_CONFIG_PATH: configPath,
     CHUNKER_QUEUE_URL: queueUrl,
     POPULATION_TYPE: populationType,
-    DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT: callLimit,
+    DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT: iterationLimit,
     SINGLE_PERSON_BUID: buid,
     REGION: region,
     STACK_ID: stackId,
@@ -76,7 +76,6 @@ export const extractEnvironment = (): RunnerEnv => {
     configPath,
     queueUrl,
     populationType,
-    callLimit,
     buid,
     region,
     stackId,
@@ -84,6 +83,7 @@ export const extractEnvironment = (): RunnerEnv => {
     messagesToPrepopulate,
     clusterName,
     serviceName,
+    iterationLimit: iterationLimit ? parseInt(iterationLimit) : undefined,
     desiredCount: DESIRED_COUNT ? parseInt(DESIRED_COUNT) : 0,
     bulkReset: `${bulkReset}`.toLowerCase().trim() === 'true',
     trustPreviousStorage: `${trustPreviousStorage}`.toLowerCase().trim() === 'true',
@@ -105,7 +105,7 @@ export const setTestEnvironment = (): void => {
     'SECRET_ARN',
     'CHUNKER_QUEUE_URL',
     'POPULATION_TYPE',
-    'DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT',
+    'DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT',
     'SINGLE_PERSON_BUID',
     'REGION',
     'MESSAGES_TO_PREPOPULATE',

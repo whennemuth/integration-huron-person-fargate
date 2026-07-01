@@ -21,7 +21,7 @@ export type TaskParameters = {
   bulkReset: boolean,
   trustPreviousStorage: boolean,
   offset?: number;
-  limit?: number;
+  iterationLimit?: number;
   chunkDirectory?: string;
 };
 
@@ -37,7 +37,7 @@ export type TaskParameters = {
  * --------------------------------
  * Because the source API is slow in serviceing any single request, the chunker is designed to run in
  * parallel across multiple Fargate tasks if configured to do so. Each task processes a specific 
- * range of records based on the offset and limit parameters, allowing for efficient scaling 
+ * range of records based on the offset and iterationLimit parameters, allowing for efficient scaling 
  * and faster processing of large datasets. If parallelism is not configured, it will be run 
  * in a single task that generates all the chunk files, taking longer - hours.
  * 
@@ -105,7 +105,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL: baseUrl,
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: fetchPath,
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET: offset = '0',
-      DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT: limit = '0',
+      DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT: iterationLimit = '0',
       TRUST_PREVIOUS_STORAGE = 'false',
       BULK_RESET
     } = process.env;
@@ -132,7 +132,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         bulkReset: BULK_RESET?.toLowerCase() === 'true',
         trustPreviousStorage: TRUST_PREVIOUS_STORAGE?.toLowerCase() === 'true',
         offset: offset ? parseInt(offset, 10) : undefined,
-        limit: limit ? parseInt(limit, 10) : undefined,
+        iterationLimit: iterationLimit ? parseInt(iterationLimit, 10) : undefined,
         chunkDirectory: chunkDirectory || undefined
       };
     }
@@ -154,7 +154,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       DATASOURCE_ENDPOINTCONFIG_PERSON_BASE_URL: baseUrl,
       DATASOURCE_ENDPOINTCONFIG_PERSON_PATH: fetchPath,
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET: offset = '0',
-      DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT: limit = '0',
+      DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT: iterationLimit = '0',
       SINGLE_PERSON_BUID: buid,
       TRUST_PREVIOUS_STORAGE = 'false',
       BULK_RESET
@@ -176,7 +176,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         bulkReset: BULK_RESET?.toLowerCase() === 'true',
         trustPreviousStorage: TRUST_PREVIOUS_STORAGE?.toLowerCase() === 'true',
         offset: offset ? parseInt(offset, 10) : undefined,
-        limit: limit ? parseInt(limit, 10) : undefined,
+        iterationLimit: iterationLimit ? parseInt(iterationLimit, 10) : undefined,
         chunkDirectory: chunkDirectory || undefined
       }) } as Message);
     }
@@ -201,7 +201,7 @@ export class ChunkFromAPI implements IChunkFromSource {
     const fetchPath = messageBody.fetchPath || 'from_config';
     const populationType = messageBody.populationType || SyncPopulation.PersonFull;
     const offset = messageBody.offset !== undefined ? Number(messageBody.offset) : 0;
-    const limit = messageBody.limit !== undefined ? Number(messageBody.limit) : 0;
+    const iterationLimit = messageBody.iterationLimit !== undefined ? Number(messageBody.iterationLimit) : 0;
     const chunkDirectory = messageBody.chunkDirectory;
     const bulkReset = messageBody.bulkReset;
     const trustPreviousStorage = messageBody.trustPreviousStorage;
@@ -211,7 +211,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       fetchPath, 
       populationType, 
       offset,
-      limit,
+      iterationLimit,
       chunkDirectory,
       bulkReset: typeof bulkReset === 'boolean' ? bulkReset : bulkReset === 'true',
       trustPreviousStorage: typeof trustPreviousStorage === 'boolean'
@@ -367,45 +367,45 @@ export class ChunkFromAPI implements IChunkFromSource {
 
   /**
    * Create and send the next SQS message for parallel chunking.
-   * Calculates the next offset (currentOffset + limit) and sends a message to the chunker queue.
+   * Calculates the next offset (currentOffset + iterationLimit) and sends a message to the chunker queue.
    * This is called BEFORE starting the current chunking task to enable true parallelism.
    * @param chunkerQueue The ChunkerQueue instance used to send the next message
    * @param dryRun If true, will not actually send the message but will log the parameters instead (default: false)
    * @returns true if message sent successfully, false if skipped
    */
   public sendNextChunkingMessage = async (chunkerQueue: ChunkerQueue, dryRun: boolean = false): Promise<boolean> => {
-    const { getLimitAndOffset, getChunkDirectory, taskParameters } = this;
-    const { limit, offset } = getLimitAndOffset();
+    const { getIterationLimitAndOffset, getChunkDirectory, taskParameters } = this;
+    const { iterationLimit, offset } = getIterationLimitAndOffset();
     const chunkDirectory = getChunkDirectory();
     
     return chunkerQueue.sendNextChunkingMessage({ 
-      limit, offset, chunkDirectory, taskParameters, dryRun 
+      iterationLimit, offset, chunkDirectory, taskParameters, dryRun 
     });
   }
 
   /**
-   * Get the limit and offset for the current chunking task, taking into account the 
+   * Get the iterationLimit and offset for the current chunking task, taking into account the 
    * maxScalingCapacity for parallelism control. If maxScalingCapacity is 1, it overrides any
-   * provided limit and offset to process the full population in a single task (no parallelism).
-   * @returns An object containing the limit and offset for the current chunking task.
+   * provided iterationLimit and offset to process the full population in a single task (no parallelism).
+   * @returns An object containing the iterationLimit and offset for the current chunking task.
    */
-  public getLimitAndOffset = (): { limit: number; offset: number } => {
+  public getIterationLimitAndOffset = (): { iterationLimit: number; offset: number } => {
     const envMaxScalingCapacity = process.env.MAX_SCALING_CAPACITY
       ? parseInt(process.env.MAX_SCALING_CAPACITY, 10)
       : undefined;
     const maxScalingCapacity = this.context?.ECS.chunkerService?.maxScalingCapacity ?? envMaxScalingCapacity ?? -1;
     if(!this.taskParameters) {
-      console.warn('Task parameters not set, defaulting limit and offset to 0 (process full population in single task)');
-      return { limit: 0, offset: 0 };
+      console.warn('Task parameters not set, defaulting iterationLimit and offset to 0 (process full population in single task)');
+      return { iterationLimit: 0, offset: 0 };
     }
-    const { offset = 0, limit = 0 } = this.taskParameters;
-    if (maxScalingCapacity === 1 && (limit !== 0 || offset !== 0)) {
-      console.log(`ℹ️  maxScalingCapacity is 1 (parallelism disabled). Overriding offset=0, limit=0 to process full population.`);
+    const { offset = 0, iterationLimit = 0 } = this.taskParameters;
+    if (maxScalingCapacity === 1 && (iterationLimit !== 0 || offset !== 0)) {
+      console.log(`ℹ️  maxScalingCapacity is 1 (parallelism disabled). Overriding offset=0, iterationLimit=0 to process full population.`);
       this.taskParameters.offset = 0;
-      this.taskParameters.limit = 0;
-      return this.getLimitAndOffset();
+      this.taskParameters.iterationLimit = 0;
+      return this.getIterationLimitAndOffset();
     }
-    return { limit, offset };
+    return { iterationLimit, offset };
   }
 
   /**
@@ -429,7 +429,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         bulkReset: false,
         trustPreviousStorage: false
       };
-      const { limit, offset } = this.getLimitAndOffset();
+      const { iterationLimit, offset } = this.getIterationLimitAndOffset();
       if(bulkReset !== bulkResetOverride && bulkResetOverride === true) {
         console.warn(`Overriding bulkReset flag in task parameters from ${bulkReset} to ${bulkResetOverride} based on message parameters`);
       }
@@ -454,7 +454,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       console.log(`Bulk reset flag: ${bulkReset}`);
       console.log(`Trust previous storage: ${trustPreviousStorage}`);
       console.log(`Offset: ${offset}`);
-      console.log(`Limit: ${limit}`);
+      console.log(`iterationLimit: ${iterationLimit}`);
       console.log(`Person ID field: ${personIdField}`);
       console.log(`Population type: ${this.taskParameters.populationType}\n`);
       console.log(`Final task parameters: ${JSON.stringify(this.taskParameters)}`);
@@ -492,7 +492,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         personArrayWrapper,
         sourcePath: undefined, // Not used for API source, as the wrapper will detect the person array path from the API response stream directly
         offset, // indicates the "nth" chunk in from the start of the overall sync population. Used in the context of chunking "in parallel".
-        limit, // indicates how many chunks to "chunk out" before stopping. Used in the context of chunking "in parallel".
+        iterationLimit, // indicates how many chunks to "chunk out" before stopping. Used in the context of chunking "in parallel".
         dryRun: dryRun.toLowerCase() === 'true'
       };
 

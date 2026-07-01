@@ -50,7 +50,7 @@ src/
 - `HURON_PERSON_CONFIG_PATH` - Path to local config file
 - `POPULATION_TYPE` - `person-delta` or `person-full` (default: person-full)
 - `SINGLE_PERSON_BUID` - Test with single person (e.g., `U12345678`)
-- `DATASOURCE_ENDPOINTCONFIG_CALL_LIMIT` - Limit number of people fetched
+- `DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT` - Limit number of API calls made to fetch people
 - `BULK_RESET` - Set to `true` to force full resync
 - `TRUST_PREVIOUS_STORAGE` - Set to `true` to trust delta storage
 - `MESSAGES_TO_PREPOPULATE` - Number of messages to seed (default: 0)
