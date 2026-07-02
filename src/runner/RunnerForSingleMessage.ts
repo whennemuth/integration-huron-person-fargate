@@ -1,6 +1,6 @@
 import { Config, DataSourceConfig } from 'integration-huron-person';
 import { AbstractAtomicCounter } from '../AtomicCounter';
-import { CHUNKER_COUNTER_NAME } from '../chunking/ChunkerQueue';
+import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from '../chunking/ChunkerQueue';
 import { ApiChunkerEvent } from '../chunking/ChunkerSubscriber';
 import { handleApiEvent } from '../chunking/fetch/ChunkerApiSubscriber';
 import { ChunkingServiceRunner } from './AbstractRunner';
@@ -64,15 +64,23 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
       }
     };
 
-    // Reset the atomic counter for the chunker queue to ensure a clean state before sending the single person request
+    // Reset counters to ensure clean offsets and chunk ordinals for the new run.
     if( stackId && region && landscape) {
       console.log(`\n📝 Resetting atomic counter for chunker queue: ${CHUNKER_COUNTER_NAME}\n`);
-      const atomicCounter = new class extends AbstractAtomicCounter {
+      const offsetCounter = new class extends AbstractAtomicCounter {
         getCounterName(): string {
           return CHUNKER_COUNTER_NAME;
         }
       }({ stackId, region, landscape });
-      await atomicCounter.reset();
+      await offsetCounter.reset();
+
+      console.log(`\n📝 Resetting atomic counter for chunk ordinals: ${CHUNK_ORDINAL_COUNTER_NAME}\n`);
+      const chunkOrdinalCounter = new class extends AbstractAtomicCounter {
+        getCounterName(): string {
+          return CHUNK_ORDINAL_COUNTER_NAME;
+        }
+      }({ stackId, region, landscape });
+      await chunkOrdinalCounter.reset();
     }
 
     console.log(`\n📨 Sending single initial message to trigger chunking process...\n`);

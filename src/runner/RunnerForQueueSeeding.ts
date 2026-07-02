@@ -172,8 +172,8 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
       dryRun: false
     });
     
-    // Reset the atomic counter to ensure a clean slate for the seeded messages
-    await queueSeeder.resetAtomicCounter();
+    // Reset the atomic counters to ensure a clean slate for seeded messages and chunk ordinals
+    await queueSeeder.resetAtomicCounters();
 
     // Seed the queue with the specified number of messages
     await queueSeeder.seedQueue();

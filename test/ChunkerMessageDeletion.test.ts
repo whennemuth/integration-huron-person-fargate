@@ -73,7 +73,9 @@ describe('Chunker Main - Message Deletion', () => {
       getMessageBody: jest.fn().mockReturnValue(JSON.parse(mockMessage.Body!)),
       deleteMessageFromQueue: deleteMessageSpy,
       popMessageFromQueue: jest.fn().mockResolvedValue(mockMessage),
-      sendNextChunkingMessage: jest.fn().mockResolvedValue(true)
+      sendNextChunkingMessage: jest.fn().mockResolvedValue(true),
+      createChunkOrdinalAllocator: jest.fn().mockReturnValue(async () => 0),
+      hasAtomicCounterSupport: jest.fn().mockReturnValue(true)
     } as any;
 
     // Mock ChunkFromAPI
@@ -84,6 +86,8 @@ describe('Chunker Main - Message Deletion', () => {
       hasSufficientConfig: jest.fn().mockReturnValue(true),
       hasSufficientTaskInfo: jest.fn().mockReturnValue(true),
       sendNextChunkingMessage: jest.fn().mockResolvedValue(true),
+      setChunkOrdinalAllocator: jest.fn(),
+      getIterationLimitAndOffset: jest.fn().mockReturnValue({ offset: 0, iterationLimit: 100 }),
       runChunking: jest.fn().mockResolvedValue(undefined),
       getBulkResetFlag: jest.fn().mockReturnValue(false),
       getTrustPreviousStorageFlag: jest.fn().mockReturnValue(true),

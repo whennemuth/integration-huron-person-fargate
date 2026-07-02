@@ -10,7 +10,7 @@ import { ChunkerQueue } from '../ChunkerQueue';
 import { MetadataManager, WriteMetadataParams } from "../Metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
-import { BigJsonFetch, BigJsonFetchConfig } from "./BigJsonFetch";
+import { BigJsonFetch, BigJsonFetchConfig, ChunkOrdinalAllocator } from "./BigJsonFetch";
 import { ChunkConfigOverride } from "./ChunkConfigOverride";
 import { SourceSimulatorFunctionURL } from './SourceSimulator';
 
@@ -76,6 +76,7 @@ export class ChunkFromAPI implements IChunkFromSource {
   private chunkDirectory: string;
   private context?: IContext;
   private messageFromQueue: Message | undefined;
+  private chunkOrdinalAllocator?: ChunkOrdinalAllocator;
 
   public static defaultPopulationType = SyncPopulation.PersonFull;
 
@@ -92,6 +93,10 @@ export class ChunkFromAPI implements IChunkFromSource {
 
   public getMessage = (): Message | undefined => {
     return this.messageFromQueue;
+  }
+
+  public setChunkOrdinalAllocator = (chunkOrdinalAllocator: ChunkOrdinalAllocator): void => {
+    this.chunkOrdinalAllocator = chunkOrdinalAllocator;
   }
 
   /**
@@ -493,7 +498,8 @@ export class ChunkFromAPI implements IChunkFromSource {
         sourcePath: undefined, // Not used for API source, as the wrapper will detect the person array path from the API response stream directly
         offset, // indicates the "nth" chunk in from the start of the overall sync population. Used in the context of chunking "in parallel".
         iterationLimit, // indicates how many chunks to "chunk out" before stopping. Used in the context of chunking "in parallel".
-        dryRun: dryRun.toLowerCase() === 'true'
+        dryRun: dryRun.toLowerCase() === 'true',
+        chunkOrdinalAllocator: this.chunkOrdinalAllocator
       };
 
       // Run fetch and chunk operation

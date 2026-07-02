@@ -70,7 +70,12 @@ export interface BigJsonFetchConfig {
 
   /** Optional dry run mode (default: false), if true, no files will be written */
   dryRun?: boolean;
+
+  /** Optional allocator for chunk ordinals used in chunk key naming. */
+  chunkOrdinalAllocator?: ChunkOrdinalAllocator;
 }
+
+export type ChunkOrdinalAllocator = () => Promise<number>;
 
 /**
  * Result of a chunking operation
@@ -123,8 +128,10 @@ export class BigJsonFetch {
   private readonly offset?: number;
   private readonly iterationLimit?: number;
   private readonly dryRun: boolean;
+  private readonly chunkOrdinalAllocator: ChunkOrdinalAllocator;
 
   constructor(config: BigJsonFetchConfig) {
+    let localNextOrdinal = config.offset || 0;
     this.itemsPerChunk = config.itemsPerChunk;
     this.config = config.config;
     this.responseFilter = config.responseFilter;
@@ -135,6 +142,11 @@ export class BigJsonFetch {
     this.offset = config.offset;
     this.iterationLimit = config.iterationLimit;
     this.dryRun = config.dryRun || false;
+    this.chunkOrdinalAllocator = config.chunkOrdinalAllocator || (async () => {
+      const nextOrdinal = localNextOrdinal;
+      localNextOrdinal++;
+      return nextOrdinal;
+    });
     
     // Use provided wrapper or default to '0.response' (BU API structure)
     this.personArrayWrapper = config.personArrayWrapper ?? {
@@ -198,7 +210,7 @@ export class BigJsonFetch {
       onChunkWritten: (key: string) => chunkKeys.push(key) 
     };
     const batchProcessor = new class extends BuCdmPeopleDataSourceBatch {
-      private currentChunkNumber = 0;
+      private currentBatchNumber = 0;
       
       constructor(private params: {
         dataSource: BuCdmPeopleDataSource,
@@ -210,7 +222,7 @@ export class BigJsonFetch {
       }) {
         const { dataSource, batchSize, offset = 0, iterationLimit = 0 } = params;
         super({ dataSource, batchSize, offset, iterationLimit });
-        this.currentChunkNumber = offset;
+        this.currentBatchNumber = offset;
       }
 
       protected process = async (response: any[]): Promise<void> => {
@@ -225,21 +237,22 @@ export class BigJsonFetch {
           return;
         }
 
-        console.log(`Received ${persons.length} persons from batch ${this.currentChunkNumber + 1}`);
+        console.log(`Received ${persons.length} persons from batch ${this.currentBatchNumber + 1}`);
 
         // Chunk key is derived from chunk number. For API chunking, upstream allocation
         // semantics determine content uniqueness; this writer only persists the current slice.
-        const chunkKey = `${chunkDirPath}chunk-${self.padChunkNumber(this.currentChunkNumber)}.ndjson`;
+        const chunkOrdinal = await self.chunkOrdinalAllocator();
+        const chunkKey = `${chunkDirPath}chunk-${self.padChunkNumber(chunkOrdinal)}.ndjson`;
         await self.writeChunk(chunkKey, persons);
         
         // MEMORY OPTIMIZATION (Secondary): Use callback to collect chunk key
         onChunkWritten(chunkKey);
         
         if (!self.dryRun) {
-          console.log(`Wrote chunk ${this.currentChunkNumber + 1}: ${chunkKey} (${persons.length} records)`);
+          console.log(`Wrote chunk ordinal ${chunkOrdinal}: ${chunkKey} (${persons.length} records)`);
         }
 
-        this.currentChunkNumber++;
+        this.currentBatchNumber++;
         
         // MEMORY OPTIMIZATION (Secondary): Clear persons array to help garbage collection
         persons.length = 0;

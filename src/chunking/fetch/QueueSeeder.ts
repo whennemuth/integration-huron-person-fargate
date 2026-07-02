@@ -5,7 +5,7 @@ import { ApiChunkerEvent } from '../ChunkerSubscriber';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 import { extractChunkDirectory } from '../filedrop/ChunkPathUtils';
 import { AbstractAtomicCounter } from '../../AtomicCounter';
-import { CHUNKER_COUNTER_NAME } from '../ChunkerQueue';
+import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from '../ChunkerQueue';
 
 export type QueueSeederParams = {
   stackId?: string, 
@@ -56,7 +56,8 @@ export type QueueSeederParams = {
  * ```
  */
 export class QueueSeeder {
-  private atomicCounter?: AbstractAtomicCounter;
+  private offsetCounter?: AbstractAtomicCounter;
+  private chunkOrdinalCounter?: AbstractAtomicCounter;
   private chunkDirectory?: string;
 
   constructor(private params: QueueSeederParams) {
@@ -72,26 +73,34 @@ export class QueueSeeder {
       throw new Error('LANDSCAPE is required to initialize QueueSeeder');
     }
 
-    console.log('Atomic counter detected in QueueSeeder constructor');
-    this.atomicCounter = new class extends AbstractAtomicCounter {
+    console.log('Atomic counters detected in QueueSeeder constructor');
+    this.offsetCounter = new class extends AbstractAtomicCounter {
       getCounterName(): string {
         return CHUNKER_COUNTER_NAME;
       }
     }({ stackId, region, landscape });
+
+    this.chunkOrdinalCounter = new class extends AbstractAtomicCounter {
+      getCounterName(): string {
+        return CHUNK_ORDINAL_COUNTER_NAME;
+      }
+    }({ stackId, region, landscape });
   }
 
-  public resetAtomicCounter = async (): Promise<void> => {
-    if (!this.atomicCounter) {
-      throw new Error('Atomic counter not initialized - cannot reset');
+  public resetAtomicCounters = async (): Promise<void> => {
+    if (!this.offsetCounter || !this.chunkOrdinalCounter) {
+      throw new Error('Atomic counters not initialized - cannot reset');
     }
     console.log(`\n📝 Resetting atomic counter for chunker queue: ${CHUNKER_COUNTER_NAME}\n`);
-    await this.atomicCounter.reset();
+    await this.offsetCounter.reset();
+    console.log(`\n📝 Resetting atomic counter for chunk ordinals: ${CHUNK_ORDINAL_COUNTER_NAME}\n`);
+    await this.chunkOrdinalCounter.reset();
   }
 
   private getNextOffset = async (currentOffset: number, iterationLimit: number): Promise<number> => {
-    const { atomicCounter } = this;
-    if(atomicCounter) {
-      return await atomicCounter.increment(iterationLimit);
+    const { offsetCounter } = this;
+    if(offsetCounter) {
+      return await offsetCounter.increment(iterationLimit);
     }
     else {
       return currentOffset + iterationLimit;
@@ -164,7 +173,7 @@ export class QueueSeeder {
     console.log(`   - Bulk Reset: ${bulkReset}`);
     console.log(`   - Trust Previous Storage: ${trustPreviousStorage}`);
     console.log(`   - Queue URL: ${queueUrl}`);
-    console.log(`   - Using Atomic Counter: ${!!this.atomicCounter}`);
+    console.log(`   - Using Atomic Counter: ${!!this.offsetCounter}`);
     console.log(`   - Stack ID: ${stackId}`);
     console.log(`   - Region: ${region}`);
     console.log('');
