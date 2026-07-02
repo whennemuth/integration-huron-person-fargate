@@ -58,6 +58,23 @@ export class HuronPersonCache {
     return BasicCache.getInstance(config);
   }
 
+  public async s3PopulationCacheExists(params: { bucketName: string, key: string, region: string }): Promise<boolean> {
+    const { bucketName, key, region } = params;
+    const s3 = new S3({ region });
+    try {
+      await s3.headObject({
+        Bucket: bucketName,
+        Key: key
+      });
+      return true;
+    } catch (error: any) {
+      if (error.name === 'NotFound') {
+        return false;
+      }
+      throw error;
+    }
+  }
+
   public getFullPopulationFromTargetAPI = async (): Promise<HuronPerson[]> => {
     const config = await this.getConfig();
     const listPeople = new ListPeople(config, 500);
@@ -256,6 +273,13 @@ if (require.main === module) {
         key: PERSON_CACHE_KEY, 
         region: REGION 
       });
+
+      const exists = await personCache.s3PopulationCacheExists({
+        bucketName: PERSON_CACHE_BUCKET_NAME, 
+        key: PERSON_CACHE_KEY, 
+        region: REGION 
+      });
+      console.log(`Cache exists: ${exists}`);
 
       const cacheSet = await personCache.getS3PopulationCache({ 
         bucketName: PERSON_CACHE_BUCKET_NAME, 

@@ -374,11 +374,18 @@ export async function main() {
     if(chunkFromParams.bulkReset || !chunkFromParams.trustPreviousStorage) {
       const config = await getConfig();
       const { CACHE_FILE_NAME } = HuronPersonCache;
-      await new HuronPersonCache({ config }).setS3PopulationCache({ 
+      const cache = new HuronPersonCache({ config });
+      const fileParms = { 
         bucketName: chunksBucket, 
         key: chunker.getChunkDirectory() + `/${CACHE_FILE_NAME}`, 
         region: region! 
-      });
+      }
+      if(await cache.s3PopulationCacheExists(fileParms)) {
+        console.log(`✓ Population cache file already exists in S3 at s3://${fileParms.bucketName}/${fileParms.key}`);
+      }
+      else {
+        await cache.setS3PopulationCache(fileParms);
+      }
     }
 
     await chunker.runChunking(chunkFromParams);

@@ -152,6 +152,9 @@ export class ChunkerTaskDefinition extends Construct {
           's3:GetObjectVersion',
           's3:PutObject',
           's3:PutObjectAcl',
+          's3:DeleteObject',
+          's3:DeleteObjectVersion',
+          's3:headObject',
         ],
         resources: [
           `arn:aws:s3:::${chunksBucketName}/*`,
