@@ -57,38 +57,56 @@ export class LambdaFunctionEnvironmentVariable {
    * @param val - Value to set for the environment variable
    */
   public setEnvironmentVariable = async (name: string, val: string): Promise<void> => {
+    await this.setEnvironmentVariables({ [name]: val });
+  }
+
+  /**
+   * Set one or more environment variables on a Lambda function in a single update request.
+   *
+   * This avoids back-to-back UpdateFunctionConfiguration calls when multiple variables
+   * need to be changed together.
+   *
+   * @param entries - Record of environment variable names and values to apply
+   */
+  public setEnvironmentVariables = async (entries: Record<string, string>): Promise<void> => {
     const { lambdaFunctionName, region } = this.params;
-    
+
+    if (!entries || Object.keys(entries).length === 0) {
+      console.log(`No environment variable changes provided for Lambda function ${lambdaFunctionName}`);
+      return;
+    }
+
     const lambdaClient = new LambdaClient({ region });
-    
+
     try {
       // First, get the current configuration to preserve existing environment variables
       const getCommand = new GetFunctionConfigurationCommand({
         FunctionName: lambdaFunctionName
       });
-      
+
       const currentConfig = await lambdaClient.send(getCommand);
       const currentVariables = currentConfig.Environment?.Variables || {};
-      
-      // Update with the new variable
+
       const updatedVariables = {
         ...currentVariables,
-        [name]: val
+        ...entries
       };
-      
-      // Apply the update
+
+      // Apply a single update containing all requested variable changes.
       const updateCommand = new UpdateFunctionConfigurationCommand({
         FunctionName: lambdaFunctionName,
         Environment: {
           Variables: updatedVariables
         }
       });
-      
+
       await lambdaClient.send(updateCommand);
-      
-      console.log(`Successfully set ${name}=${val} on Lambda function ${lambdaFunctionName}`);
+
+      const updatedNames = Object.keys(entries).join(', ');
+      console.log(`Successfully set environment variables [${updatedNames}] on Lambda function ${lambdaFunctionName}`);
     } catch (error) {
-      console.error(`Failed to set environment variable ${name} on Lambda function ${lambdaFunctionName}:`, error);
+      const updatedNames = Object.keys(entries).join(', ');
+      console.error(`Failed to set environment variables [${updatedNames}] on Lambda function ${lambdaFunctionName}:`, error);
       throw error;
     }
   }

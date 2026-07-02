@@ -43,17 +43,22 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
       return lambda;
     }
 
-    // Update the source simulator Lambda function's environment variables if they are provided in the configuration.
+    // Update all simulator environment overrides in one Lambda configuration update.
+    // This avoids back-to-back update conflicts when multiple values are provided.
+    const sourceSimulatorEnvOverrides: Record<string, string> = {};
     if(delay && delay > 0) {
-      const lambda = await getSourceSimulatorLambdaFunction();
-      await lambda.setEnvironmentVariable(MOCK_SIMULATED_DELAY_SECONDS, delay.toString());
+      sourceSimulatorEnvOverrides[MOCK_SIMULATED_DELAY_SECONDS] = delay.toString();
     }
     if(total && total > 0) {
-      const lambda = await getSourceSimulatorLambdaFunction();
-      await lambda.setEnvironmentVariable(MOCK_TOTAL_POPULATION, total.toString());
+      sourceSimulatorEnvOverrides[MOCK_TOTAL_POPULATION] = total.toString();
     }
     if(errorRate && errorRate > 0) {
+      sourceSimulatorEnvOverrides[MOCK_ERROR_RATE] = errorRate.toString();
+    }
+    if(Object.keys(sourceSimulatorEnvOverrides).length > 0) {
       const lambda = await getSourceSimulatorLambdaFunction();
+      await lambda.setEnvironmentVariables(sourceSimulatorEnvOverrides);
+    }
 
     const getNbrFromStr = (val: string | undefined): number => val && !isNaN(Number(val)) ? parseInt(val) : 0;
 
