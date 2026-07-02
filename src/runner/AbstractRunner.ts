@@ -84,7 +84,21 @@ export abstract class ChunkingServiceRunner {
    * @param configTotalPopulation 
    */
   protected async logSourceSimulatorPredictions(): Promise<void> {
+    const predictions = await this.getSourceSimulatorPredictions();
+    const { totalFullChunks, remainingItems, itemsPerChunk } = predictions;
+    if(totalFullChunks > 0) {
+      console.log(`Should generate ${totalFullChunks} full chunks of ${itemsPerChunk} items each, with ${remainingItems} remaining items in the last chunk.`);
+    }
+    else {
+      console.warn('MOCK_TOTAL_POPULATION is not set or is not a valid number. Cannot predict chunking output.');
+    }
+  }
+
+  protected async getSourceSimulatorPredictions(): Promise<{ 
+    totalPopulation: number, totalFullChunks: number, remainingItems: number, itemsPerChunk: number 
+  }> {
     const { landscape, region,  } = this.env;
+    const predictions = { totalPopulation: 0, totalFullChunks: 0, remainingItems: 0, itemsPerChunk: 0 };
 
     // Destructure variables from the stack context.
     const { 
@@ -104,12 +118,17 @@ export abstract class ChunkingServiceRunner {
       if(!isNaN(ITEMS_PER_CHUNK) && ITEMS_PER_CHUNK > 0) {
         const totalFullChunks = Math.floor(totalPopulation / ITEMS_PER_CHUNK);
         const remainingItems = totalPopulation % ITEMS_PER_CHUNK;
-        console.log(`Should generate ${totalFullChunks} full chunks of ${ITEMS_PER_CHUNK} items each, with ${remainingItems} remaining items in the last chunk.`);
+        predictions.totalPopulation = totalPopulation;
+        predictions.totalFullChunks = totalFullChunks;
+        predictions.remainingItems = remainingItems;
+        predictions.itemsPerChunk = ITEMS_PER_CHUNK;
       }
     }
     else {
       console.warn('MOCK_TOTAL_POPULATION is not set or is not a valid number. Cannot predict chunking output.');
     }
+
+    return predictions;
   }
 
   /**

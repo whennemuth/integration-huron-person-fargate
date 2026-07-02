@@ -66,6 +66,10 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
     }
 
 
+    // Validate we are not overseeding as determined by comparing seedNumber to source simulator predicted .  
+    const predictions = await this.getSourceSimulatorPredictions();
+    const { totalPopulation } = predictions;
+
     return true;
   }
 

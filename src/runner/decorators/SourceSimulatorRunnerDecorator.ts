@@ -14,8 +14,8 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
     super();
   }
   public async validatePrerequisites(): Promise<boolean> {
-    const { 
-      region, landscape, 
+    let { 
+      region, landscape, messagesToPrepopulate, iterationLimit, 
       sourceSimulatorMockSimulatedDelaySeconds: delay, 
       sourceSimulatorMockTotalPopulation: total,
       sourceSimulatorMockErrorRate: errorRate
@@ -54,8 +54,37 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
     }
     if(errorRate && errorRate > 0) {
       const lambda = await getSourceSimulatorLambdaFunction();
-      await lambda.setEnvironmentVariable(MOCK_ERROR_RATE, errorRate.toString());
+
+    const getNbrFromStr = (val: string | undefined): number => val && !isNaN(Number(val)) ? parseInt(val) : 0;
+
+    const getNbr = (nbr: number | undefined): number => nbr && !isNaN(nbr) ? nbr : 0;
+    
+    // Warn if queue seeding is being carried out that we are not overseeding as determined by
+    // comparing the seedNumber math to source simulator predicted population. 
+    if (getNbrFromStr(messagesToPrepopulate) > 0 ) { 
+      const seedNumber = parseInt(messagesToPrepopulate);
+
+      if(seedNumber > 0) {
+        const predictions = await this.getSourceSimulatorPredictions();
+        const { totalPopulation, itemsPerChunk } = predictions;
+        iterationLimit = getNbr(iterationLimit);
+        const singleTaskPopulation = iterationLimit * itemsPerChunk;
+        if(singleTaskPopulation >= 0) {
+          const seedingPopulation = seedNumber * itemsPerChunk * iterationLimit;
+          
+          if(seedingPopulation > totalPopulation) {
+            const overage = seedingPopulation - totalPopulation;
+            if(overage > singleTaskPopulation) {
+              console.warn(`Overseeding: Seeding population (${seedingPopulation}) exceeds total population (${totalPopulation}) by more than a single task's worth of items (${singleTaskPopulation}).`);
+            }
+          }
+          else {
+            console.log(`Seeding population (${seedingPopulation}) is within the total population (${totalPopulation}). Proceeding with operation.`);
+          }
+        }
+      }
     }
+
 
     return this.wrappedRunner.validatePrerequisites();
   }

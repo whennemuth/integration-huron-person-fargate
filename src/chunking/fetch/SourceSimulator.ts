@@ -252,14 +252,14 @@ async function getApiKey(): Promise<string | null> {
   }
 }
 
-function getSimulatorCounter(): AbstractAtomicCounter | null {
+export function getSimulatorCounter(params?: { stackId?: string, region?: string, landscape?: string  }): AbstractAtomicCounter | null {
   if (cachedCounter) {
     return cachedCounter;
   }
 
-  const stackId = process.env.STACK_ID;
-  const region = process.env.REGION;
-  const landscape = process.env.LANDSCAPE;
+  const stackId = params?.stackId ?? process.env.STACK_ID;
+  const region = params?.region ?? process.env.REGION;
+  const landscape = params?.landscape ?? process.env.LANDSCAPE;
 
   if (!stackId || !region || !landscape) {
     return null;
