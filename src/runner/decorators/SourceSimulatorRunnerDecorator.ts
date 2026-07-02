@@ -1,5 +1,5 @@
 import { Config, DataSourceConfig } from "integration-huron-person";
-import { ENVIRONMENT_VARIABLES_NAMES, SourceSimulatorFunctionURL, FUNCTION_BASE_NAME as sourceSimulatorFunctionBaseName } from "../../chunking/fetch/SourceSimulator";
+import { ENVIRONMENT_VARIABLES_NAMES, SourceSimulatorFunctionURL, getSimulatorCounter, FUNCTION_BASE_NAME as sourceSimulatorFunctionBaseName } from "../../chunking/fetch/SourceSimulator";
 import { ChunkingServiceRunner } from "../AbstractRunner";
 import { LambdaFunctionEnvironmentVariable } from "../LambdaFunctionEnvironmentVariable";
 import { Endpoint, NormalizedPopulationType } from "../RunnerTypes";
@@ -90,7 +90,7 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
   }
 
   public async resolveDataSource(config: Config): Promise<Endpoint> {
-    const { region, landscape, sourceSimulator } = this.wrappedRunner.env;
+    const { region, landscape, sourceSimulator, stackId } = this.wrappedRunner.env;
     let { 
       endpointConfig: { baseUrl } = {}, 
       fetchPath 
@@ -114,6 +114,14 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
     console.log(`Using source simulator: ${JSON.stringify({ baseUrl, fetchPath }, null, 2)}`);
 
     await this.logSourceSimulatorPredictions();
+
+    // Reset the atomic counter for the source simulator to ensure a clean state before starting the operation. This is important to avoid any residual state from previous runs affecting the current operation.
+    const atomicCounter = getSimulatorCounter({ stackId, region, landscape });
+    console.log(`Resetting source simulator atomic counter for landscape ${landscape} in region ${region}.`);
+    if(!atomicCounter) {
+      throw new Error('Unable to get atomic counter for source simulator. Ensure STACK_ID, REGION, and LANDSCAPE are set.');
+    }
+    await atomicCounter.reset();
 
     return { baseUrl: baseUrl!, fetchPath: fetchPath! };
   }
