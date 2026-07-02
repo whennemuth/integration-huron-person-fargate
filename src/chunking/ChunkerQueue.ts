@@ -14,6 +14,7 @@ export type ChunkerQueueParams = {
 };
 
 export const CHUNKER_COUNTER_NAME = 'chunker-offset-counter';
+export const CHUNK_ORDINAL_COUNTER_NAME = 'chunker-chunk-ordinal-counter';
 
 /**
  * Utility class to handle interactions with the SQS queue for the chunker service, with 
@@ -25,6 +26,8 @@ export class ChunkerQueue {
   private readonly region?: string;
   private readonly landscape?: string;
   private atomicCounter: AbstractAtomicCounter | undefined;
+  private readonly stackId?: string;
+  private readonly hasAtomicCounterTable: boolean;
 
   private message: Message | undefined;
 
@@ -35,6 +38,8 @@ export class ChunkerQueue {
     this.QueueUrl = QueueUrl;
     this.region = region;
     this.landscape = landscape;
+    this.stackId = STACK_ID;
+    this.hasAtomicCounterTable = !!(DYNAMODB_ATOMIC_COUNTER_TABLE_NAME && STACK_ID);
     if (!QueueUrl) {
       throw new Error('SQS_QUEUE_URL is required in environment variables');
     }
@@ -44,18 +49,31 @@ export class ChunkerQueue {
     if( !landscape) {
       throw new Error('LANDSCAPE is required in environment variables');
     }
-    if (DYNAMODB_ATOMIC_COUNTER_TABLE_NAME && STACK_ID) {
+    if (this.hasAtomicCounterTable) {
       console.log('Atomic counter detected');
-      this.atomicCounter = new class extends AbstractAtomicCounter {
-        getCounterName(): string {
-          return CHUNKER_COUNTER_NAME;
-        }
-      }({ stackId: STACK_ID, region: region!, landscape });
+      this.atomicCounter = this.createAtomicCounter(CHUNKER_COUNTER_NAME);
     }
+  }
+
+  private createAtomicCounter = (counterName: string): AbstractAtomicCounter | undefined => {
+    const { hasAtomicCounterTable, stackId, region, landscape } = this;
+    if (!hasAtomicCounterTable || !stackId || !region || !landscape) {
+      return undefined;
+    }
+
+    return new class extends AbstractAtomicCounter {
+      getCounterName(): string {
+        return counterName;
+      }
+    }({ stackId, region, landscape });
   }
 
   public get queueUrl(): string | undefined {
     return this.QueueUrl;
+  }
+
+  public hasAtomicCounterSupport = (): boolean => {
+    return this.hasAtomicCounterTable;
   }
 
 
@@ -184,6 +202,27 @@ export class ChunkerQueue {
     else {
       return currentOffset + iterationLimit;
     }
+  }
+
+  /**
+   * Build a chunk-ordinal allocator backed by a single reusable counter.
+   *
+   * Counter lifecycle is controlled by runner-level reset before each operation.
+   */
+  public createChunkOrdinalAllocator = (): (() => Promise<number>) => {
+    let localNextOrdinal = 0;
+    const chunkOrdinalCounter = this.createAtomicCounter(CHUNK_ORDINAL_COUNTER_NAME);
+
+    return async (): Promise<number> => {
+      if (chunkOrdinalCounter) {
+        const upperBound = await chunkOrdinalCounter.increment(1);
+        return Math.max(0, upperBound - 1);
+      }
+
+      const nextOrdinal = localNextOrdinal;
+      localNextOrdinal++;
+      return nextOrdinal;
+    };
   }
 
   /**

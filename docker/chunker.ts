@@ -321,12 +321,25 @@ export async function main() {
       bucketName: chunksBucket, chunkDirectory: chunker?.getChunkDirectory(), region
     });
     if (alreadyFinished) {
-      console.log(`⊘ Cancelling. This means this task was based on a SQS message that was created before the service "realized" it had reached the end.`);
+      let messageDetails = '';
+      if (chunker instanceof ChunkFromAPI) {
+        const { offset, iterationLimit } = chunker.getIterationLimitAndOffset();
+        messageDetails = ` [offset=${offset}, iterationLimit=${iterationLimit}, chunkDirectory=${chunker.getChunkDirectory()}]`;
+      }
+      console.log(`⊘ Cancelling. This means this task was based on a SQS message that was created before the service "realized" it had reached the end.${messageDetails}`);
       exitCode = 0;
       return;
     }
 
     if(chunker instanceof ChunkFromAPI) {
+      const chunkDirectory = chunker.getChunkDirectory();
+      if (chunkerQueue.hasAtomicCounterSupport()) {
+        chunker.setChunkOrdinalAllocator(chunkerQueue.createChunkOrdinalAllocator());
+        console.log('Chunk ordinal mode: atomic-allocator');
+      } else {
+        console.log('Chunk ordinal mode: offset-derived fallback (non-atomic)');
+      }
+
       // Send next chunking message BEFORE starting this task's processing
       // This enables true parallelism: the next task can start before the current one finishes
       await chunker.sendNextChunkingMessage(chunkerQueue, dryRun.toLowerCase() === 'true');
