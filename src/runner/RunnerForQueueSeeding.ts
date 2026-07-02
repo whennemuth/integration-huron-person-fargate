@@ -118,13 +118,13 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
       return;
     }
 
+    // Seed the queue
+    await this.seedQueue(endpoint, env, populationType, seedNumber);
+
     // Scale ECS service if requested
     if (env.desiredCount > 0) {
       await this.scaleEcsService(env);
     }
-
-    // Seed the queue
-    await this.seedQueue(endpoint, env, populationType, seedNumber);
   }
 
   private async scaleEcsService(env: RunnerEnv): Promise<void> {
