@@ -5,6 +5,7 @@ import { ChunkingServiceRunner } from './AbstractRunner';
 import { Endpoint, NormalizedPopulationType, RunnerEnv } from './RunnerTypes';
 import { AbstractAtomicCounter } from '../AtomicCounter';
 import { CHUNKER_COUNTER_NAME } from '../chunking/ChunkerQueue';
+import { MetricsCatchupDelay } from './MetricsCatchupDelay';
 
 /**
  * Runner for queue seeding mode with parallel processing.
@@ -144,7 +145,17 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
       );
       return;
     }
+
+    // Wait for auto-scaling alarm evaluation to "see" the new queue depth and catch up before 
+    // scaling. The new desiredCount will quickly be reverted back down to zero if the alarm is 
+    // still in ALARM state.
+    await (new MetricsCatchupDelay({
+      clusterName: env.clusterName!,
+      serviceName: env.serviceName!,
+      region: env.region!
+    })).startDelay();
     
+    // It should now be safe to scale the ECS service to the desired count.
     await desiredCountManager.setTo(env.desiredCount);
     console.log(`✓ ECS service scaled to ${env.desiredCount}\n`);
   }
