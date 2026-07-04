@@ -6,6 +6,7 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { HuronPersonSecrets } from '../../Secrets';
 import { DynamoDbTables } from '../../DynamoDB';
+import { SERVICE_LOGICAL_ID } from './ChunkerService';
 
 export interface ChunkerTaskDefinitionProps {
   repository: IRepository;
@@ -99,6 +100,7 @@ export class ChunkerTaskDefinition extends Construct {
           the ${chunksBucketName} bucket for parallel processing.`,
         REGION: region,
         ECS_CLUSTER_NAME: ecsClusterName,
+        ECS_SERVICE_NAME: SERVICE_LOGICAL_ID,
         MAX_SCALING_CAPACITY: maxScalingCapacity.toString(),
         SQS_QUEUE_URL: queueUrl,
         CHUNKS_BUCKET: chunksBucketName,

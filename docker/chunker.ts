@@ -54,6 +54,7 @@ import { HuronPersonCache } from '../src/PersonCache';
 import { TaskProtection } from '../src/TaskProtection';
 import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
 import { SyncPopulation } from './chunkTypes';
+import { DesiredCount } from '../src/DesiredCount';
 
 export type IChunkFromSource = {
   runChunking: (params: ChunkFromParams) => Promise<void>

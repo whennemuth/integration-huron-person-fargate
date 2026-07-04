@@ -93,8 +93,11 @@ export abstract class AbstractService {
     ) as CfnAlarm[];
 
     alarms.forEach((alarm) => {
-      // Get the current alarm properties to preserve threshold and comparison operator
-      const alarmResource = alarm as any;
+      // Keep upper alarms on default visible-only metric; composite is for scale-in only.
+      const isLowerAlarm = alarm.node.path.includes('/LowerAlarm');
+      if (!isLowerAlarm) {
+        return;
+      }
       
       // Remove the single-metric properties (they conflict with Metrics array)
       alarm.addPropertyDeletionOverride('MetricName');

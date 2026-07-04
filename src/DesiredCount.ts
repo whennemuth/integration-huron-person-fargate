@@ -1,7 +1,6 @@
 import { ApplicationAutoScalingClient, DescribeScalableTargetsCommand, DescribeScalableTargetsCommandInput } from "@aws-sdk/client-application-auto-scaling";
 import { ECSClient, Service, UpdateServiceCommand } from "@aws-sdk/client-ecs";
 import { TestEnvironment } from "integration-core";
-import { IContext } from "../context/IContext";
 
 export type DesiredCountParams = {
   clusterName?: string;
