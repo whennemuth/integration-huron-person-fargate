@@ -2,7 +2,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { BatchWriteCommand, DynamoDBDocumentClient, GetCommand, QueryCommand, QueryCommandOutput, ScanCommand, ScanCommandInput } from '@aws-sdk/lib-dynamodb';
 import { TestEnvironment } from 'integration-core';
 import { IContext } from '../../context/IContext';
-import { StatisticsItem } from '../processing/ApiErrorTracking';
+import { StatisticsItem } from '../ApiErrorTracking';
 
 export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-statistics-${context.TAGS.Landscape.toLowerCase()}`;
 export const DYNAMODB_PARTITION_KEY = 'integrationTimestamp';

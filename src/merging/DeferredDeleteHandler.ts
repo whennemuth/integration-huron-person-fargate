@@ -3,7 +3,7 @@ import { FieldSet, TestEnvironment } from "integration-core";
 import { BasicCache, Cache, Config, ConfigManager, FieldDefinitions, HuronPersonDataTarget, ReadPerson, TargetPersonDeleteType } from "integration-huron-person";
 import * as readline from 'readline';
 import { Readable } from 'stream';
-import { TrackingTargetApiErrorProcessor } from "../processing/ApiErrorTracking";
+import { TrackingTargetApiErrorProcessor } from "../ApiErrorTracking";
 import { getLocalConfig } from "../Utils";
 
 export type DeferredDeleteHandlerParams = {

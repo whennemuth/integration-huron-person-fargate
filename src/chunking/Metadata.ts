@@ -71,6 +71,9 @@ export type Flags = {
   bulkReset: boolean;
   trustPreviousStorage: boolean;
   syncPopulation: SyncPopulation;
+  runFailed?: boolean;
+  runFailureMessage?: string;
+  runFailureTimestamp?: string;
   [key: string]: any; // Allow additional fields for flexibility
 }
 
@@ -140,12 +143,33 @@ export interface ReadFlagsParams {
   region?: string;
 }
 
+export interface MarkRunFailedParams {
+  bucketName: string;
+  chunkDirectory: string;
+  region?: string;
+  errorMessage?: string;
+}
+
+export interface ReadTerminalErrorParams {
+  bucketName: string;
+  chunkDirectory: string;
+  region?: string;
+}
+
+export type TerminalError = {
+  stage: 'chunking';
+  chunkDirectory: string;
+  errorMessage?: string;
+  errorTimestamp: string;
+};
+
 /**
  * Centralized manager for chunk metadata operations.
  */
 export class MetadataManager {
   private static readonly METADATA_FILENAME = '_metadata.json';
   private static readonly FLAGS_FILENAME = '_flags.json';
+  private static readonly TERMINAL_ERROR_FILENAME = '_terminal_error.json';
 
   /**
    * Derive delta storage path from chunk directory
@@ -178,6 +202,13 @@ export class MetadataManager {
   }
 
   /**
+   * Get terminal error marker key from chunk directory.
+   */
+  public static getTerminalErrorKey(chunkDirectory: string): string {
+    return `${chunkDirectory}/${MetadataManager.TERMINAL_ERROR_FILENAME}`;
+  }
+
+  /**
    * Write chunk metadata to S3.
    * Persists only the run manifest (flags, paths, timestamps).
    * Parameters like chunkCount, totalRecords, chunkKeys are accepted for caller convenience but NOT persisted.
@@ -186,7 +217,18 @@ export class MetadataManager {
   public static async write(params: WriteMetadataParams): Promise<void> {
     const { 
       bucketName, chunkDirectory, itemsPerChunk,
-      source, target, bulkReset, trustPreviousStorage, syncPopulation, dryRun = false, storage, region, replace = false
+      source,
+      target,
+      bulkReset,
+      trustPreviousStorage,
+      syncPopulation,
+      runFailed,
+      runFailureMessage,
+      runFailureTimestamp,
+      dryRun = false,
+      storage,
+      region,
+      replace = false
     } = params;
 
     const metadataKey = MetadataManager.getMetadataKey(chunkDirectory);
@@ -200,6 +242,15 @@ export class MetadataManager {
     // Add optional target field
     if (target) {
       metadata.target = target;
+    }
+    if (runFailed !== undefined) {
+      metadata.runFailed = runFailed;
+    }
+    if (runFailureMessage !== undefined) {
+      metadata.runFailureMessage = runFailureMessage;
+    }
+    if (runFailureTimestamp !== undefined) {
+      metadata.runFailureTimestamp = runFailureTimestamp;
     }
 
     const metadataJson = JSON.stringify(metadata, null, 2);
@@ -249,7 +300,18 @@ export class MetadataManager {
    */
   public static async writeFlags(params: WriteFlagsParams): Promise<void> {
     const {
-      bucketName, chunkDirectory, bulkReset, trustPreviousStorage, syncPopulation, dryRun = false, storage, region, replace = false
+      bucketName,
+      chunkDirectory,
+      bulkReset,
+      trustPreviousStorage,
+      syncPopulation,
+      runFailed,
+      runFailureMessage,
+      runFailureTimestamp,
+      dryRun = false,
+      storage,
+      region,
+      replace = false
     } = params;
 
     const flagsKey = MetadataManager.getFlagsKey(chunkDirectory);
@@ -258,6 +320,16 @@ export class MetadataManager {
       trustPreviousStorage,
       syncPopulation
     };
+
+    if (runFailed !== undefined) {
+      flags.runFailed = runFailed;
+    }
+    if (runFailureMessage !== undefined) {
+      flags.runFailureMessage = runFailureMessage;
+    }
+    if (runFailureTimestamp !== undefined) {
+      flags.runFailureTimestamp = runFailureTimestamp;
+    }
 
     const flagsJson = JSON.stringify(flags, null, 2);
     const flagsLog = `s3://${bucketName}/${flagsKey}`;
@@ -374,6 +446,74 @@ export class MetadataManager {
       console.warn(`Warning: Could not read flags file: ${error.message}`);
       console.warn('Falling back to environment variables for configuration');
       return {};
+    }
+  }
+
+  /**
+   * Mark the chunking run as failed.
+   * This prevents merger orchestration from treating partial chunk output as successful completion.
+   */
+  public static async markRunFailed(params: MarkRunFailedParams): Promise<void> {
+    const { bucketName, chunkDirectory, region, errorMessage } = params;
+    const markerKey = MetadataManager.getTerminalErrorKey(chunkDirectory);
+    const marker: TerminalError = {
+      stage: 'chunking',
+      chunkDirectory,
+      errorMessage,
+      errorTimestamp: new Date().toISOString()
+    };
+
+    const s3Client = new S3Client({ region });
+    await s3Client.send(new PutObjectCommand({
+      Bucket: bucketName,
+      Key: markerKey,
+      Body: JSON.stringify(marker, null, 2),
+      ContentType: 'application/json'
+    }));
+
+    console.error(`⛔ Terminal error marker written: s3://${bucketName}/${markerKey}`);
+  }
+
+  /**
+   * Determine whether the run has been explicitly marked as failed.
+   */
+  public static async isRunFailed(params: ReadFlagsParams): Promise<boolean> {
+    const flags = await MetadataManager.readFlags(params);
+    return flags.runFailed === true;
+  }
+
+  /**
+   * Check whether a terminal error marker exists for the run.
+   */
+  public static async terminalErrorExists(params: ReadTerminalErrorParams): Promise<boolean> {
+    const { bucketName, chunkDirectory, region } = params;
+    const key = MetadataManager.getTerminalErrorKey(chunkDirectory);
+    return objectExistsInS3(bucketName, key, region);
+  }
+
+  /**
+   * Read terminal error marker details if present.
+   */
+  public static async readTerminalError(params: ReadTerminalErrorParams): Promise<TerminalError | undefined> {
+    const { bucketName, chunkDirectory, region } = params;
+    const key = MetadataManager.getTerminalErrorKey(chunkDirectory);
+    const s3Client = new S3Client({ region });
+
+    try {
+      const response = await s3Client.send(new GetObjectCommand({
+        Bucket: bucketName,
+        Key: key
+      }));
+      const body = await response.Body?.transformToString();
+      if (!body) {
+        return undefined;
+      }
+      return JSON.parse(body) as TerminalError;
+    } catch (error: any) {
+      if (error.name === 'NoSuchKey') {
+        return undefined;
+      }
+      throw error;
     }
   }
 

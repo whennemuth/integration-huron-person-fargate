@@ -62,6 +62,7 @@ export class TaskDefinitions extends Construct {
       maxScalingCapacity: ctx.ECS.chunkerService?.maxScalingCapacity ?? 1,
       ecsChunkerServiceName: SERVICE_LOGICAL_ID,
       landscape: ctx.TAGS.Landscape.toLowerCase(),
+      retries: ctx.ECS.chunkerTaskDefinition.retries,
       dryRun: ctx.DRY_RUN?.taskdef?.chunker,
       tags,
     });

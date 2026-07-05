@@ -13,6 +13,10 @@ import { extractChunkDirectory } from '../filedrop/ChunkPathUtils';
 import { getLocalConfig } from '../../Utils';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 
+type SourceApiRetryStrategy = {
+  executeWithRetry: <T>(fn: () => Promise<T>, context?: string) => Promise<T>;
+};
+
 /**
  * Configuration for BigJsonFetch chunking operations
  */
@@ -73,6 +77,9 @@ export interface BigJsonFetchConfig {
 
   /** Optional allocator for chunk ordinals used in chunk key naming. */
   chunkOrdinalAllocator?: ChunkOrdinalAllocator;
+
+  /** Optional retry strategy for source API calls (e.g., 429 handling). */
+  retryStrategy?: SourceApiRetryStrategy;
 }
 
 export type ChunkOrdinalAllocator = () => Promise<number>;
@@ -91,7 +98,13 @@ export interface ChunkResult {
   chunkCount: number;
 
   /** Indicates if this chunk reached the end of records (indicates this is the final chunk of the overall sync operation) */
-  reachedTheEndOfRecords: boolean
+  reachedTheEndOfRecords: boolean;
+
+  /** Indicates a terminal fetch/chunking error occurred (for run-level fast fail signaling). */
+  terminalErrorEncountered: boolean;
+
+  /** Optional terminal error details when terminalErrorEncountered is true. */
+  terminalErrorMessage?: string;
 }
 
 /**
@@ -129,6 +142,7 @@ export class BigJsonFetch {
   private readonly iterationLimit?: number;
   private readonly dryRun: boolean;
   private readonly chunkOrdinalAllocator: ChunkOrdinalAllocator;
+  private readonly retryStrategy?: SourceApiRetryStrategy;
 
   constructor(config: BigJsonFetchConfig) {
     let localNextOrdinal = config.offset || 0;
@@ -142,6 +156,7 @@ export class BigJsonFetch {
     this.offset = config.offset;
     this.iterationLimit = config.iterationLimit;
     this.dryRun = config.dryRun || false;
+    this.retryStrategy = config.retryStrategy;
     this.chunkOrdinalAllocator = config.chunkOrdinalAllocator || (async () => {
       const nextOrdinal = localNextOrdinal;
       localNextOrdinal++;
@@ -194,8 +209,9 @@ export class BigJsonFetch {
     // Create data source for API communication
     const dataSource = new BuCdmPeopleDataSource({ 
       config: this.config, 
-      responseFilter: this.responseFilter 
-    });
+      responseFilter: this.responseFilter,
+      retryStrategy: this.retryStrategy
+    } as any);
 
     // MEMORY OPTIMIZATION: Refactored to minimize closure capture.
     // Primary fix: ApiClientForApiKey uses streaming to prevent buffering responses in memory.
@@ -260,14 +276,19 @@ export class BigJsonFetch {
     }(batchProcessorParams);
 
     // Process all batches
-    let reachedTheEndOfRecords = false; 
+    let reachedTheEndOfRecords = false;
+    let terminalErrorEncountered = false;
+    let terminalErrorMessage: string | undefined;
     try {
       await batchProcessor.processBatch();
       reachedTheEndOfRecords = batchProcessor.reachedTheEndOfRecords();
     } catch (error: any) {
-      console.error(`Failed to fetch and chunk from API: ${error.message}`);
+      terminalErrorEncountered = true;
+      terminalErrorMessage = error?.message || 'Unknown terminal chunking error';
+      console.error(`Failed to fetch and chunk from API: ${terminalErrorMessage}`);
       console.error('Stopping overall chunking here due to error');
-      reachedTheEndOfRecords = true; // Treat as end of records to prevent further processing
+      // Equivalent terminal signal to reachedTheEndOfRecords for run-level fast-fail orchestration.
+      reachedTheEndOfRecords = true;
     }
 
     const totalRecords = batchProcessor.recordsProcessed();
@@ -285,7 +306,9 @@ export class BigJsonFetch {
       chunkKeys,
       totalRecords,
       chunkCount: chunkKeys.length,
-      reachedTheEndOfRecords
+      reachedTheEndOfRecords,
+      terminalErrorEncountered,
+      terminalErrorMessage
     };
   }
 

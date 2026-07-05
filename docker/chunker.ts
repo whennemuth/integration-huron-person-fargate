@@ -54,7 +54,6 @@ import { HuronPersonCache } from '../src/PersonCache';
 import { TaskProtection } from '../src/TaskProtection';
 import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
 import { SyncPopulation } from './chunkTypes';
-import { DesiredCount } from '../src/DesiredCount';
 
 export type IChunkFromSource = {
   runChunking: (params: ChunkFromParams) => Promise<void>
@@ -118,6 +117,40 @@ export async function chunkingAlreadyFinished(params: {
   }
   return retval;
 }
+
+/**
+ * Bail out early if a terminal chunking error marker exists for this run.
+ * The marker file itself provides at-a-glance failure visibility in S3 directory listings.
+ */
+export async function chunkingTerminalErrorEncountered(params: {
+  bucketName: string, chunkDirectory: string, region: string | undefined
+}): Promise<boolean> {
+  const { bucketName, chunkDirectory, region } = params;
+  return MetadataManager.terminalErrorExists({ bucketName, chunkDirectory, region });
+}
+
+/**
+ * Auto scaling grace period: Allow time for ECS auto scaling activity to complete
+ * before exiting. When tasks detect that the overall job has finished and exit
+ * immediately, it can prevent the scaling activity from reaching a stable state,
+ * causing the desired count to remain higher than actual running tasks, even if the ecs
+ * service had lowered the desired count as evidenced by the service scaling activities log,
+ * that action can be blocked internally by the unstable state.
+ * This brief delay ensures the auto scaling system has time to register this task
+ * as successfully running before we otherwise exit super early due to rapid job completion.
+ * @param seconds Number of seconds to pause before early exit.
+ */
+const pauseBeforeEarlyExit = async (seconds: number) => {
+  if( ! isEcsTask()) {
+    return;
+  }
+  if(`${process.env.PAUSE_BEFORE_EARLY_EXIT}`.toLocaleLowerCase() !== 'true') {
+    return;
+  }
+  console.log(`⏳ Pausing for ${seconds} seconds before early exit to allow ECS auto scaling to stabilize...`);
+  await new Promise(resolve => setTimeout(resolve, seconds * 1000));
+  console.log(`⏳ Pause complete. Exiting now.`);
+};
 
 /**
  * Get configuration from environment variables, Secrets Manager, or local file system 
@@ -305,6 +338,7 @@ export async function main() {
     if(!chunker) {
       console.error('ERROR: Insufficient task parameters. Must provide either API config or S3 input parameters via SQS message or environment variables.');
       exitCode = 1;
+      await pauseBeforeEarlyExit(30); // Allow time for ECS auto scaling to stabilize before exiting
       return;
     }
 
@@ -312,6 +346,17 @@ export async function main() {
     if(chunker.noMessagesFromQueue) {
       console.log('⊘ No messages in queue - exiting');
       exitCode = 0;
+      await pauseBeforeEarlyExit(30); // Allow time for ECS auto scaling to stabilize before exiting
+      return;
+    }
+
+    const terminalErrorEncountered = await chunkingTerminalErrorEncountered({
+      bucketName: chunksBucket, chunkDirectory: chunker?.getChunkDirectory(), region
+    });
+    if (terminalErrorEncountered) {
+      console.log('⊘ Cancelling. A terminal chunking error marker already exists for this chunk directory.');
+      exitCode = 1;
+      await pauseBeforeEarlyExit(30); // Allow time for ECS auto scaling to stabilize before exiting
       return;
     }
 
@@ -328,6 +373,7 @@ export async function main() {
         messageDetails = ` [offset=${offset}, iterationLimit=${iterationLimit}, chunkDirectory=${chunker.getChunkDirectory()}]`;
       }
       console.log(`⊘ Cancelling. This means this task was based on a SQS message that was created before the service "realized" it had reached the end.${messageDetails}`);
+      await pauseBeforeEarlyExit(30); // Allow time for ECS auto scaling to stabilize before exiting
       exitCode = 0;
       return;
     }
@@ -406,6 +452,19 @@ export async function main() {
   }
   catch (error) {
     console.error('Error in chunking process:', error);
+    const chunkDirectory = chunker?.getChunkDirectory?.();
+    if (chunkDirectory) {
+      try {
+        await MetadataManager.markRunFailed({
+          bucketName: process.env.CHUNKS_BUCKET!,
+          chunkDirectory,
+          region: process.env.REGION,
+          errorMessage: error instanceof Error ? error.message : String(error)
+        });
+      } catch (markError: any) {
+        console.error(`Failed to persist run-failed marker: ${markError.message}`);
+      }
+    }
     exitCode = 1;
   }
   finally {
@@ -456,6 +515,7 @@ if (require.main === module) {
     'ECS_CLUSTER_NAME',
     'CACHE_ENABLED',
     'CACHE_PATH',
+    'RETRY_STRATEGY',
   ].forEach(testEnvironment.getVar);
 
   main();

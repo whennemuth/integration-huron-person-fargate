@@ -4,6 +4,7 @@ import { ContainerImage, CpuArchitecture, Secret as EcsSecret, FargateTaskDefini
 import { Effect, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
+import { RetryStrategyConfig } from '../../../src/ApiErrorRetryStrategy';
 import { HuronPersonSecrets } from '../../Secrets';
 import { DynamoDbTables } from '../../DynamoDB';
 import { SERVICE_LOGICAL_ID } from './ChunkerService';
@@ -28,6 +29,7 @@ export interface ChunkerTaskDefinitionProps {
   huronPersonSecrets: HuronPersonSecrets;
   ecsChunkerServiceName: string;
   landscape: string;
+  retries?: RetryStrategyConfig;
   dryRun?: boolean;
   tags?: { [key: string]: string };
 }
@@ -46,8 +48,37 @@ export class ChunkerTaskDefinition extends Construct {
       huronPersonSecrets: { secret, secretArn , secretName } = {}, dynamoDbTables, logRetentionDays, 
       memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, itemsPerChunk, chunksBucketName, 
       inputBucketName, repository, imageTag, ecsClusterName, maxScalingCapacity, stackId, 
-      ecsChunkerServiceName, landscape, dryRun, tags 
+      ecsChunkerServiceName, landscape, dryRun, tags, retries
     } = props;
+
+    const environment: { [key: string]: string } = {
+      DESCRIPTION1:
+        `Container run by a lambda function responding to S3 events when a new large person
+          data file is uploaded to the ${inputBucketName} bucket.`,
+      DESCRIPTION2:
+        `It splits the file into smaller NDJSON chunk files, and writes the chunks back to
+          the ${chunksBucketName} bucket for parallel processing.`,
+      REGION: region,
+      ECS_CLUSTER_NAME: ecsClusterName,
+      ECS_SERVICE_NAME: SERVICE_LOGICAL_ID,
+      MAX_SCALING_CAPACITY: maxScalingCapacity.toString(),
+      SQS_QUEUE_URL: queueUrl,
+      CHUNKS_BUCKET: chunksBucketName,
+      SHARED_DELTA_STORAGE_DIR: props.sharedDeltaStorageDir,
+      DYNAMODB_ATOMIC_COUNTER_TABLE_NAME: dynamoDbTables.atomicCounterTable.tableName,
+      ITEMS_PER_CHUNK: itemsPerChunk.toString(),
+      PERSON_ID_FIELD: 'personid',
+      STACK_ID: stackId,
+      LANDSCAPE: landscape,
+      SECRET_ARN: secretArn!,
+      IS_ECS_TASK: 'true',
+      PAUSE_BEFORE_EARLY_EXIT: 'true', // Number of seconds to pause before early exit
+      DRY_RUN: dryRun ? 'true' : 'false'
+    };
+
+    if (retries && (retries.retryStrategyOptions || retries.retryStrategyType)) {
+      environment.RETRY_STRATEGY = JSON.stringify(retries);
+    }
 
     // Create CloudWatch log group
     const logGroup = new LogGroup(this, 'LogGroup', {
@@ -91,30 +122,7 @@ export class ChunkerTaskDefinition extends Construct {
       }),
       memoryLimitMiB, // Hard limit for container memory - if the container exceeds this, it will be killed. This is required to prevent runaway memory usage in case of issues.
       memoryReservationMiB, // Soft limit for container memory - the container can use more memory if available.
-      environment: {
-        DESCRIPTION1: 
-          `Container run by a lambda function responding to S3 events when a new large person 
-          data file is uploaded to the ${inputBucketName} bucket.`,
-        DESCRIPTION2: 
-          `It splits the file into smaller NDJSON chunk files, and writes the chunks back to 
-          the ${chunksBucketName} bucket for parallel processing.`,
-        REGION: region,
-        ECS_CLUSTER_NAME: ecsClusterName,
-        ECS_SERVICE_NAME: SERVICE_LOGICAL_ID,
-        MAX_SCALING_CAPACITY: maxScalingCapacity.toString(),
-        SQS_QUEUE_URL: queueUrl,
-        CHUNKS_BUCKET: chunksBucketName,
-        SHARED_DELTA_STORAGE_DIR: props.sharedDeltaStorageDir,
-        DYNAMODB_ATOMIC_COUNTER_TABLE_NAME: dynamoDbTables.atomicCounterTable.tableName,
-        ITEMS_PER_CHUNK: itemsPerChunk.toString(),
-        PERSON_ID_FIELD: 'personid',
-        STACK_ID: stackId,
-        LANDSCAPE: landscape,
-        SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
-        // INPUT_BUCKET and INPUT_KEY will be provided at runtime by Lambda
-        IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
-        DRY_RUN: dryRun ? 'true' : 'false'
-      },
+      environment,
       secrets
     });
 

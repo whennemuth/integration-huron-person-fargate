@@ -109,7 +109,7 @@ export class SourceSimulator extends Construct {
         ]
       },
       // Set reserved concurrency to control parallel execution
-      reservedConcurrentExecutions: 10,
+      reservedConcurrentExecutions: 20,
     });
 
     // Grant Lambda permission to read from Secrets Manager

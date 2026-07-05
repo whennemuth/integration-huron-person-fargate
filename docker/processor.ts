@@ -50,8 +50,8 @@ import {
 } from 'integration-huron-person';
 import type { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
 import { MetadataManager, ChunkMetadata, Flags } from '../src/chunking/Metadata';
-import { getRetryStrategy } from '../src/processing/ApiErrorRetryStrategy';
-import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/processing/ApiErrorTracking';
+import { getRetryStrategy } from '../src/ApiErrorRetryStrategy';
+import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/ApiErrorTracking';
 import { NextChunk, QueueReader } from '../src/Queue';
 import { getLocalConfig } from '../src/Utils';
 import { HuronPersonCache } from '../src/PersonCache';

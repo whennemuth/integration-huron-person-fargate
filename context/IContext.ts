@@ -1,5 +1,5 @@
 import { Config as HuronPersonConfig } from 'integration-huron-person';
-import { RetryStrategyConfig } from '../src/processing/ApiErrorRetryStrategy';
+import { RetryStrategyConfig } from '../src/ApiErrorRetryStrategy';
 
 export interface IContext {
 
@@ -45,6 +45,7 @@ export interface IContext {
       memoryLimitMiB: number;
       memoryReservationMiB: number;
       logRetentionDays: number;
+      retries?: RetryStrategyConfig;
     };
     /** Processor task definition configuration */
     processorTaskDefinition: {

@@ -6,6 +6,7 @@ import { SyncPopulation } from "../../../docker/chunkTypes";
 import { ChunkFromParams, IChunkFromSource, writeChunkMetadata } from "../../../docker/chunker";
 import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
+import { getRetryStrategy } from '../../ApiErrorRetryStrategy';
 import { ChunkerQueue } from '../ChunkerQueue';
 import { MetadataManager, WriteMetadataParams } from "../Metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
@@ -499,7 +500,8 @@ export class ChunkFromAPI implements IChunkFromSource {
         offset, // indicates the "nth" chunk in from the start of the overall sync population. Used in the context of chunking "in parallel".
         iterationLimit, // indicates how many chunks to "chunk out" before stopping. Used in the context of chunking "in parallel".
         dryRun: dryRun.toLowerCase() === 'true',
-        chunkOrdinalAllocator: this.chunkOrdinalAllocator
+        chunkOrdinalAllocator: this.chunkOrdinalAllocator,
+        retryStrategy: getRetryStrategy(process.env.RETRY_STRATEGY)
       };
 
       // Run fetch and chunk operation
@@ -510,20 +512,54 @@ export class ChunkFromAPI implements IChunkFromSource {
       const { baseUrl, fetchPath } = this.taskParameters;
       const sourceUrl = `${baseUrl}${fetchPath}`;
 
-      if(result.reachedTheEndOfRecords) {
-        // Build target URL from config if available
-        let targetUrl: string | undefined;
-        try {
-          const targetBaseUrl = this.config.dataTarget?.endpointConfig?.baseUrl;
-          const personsPath = this.config.dataTarget?.personsPath;
-          if (targetBaseUrl && personsPath) {
-            targetUrl = `${targetBaseUrl}${personsPath}`;
-          }
-        } catch (error) {
-          // Target URL is optional, don't fail if not available
-          console.log('Target URL not available in config');
+      // Build target URL from config if available
+      let targetUrl: string | undefined;
+      try {
+        const targetBaseUrl = this.config.dataTarget?.endpointConfig?.baseUrl;
+        const personsPath = this.config.dataTarget?.personsPath;
+        if (targetBaseUrl && personsPath) {
+          targetUrl = `${targetBaseUrl}${personsPath}`;
         }
+      } catch (error) {
+        // Target URL is optional, don't fail if not available
+        console.log('Target URL not available in config');
+      }
 
+      if (result.terminalErrorEncountered) {
+        const runFailureTimestamp = new Date().toISOString();
+        const runFailureMessage = result.terminalErrorMessage || 'Unknown terminal chunking error';
+
+        // Persist failure metadata for run diagnostics and explicit terminal-state visibility.
+        await writeChunkMetadata({
+          storage: chunksStorage,
+          bucketName: chunksBucket,
+          chunkDirectory,
+          itemsPerChunk,
+          source: sourceUrl,
+          target: targetUrl,
+          dryRun: fetchConfig.dryRun || false,
+          bulkReset,
+          trustPreviousStorage,
+          syncPopulation: this.taskParameters.populationType as SyncPopulation,
+          runFailed: true,
+          runFailureMessage,
+          runFailureTimestamp,
+          replace: true,
+          region
+        } satisfies WriteMetadataParams);
+
+        // Keep flags aligned with metadata so merger gating has the same terminal signal.
+        await MetadataManager.markRunFailed({
+          bucketName: chunksBucket,
+          chunkDirectory,
+          region,
+          errorMessage: runFailureMessage
+        });
+
+        throw new Error(`Terminal chunking failure (retry exhausted): ${runFailureMessage}`);
+      }
+
+      if(result.reachedTheEndOfRecords) {
         // Build aggregated metadata from run-level S3 state
         // This ensures metadata reflects ALL chunks across all parallel tasks, not just this task's local slice
         let aggregatedChunkCount = result.chunkCount;

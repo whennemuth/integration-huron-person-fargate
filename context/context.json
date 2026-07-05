@@ -21,7 +21,10 @@
       "cpu": 2048,
       "memoryLimitMiB": 4096,
       "memoryReservationMiB": 2048,
-      "logRetentionDays": 90
+      "logRetentionDays": 90,
+      "retries": {
+        "retryStrategyType": "AGGRESSIVE"
+      }
     },
     "processorTaskDefinition": {
       "cpu": 1024,

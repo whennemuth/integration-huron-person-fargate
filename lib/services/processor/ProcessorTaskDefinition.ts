@@ -84,7 +84,7 @@ export class ProcessorTaskDefinition extends Construct {
     if(retries) {
       const { retryStrategyOptions, retryStrategyType } = retries;
       if(retryStrategyOptions || retryStrategyType) {
-        environment.RETRY_STRATEGY = JSON.stringify(retryStrategyType);
+        environment.RETRY_STRATEGY = JSON.stringify(retries);
       }
     }
 

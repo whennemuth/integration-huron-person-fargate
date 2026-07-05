@@ -2,7 +2,7 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { StatisticsTable } from '../src/statistics/StatisticsTable';
 import { IContext } from '../context/IContext';
-import { StatisticsItem } from '../src/processing/ApiErrorTracking';
+import { StatisticsItem } from '../src/ApiErrorTracking';
 
 const dynamoMock = mockClient(DynamoDBDocumentClient);
 

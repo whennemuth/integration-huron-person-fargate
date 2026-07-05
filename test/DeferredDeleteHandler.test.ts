@@ -1,7 +1,7 @@
 import { DeferredDeleteHandler, DeferredDeleteHandlerParams } from '../src/merging/DeferredDeleteHandler';
 import { TargetPersonDeleteType, Config, HuronPersonDataTarget, ReadPerson } from 'integration-huron-person';
 import { BatchStatus, FieldSet } from 'integration-core';
-import { TrackingTargetApiErrorProcessor } from '../src/processing/ApiErrorTracking';
+import { TrackingTargetApiErrorProcessor } from '../src/ApiErrorTracking';
 import { mockClient } from 'aws-sdk-client-mock';
 import { S3, GetObjectCommand } from '@aws-sdk/client-s3';
 import { sdkStreamMixin } from '@smithy/util-stream';

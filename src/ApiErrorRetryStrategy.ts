@@ -270,7 +270,7 @@ export const DEFAULT_RETRY_STRATEGY = new RetryStrategy({
   baseDelayMs: 1000,
   exponentialBase: 2,
   maxDelayMs: 30000,
-  retryableStatusCodes: [429, 500, 502, 503, 504],
+  retryableStatusCodes: [429, 408, 500, 502, 503, 504],
 });
 
 /**
@@ -284,7 +284,7 @@ export const AGGRESSIVE_RETRY_STRATEGY = new RetryStrategy({
   baseDelayMs: 2000,
   exponentialBase: 2,
   maxDelayMs: 60000,
-  retryableStatusCodes: [429, 500, 502, 503, 504],
+  retryableStatusCodes: [429, 408, 500, 502, 503, 504],
 });
 
 export const THROTTLING_ONLY_RETRY_STRATEGY = new RetryStrategy({

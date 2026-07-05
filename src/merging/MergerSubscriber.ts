@@ -87,6 +87,19 @@ export async function handler(event: any): Promise<any> {
   console.log(`Delta storage path: ${deltaStoragePath}`);
   console.log(`Chunk directory: ${chunkDirectory}`);
 
+  const terminalError = await MetadataManager.readTerminalError({
+    bucketName: bucket,
+    chunkDirectory,
+    region
+  });
+  if (terminalError) {
+    console.error(
+      `⛔ Merger blocked because chunking terminal error marker exists for ${chunkDirectory}. ` +
+      `Reason: ${terminalError.errorMessage || 'unknown error'}`
+    );
+    return { statusCode: 200, body: 'Run failed - merger blocked' };
+  }
+
   // Step 1: Validate contiguous marker ordinals to determine completion
   // This replaces the metadata.chunkCount gate with marker-based validation.
   // Merger is triggered only when markers form uninterrupted sequence 0..N.

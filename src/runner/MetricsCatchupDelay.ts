@@ -101,14 +101,11 @@ export class MetricsCatchupDelay {
     
     while (remaining > 0) {
       alarmState = await this.getAlarmState();
-      if (alarmState === undefined) {
-        console.log(`${remaining} seconds remaining of a ${totalDelaySeconds} second delay`);
-      }
-      else if (alarmState === 'ALARM') {
-        console.log(`Alarm state: ${alarmState}. ${remaining} seconds remaining of a ${totalDelaySeconds} second delay`);
+      if (alarmState !== 'OK') {
+        console.log(`Alarm state: ${alarmState ? alarmState : 'undefined'} (needs to be OK). ${remaining} of ${totalDelaySeconds} seconds remain to try again, retrying in ${countdownStepSeconds} seconds...`);
       }
       else {
-        console.log(`✓ Metrics catch-up delay completed (alarm state, ${alarmState}, is no longer ALARM).\n`);
+        console.log(`✓ Metrics catch-up delay completed after ${totalDelaySeconds - remaining} seconds (alarm state, ${alarmState}, is no longer ALARM).\n`);
         return;
       }
       const sleepSeconds = Math.min(countdownStepSeconds, remaining);
