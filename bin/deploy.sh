@@ -33,6 +33,6 @@ cdk output --all
 echo ""
 echo -e "${YELLOW}Next steps:${NC}"
 echo "1. Build and push Docker image: npm run docker-publish"
-echo "2. Upload a JSON file to the input bucket to trigger processing"
+echo "2. Trigger processing: Use src/runner/Runner.ts for source API method, or upload a JSON file to the input bucket if using the \"filedrop\" method"
 echo "3. Monitor CloudWatch logs: /ecs/huron-person-chunker and /ecs/huron-person-integration"
 echo "4. Check SQS queue depth for processing progress"

@@ -73,4 +73,4 @@ fi
 echo ""
 echo -e "${YELLOW}Next steps:${NC}"
 echo "1. Deploy CDK stack: npm run deploy"
-echo "2. Upload a JSON file to S3 to trigger processing"
+echo "2. Trigger processing: Use src/runner/Runner.ts for source API method, or upload a JSON file to the input bucket if using the \"filedrop\" method"

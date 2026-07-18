@@ -30,7 +30,11 @@ npm run docker-publish
 ### 3. Test
 
 ```bash
-# Upload a JSON file to trigger processing
+# Trigger processing: Use src/runner/Runner.ts for source API method (Set "RUNNER_" prefixed environment variables first)
+export $(cat .env | xargs)
+npx ts-node src/Runner.ts workspaceFolder=$(pwd) 
+
+# Or upload a JSON file to the input bucket if using the "filedrop" method as the source
 aws s3 cp test-data/sample.json s3://huron-person-file-drop-dev/
 ```
 
