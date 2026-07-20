@@ -32,7 +32,7 @@ ECR_REPOSITORY_NAME=huron-person-integration
 DRY_RUN=false
 
 # Huron Person Integration Environment Variables
-HURON_PERSON_CONFIG_PATH=../integration-huron-person/config.json
+HURON_PERSON_CONFIG_PATH=../integration-huron-person/config/config.staging.json
 
 # Person DataSource Configuration (API Key Authentication)
 DATASOURCE_ENDPOINTCONFIG_PERSON_BASE_URL=https://prod-buprod-cloudultra-fm.snaplogic.io
@@ -70,7 +70,7 @@ CACHE_ENABLED=true
 CACHE_PATH=.
 
 # --------- Use these for src\Runner.ts ---------- #
-RUNNER_CHUNKER_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/770203350335/huron-person-chunker-queue-dev
+RUNNER_CHUNKER_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/770203350335/huron-person-chunker-queue-staging
 RUNNER_DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT=10
 RUNNER_POPULATION_TYPE=person-full
 RUNNER_BULK_RESET=false
@@ -139,11 +139,11 @@ DOCKER_CHUNKER_REGION=us-east-2
 DOCKER_CHUNKER_ITEMS_PER_CHUNK=200
 DOCKER_CHUNKER_PERSON_ID_FIELD=personid
 DOCKER_CHUNKER_DRY_RUN=false
-DOCKER_CHUNKER_SQS_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/770203350335/huron-person-chunker-queue-dev
+DOCKER_CHUNKER_SQS_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/770203350335/huron-person-chunker-queue-staging
 DOCKER_CHUNKER_SHARED_DELTA_STORAGE_DIR=delta-storage
 DOCKER_CHUNKER_IS_ECS_TASK=false
 DOCKER_CHUNKER_ECS_AGENT_URI=http://169.254.170.2
-DOCKER_CHUNKER_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config.json
+DOCKER_CHUNKER_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config/config.staging.json
 DOCKER_CHUNKER_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-xug4Og
 DOCKER_CHUNKER_HURON_PERSON_CONFIG_JSON=
 DOCKER_CHUNKER_POPULATION_SCOPE=single
@@ -173,7 +173,7 @@ DOCKER_PROCESSOR_RETRY_STRATEGY=AGGRESSIVE
 DOCKER_PROCESSOR_SHARED_DELTA_STORAGE_DIR=delta-storage
 DOCKER_PROCESSOR_IS_ECS_TASK=false
 DOCKER_PROCESSOR_ECS_AGENT_URI=http://169.254.170.2
-DOCKER_PROCESSOR_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config.json
+DOCKER_PROCESSOR_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config/config.staging.json
 DOCKER_PROCESSOR_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-xug4Og
 DOCKER_PROCESSOR_CACHE_ENABLED=true
 DOCKER_PROCESSOR_CACHE_PATH=.
@@ -189,7 +189,7 @@ DOCKER_MERGER_DRY_RUN=false
 DOCKER_MERGER_IS_ECS_TASK=false
 DOCKER_MERGER_ECS_AGENT_URI=http://169.254.170.2
 DOCKER_MERGER_PERSON_DELETE_TYPE=soft
-DOCKER_MERGER_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config.json
+DOCKER_MERGER_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config/config.staging.json
 DOCKER_MERGER_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-xug4Og
 DOCKER_MERGER_HURON_PERSON_CONFIG_JSON=
 DOCKER_MERGER_DYNAMODB_STATISTICS_TABLE_NAME=huron-person-fargate-statistics
@@ -245,7 +245,7 @@ DEFERRED_DELETE_REGION=us-east-2
 DEFERRED_DELETE_MERGED_NDJSON_KEY=previous-input-testing.ndjson
 DEFERRED_DELETE_BASELINE_NDJSON_KEY=delta-storage/previous-input.ndjson
 DEFERRED_DELETE_PERSON_DELETE_TYPE=soft
-DEFERRED_DELETE_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config.json
+DEFERRED_DELETE_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config/config.staging.json
 DEFERRED_DELETE_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
 DEFERRED_DELETE_DYNAMODB_STATISTICS_TABLE_NAME=huron-person-fargate-statistics
 DEFERRED_DELETE_CACHE_ENABLED=true
@@ -256,12 +256,12 @@ PERSON_CACHE_PERSON_CACHE_BUCKET_NAME=huron-person-chunks-dev
 PERSON_CACHE_PERSON_CACHE_KEY=personCache.txt
 PERSON_CACHE_REGION=us-east-2
 PERSON_CACHE_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
-PERSON_CACHE_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config.json
+PERSON_CACHE_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config/config.staging.json
 PERSON_CACHE_CACHE_ENABLED=true
 PERSON_CACHE_CACHE_PATH=.
 
 # ------- Harness Groups for src\processing\ApiErrorTracking.ts ------- #
-API_ERROR_TRACKING_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config.json
+API_ERROR_TRACKING_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config/config.staging.json
 API_ERROR_TRACKING_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
 API_ERROR_TRACKING_CACHE_ENABLED=true
 API_ERROR_TRACKING_CACHE_PATH=.

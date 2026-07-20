@@ -5,7 +5,7 @@
   "TAGS": {
     "Service": "research-administration",
     "Function": "kuali",
-    "Landscape": "dev",
+    "Landscape": "staging",
     "CostCenter": "AWS Kuali",
     "Ticket": "PRJ2017653"
   },
@@ -17,12 +17,14 @@
     "deltaExpirationDays": 30
   },
   "ECS": {
-    "vpcId": "vpc-0924b18f090419275",
     "chunkerTaskDefinition": {
       "cpu": 2048,
       "memoryLimitMiB": 4096,
       "memoryReservationMiB": 2048,
-      "logRetentionDays": 90
+      "logRetentionDays": 90,
+      "retries": {
+        "retryStrategyType": "AGGRESSIVE"
+      }
     },
     "processorTaskDefinition": {
       "cpu": 1024,
@@ -67,15 +69,15 @@
       "pollIntervalMinutes": 2
     },
     "sourceSimulator": {
-      "enabled": true,
+      "enabled": false,
       "timeoutSeconds": 60,
       "memorySizeMb": 256,
-      "mockTotalPopulation": 1000,
+      "mockTotalPopulation": 1950,
       "simulatedDelaySeconds": 3
     }
   },
   "HURON_PERSON_CONFIG": {
-    "configPath": "../integration-huron-person/config.json"
+    "configPath": "../integration-huron-person/config/config.staging.json"
   },
   "BULK_RESET": true,
   "TRUST_PREVIOUS_STORAGE": false,

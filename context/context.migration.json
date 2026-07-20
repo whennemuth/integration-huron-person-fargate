@@ -17,12 +17,15 @@
     "deltaExpirationDays": 30
   },
   "ECS": {
-    "vpcId": "vpc-0924b18f090419275",
+    "vpcId": "vpc-08291eb088cf2e883",
     "chunkerTaskDefinition": {
       "cpu": 2048,
       "memoryLimitMiB": 4096,
       "memoryReservationMiB": 2048,
-      "logRetentionDays": 90
+      "logRetentionDays": 90,
+      "retries": {
+        "retryStrategyType": "AGGRESSIVE"
+      }
     },
     "processorTaskDefinition": {
       "cpu": 1024,
@@ -65,10 +68,17 @@
       "timeoutSeconds": 60,
       "memorySizeMb": 256,
       "pollIntervalMinutes": 2
+    },
+    "sourceSimulator": {
+      "enabled": false,
+      "timeoutSeconds": 60,
+      "memorySizeMb": 256,
+      "mockTotalPopulation": 1950,
+      "simulatedDelaySeconds": 3
     }
   },
   "HURON_PERSON_CONFIG": {
-    "configPath": "../integration-huron-person/config.json"
+    "configPath": "../integration-huron-person/config/config.migration.json"
   },
   "BULK_RESET": true,
   "TRUST_PREVIOUS_STORAGE": false,

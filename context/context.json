@@ -5,7 +5,7 @@
   "TAGS": {
     "Service": "research-administration",
     "Function": "kuali",
-    "Landscape": "dev",
+    "Landscape": "migration",
     "CostCenter": "AWS Kuali",
     "Ticket": "PRJ2017653"
   },
@@ -17,6 +17,7 @@
     "deltaExpirationDays": 30
   },
   "ECS": {
+    "vpcId": "vpc-08291eb088cf2e883",
     "chunkerTaskDefinition": {
       "cpu": 2048,
       "memoryLimitMiB": 4096,
@@ -69,7 +70,7 @@
       "pollIntervalMinutes": 2
     },
     "sourceSimulator": {
-      "enabled": true,
+      "enabled": false,
       "timeoutSeconds": 60,
       "memorySizeMb": 256,
       "mockTotalPopulation": 1950,
@@ -77,7 +78,7 @@
     }
   },
   "HURON_PERSON_CONFIG": {
-    "configPath": "../integration-huron-person/config.json"
+    "configPath": "../integration-huron-person/config/config.migration.json"
   },
   "BULK_RESET": true,
   "TRUST_PREVIOUS_STORAGE": false,
