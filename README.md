@@ -6,7 +6,7 @@ This CDK TypeScript project deploys the Huron Person integration as a serverless
 
 This project is an independently versioned npm package with its own Git repository.
 
-It depends on other packages (notably `integration-core` and integration pipeline packages) through dependency-level composition. The workspace is a development convenience, not a workspace-level source-control unit.
+It depends on other packages (notably `integration-core`, `integration-huron-person` and integration pipeline packages) through dependency-level composition. The workspace is a development convenience, not a workspace-level source-control unit.
 
 ## Shared Copilot Skills Setup (VS Code Configuration)
 *NOTE: The following assumes a VS Code development environment - adapt as needed for other editors.*

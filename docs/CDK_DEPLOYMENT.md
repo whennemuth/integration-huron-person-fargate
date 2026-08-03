@@ -183,6 +183,19 @@ huron-person-fargate-processor.ChunksBucketName = huron-person-chunks-dev
 
 ## Troubleshooting
 
+### Stack creation/update known issues
+
+**Transient AWS Lambda Service-Side Error:**
+
+You may encounter a stack creation/update error that looks like this: 
+```
+Resource handler returned message: "The role defined for the function cannot be assumed by Lambda. (Service: Lambda, Status Code: 400, Request ID: feefaedf-ed97-40f4-832f-171cd0ed3c08) (SDK Attempt Count: 1)" (RequestToken: 3e22193a-2bde-1510-e55e-f168363a1832, HandlerErrorCode: InvalidRequest)
+```
+
+The Lambda API itself occasionally returns 400 - The role defined for the function cannot be assumed as a transient error even when the role is fully valid and propagated. This is a known intermittent behavior in the Lambda control plane — the error message is misleading and doesn't always mean the role is actually unassumable.
+
+There is not much you can do to rule out this transient error. However, retrying the stack creation/update should resolve the issue. 
+
 ### Chunker Task Not Starting
 
 **Check Lambda logs:**
