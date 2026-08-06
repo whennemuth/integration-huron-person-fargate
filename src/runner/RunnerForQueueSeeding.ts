@@ -18,7 +18,7 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
   public async validatePrerequisites(): Promise<boolean> {
     const { 
       queueUrl, messagesToPrepopulate, buid, region, stackId, landscape, 
-      desiredCount, clusterName, serviceName 
+      desiredCount, clusterName, serviceName, sourceSimulator
     } = this.env;
 
     if (!queueUrl) {
@@ -66,10 +66,15 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
       }
     }
 
-
-    // Validate we are not overseeding as determined by comparing seedNumber to source simulator predicted .  
-    const predictions = await this.getSourceSimulatorPredictions();
-    const { totalPopulation } = predictions;
+    if(sourceSimulator) {
+      // Validate we are not overseeding as determined by comparing seedNumber to source simulator predicted .  
+      const predictions = await this.getSourceSimulatorPredictions();
+      const { totalPopulation } = predictions;
+      if (seedNumber > totalPopulation) {
+        console.error(`MESSAGES_TO_PREPOPULATE (${seedNumber}) exceeds the total population predicted by the source simulator (${totalPopulation}). Cancelling operation`);
+        return false;
+      }
+    }
 
     return true;
   }
