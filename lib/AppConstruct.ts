@@ -168,10 +168,17 @@ export class AppConstruct extends Construct {
     // ========================================
     // 9. Merger Service (Phase 3)
     // ========================================
-    this.ecs.createMergerService(
-      this.queue.mergerQueue,
-      this.queue.mergerDeadLetterQueue
-    );
+    // Only create merger service for file-based delta storage
+    // DynamoDB strategy doesn't need file consolidation (atomic writes to shared tables)
+    if (!ctx.useDynamoDb) {
+      this.ecs.createMergerService(
+        this.queue.mergerQueue,
+        this.queue.mergerDeadLetterQueue
+      );
+      console.log('[MergerService] Created (file-based delta storage)');
+    } else {
+      console.log('[MergerService] Skipped (DynamoDB delta storage - no file consolidation needed)');
+    }
 
     
     // Source Simulator (Optional) - Mock API for testing without 30-minute cooldown

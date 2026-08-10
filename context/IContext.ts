@@ -156,6 +156,17 @@ export interface IContext {
   BULK_RESET?: boolean;
 
   /** 
+   * Use DynamoDB for delta storage instead of S3 file-based storage.
+   * When true:
+   * - Creates PersonCurrentState and PersonHistory tables
+   * - Processors write directly to DynamoDB (no mini-delta files)
+   * - Merger simplified (deletion detection only, no file consolidation)
+   * - Eliminates "maintain the illusion" coordination problem
+   * Default: false (use file-based S3 delta storage)
+   */
+  useDynamoDb?: boolean;
+
+  /** 
    * Trust previous storage configuration - controls whether to trust previously stored 
    * data (e.g., previous-input.ndjson) as the source of truth for existing records insofar
    * as they already exist in the target system or not), or pre-load all of the sourceIdentifier

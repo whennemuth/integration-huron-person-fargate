@@ -178,6 +178,27 @@ DOCKER_PROCESSOR_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret
 DOCKER_PROCESSOR_CACHE_ENABLED=true
 DOCKER_PROCESSOR_CACHE_PATH=.
 
+# ------- Harness Groups for docker/processor-dynamodb.ts ------- #
+# DynamoDB-based processor (simplified - no mini-deltas, no marker files)
+# Writes directly to PersonCurrentState and PersonHistory tables
+# Note: Requires PERSON_CURRENT_STATE_TABLE_NAME and PERSON_HISTORY_TABLE_NAME
+DOCKER_PROCESSOR_DYNAMODB_REGION=us-east-2
+DOCKER_PROCESSOR_DYNAMODB_CHUNKS_BUCKET=huron-person-chunks-dev
+DOCKER_PROCESSOR_DYNAMODB_CHUNK_KEY=chunks/person-full/2026-04-09T15:28:18.703Z/chunk-0000.ndjson
+DOCKER_PROCESSOR_DYNAMODB_SQS_QUEUE_URL=
+DOCKER_PROCESSOR_DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME=huron-person-fargate-person-current-state-preview
+DOCKER_PROCESSOR_DYNAMODB_PERSON_HISTORY_TABLE_NAME=huron-person-fargate-person-history-preview
+DOCKER_PROCESSOR_DYNAMODB_STATIC_MAP_USAGE={"orgMap":true,"stateMap":true,"countryMap":true}
+DOCKER_PROCESSOR_DYNAMODB_DRY_RUN=false
+DOCKER_PROCESSOR_DYNAMODB_BULK_RESET=false
+DOCKER_PROCESSOR_DYNAMODB_DYNAMODB_STATISTICS_TABLE_NAME=huron-person-fargate-statistics-preview
+DOCKER_PROCESSOR_DYNAMODB_RETRY_STRATEGY=AGGRESSIVE
+DOCKER_PROCESSOR_DYNAMODB_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config/config.staging.json
+DOCKER_PROCESSOR_DYNAMODB_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-xug4Og
+DOCKER_PROCESSOR_DYNAMODB_HURON_PERSON_CONFIG_JSON=
+DOCKER_PROCESSOR_DYNAMODB_STACK_ID=huron-person-fargate
+DOCKER_PROCESSOR_DYNAMODB_LANDSCAPE=preview
+
 # ------- Harness Groups for docker/merger.ts ------- #
 DOCKER_MERGER_SQS_QUEUE_URL=
 DOCKER_MERGER_CHUNKS_BUCKET=huron-person-chunks-dev
