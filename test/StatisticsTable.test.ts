@@ -1,6 +1,6 @@
 import { mockClient } from 'aws-sdk-client-mock';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
-import { StatisticsTable } from '../src/statistics/StatisticsTable';
+import { StatisticsTable } from '../src/dynamodb/StatisticsTable';
 import { IContext } from '../context/IContext';
 import { StatisticsItem } from '../src/ApiErrorTracking';
 

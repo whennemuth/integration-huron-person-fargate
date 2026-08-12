@@ -7,7 +7,7 @@ import {
   DYNAMODB_SECONDARY_PARTITION_KEY as statisticsSecondaryPartitionKey, 
   DYNAMODB_SORT_KEY as statisticsSortKey, 
   DYNAMODB_TABLE_NAME as statisticsTableName
-} from '../src/statistics/StatisticsTable';
+} from '../src/dynamodb/StatisticsTable';
 import {
   DYNAMODB_TABLE_NAME as atomicCounterTableName,
   DYNAMODB_PARTITION_KEY as atomicCounterPartitionKey
@@ -18,7 +18,7 @@ import {
   DYNAMODB_GSI_INDEX_NAME as personCurrentStateGSIIndexName,
   DYNAMODB_GSI_PARTITION_KEY as personCurrentStateGSIPartitionKey,
   DYNAMODB_GSI_SORT_KEY as personCurrentStateGSISortKey
-} from '../src/PersonCurrentStateTable';
+} from '../src/dynamodb/PersonCurrentStateTable';
 import {
   DYNAMODB_TABLE_NAME as personHistoryTableName,
   DYNAMODB_PARTITION_KEY as personHistoryPartitionKey,
@@ -29,7 +29,7 @@ import {
   DYNAMODB_GSI2_INDEX_NAME as personHistoryGSI2IndexName,
   DYNAMODB_GSI2_PARTITION_KEY as personHistoryGSI2PartitionKey,
   DYNAMODB_GSI2_SORT_KEY as personHistoryGSI2SortKey
-} from '../src/PersonHistoryTable';
+} from '../src/dynamodb/PersonHistoryTable';
 
 export enum TableResourceIds {
   STATISTICS_TABLE = 'StatisticsTable',
