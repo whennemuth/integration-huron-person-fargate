@@ -254,6 +254,38 @@ export class ChunkerTaskDefinition extends Construct {
       })
     );
 
+    // Grant DynamoDB write permissions for PersonCurrentStateTable
+    // Used for storing current sync state of each person in DynamoDB mode
+    if (dynamoDbTables.personCurrentStateTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.personCurrentStateTable.tableName}`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB write permissions for StatisticsTable
+    // Used for writing METADATA and FLAGS event records in DynamoDB mode
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'dynamodb:PutItem',
+          'dynamodb:UpdateItem',
+        ],
+        resources: [
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.statisticsTable.tableName}`,
+        ],
+      })
+    );
+
     // Apply any resource-specific tags - tags not defined in IContext.TAGS
     if (tags) {
       Object.entries(tags).forEach(([key, value]) => {

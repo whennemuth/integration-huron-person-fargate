@@ -196,6 +196,41 @@ export class ProcessorTaskDefinition extends Construct {
       })
     );
 
+    // Grant DynamoDB read permissions for PersonCurrentStateTable
+    // Used for reading current person sync state during processing in DynamoDB mode
+    if (dynamoDbTables.personCurrentStateTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:GetItem',
+            'dynamodb:Query',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.personCurrentStateTable.tableName}`,
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.personCurrentStateTable.tableName}/index/*`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB write permissions for PersonHistoryTable
+    // Used for writing person change history records during processing in DynamoDB mode
+    if (dynamoDbTables.personHistoryTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.personHistoryTable.tableName}`,
+          ],
+        })
+      );
+    }
+
     // Grant ECS task protection permissions
     // This allows the running task to enable/disable scale-in protection via ECS agent endpoint
     this.taskDefinition.addToTaskRolePolicy(

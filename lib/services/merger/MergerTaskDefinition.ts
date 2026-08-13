@@ -155,6 +155,42 @@ export class MergerTaskDefinition extends Construct {
       })
     );
 
+    // Grant DynamoDB query permissions for PersonCurrentStateTable
+    // Used for deletion detection (finding persons in storage but not in source) in DynamoDB mode
+    if (dynamoDbTables.personCurrentStateTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:Query',
+            'dynamodb:GetItem',
+            'dynamodb:Scan', // Needed for full table scan to detect deletions
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.personCurrentStateTable.tableName}`,
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.personCurrentStateTable.tableName}/index/*`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB write permissions for PersonHistoryTable
+    // Used for writing DELETED event records during merge in DynamoDB mode
+    if (dynamoDbTables.personHistoryTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.personHistoryTable.tableName}`,
+          ],
+        })
+      );
+    }
+
     // Grant ECS task protection permissions
     // This allows the running task to enable/disable scale-in protection via ECS agent endpoint
     this.taskDefinition.addToTaskRolePolicy(
