@@ -50,7 +50,7 @@
  * ```
  */
 
-import { FieldSet, humanReadableFromMilliseconds, Timer, TestEnvironment, DeltaStrategyForDynamoDB } from 'integration-core';
+import { FieldSet, humanReadableFromMilliseconds, TestEnvironment, Timer } from 'integration-core';
 import {
   BasicCache,
   Config,
@@ -60,14 +60,15 @@ import {
   TargetApiErrorEventProcessor
 } from 'integration-huron-person';
 import type { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
-import { MetadataManager, Flags } from '../src/chunking/Metadata';
 import { getRetryStrategy } from '../src/ApiErrorRetryStrategy';
 import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/ApiErrorTracking';
 import { NextChunk, QueueReader } from '../src/Queue';
-import { getLocalConfig } from '../src/Utils';
-import { HuronPersonCache } from '../src/PersonCache';
-import { SyncPopulation } from './chunkTypes';
 import { TaskProtection } from '../src/TaskProtection';
+import { getLocalConfig } from '../src/Utils';
+import { Flags, MetadataForS3 } from '../src/chunking/metadata';
+const MetadataManager = MetadataForS3;
+import { PersonCacheLookup } from '../src/person-cache/PersonCacheLookup';
+import { SyncPopulation } from './chunkTypes';
 
 const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
@@ -293,46 +294,6 @@ export async function main(queueReader: QueueReader) {
       console.log(`Cache instance created: ${cache.constructor.name}`);
     }
 
-    // Implement cache lookup for source identifiers
-    let cachedSourceIdentifiers: Set<string> | undefined;
-    const lookupPersonInTargetSystemCache = async (person: FieldSet | string): Promise<any> => {
-      if (!cachedSourceIdentifiers) {
-        const personCache = new HuronPersonCache({ config });
-        const chunkDirectory = s3Key!.substring(0, s3Key!.lastIndexOf('/'));
-        const key = chunkDirectory + `/${HuronPersonCache.CACHE_FILE_NAME}`;
-
-        cachedSourceIdentifiers = await personCache.getS3PopulationCache({ 
-          bucketName: bucketName!, key, region: region! 
-        });
-
-        if (!cachedSourceIdentifiers) {
-          cachedSourceIdentifiers = new Set<string>();
-        }
-        
-        console.log(`Loaded ${cachedSourceIdentifiers.size} source identifiers from target system cache`);
-      }
-
-      // Extract sourceIdentifier from person
-      let sourceIdentifier: string | undefined;
-      if (typeof person === 'string') {
-        sourceIdentifier = person;
-      } else if (typeof person === 'object' && person.fieldValues) {
-        const field = person.fieldValues.find((fv: any) => {
-          const fieldName = Object.keys(fv)[0];
-          return fieldName === 'sourceIdentifier';
-        });
-        if (field) {
-          sourceIdentifier = Object.values(field)[0] as string;
-        }
-      }
-
-      if (sourceIdentifier && cachedSourceIdentifiers.has(sourceIdentifier)) {
-        return sourceIdentifier;
-      }
-      
-      return undefined;
-    };
-
     // Create and run integration
     const integration = new HuronPersonIntegration({ 
       config,
@@ -340,7 +301,12 @@ export async function main(queueReader: QueueReader) {
       bulkReset,
       trustPreviousStorage,
       cache,
-      lookupPersonInTargetSystemCache, 
+      lookupPersonInTargetSystemCache: async (person: FieldSet | string) => {
+        // Provide a lookup against s3 for a list of ALL buids, which is retained as a cache.
+        return new PersonCacheLookup({ 
+          config, region, bucketName 
+        }).lookupPersonInTargetSystemCache({ person, s3Key });
+      },
       errorEventProcessor: errorTracker,
       retryStrategy,
       cleanupPreviousData: false, // DynamoDB manages its own data, no cleanup needed

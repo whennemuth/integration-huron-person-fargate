@@ -39,7 +39,7 @@
  */
 
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { FieldSet, humanReadableFromMilliseconds, Timer, TestEnvironment } from 'integration-core';
+import { FieldSet, humanReadableFromMilliseconds, TestEnvironment, Timer } from 'integration-core';
 import {
   BasicCache,
   Config,
@@ -49,14 +49,15 @@ import {
   TargetApiErrorEventProcessor
 } from 'integration-huron-person';
 import type { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
-import { MetadataManager, ChunkMetadata, Flags } from '../src/chunking/Metadata';
 import { getRetryStrategy } from '../src/ApiErrorRetryStrategy';
 import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/ApiErrorTracking';
 import { NextChunk, QueueReader } from '../src/Queue';
-import { getLocalConfig } from '../src/Utils';
-import { HuronPersonCache } from '../src/PersonCache';
-import { SyncPopulation } from './chunkTypes';
 import { TaskProtection } from '../src/TaskProtection';
+import { getLocalConfig } from '../src/Utils';
+import { ChunkMetadata, Flags, MetadataForS3 } from '../src/chunking/metadata';
+const MetadataManager = MetadataForS3;
+import { PersonCacheLookup } from '../src/person-cache/PersonCacheLookup';
+import { SyncPopulation } from './chunkTypes';
 
 const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
@@ -425,55 +426,6 @@ export async function main(queueReader: QueueReader) {
      */
     const cleanupPreviousData = false;
 
-    /**
-     * Implement cache lookup for source identifiers from the target system to avoid expensive direct 
-     * API lookups within the same chunk. These derive from an S3 file created by the chunker task.
-     */
-    let cachedSourceIdentifiers: Set<string> | undefined; // Cache to track which source identifiers have been looked up in the target system to avoid redundant lookups within the same chunk
-    const lookupPersonInTargetSystemCache = async (person: FieldSet | string): Promise<any> => {
-      // Lazy load cache on first access
-      if (!cachedSourceIdentifiers) {
-        const personCache = new HuronPersonCache({ config });
-        // Derive chunk directory from chunk key
-        // "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0000.ndjson" -> "chunks/person-full/2026-03-03T19:58:41.277Z"
-        const chunkDirectory = s3Key.substring(0, s3Key.lastIndexOf('/'));
-        const key = chunkDirectory + `/${HuronPersonCache.CACHE_FILE_NAME}`;
-
-        cachedSourceIdentifiers = await personCache.getS3PopulationCache({ 
-          bucketName: bucketName!, key, region: region! 
-        });
-
-        if (!cachedSourceIdentifiers) {
-          cachedSourceIdentifiers = new Set<string>();
-        }
-        
-        console.log(`Loaded ${cachedSourceIdentifiers.size} source identifiers from target system cache`);
-      }
-
-      // Extract sourceIdentifier from person (string or FieldSet)
-      let sourceIdentifier: string | undefined;
-      
-      if (typeof person === 'string') {
-        sourceIdentifier = person;
-      } else if (typeof person === 'object' && person.fieldValues) {
-        // FieldSet - find sourceIdentifier field
-        const field = person.fieldValues.find(fv => {
-          const fieldName = Object.keys(fv)[0];
-          return fieldName === 'sourceIdentifier';
-        });
-        if (field) {
-          sourceIdentifier = Object.values(field)[0] as string;
-        }
-      }
-
-      // Return sourceIdentifier if found in cache, otherwise undefined
-      if (sourceIdentifier && cachedSourceIdentifiers.has(sourceIdentifier)) {
-        return sourceIdentifier;
-      }
-      
-      return undefined;
-    }
-
     // Create and run integration using HuronPersonIntegration
     const integration = new HuronPersonIntegration({ 
       config,  // Pass pre-built config with S3 or API data source
@@ -481,7 +433,12 @@ export async function main(queueReader: QueueReader) {
       bulkReset, // Pass through bulk reset flag from environment variable
       trustPreviousStorage, // Pass through trust flag - cache is used when false to force upsert lookup path
       cache, // Shared cache for JWT tokens
-      lookupPersonInTargetSystemCache, 
+      lookupPersonInTargetSystemCache: async (person: FieldSet | string) => {
+        // Provide a lookup against s3 for a list of ALL buids, which is retained as a cache.
+        return new PersonCacheLookup({ 
+          config, region, bucketName 
+        }).lookupPersonInTargetSystemCache({ person, s3Key });
+      },
       errorEventProcessor: errorTracker, // Inject error tracker for tracking errors and throttling
       retryStrategy, // Inject retry strategy for handling transient API failures (429, 5xx, network errors)
       cleanupPreviousData,

@@ -4,7 +4,7 @@ import { ChunkFromParams, IChunkFromSource, writeChunkMetadata } from "../../../
 import { SyncPopulation } from "../../../docker/chunkTypes";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { ChunkerQueue } from '../ChunkerQueue';
-import { WriteMetadataParams } from "../Metadata";
+import { WriteMetadataParams } from "../metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { BigJsonFile, BigJsonFileConfig } from "./BigJsonFile";
 import { extractChunkDirectory } from './ChunkPathUtils';

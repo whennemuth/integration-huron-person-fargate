@@ -1,5 +1,6 @@
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
-import { MetadataManager } from '../src/chunking/Metadata';
+import { MetadataForS3 } from '../src/chunking/metadata';
+const MetadataManager = MetadataForS3;
 import { mockClient } from 'aws-sdk-client-mock';
 
 const s3Mock = mockClient(S3Client);

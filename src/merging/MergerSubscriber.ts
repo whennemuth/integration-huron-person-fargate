@@ -1,6 +1,7 @@
 import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import { ChunkMetadata, MetadataManager } from '../chunking/Metadata';
+import { ChunkMetadata, MetadataForS3 } from '../chunking/metadata';
+const MetadataManager = MetadataForS3;
 
 export const FUNCTION_BASE_NAME = 'merger-subscriber';
 

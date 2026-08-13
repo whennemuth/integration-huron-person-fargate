@@ -44,7 +44,8 @@ import { objectExistsInS3 } from '../src/Utils';
 import { extractChunkDirectory } from '../src/chunking/filedrop/ChunkPathUtils';
 import { DeferredDeleteHandler } from '../src/merging/DeferredDeleteHandler';
 import { MergeEngine } from '../src/merging/MergeEngine';
-import { MetadataManager } from '../src/chunking/Metadata';
+import { MetadataForS3 } from '../src/chunking/metadata';
+const MetadataManager = MetadataForS3;
 import { SyncPopulation } from './chunkTypes';
 import { TaskProtection } from '../src/TaskProtection';
 

@@ -1,211 +1,44 @@
 import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { S3StorageAdapter } from '../storage/S3StorageAdapter';
-import { SyncPopulation } from '../../docker/chunkTypes';
-import { objectExistsInS3 } from '../Utils';
+import { Config } from 'integration-huron-person';
+import { S3StorageAdapter } from '../../storage/S3StorageAdapter';
+import { objectExistsInS3 } from '../../Utils';
+import {
+  AbstractMetadata,
+  ChunkMetadata,
+  Flags,
+  MarkRunFailedParams,
+  ReadFlagsParams,
+  ReadMetadataParams,
+  ReadTerminalErrorParams,
+  TerminalError,
+  WriteFlagsParams,
+  WriteMetadataParams
+} from './AbstractMetadata';
 
 /**
- * Chunk Metadata Management
+ * S3-based metadata management implementation.
  * 
- * This module manages two types of metadata files used in the 3-phase ECS Fargate chunking pipeline:
+ * Stores metadata as JSON files in S3:
+ * - _metadata.json: Run manifest and configuration
+ * - _flags.json: Sync configuration flags
+ * - _terminal_error.json: Terminal error marker
  * 
- * ## 1. Flags File (_flags.json)
+ * ## File Locations
+ * All files stored under: `s3://{bucket}/chunks/{populationType}/{timestamp}/`
  * 
- * **Purpose:** Provides immediate access to sync configuration flags for processor tasks.
- * 
- * **Written:** By the chunker task (Phase 1) BEFORE chunking begins.
- * 
- * **Read by:** Processor tasks (Phase 2) which start processing chunks before chunking completes.
- * 
- * **Contains:** 
- * - `bulkReset` (boolean): Whether to force target system lookups for all records
- * - `syncPopulation` (SyncPopulation): Population type being synced (PersonFull vs PersonDelta)
- * 
- * **Why needed:** Solves timing race condition where processor tasks start before chunking completes
- * and need configuration flags immediately. Without this, processors would have to wait for the
- * full metadata file to be written at the end of chunking.
- * 
- * **Location:** `s3://{bucket}/chunks/{populationType}/{timestamp}/_flags.json`
- * 
- * ## 2. Metadata File (_metadata.json)
- * 
- * **Purpose:** Provides run manifest and configuration for post-run diagnostics and audit.
- * Merger completion is now determined by contiguous processing-complete marker files, not metadata.
- * 
- * **Written:** By the chunker task (Phase 1) AFTER chunking completes.
- * 
- * **Read by:** Diagnostic/audit tools to understand run context and source/target configuration.
- * 
- * **Contains:**
- * - All flags (bulkReset, trustPreviousStorage, syncPopulation)
- * - File paths (chunkDirectory, deltaStoragePath)
- * - Source/target information
- * - Timestamps (createdAt)
- * - Optional: itemsPerChunk for reference
- * 
- * **Does NOT contain (informational only via logs):**
- * - chunkCount (determined by contiguous marker ordinals 0..N)
- * - totalRecords (computed from marker presence, not persisted)
- * - chunkKeys (full list determined by marker file enumeration)
- * 
- * **Location:** `s3://{bucket}/chunks/{populationType}/{timestamp}/_metadata.json`
- * 
- * ## Pipeline Flow
- * 
- * 1. **Chunker (Phase 1):**
- *    - Writes _flags.json immediately
- *    - Creates chunk files (chunk-0000.ndjson, chunk-0001.ndjson, ...)
- *    - Writes _metadata.json after chunking completes
- * 
- * 2. **Processor (Phase 2):**
- *    - Reads _flags.json for sync configuration
- *    - Processes individual chunks in parallel
- *    - Creates marker files when complete
- * 
- * 3. **Merger (Phase 3):**
- *    - Reads _metadata.json to get expected chunk count
- *    - Waits for all processor marker files
- *    - Merges delta results when complete
+ * ## Usage:
+ * ```typescript
+ * const metadata = new MetadataForS3({ config });
+ * await metadata.writeFlags({ bucketName, chunkDirectory, ...flags });
+ * await metadata.write({ bucketName, chunkDirectory, itemsPerChunk, source, ...flags });
+ * ```
  */
+export class MetadataForS3 extends AbstractMetadata {
+  private storage?: S3StorageAdapter;
 
-export type Flags = {
-  bulkReset: boolean;
-  trustPreviousStorage: boolean;
-  syncPopulation: SyncPopulation;
-  runFailed?: boolean;
-  runFailureMessage?: string;
-  runFailureTimestamp?: string;
-  [key: string]: any; // Allow additional fields for flexibility
-}
-
-/**
- * Core metadata fields shared between input parameters and stored metadata.
- * These fields are always present when writing and expected when reading properly formed metadata.
- */
-type CoreMetadataFields = Flags & {
-  source: string;
-  target?: string;
-  chunkDirectory: string;
-  itemsPerChunk: number;
-};
-
-/**
- * Stored metadata format - what gets persisted to S3.
- * This is the canonical definition used throughout the codebase.
- */
-export type ChunkMetadata = CoreMetadataFields & {
-  deltaStoragePath: string;
-  createdAt: string;
-};
-
-/**
- * Input parameters for writing metadata.
- * Extends core fields with write-specific operational parameters.
- * 
- * Note: chunkCount, totalRecords, and chunkKeys are NOT included here.
- * These are informational only and should be computed on-demand from marker files
- * rather than persisted. Callers should log these values separately if needed.
- */
-export type WriteMetadataParams = CoreMetadataFields & {
-  bucketName: string;
-  dryRun?: boolean;
-  storage?: S3StorageAdapter;
-  replace?: boolean; // Whether to replace existing metadata file if it exists (default: false)
-  region?: string;
-};
-
-/**
- * Parameters for reading metadata
- */
-export interface ReadMetadataParams {
-  bucketName: string;
-  chunkDirectory: string;
-  region?: string;
-}
-
-/**
- * Parameters for writing flags
- */
-export type WriteFlagsParams = Flags & {
-  bucketName: string;
-  chunkDirectory: string;
-  dryRun?: boolean;
-  storage?: S3StorageAdapter;
-  replace?: boolean; // Whether to replace existing flags file if it exists (default: false)
-  region?: string;
-};
-
-/**
- * Parameters for reading flags
- */
-export interface ReadFlagsParams {
-  bucketName: string;
-  chunkDirectory: string;
-  region?: string;
-}
-
-export interface MarkRunFailedParams {
-  bucketName: string;
-  chunkDirectory: string;
-  region?: string;
-  errorMessage?: string;
-}
-
-export interface ReadTerminalErrorParams {
-  bucketName: string;
-  chunkDirectory: string;
-  region?: string;
-}
-
-export type TerminalError = {
-  stage: 'chunking';
-  chunkDirectory: string;
-  errorMessage?: string;
-  errorTimestamp: string;
-};
-
-/**
- * Centralized manager for chunk metadata operations.
- */
-export class MetadataManager {
-  private static readonly METADATA_FILENAME = '_metadata.json';
-  private static readonly FLAGS_FILENAME = '_flags.json';
-  private static readonly TERMINAL_ERROR_FILENAME = '_terminal_error.json';
-
-  /**
-   * Derive delta storage path from chunk directory
-   * Example: "chunks/person-full/2026-03-03T19:58:41.277Z" -> "deltas/person-full/2026-03-03T19:58:41.277Z"
-   */
-  public static deriveDeltaStoragePath(chunkDirectory: string): string {
-    return chunkDirectory.replace(/^chunks\//, 'deltas/');
-  }
-
-  /**
-   * Derive chunk directory from delta storage path
-   * Example: "deltas/person-full/2026-03-03T19:58:41.277Z" -> "chunks/person-full/2026-03-03T19:58:41.277Z"
-   */
-  public static deriveChunkDirectory(deltaStoragePath: string): string {
-    return deltaStoragePath.replace(/^deltas\//, 'chunks/');
-  }
-
-  /**
-   * Get metadata file key from chunk directory
-   */
-  public static getMetadataKey(chunkDirectory: string): string {
-    return `${chunkDirectory}/${MetadataManager.METADATA_FILENAME}`;
-  }
-
-  /**
-   * Get flags file key from chunk directory
-   */
-  public static getFlagsKey(chunkDirectory: string): string {
-    return `${chunkDirectory}/${MetadataManager.FLAGS_FILENAME}`;
-  }
-
-  /**
-   * Get terminal error marker key from chunk directory.
-   */
-  public static getTerminalErrorKey(chunkDirectory: string): string {
-    return `${chunkDirectory}/${MetadataManager.TERMINAL_ERROR_FILENAME}`;
+  constructor(params: { config: Config; storage?: S3StorageAdapter }) {
+    super(params);
+    this.storage = params.storage;
   }
 
   /**
@@ -214,7 +47,7 @@ export class MetadataManager {
    * Parameters like chunkCount, totalRecords, chunkKeys are accepted for caller convenience but NOT persisted.
    * These values are now determined from contiguous marker files and S3 state, not from metadata.
    */
-  public static async write(params: WriteMetadataParams): Promise<void> {
+  public async write(params: WriteMetadataParams): Promise<void> {
     const { 
       bucketName, chunkDirectory, itemsPerChunk,
       source,
@@ -226,13 +59,16 @@ export class MetadataManager {
       runFailureMessage,
       runFailureTimestamp,
       dryRun = false,
-      storage,
       region,
       replace = false
     } = params;
 
-    const metadataKey = MetadataManager.getMetadataKey(chunkDirectory);
-    const deltaStoragePath = MetadataManager.deriveDeltaStoragePath(chunkDirectory);
+    if (!bucketName) {
+      throw new Error('bucketName is required for S3 metadata operations');
+    }
+
+    const metadataKey = AbstractMetadata.getMetadataKey(chunkDirectory);
+    const deltaStoragePath = AbstractMetadata.deriveDeltaStoragePath(chunkDirectory);
 
     const metadata: ChunkMetadata = {
       itemsPerChunk, source, chunkDirectory,
@@ -276,9 +112,9 @@ export class MetadataManager {
         }
       }
 
-      if (storage) {
+      if (this.storage) {
         // Use provided storage adapter or create S3Client
-        await storage.writeFile(metadataKey, metadataJson, 'application/json');
+        await this.storage.writeFile(metadataKey, metadataJson, 'application/json');
       } 
       else {
         const s3Client = new S3Client({ region });
@@ -298,7 +134,7 @@ export class MetadataManager {
    * This file contains only bulkReset and syncPopulation flags needed by processors.
    * Written early so processor tasks can read flags even before chunking completes.
    */
-  public static async writeFlags(params: WriteFlagsParams): Promise<void> {
+  public async writeFlags(params: WriteFlagsParams): Promise<void> {
     const {
       bucketName,
       chunkDirectory,
@@ -309,12 +145,15 @@ export class MetadataManager {
       runFailureMessage,
       runFailureTimestamp,
       dryRun = false,
-      storage,
       region,
       replace = false
     } = params;
 
-    const flagsKey = MetadataManager.getFlagsKey(chunkDirectory);
+    if (!bucketName) {
+      throw new Error('bucketName is required for S3 metadata operations');
+    }
+
+    const flagsKey = AbstractMetadata.getFlagsKey(chunkDirectory);
     const flags: Flags = {
       bulkReset,
       trustPreviousStorage,
@@ -339,8 +178,8 @@ export class MetadataManager {
       console.log(`[DRY RUN] Content: ${flagsJson}`);
     } else {
       // Use provided storage adapter or create S3Client
-      if (storage) {
-        await storage.writeFile(flagsKey, flagsJson, 'application/json');
+      if (this.storage) {
+        await this.storage.writeFile(flagsKey, flagsJson, 'application/json');
       } else {
         const s3Client = new S3Client({ region });
         await s3Client.send(new PutObjectCommand({
@@ -358,7 +197,7 @@ export class MetadataManager {
    * Read chunk metadata from S3.
    * Replaces getChunkMetadata and readChunkMetadata with unified implementation.
    */
-  public static async read(params: ReadMetadataParams): Promise<Partial<ChunkMetadata>> {
+  public async read(params: ReadMetadataParams): Promise<Partial<ChunkMetadata>> {
     const { bucketName, chunkDirectory, region } = params;
     
     if (!bucketName) {
@@ -366,7 +205,7 @@ export class MetadataManager {
       return {};
     }
 
-    const metadataKey = MetadataManager.getMetadataKey(chunkDirectory);
+    const metadataKey = AbstractMetadata.getMetadataKey(chunkDirectory);
     const s3Client = new S3Client({ region });
 
     try {
@@ -389,7 +228,7 @@ export class MetadataManager {
       console.log(`✓ Metadata loaded: ${JSON.stringify(metadata)}`);
       
       // Log warnings for missing expected fields
-      MetadataManager.validateMetadata(metadata);
+      this.validateMetadata(metadata);
       
       return metadata;
     } catch (error: any) {
@@ -407,7 +246,7 @@ export class MetadataManager {
    * Read flags file from S3.
    * Flags file contains bulkReset and syncPopulation needed by processors.
    */
-  public static async readFlags(params: ReadFlagsParams): Promise<Partial<Flags>> {
+  public async readFlags(params: ReadFlagsParams): Promise<Partial<Flags>> {
     const { bucketName, chunkDirectory, region } = params;
     
     if (!bucketName) {
@@ -415,7 +254,7 @@ export class MetadataManager {
       return {};
     }
 
-    const flagsKey = MetadataManager.getFlagsKey(chunkDirectory);
+    const flagsKey = AbstractMetadata.getFlagsKey(chunkDirectory);
     const s3Client = new S3Client({ region });
 
     try {
@@ -453,9 +292,14 @@ export class MetadataManager {
    * Mark the chunking run as failed.
    * This prevents merger orchestration from treating partial chunk output as successful completion.
    */
-  public static async markRunFailed(params: MarkRunFailedParams): Promise<void> {
+  public async markRunFailed(params: MarkRunFailedParams): Promise<void> {
     const { bucketName, chunkDirectory, region, errorMessage } = params;
-    const markerKey = MetadataManager.getTerminalErrorKey(chunkDirectory);
+    
+    if (!bucketName) {
+      throw new Error('bucketName is required for S3 metadata operations');
+    }
+
+    const markerKey = AbstractMetadata.getTerminalErrorKey(chunkDirectory);
     const marker: TerminalError = {
       stage: 'chunking',
       chunkDirectory,
@@ -477,26 +321,36 @@ export class MetadataManager {
   /**
    * Determine whether the run has been explicitly marked as failed.
    */
-  public static async isRunFailed(params: ReadFlagsParams): Promise<boolean> {
-    const flags = await MetadataManager.readFlags(params);
+  public async isRunFailed(params: ReadFlagsParams): Promise<boolean> {
+    const flags = await this.readFlags(params);
     return flags.runFailed === true;
   }
 
   /**
    * Check whether a terminal error marker exists for the run.
    */
-  public static async terminalErrorExists(params: ReadTerminalErrorParams): Promise<boolean> {
+  public async terminalErrorExists(params: ReadTerminalErrorParams): Promise<boolean> {
     const { bucketName, chunkDirectory, region } = params;
-    const key = MetadataManager.getTerminalErrorKey(chunkDirectory);
+    
+    if (!bucketName) {
+      throw new Error('bucketName is required for S3 metadata operations');
+    }
+
+    const key = AbstractMetadata.getTerminalErrorKey(chunkDirectory);
     return objectExistsInS3(bucketName, key, region);
   }
 
   /**
    * Read terminal error marker details if present.
    */
-  public static async readTerminalError(params: ReadTerminalErrorParams): Promise<TerminalError | undefined> {
+  public async readTerminalError(params: ReadTerminalErrorParams): Promise<TerminalError | undefined> {
     const { bucketName, chunkDirectory, region } = params;
-    const key = MetadataManager.getTerminalErrorKey(chunkDirectory);
+    
+    if (!bucketName) {
+      throw new Error('bucketName is required for S3 metadata operations');
+    }
+
+    const key = AbstractMetadata.getTerminalErrorKey(chunkDirectory);
     const s3Client = new S3Client({ region });
 
     try {
@@ -523,8 +377,8 @@ export class MetadataManager {
    * @param chunkS3Key - Full S3 key to chunk file (e.g., "chunks/person-full/.../chunk-0000.ndjson")
    * @param region - AWS region
    */
-  public static async readFlagsFromChunkKey(
-    bucketName: string,
+  public async readFlagsFromChunkKey(
+    bucketName: string | undefined,
     chunkS3Key: string,
     region?: string
   ): Promise<Partial<Flags>> {
@@ -533,27 +387,7 @@ export class MetadataManager {
     // -> "chunks/person-full/2026-03-03T19:58:41.277Z"
     const chunkDirectory = chunkS3Key.substring(0, chunkS3Key.lastIndexOf('/'));
     
-    return MetadataManager.readFlags({ bucketName, chunkDirectory, region });
-  }
-
-  /**
-   * Validate metadata and log warnings for missing fields.
-   * Note: chunkCount, totalRecords, chunkKeys are no longer persisted in metadata.
-   * They are now determined from contiguous marker files.
-   */
-  private static validateMetadata(metadata: Partial<ChunkMetadata>): void {
-    const requiredFields: (keyof ChunkMetadata)[] = [
-      'bulkReset', 'deltaStoragePath', 'syncPopulation'
-    ];
-
-    for (const field of requiredFields) {
-      if (metadata[field] === undefined) {
-        const defaultValue = field === 'syncPopulation' 
-          ? SyncPopulation.PersonFull 
-          : false;
-        console.warn(`⚠️ ${field} value not found in metadata, defaulting to ${defaultValue}`);
-      }
-    }
+    return this.readFlags({ bucketName, chunkDirectory, region });
   }
 
   /**
@@ -562,8 +396,8 @@ export class MetadataManager {
    * @param chunkS3Key - Full S3 key to chunk file (e.g., "chunks/person-full/.../chunk-0000.ndjson")
    * @param region - AWS region
    */
-  public static async readFromChunkKey(
-    bucketName: string,
+  public async readFromChunkKey(
+    bucketName: string | undefined,
     chunkS3Key: string,
     region?: string
   ): Promise<Partial<ChunkMetadata>> {
@@ -572,7 +406,7 @@ export class MetadataManager {
     // -> "chunks/person-full/2026-03-03T19:58:41.277Z"
     const chunkDirectory = chunkS3Key.substring(0, chunkS3Key.lastIndexOf('/'));
     
-    return MetadataManager.read({ bucketName, chunkDirectory, region });
+    return this.read({ bucketName, chunkDirectory, region });
   }
 
   /**
@@ -585,11 +419,15 @@ export class MetadataManager {
    * @param region - AWS region
    * @returns Array of chunk file keys sorted by chunk number
    */
-  public static async listChunkFiles(
-    bucketName: string,
+  public async listChunkFiles(
+    bucketName: string | undefined,
     chunkDirectory: string,
     region?: string
   ): Promise<string[]> {
+    if (!bucketName) {
+      throw new Error('bucketName is required for S3 metadata operations');
+    }
+
     const s3Client = new S3Client({ region });
     const prefix = `${chunkDirectory}/`;
     const chunkFiles: string[] = [];
@@ -646,11 +484,15 @@ export class MetadataManager {
    * @param region - AWS region
    * @returns Total record count across all chunks
    */
-  public static async computeTotalRecords(
-    bucketName: string,
+  public async computeTotalRecords(
+    bucketName: string | undefined,
     chunkKeys: string[],
     region?: string
   ): Promise<number> {
+    if (!bucketName) {
+      throw new Error('bucketName is required for S3 metadata operations');
+    }
+
     const s3Client = new S3Client({ region });
     let totalRecords = 0;
 
@@ -689,21 +531,21 @@ export class MetadataManager {
    * @param region - AWS region
    * @returns Aggregated metadata with full chunk list and totals
    */
-  public static async buildAggregatedMetadata(
-    bucketName: string,
+  public async buildAggregatedMetadata(
+    bucketName: string | undefined,
     chunkDirectory: string,
     region?: string
   ): Promise<{ chunkKeys: string[]; totalRecords: number; chunkCount: number }> {
     try {
       // Discover all chunk files
-      const chunkKeys = await MetadataManager.listChunkFiles(bucketName, chunkDirectory, region);
+      const chunkKeys = await this.listChunkFiles(bucketName, chunkDirectory, region);
 
       if (chunkKeys.length === 0) {
         throw new Error(`No chunk files found in ${chunkDirectory}`);
       }
 
       // Compute total records
-      const totalRecords = await MetadataManager.computeTotalRecords(bucketName, chunkKeys, region);
+      const totalRecords = await this.computeTotalRecords(bucketName, chunkKeys, region);
 
       const chunkCount = chunkKeys.length;
 
@@ -714,5 +556,146 @@ export class MetadataManager {
       console.error(`Failed to build aggregated metadata: ${error.message}`);
       throw error;
     }
+  }
+
+  // ========================================
+  // Static wrapper methods for backward compatibility
+  // ========================================
+
+  /**
+   * Static wrapper for write() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async write(params: WriteMetadataParams): Promise<void> {
+    const instance = new MetadataForS3({ config: {} as Config });
+    return instance.write(params);
+  }
+
+  /**
+   * Static wrapper for writeFlags() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async writeFlags(params: WriteFlagsParams): Promise<void> {
+    const instance = new MetadataForS3({ config: {} as Config });
+    return instance.writeFlags(params);
+  }
+
+  /**
+   * Static wrapper for read() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async read(params: ReadMetadataParams): Promise<Partial<ChunkMetadata>> {
+    const instance = new MetadataForS3({ config: {} as Config });
+    return instance.read(params);
+  }
+
+  /**
+   * Static wrapper for readFlags() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async readFlags(params: ReadFlagsParams): Promise<Partial<Flags>> {
+    const instance = new MetadataForS3({ config: {} as Config });
+    return instance.readFlags(params);
+  }
+
+  /**
+   * Static wrapper for markRunFailed() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async markRunFailed(params: MarkRunFailedParams): Promise<void> {
+    const instance = new MetadataForS3({ config: {} as Config });
+    return instance.markRunFailed(params);
+  }
+
+  /**
+   * Static wrapper for isRunFailed() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async isRunFailed(params: ReadFlagsParams): Promise<boolean> {
+    const instance = new MetadataForS3({ config: {} as Config });
+    return instance.isRunFailed(params);
+  }
+
+  /**
+   * Static wrapper for terminalErrorExists() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async terminalErrorExists(params: ReadTerminalErrorParams): Promise<boolean> {
+    const instance = new MetadataForS3({ config: {} as Config });
+    return instance.terminalErrorExists(params);
+  }
+
+  /**
+   * Static wrapper for readTerminalError() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async readTerminalError(params: ReadTerminalErrorParams): Promise<TerminalError | undefined> {
+    const instance = new MetadataForS3({ config: {} as Config });
+    return instance.readTerminalError(params);
+  }
+
+  /**
+   * Static wrapper for readFlagsFromChunkKey() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async readFlagsFromChunkKey(
+    bucketName: string | undefined,
+    chunkS3Key: string,
+    region?: string
+  ): Promise<Partial<Flags>> {
+    const instance = new MetadataForS3({ config: {} as Config });
+    return instance.readFlagsFromChunkKey(bucketName, chunkS3Key, region);
+  }
+
+  /**
+   * Static wrapper for readFromChunkKey() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async readFromChunkKey(
+    bucketName: string | undefined,
+    chunkS3Key: string,
+    region?: string
+  ): Promise<Partial<ChunkMetadata>> {
+    const instance = new MetadataForS3({ config: {} as Config });
+    return instance.readFromChunkKey(bucketName, chunkS3Key, region);
+  }
+
+  /**
+   * Static wrapper for listChunkFiles() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async listChunkFiles(
+    bucketName: string | undefined,
+    chunkDirectory: string,
+    region?: string
+  ): Promise<string[]> {
+    const instance = new MetadataForS3({ config: {} as Config });
+    return instance.listChunkFiles(bucketName, chunkDirectory, region);
+  }
+
+  /**
+   * Static wrapper for computeTotalRecords() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async computeTotalRecords(
+    bucketName: string | undefined,
+    chunkKeys: string[],
+    region?: string
+  ): Promise<number> {
+    const instance = new MetadataForS3({ config: {} as Config });
+    return instance.computeTotalRecords(bucketName, chunkKeys, region);
+  }
+
+  /**
+   * Static wrapper for buildAggregatedMetadata() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async buildAggregatedMetadata(
+    bucketName: string | undefined,
+    chunkDirectory: string,
+    region?: string
+  ): Promise<{ chunkKeys: string[]; totalRecords: number; chunkCount: number }> {
+    const instance = new MetadataForS3({ config: {} as Config });
+    return instance.buildAggregatedMetadata(bucketName, chunkDirectory, region);
   }
 }
