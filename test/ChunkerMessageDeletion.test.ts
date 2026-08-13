@@ -11,7 +11,8 @@ import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
 import { TaskProtection } from '../src/TaskProtection';
 import { MetadataManager } from '../src/chunking/Metadata';
-import { HuronPersonCache } from '../src/PersonCache';
+import { PersonCacheFactory } from '../src/person-cache/PersonCacheFactory';
+import { AbstractPersonCache } from '../src/person-cache/AbstractPersonCache';
 import { ConfigManager } from 'integration-huron-person';
 import * as Utils from '../src/Utils';
 
@@ -145,11 +146,11 @@ describe('Chunker Main - Message Deletion', () => {
     };
     (ConfigManager.getInstance as jest.Mock) = jest.fn().mockReturnValue(mockConfigManager);
 
-    // Mock HuronPersonCache
-    (HuronPersonCache as jest.MockedClass<typeof HuronPersonCache>).mockImplementation(() => ({
-      setS3PopulationCache: jest.fn().mockResolvedValue(undefined)
-    } as any));
-    (HuronPersonCache as any).CACHE_FILE_NAME = 'cache.ndjson';
+    // Mock PersonCacheFactory
+    (PersonCacheFactory.create as jest.Mock) = jest.fn().mockReturnValue({
+      setCache: jest.fn().mockResolvedValue(undefined),
+      cacheExists: jest.fn().mockResolvedValue(false)
+    });
 
     jest.clearAllMocks();
   });

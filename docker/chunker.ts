@@ -50,7 +50,8 @@ import { ChunkerQueue } from '../src/chunking/ChunkerQueue';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
 import { MetadataManager, ReadMetadataParams, WriteMetadataParams } from '../src/chunking/Metadata';
-import { HuronPersonCache } from '../src/PersonCache';
+import { PersonCacheFactory } from '../src/person-cache/PersonCacheFactory';
+import { AbstractPersonCache } from '../src/person-cache/AbstractPersonCache';
 import { TaskProtection } from '../src/TaskProtection';
 import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
 import { SyncPopulation } from './chunkTypes';
@@ -433,18 +434,18 @@ export async function main() {
      */
     if(chunkFromParams.bulkReset || !chunkFromParams.trustPreviousStorage) {
       const config = await getConfig();
-      const { CACHE_FILE_NAME } = HuronPersonCache;
-      const cache = new HuronPersonCache({ config });
+      const { CACHE_FILE_NAME } = AbstractPersonCache;
+      const cache = PersonCacheFactory.create(config);
       const fileParms = { 
         bucketName: chunksBucket, 
         key: chunker.getChunkDirectory() + `/${CACHE_FILE_NAME}`, 
         region: region! 
       }
-      if(await cache.s3PopulationCacheExists(fileParms)) {
+      if(await cache.cacheExists(fileParms)) {
         console.log(`✓ Population cache file already exists in S3 at s3://${fileParms.bucketName}/${fileParms.key}`);
       }
       else {
-        await cache.setS3PopulationCache(fileParms);
+        await cache.setCache(fileParms);
       }
     }
 
