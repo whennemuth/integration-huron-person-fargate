@@ -105,6 +105,119 @@ You can skip verification by saying:
 - DEFERRED_DELETE_HANDLER_*, STATISTICS_TABLE_*
 - DOCKER_MERGER_*
 
+## Storage Modes: DynamoDB vs S3
+
+The pipeline supports two storage modes for delta state and metadata, controlled by `config.storage.type`:
+- `'s3'` | `'file'` | `'database'` → **S3 Mode** (traditional file-based storage)
+- `'dynamodb'` → **DynamoDB Mode** (database-backed state tracking)
+
+**IMPORTANT**: S3 chunk NDJSON files (`chunk-0000.ndjson`, `chunk-0001.ndjson`, etc.) remain in S3 regardless of storage mode. Only state/metadata files migrate to DynamoDB.
+
+### S3 Mode (Default)
+
+**What's stored in S3**:
+1. **Chunk files**: `s3://bucket/chunks/{population}/{timestamp}/chunk-XXXX.ndjson`
+2. **Metadata file**: `s3://bucket/chunks/{population}/{timestamp}/_metadata.json`
+3. **Flags file**: `s3://bucket/chunks/{population}/{timestamp}/_flags.json`
+4. **Terminal error marker**: `s3://bucket/chunks/{population}/{timestamp}/_terminal_error.json`
+5. **Delta storage**: `s3://bucket/delta-storage/{population}/previous-input.ndjson`
+6. **Hash storage**: `s3://bucket/delta-storage/{population}/hashes.ndjson`
+
+**Characteristics**:
+- Simple file-based architecture
+- Easy to inspect with AWS Console or CLI
+- Lower cost for infrequent access patterns
+- Sequential file I/O (streaming, line-by-line reading)
+
+### DynamoDB Mode (Parallel Implementation)
+
+**What's stored in DynamoDB**:
+1. **PersonCurrentStateTable** - Current person sync state
+   - PK: `personId` (BUID)
+   - Attributes: `hash`, `sourceIdentifier`, `lastSyncTime`, `syncRunId`
+   - GSI: `syncRunId-personId` (for querying all persons in a sync run)
+   
+2. **PersonHistoryTable** - Historical change audit trail
+   - PK: `personId`, SK: `syncRunId` (composite key for versioning)
+   - Attributes: `changeType` (CREATED | UPDATED | DELETED), `hash`, `timestamp`
+   - GSI1: `syncRunId-changeType` (query all changes in a run by type)
+   - GSI2: `changeType-syncRunId` (query changes across runs by type)
+
+3. **StatisticsTable** - Metadata, flags, and error events
+   - PK: `integrationTimestamp` (syncRunId), SK: `eventType`
+   - Event types: `METADATA`, `FLAGS`, `TERMINAL_ERROR`, `STATISTICS`, `ERROR:*`
+   - Replaces `_metadata.json` and `_flags.json` files from S3 mode
+
+**What remains in S3** (even in DynamoDB mode):
+- Chunk NDJSON files (parallel processing dependency)
+- Person cache file (10K-100K BUIDs, better in S3 than DynamoDB item batches)
+
+**Characteristics**:
+- Atomic updates with conditional expressions
+- Point-in-time recovery and backups
+- Query-based access patterns (GSI flexibility)
+- Better for high-frequency state lookups
+- Supports resumption after failures (via PersonCurrentStateTable)
+
+### Migration Path (Parallel Implementation)
+
+**DynamoDB mode does NOT remove S3 features**. Both modes coexist:
+
+**Template Pattern Abstractions**:
+1. **HashStorage** (integration-huron-person/src/delta-storage/)
+   - `AbstractHashStorage` base class
+   - `HashStorageResetForS3` (S3 implementation)
+   - `HashStorageResetForDynamoDb` (DynamoDB implementation)
+   - `HashStorageResetFactory` switches on `config.storage.type`
+
+2. **PersonCache** (src/person-cache/)
+   - `AbstractPersonCache` base class
+   - `PersonCacheForS3` (direct S3 implementation)
+   - `PersonCacheForDynamoDb` (facade delegating to S3 - optimal for bulk data)
+   - `PersonCacheFactory` switches on `config.storage.type`
+
+3. **Metadata** (src/chunking/metadata/)
+   - `AbstractMetadata` with 19 methods (5 static, 14 abstract)
+   - `MetadataForS3` (file-based implementation)
+   - `MetadataForDynamoDb` (StatisticsTable with `eventType` field)
+   - `MetadataFactory` switches on `config.storage.type`
+
+**Switching Between Modes**:
+```typescript
+// In Secrets Manager or context.json:
+{
+  "storage": {
+    "type": "s3"        // Traditional file-based mode
+    // OR
+    "type": "dynamodb"  // DynamoDB state tracking mode
+  }
+}
+```
+
+**IAM Permissions** (automatically configured in task definitions):
+- S3 mode: S3 bucket read/write only
+- DynamoDB mode: S3 bucket + DynamoDB table read/write (conditionally granted)
+
+**CDK Infrastructure** (`lib/DynamoDB.ts`):
+- Tables created only when `context.useDynamoDb === true`
+- Task definitions check `dynamoDbTables.personCurrentStateTable` before granting permissions
+- Zero infrastructure impact when using S3 mode
+
+### When to Use Each Mode
+
+**Use S3 Mode when**:
+- Simple deployment with minimal infrastructure
+- Infrequent sync operations (daily/weekly)
+- File-based introspection preferred (AWS Console browsing)
+- Lower cost priority for small-scale operations
+
+**Use DynamoDB Mode when**:
+- Frequent sync operations requiring fast state lookups
+- Audit trail and history tracking critical
+- Resumption and retry logic needed (pipeline interruptions)
+- Query-based analytics desired (change type filtering, time-series analysis)
+- Point-in-time recovery and backups required
+
 ## TestEnvironment Pattern Implementation
 
 ### Migration Strategy
