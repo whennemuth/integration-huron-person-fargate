@@ -33,6 +33,10 @@ Use this canonical settings entry:
       "name": "skills"
     },
     {
+      "path": ".copilot/memories",
+      "name": "workspace-memories"
+    },
+    {
       "path": "integration-core",
       "name": "core"
     }
@@ -58,6 +62,10 @@ Use this canonical settings entry:
       "name": "skills"
     },
     {
+      "path": ".copilot/memories",
+      "name": "workspace-memories"
+    },
+    {
       "path": "integration-core",
       "name": "core"
     },
@@ -80,6 +88,18 @@ Use this canonical settings entry:
   }
 }
 ```
+
+### Workspace-Scoped Memory Files
+
+The `.copilot/memories/` directory (displayed as "workspace-memories" in the workspace) stores workspace-scoped Copilot memory files that apply to all projects in the integration workspace.
+
+**Purpose**: Contains coding preferences, task verification protocols, and workflow requirements that should be consistently applied across all integration projects.
+
+**Key file**: `task-verification-protocol.md` - Defines requirements for build verification, test execution, and completion reporting on all code implementation tasks.
+
+**Discovery**: VS Code Copilot automatically loads memory files from this directory when included as a workspace folder in your `.code-workspace` file.
+
+**Scope**: These memory files apply workspace-wide and are distinct from project-specific conventions documented in individual project `CLAUDE.md` files.
 
 The `cdk.json` file tells the CDK Toolkit how to execute your app.
 
