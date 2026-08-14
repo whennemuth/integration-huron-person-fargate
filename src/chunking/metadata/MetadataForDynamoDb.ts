@@ -390,4 +390,65 @@ export class MetadataForDynamoDb extends AbstractMetadata {
       'to list chunk files and build aggregated metadata.'
     );
   }
+
+  // ============================================================================
+  // Static Wrapper Methods (Backward Compatibility)
+  // ============================================================================
+
+  /**
+   * Create minimal IContext from environment variables for static method usage.
+   * Used when config hasn't been loaded yet (e.g., early in processor initialization).
+   */
+  private static createMinimalContext(): IContext {
+    const { 
+      STATISTICS_TABLE_NAME,
+      PERSON_CURRENT_STATE_TABLE_NAME,
+      PERSON_HISTORY_TABLE_NAME 
+    } = process.env;
+
+    if (!STATISTICS_TABLE_NAME || !PERSON_CURRENT_STATE_TABLE_NAME || !PERSON_HISTORY_TABLE_NAME) {
+      throw new Error(
+        'DynamoDB table environment variables not found. Required: ' +
+        'STATISTICS_TABLE_NAME, PERSON_CURRENT_STATE_TABLE_NAME, PERSON_HISTORY_TABLE_NAME'
+      );
+    }
+
+    // Create minimal context with only DynamoDB table information
+    // Other fields are not needed for metadata operations
+    return {
+      dynamoDbTables: {
+        statisticsTable: { tableName: STATISTICS_TABLE_NAME },
+        personCurrentStateTable: { tableName: PERSON_CURRENT_STATE_TABLE_NAME },
+        personHistoryTable: { tableName: PERSON_HISTORY_TABLE_NAME }
+      }
+    } as unknown as IContext;
+  }
+
+  /**
+   * Static wrapper for readFlagsFromChunkKey() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async readFlagsFromChunkKey(
+    bucketName: string | undefined,
+    chunkS3Key: string,
+    region?: string
+  ): Promise<Partial<Flags>> {
+    const context = MetadataForDynamoDb.createMinimalContext();
+    const instance = new MetadataForDynamoDb({ config: {} as Config, context });
+    return instance.readFlagsFromChunkKey(bucketName, chunkS3Key, region);
+  }
+
+  /**
+   * Static wrapper for readFromChunkKey() method.
+   * Creates a temporary instance for backward compatibility with existing code.
+   */
+  public static async readFromChunkKey(
+    bucketName: string | undefined,
+    chunkS3Key: string,
+    region?: string
+  ): Promise<Partial<ChunkMetadata>> {
+    const context = MetadataForDynamoDb.createMinimalContext();
+    const instance = new MetadataForDynamoDb({ config: {} as Config, context });
+    return instance.readFromChunkKey(bucketName, chunkS3Key, region);
+  }
 }

@@ -65,8 +65,9 @@ import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from 
 import { NextChunk, QueueReader } from '../src/Queue';
 import { TaskProtection } from '../src/TaskProtection';
 import { getLocalConfig } from '../src/Utils';
-import { Flags, MetadataForS3 } from '../src/chunking/metadata';
-const MetadataManager = MetadataForS3;
+import { Flags } from '../src/chunking/metadata';
+import { getMetadataManager } from '../src/chunking/metadata/ProcessorMetadataFactory';
+const MetadataManager = getMetadataManager();
 import { PersonCacheLookup } from '../src/person-cache/PersonCacheLookup';
 import { SyncPopulation } from './chunkTypes';
 

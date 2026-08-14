@@ -79,6 +79,15 @@ export class ProcessorTaskDefinition extends Construct {
         `It processes the chunk by syncing all person records in it to the Huron API.`
     };
 
+    // Add DynamoDB-specific table names when using DynamoDB mode
+    // These tables only exist in DynamoDB mode and are used to distinguish between S3 and DynamoDB storage modes
+    if (dynamoDbTables.personCurrentStateTable) {
+      environment.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME = dynamoDbTables.personCurrentStateTable.tableName;
+    }
+    if (dynamoDbTables.personHistoryTable) {
+      environment.DYNAMODB_PERSON_HISTORY_TABLE_NAME = dynamoDbTables.personHistoryTable.tableName;
+    }
+
     // Check if the context includes retry strategy configuration and add it to environment variables if present.
     const { retries } = context.ECS.processorTaskDefinition;
     if(retries) {

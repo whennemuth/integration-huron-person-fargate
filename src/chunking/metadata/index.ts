@@ -42,3 +42,6 @@ export { MetadataForDynamoDb } from './MetadataForDynamoDb';
 
 // Export factory
 export { MetadataFactory } from './MetadataFactory';
+
+// Export processor factory helper
+export { getMetadataManager } from './ProcessorMetadataFactory';
