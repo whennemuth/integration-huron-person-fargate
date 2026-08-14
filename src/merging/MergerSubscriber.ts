@@ -1,7 +1,8 @@
 import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import { ChunkMetadata, MetadataForS3 } from '../chunking/metadata';
-const MetadataManager = MetadataForS3;
+import { Config } from 'integration-huron-person';
+import { ChunkMetadata, MetadataFactory } from '../chunking/metadata';
+import { getConfig } from '../../docker/chunker';
 
 export const FUNCTION_BASE_NAME = 'merger-subscriber';
 
@@ -88,7 +89,11 @@ export async function handler(event: any): Promise<any> {
   console.log(`Delta storage path: ${deltaStoragePath}`);
   console.log(`Chunk directory: ${chunkDirectory}`);
 
-  const terminalError = await MetadataManager.readTerminalError({
+  // Load configuration to determine storage type
+  const config = await getConfig();
+  const metadataManager = MetadataFactory.create({ config });
+
+  const terminalError = await metadataManager.readTerminalError({
     bucketName: bucket,
     chunkDirectory,
     region
@@ -123,7 +128,7 @@ export async function handler(event: any): Promise<any> {
   }
 
   // Step 2: All markers are contiguous - get metadata for context and audit trail
-  const metadata = await getChunkMetadata(chunkDirectory, bucket, region);
+  const metadata = await getChunkMetadata(config, chunkDirectory, bucket, region);
   
   if (!metadata) {
     console.log('Note: metadata file not found, but marker ordinals are contiguous - proceeding with merger');
@@ -156,11 +161,13 @@ export async function handler(event: any): Promise<any> {
 
 /**
  * Reads metadata file to determine expected chunk count
+ * @param config - Configuration to determine storage type
  * @param chunkDirectory - The chunk directory path (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z")
  * @param bucketName - S3 bucket name (optional, uses CHUNKS_BUCKET_NAME env var if not provided)
  * @param region - AWS region (optional, uses REGION env var if not provided)
  */
 export async function getChunkMetadata(
+  config: Config,
   chunkDirectory: string,
   bucketName?: string,
   region?: string
@@ -171,7 +178,8 @@ export async function getChunkMetadata(
     return null;
   }
 
-  const metadata = await MetadataManager.read({
+  const metadataManager = MetadataFactory.create({ config });
+  const metadata = await metadataManager.read({
     bucketName: bucket,
     chunkDirectory,
     region: region || process.env.REGION

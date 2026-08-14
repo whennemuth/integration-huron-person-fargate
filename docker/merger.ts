@@ -44,8 +44,8 @@ import { objectExistsInS3 } from '../src/Utils';
 import { extractChunkDirectory } from '../src/chunking/filedrop/ChunkPathUtils';
 import { DeferredDeleteHandler } from '../src/merging/DeferredDeleteHandler';
 import { MergeEngine } from '../src/merging/MergeEngine';
-import { MetadataForS3 } from '../src/chunking/metadata';
-const MetadataManager = MetadataForS3;
+import { MetadataFactory } from '../src/chunking/metadata';
+import { getConfig } from './chunker';
 import { SyncPopulation } from './chunkTypes';
 import { TaskProtection } from '../src/TaskProtection';
 
@@ -266,7 +266,9 @@ async function main() {
         // to identify records truly removed from source and soft-delete them from target API
         if (DeferredDeleteHandler.isConfiguredForDeletes()) {
           // First check if the population type for this sync is compatible with deletion processing (e.g., PersonDelta). We don't want to run deletion logic for sync types that aren't designed for it.
-          const flags = await MetadataManager.readFlags({ bucketName, chunkDirectory: chunkDir, region });
+          const config = await getConfig();
+          const metadataManager = MetadataFactory.create({ config });
+          const flags = await metadataManager.readFlags({ bucketName, chunkDirectory: chunkDir, region });
           const { syncPopulation } = flags;
           if(syncPopulation === SyncPopulation.PersonDelta) {
             console.log(`  Sync population type is PersonDelta - Deletion handling does NOT apply.`);

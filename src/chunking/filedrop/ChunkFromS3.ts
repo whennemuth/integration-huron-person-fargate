@@ -1,6 +1,6 @@
 import { Message } from '@aws-sdk/client-sqs';
 import { TestEnvironment } from 'integration-core';
-import { ChunkFromParams, IChunkFromSource, writeChunkMetadata } from "../../../docker/chunker";
+import { ChunkFromParams, IChunkFromSource, writeChunkMetadata, getConfig } from "../../../docker/chunker";
 import { SyncPopulation } from "../../../docker/chunkTypes";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { ChunkerQueue } from '../ChunkerQueue';
@@ -221,7 +221,8 @@ export class ChunkFromS3 implements IChunkFromSource {
       const sourceUrl = `s3://${inputBucket}/${inputKey}`;
 
       // Write metadata and log results (no target for S3 source)
-      await writeChunkMetadata({
+      const integrationConfig = await getConfig();
+      await writeChunkMetadata(integrationConfig, {
         storage: chunksStorage,
         bucketName: chunksBucket,
         chunkDirectory,

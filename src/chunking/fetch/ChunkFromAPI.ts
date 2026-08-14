@@ -8,8 +8,7 @@ import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { getRetryStrategy } from '../../ApiErrorRetryStrategy';
 import { ChunkerQueue } from '../ChunkerQueue';
-import { MetadataForS3, WriteMetadataParams } from "../metadata";
-const MetadataManager = MetadataForS3;
+import { MetadataFactory, WriteMetadataParams } from "../metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig, ChunkOrdinalAllocator } from "./BigJsonFetch";
@@ -455,6 +454,9 @@ export class ChunkFromAPI implements IChunkFromSource {
       // Extract chunk base path (creates key like: chunks/person-full/2026-04-09T15:28:18.703Z)
       const chunkDirectory = this.getChunkDirectory();
 
+      // Create metadata manager for config.storage.type (S3 or DynamoDB)
+      const metadataManager = MetadataFactory.create({ config: this.config, context: this.context });
+
       console.log(`Chunks: s3://${chunksBucket}/${chunkDirectory}/`);
       console.log(`Region: ${region || 'default'}`);
       console.log(`Items per chunk: ${itemsPerChunk}`);
@@ -531,7 +533,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         const runFailureMessage = result.terminalErrorMessage || 'Unknown terminal chunking error';
 
         // Persist failure metadata for run diagnostics and explicit terminal-state visibility.
-        await writeChunkMetadata({
+        await writeChunkMetadata(this.config, {
           storage: chunksStorage,
           bucketName: chunksBucket,
           chunkDirectory,
@@ -550,7 +552,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         } satisfies WriteMetadataParams);
 
         // Keep flags aligned with metadata so merger gating has the same terminal signal.
-        await MetadataManager.markRunFailed({
+        await metadataManager.markRunFailed({
           bucketName: chunksBucket,
           chunkDirectory,
           region,
@@ -568,7 +570,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         let aggregatedChunkKeys = result.chunkKeys;
 
         try {
-          const { chunkCount, totalRecords, chunkKeys } = await MetadataManager.buildAggregatedMetadata(
+          const { chunkCount, totalRecords, chunkKeys } = await metadataManager.buildAggregatedMetadata(
             chunksBucket,
             chunkDirectory,
             region
@@ -601,7 +603,7 @@ export class ChunkFromAPI implements IChunkFromSource {
 
         // Write metadata manifest (source, target, paths, timestamps, flags)
         // Merger will verify completion via contiguous marker ordinals, not metadata fields
-        await writeChunkMetadata({
+        await writeChunkMetadata(this.config, {
           storage: chunksStorage,
           bucketName: chunksBucket,
           chunkDirectory,

@@ -49,8 +49,7 @@ import { Config, ConfigManager } from 'integration-huron-person';
 import { ChunkerQueue } from '../src/chunking/ChunkerQueue';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
-import { MetadataForS3, ReadMetadataParams, WriteMetadataParams } from '../src/chunking/metadata';
-const MetadataManager = MetadataForS3;
+import { MetadataFactory, ReadMetadataParams, WriteMetadataParams } from '../src/chunking/metadata';
 import { PersonCacheFactory } from '../src/person-cache/PersonCacheFactory';
 import { AbstractPersonCache } from '../src/person-cache/AbstractPersonCache';
 import { TaskProtection } from '../src/TaskProtection';
@@ -81,10 +80,13 @@ const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
 /**
  * Write metadata file for merger trigger detection
+ * @param config Configuration to determine storage type
+ * @param params Write metadata parameters
  */
-export async function writeChunkMetadata(params: WriteMetadataParams) {
-  await MetadataManager.write(params);
-  console.log('\n✓ Metadata file written to S3');
+export async function writeChunkMetadata(config: Config, params: WriteMetadataParams) {
+  const metadata = MetadataFactory.create({ config });
+  await metadata.write(params);
+  console.log('\n✓ Metadata written');
 }
 
 /**
@@ -94,28 +96,30 @@ export async function writeChunkMetadata(params: WriteMetadataParams) {
  * to the asynchronous nature of SQS and scaling, we may have some tasks that were triggered by 
  * messages that were created before the service realized it had reached the end, and these tasks 
  * should just exit immediately without doing any work.
+ * @param config Configuration to determine storage type
  * @param params 
  * @returns true if chunking has already finished (metadata file exists), false otherwise
  */
-export async function chunkingAlreadyFinished(params: { 
+export async function chunkingAlreadyFinished(config: Config, params: { 
   bucketName: string, chunkDirectory: string, region: string | undefined 
 }): Promise<boolean> {
   const { bucketName, chunkDirectory, region } = params;
-  const metadata = await MetadataManager.read({ 
+  const metadata = MetadataFactory.create({ config });
+  const result = await metadata.read({ 
     bucketName, chunkDirectory, region 
   } satisfies ReadMetadataParams);
 
   let retval = true; // Assume finished unless we can confirm otherwise by finding metadata
-  if(!metadata) {
+  if(!result) {
     retval = false;
   }
 
-  if (Object.keys(metadata).length === 0) {
+  if (Object.keys(result).length === 0) {
     retval = false;
   }
   
   if(retval) {
-    console.log(`🔍 Existing metadata found for this chunk directory: ${JSON.stringify(metadata)}`);
+    console.log(`🔍 Existing metadata found for this chunk directory: ${JSON.stringify(result)}`);
   }
   return retval;
 }
@@ -123,12 +127,15 @@ export async function chunkingAlreadyFinished(params: {
 /**
  * Bail out early if a terminal chunking error marker exists for this run.
  * The marker file itself provides at-a-glance failure visibility in S3 directory listings.
+ * @param config Configuration to determine storage type
+ * @param params Parameters for checking terminal error
  */
-export async function chunkingTerminalErrorEncountered(params: {
+export async function chunkingTerminalErrorEncountered(config: Config, params: {
   bucketName: string, chunkDirectory: string, region: string | undefined
 }): Promise<boolean> {
   const { bucketName, chunkDirectory, region } = params;
-  return MetadataManager.terminalErrorExists({ bucketName, chunkDirectory, region });
+  const metadata = MetadataFactory.create({ config });
+  return metadata.terminalErrorExists({ bucketName, chunkDirectory, region });
 }
 
 /**
@@ -352,7 +359,7 @@ export async function main() {
       return;
     }
 
-    const terminalErrorEncountered = await chunkingTerminalErrorEncountered({
+    const terminalErrorEncountered = await chunkingTerminalErrorEncountered(config, {
       bucketName: chunksBucket, chunkDirectory: chunker?.getChunkDirectory(), region
     });
     if (terminalErrorEncountered) {
@@ -365,7 +372,7 @@ export async function main() {
     // Completion short-circuit: once metadata exists for this chunk directory, this task is obsolete.
     // In the simulator's stateful depletion model, allocation occurs at execution time from a shared
     // supply, so remaining late-arriving tasks are expected to return empty payloads and can be skipped.
-    const alreadyFinished = await chunkingAlreadyFinished({
+    const alreadyFinished = await chunkingAlreadyFinished(config, {
       bucketName: chunksBucket, chunkDirectory: chunker?.getChunkDirectory(), region
     });
     if (alreadyFinished) {
@@ -420,7 +427,8 @@ export async function main() {
     console.log(`Sync population type: ${syncPopulation}`);
 
     // Write flags file BEFORE chunking starts so processor tasks can read it immediately
-    await MetadataManager.writeFlags({
+    const metadataManager = MetadataFactory.create({ config });
+    await metadataManager.writeFlags({
       bucketName: chunksBucket,
       chunkDirectory: chunker.getChunkDirectory(),
       bulkReset: chunkFromParams.bulkReset,
@@ -457,7 +465,9 @@ export async function main() {
     const chunkDirectory = chunker?.getChunkDirectory?.();
     if (chunkDirectory) {
       try {
-        await MetadataManager.markRunFailed({
+        const config = await getConfig();
+        const metadataManager = MetadataFactory.create({ config });
+        await metadataManager.markRunFailed({
           bucketName: process.env.CHUNKS_BUCKET!,
           chunkDirectory,
           region: process.env.REGION,
