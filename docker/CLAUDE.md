@@ -111,6 +111,75 @@ if (require.main === module) {
 export { main };
 ```
 
+## Storage Mode Detection
+
+The pipeline supports two storage backends for delta state and metadata:
+
+### Detection Logic
+
+**ProcessorMetadataFactory** (`src/chunking/metadata/ProcessorMetadataFactory.ts`) determines storage mode by checking environment variables:
+
+```typescript
+// Check for DynamoDB-mode-specific tables (optional tables that only exist when useDynamoDb is true)
+if (DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || DYNAMODB_PERSON_HISTORY_TABLE_NAME) {
+  return MetadataForDynamoDb;  // DynamoDB mode
+}
+return MetadataForS3;  // S3 mode (default)
+```
+
+**Key Principle**: Statistics and atomic counter tables exist in BOTH modes. Only PersonCurrentStateTable and PersonHistoryTable are DynamoDB-mode-specific.
+
+### S3 Mode (Default)
+
+**Environment Variables:**
+- `DYNAMODB_STATISTICS_TABLE_NAME` - Required (error tracking)
+- `DYNAMODB_ATOMIC_COUNTER_TABLE_NAME` - Required (chunk ID generation, chunker only)
+- Omit `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` and `DYNAMODB_PERSON_HISTORY_TABLE_NAME`
+
+**Storage:**
+- Metadata: `s3://bucket/chunks/{population}/{timestamp}/_metadata.json`
+- Flags: `s3://bucket/chunks/{population}/{timestamp}/_flags.json`
+- Delta storage: `s3://bucket/delta-storage/{population}/previous-input.ndjson`
+- Hash storage: `s3://bucket/delta-storage/{population}/hashes.ndjson`
+
+### DynamoDB Mode
+
+**Environment Variables:**
+- `DYNAMODB_STATISTICS_TABLE_NAME` - Required (error tracking and metadata)
+- `DYNAMODB_ATOMIC_COUNTER_TABLE_NAME` - Required (chunk ID generation, chunker only)
+- `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` - Required (enables DynamoDB mode)
+- `DYNAMODB_PERSON_HISTORY_TABLE_NAME` - Required (enables DynamoDB mode)
+
+**Storage:**
+- **PersonCurrentStateTable** - Current hash state per person (PK: personId)
+- **PersonHistoryTable** - Historical change audit trail (PK: personId, SK: syncRunId)
+- **StatisticsTable** - Metadata, flags, error events (PK: integrationTimestamp, SK: eventType)
+- Chunk NDJSON files remain in S3 (required for parallel processing)
+
+### Container-Specific Environment Variables
+
+**All Containers (Shared):**
+- `REGION` - AWS region
+- `IS_ECS_TASK` - Execution context flag ('true' in Fargate, 'false' locally)
+- `DRY_RUN` - Testing mode flag
+- `CACHE_ENABLED`, `CACHE_PATH` - PersonCache configuration
+- `SECRET_ARN` - Secrets Manager ARN for config loading
+- `HURON_PERSON_CONFIG_JSON` - Full config as JSON string (ECS secrets)
+- `HURON_PERSON_CONFIG_PATH` - Local config file path (local dev only)
+
+**Chunker Only:**
+- `DYNAMODB_ATOMIC_COUNTER_TABLE_NAME` - Required for chunk ID generation
+- No person state tables (chunker doesn't track person-level changes)
+
+**Processor Only:**
+- `DYNAMODB_STATISTICS_TABLE_NAME` - Required for error tracking
+- `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` - Optional (enables DynamoDB mode)
+- `DYNAMODB_PERSON_HISTORY_TABLE_NAME` - Optional (enables DynamoDB mode)
+
+**Merger Only:**
+- `DYNAMODB_STATISTICS_TABLE_NAME` - Required for statistics tracking
+- No person state tables needed (merger consolidates, doesn't track individuals)
+
 ## Phase 1: Chunker Container
 
 **File**: `docker/chunker.ts`

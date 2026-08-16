@@ -51,6 +51,45 @@ The merger runs after all processor tasks complete. It concatenates chunk output
 - In AWS: EventBridge rule polls metadata file and triggers merger when all chunks are processed
 - Locally: Run manually via `./run.sh merger` after processing all chunks
 
+## Storage Modes
+
+The pipeline supports two storage backends for delta state and metadata:
+
+### S3 Mode (Default)
+
+Stores all state and metadata in S3:
+- Chunk NDJSON files: `s3://bucket/chunks/{population}/{timestamp}/chunk-XXXX.ndjson`
+- Metadata file: `s3://bucket/chunks/{population}/{timestamp}/_metadata.json`
+- Flags file: `s3://bucket/chunks/{population}/{timestamp}/_flags.json`
+- Delta storage: `s3://bucket/delta-storage/{population}/previous-input.ndjson`
+- Hash storage: `s3://bucket/delta-storage/{population}/hashes.ndjson`
+
+**Environment variables:**
+- `DYNAMODB_STATISTICS_TABLE_NAME` - Required (for error tracking)
+- `DYNAMODB_ATOMIC_COUNTER_TABLE_NAME` - Required (for chunk ID generation)
+- Omit `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` and `DYNAMODB_PERSON_HISTORY_TABLE_NAME`
+
+### DynamoDB Mode
+
+Stores person state and history in DynamoDB tables:
+- **PersonCurrentStateTable** - Current hash state per person (PK: personId)
+- **PersonHistoryTable** - Historical change audit trail (PK: personId, SK: syncRunId)
+- **StatisticsTable** - Metadata, flags, error events (PK: integrationTimestamp, SK: eventType)
+- Chunk NDJSON files remain in S3 (required for parallel processing)
+
+**Environment variables:**
+- `DYNAMODB_STATISTICS_TABLE_NAME` - Required (for error tracking and metadata)
+- `DYNAMODB_ATOMIC_COUNTER_TABLE_NAME` - Required (for chunk ID generation)
+- `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` - Required (enables DynamoDB mode)
+- `DYNAMODB_PERSON_HISTORY_TABLE_NAME` - Required (enables DynamoDB mode)
+
+**Mode Detection:**
+ProcessorMetadataFactory detects storage mode by checking for DynamoDB-mode-specific environment variables:
+- If `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` or `DYNAMODB_PERSON_HISTORY_TABLE_NAME` is set → DynamoDB mode
+- Otherwise → S3 mode (default)
+
+**Note:** Statistics and atomic counter tables exist in BOTH modes. Only PersonCurrentStateTable and PersonHistoryTable are DynamoDB-mode-specific.
+
 ## Files
 
 - `Dockerfile` - Multi-stage build for ARM64/Graviton2
@@ -187,19 +226,34 @@ The AWS SDK automatically uses the specified profile. No need to set `AWS_ACCESS
 - `AWS_PROFILE` - AWS profile name from ~/.aws/credentials (default: default)
 
 ### Chunker-Specific
-- `INPUT_BUCKET` - Source bucket containing input JSON file (required)
-- `INPUT_KEY` - Key of input JSON file to process (required)
+- `INPUT_BUCKET` - Source bucket containing input JSON file (required for S3 mode)
+- `INPUT_KEY` - Key of input JSON file to process (required for S3 mode)
 - `CHUNKS_BUCKET` - Destination bucket for chunk files (required)
 - `ITEMS_PER_CHUNK` - Number of persons per chunk file (default: 200)
+- `DYNAMODB_ATOMIC_COUNTER_TABLE_NAME` - DynamoDB table for chunk ID generation (required)
+- `SECRET_ARN` - Secrets Manager ARN for configuration (optional, for API mode)
+- `STACK_ID`, `LANDSCAPE`, `ECS_CLUSTER_NAME`, `ECS_SERVICE_NAME`, `MAX_SCALING_CAPACITY` - ECS service scaling parameters
 
 ### Processor-Specific
 - `CHUNKS_BUCKET` - Bucket containing chunk files (required)
-- `CHUNK_KEY` - Key of specific chunk to process (required)
-- `HURON_API_ENDPOINT` - Huron API endpoint URL (optional, for future use)
+- `CHUNK_KEY` - Key of specific chunk to process (required for local mode)
+- `SQS_QUEUE_URL` - SQS queue for chunk notifications (required for ECS mode)
+- `DYNAMODB_STATISTICS_TABLE_NAME` - DynamoDB table for error tracking and statistics (required for both S3 and DynamoDB modes)
+- `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` - DynamoDB table for person state tracking (optional, enables DynamoDB mode)
+- `DYNAMODB_PERSON_HISTORY_TABLE_NAME` - DynamoDB table for change history audit trail (optional, enables DynamoDB mode)
+- `SECRET_ARN` - Secrets Manager ARN for configuration (optional)
+- `STATIC_MAP_USAGE` - JSON object specifying which static maps to load (e.g., `{ "orgMap": true }`)
+- `SHARED_DELTA_STORAGE_DIR` - S3 directory for baseline delta files (default: delta-storage)
 
 ### Merger-Specific
 - `CHUNKS_BUCKET` - Bucket containing chunk files (required)
 - `INPUT_BUCKET` - Original input bucket name, used as top-level folder prefix (required)
+- `CHUNK_DIRECTORY` - Explicit chunk directory path (optional, for direct execution)
+- `SQS_QUEUE_URL` - SQS queue for merge trigger (required for ECS mode)
+- `DYNAMODB_STATISTICS_TABLE_NAME` - DynamoDB table for statistics tracking (required for both S3 and DynamoDB modes)
+- `SECRET_ARN` - Secrets Manager ARN for configuration (optional)
+- `SHARED_DELTA_STORAGE_DIR` - S3 directory for baseline delta files (default: delta-storage)
+- `PERSON_DELETE_TYPE` - Deletion handling strategy (default: deferred)
 
 ## AWS Fargate Deployment
 
