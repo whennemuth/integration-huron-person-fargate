@@ -244,4 +244,107 @@ export class PersonHistoryTable {
   public async truncate(chunkSize?: number): Promise<void> {
     await this.table.truncateTable(chunkSize);
   }
+
+  /**
+   * Delete all history records for a specific sync run.
+   * Removes all person history records (NEW, UPDATED, DELETED) associated with
+   * the given syncRunId across all persons.
+   * 
+   * This is useful for:
+   * - Cleaning up failed integration runs
+   * - Removing test data
+   * - Pruning old integration history
+   * 
+   * Note: This uses GSI1 to efficiently find all records for a sync run.
+   * 
+   * @param syncRunId - ISO timestamp identifying the sync run to delete
+   * @returns Number of records deleted
+   */
+  public async deleteByPartitionKey(syncRunId: string): Promise<number> {
+    // Note: PersonHistory table uses personId as PK, syncRunId as SK
+    // We need to query GSI1 to find all records for this syncRunId
+    const items = await this.table.queryGSI(
+      DYNAMODB_GSI1_INDEX_NAME,
+      DYNAMODB_GSI1_PARTITION_KEY,
+      syncRunId
+    );
+    
+    if (items.length === 0) {
+      console.log(`No history records found for sync run ${syncRunId}`);
+      return 0;
+    }
+    
+    console.log(`Found ${items.length} history records for sync run ${syncRunId}, deleting...`);
+    
+    // Extract keys and batch delete
+    const keys = items.map(item => ({
+      [DYNAMODB_PARTITION_KEY]: item.personId,
+      [DYNAMODB_SORT_KEY]: item.syncRunId
+    }));
+    
+    await this.table.batchWrite(keys, 'delete');
+    
+    console.log(`Deleted ${keys.length} history records for sync run ${syncRunId}`);
+    return keys.length;
+  }
 }
+
+
+if(require.main === module) {
+  const { TestEnvironment } = require('integration-core');
+  const testEnvironment = TestEnvironment('PERSON_HISTORY_TABLE');
+  [
+    'PERSON_HISTORY_TABLE_TASK',
+    'PERSON_HISTORY_TABLE_PERSON_ID',
+    'PERSON_HISTORY_TABLE_SYNC_RUN_ID',
+    'TRUNCATE_CHUNK_SIZE'
+  ].forEach(testEnvironment.getVar);
+
+  const { 
+    PERSON_HISTORY_TABLE_TASK: task,
+    PERSON_HISTORY_TABLE_PERSON_ID: personId,
+    PERSON_HISTORY_TABLE_SYNC_RUN_ID: syncRunId,
+    TRUNCATE_CHUNK_SIZE
+  } = process.env;
+
+  (async () => {
+    const context = require('../../context/context.json') as IContext;
+    const historyTable = new PersonHistoryTable(context);
+    
+    switch(task) {
+      case 'truncate':
+        const chunkSize = TRUNCATE_CHUNK_SIZE ? parseInt(TRUNCATE_CHUNK_SIZE, 10) : undefined;
+        await historyTable.truncate(chunkSize);
+        break;
+      case 'history':
+        if(!personId) {
+          console.error('Missing required PERSON_HISTORY_TABLE_PERSON_ID environment variable for history task!');
+          process.exit(1);
+        }
+        const history = await historyTable.getPersonHistory(personId);
+        console.log(`Found ${history.length} history record(s) for person ${personId}:`);
+        console.log(JSON.stringify(history, null, 2));
+        break;
+      case 'changes':
+        if(!syncRunId) {
+          console.error('Missing required PERSON_HISTORY_TABLE_SYNC_RUN_ID environment variable for changes task!');
+          process.exit(1);
+        }
+        const changes = await historyTable.getChangesInSyncRun(syncRunId);
+        console.log(`Found ${changes.length} change(s) in sync run ${syncRunId}:`);
+        console.log(JSON.stringify(changes, null, 2));
+        break;
+      case 'delete':
+        if(!syncRunId) {
+          console.error('Missing required PERSON_HISTORY_TABLE_SYNC_RUN_ID environment variable for delete task!');
+          process.exit(1);
+        }
+        const deletedCount = await historyTable.deleteByPartitionKey(syncRunId);
+        console.log(`Deleted ${deletedCount} record(s) for sync run ${syncRunId}`);
+        break;
+      default:
+        console.error(`Unknown task: ${task}. Supported tasks: truncate, history, changes, delete`);
+    }
+  })();
+}
+

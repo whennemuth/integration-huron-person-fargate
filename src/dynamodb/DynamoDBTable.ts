@@ -106,6 +106,65 @@ export class DynamoDBTable {
   }
 
   /**
+   * Delete all items with a specific partition key value.
+   * This method queries all items matching the partition key and deletes them in batches.
+   * Useful for removing all records associated with a specific entity (e.g., a sync run).
+   * 
+   * Note: This uses Query (efficient) rather than Scan, making it suitable for
+   * partition-specific cleanup operations.
+   * 
+   * Usage:
+   * ```typescript
+   * const deletedCount = await table.deleteByPartitionKey('2026-03-03T19:58:41.277Z');
+   * console.log(`Deleted ${deletedCount} items`);
+   * ```
+   * 
+   * @param partitionKeyValue - Value of the partition key to delete
+   * @param chunkSize - Number of items to delete per batch (default: 25, max: 25)
+   * @returns Number of items deleted
+   */
+  public async deleteByPartitionKey(partitionKeyValue: string, chunkSize: number = 25): Promise<number> {
+    const { client, params: { tableName, partitionKey, sortKey } } = this;
+    console.log(`Deleting items with ${partitionKey} = ${partitionKeyValue} from table: ${tableName}`);
+  
+    let itemsDeleted = 0;
+    
+    // Query all items with this partition key
+    const items = await this.queryByPartitionKey(partitionKeyValue);
+    
+    if (items.length === 0) {
+      console.log('No items found to delete.');
+      return 0;
+    }
+    
+    console.log(`Found ${items.length} items to delete.`);
+    
+    // Process in batches of chunkSize (DynamoDB limit is 25)
+    for (let i = 0; i < items.length; i += chunkSize) {
+      const batch = items.slice(i, i + chunkSize);
+      const getKey = (item: any) => ({
+        [partitionKey]: item[partitionKey],
+        ...(sortKey ? { [sortKey]: item[sortKey] } : {})
+      });
+      const deleteRequests = batch.map(item => ({
+        DeleteRequest: {
+          Key: getKey(item)
+        }
+      }));
+      
+      await client.send(new BatchWriteCommand({
+        RequestItems: { [tableName]: deleteRequests }
+      }));
+      
+      itemsDeleted += batch.length;
+      console.log(`Deleted ${itemsDeleted} items so far...`);
+    }
+    
+    console.log(`Deletion complete. Deleted ${itemsDeleted} total items.`);
+    return itemsDeleted;
+  }
+
+  /**
    * Get a single item from DynamoDB by partition key and sort key.
    * This is a generic method that can retrieve any item from the table.
    * 

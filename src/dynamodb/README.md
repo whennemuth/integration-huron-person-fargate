@@ -261,6 +261,234 @@ const deletedPersons = await historyTable.getChangesByType('DELETED');
 const recentDeleted = await historyTable.getChangesByType('DELETED', '2026-01-01T00:00:00.000Z');
 ```
 
+### Harness Execution
+The PersonHistoryTable includes a test harness for interactive operations:
+
+```bash
+# Truncate table
+PERSON_HISTORY_TABLE_TASK=truncate npx ts-node src/dynamodb/PersonHistoryTable.ts
+
+# Get person history
+PERSON_HISTORY_TABLE_TASK=history \
+PERSON_HISTORY_TABLE_PERSON_ID=U12345678 \
+npx ts-node src/dynamodb/PersonHistoryTable.ts
+
+# Get all changes in a sync run
+PERSON_HISTORY_TABLE_TASK=changes \
+PERSON_HISTORY_TABLE_SYNC_RUN_ID=2026-03-03T19:58:41.277Z \
+npx ts-node src/dynamodb/PersonHistoryTable.ts
+
+# Delete all history records for a sync run
+PERSON_HISTORY_TABLE_TASK=delete \
+PERSON_HISTORY_TABLE_SYNC_RUN_ID=2026-03-03T19:58:41.277Z \
+npx ts-node src/dynamodb/PersonHistoryTable.ts
+```
+
+## PersonCurrentStateTable Harness
+
+### Harness Execution
+```bash
+# Truncate table
+PERSON_CURRENT_STATE_TABLE_TASK=truncate npx ts-node src/dynamodb/PersonCurrentStateTable.ts
+
+# Get person state
+PERSON_CURRENT_STATE_TABLE_TASK=get \
+PERSON_CURRENT_STATE_TABLE_PERSON_ID=U12345678 \
+npx ts-node src/dynamodb/PersonCurrentStateTable.ts
+
+# List persons in a sync run
+PERSON_CURRENT_STATE_TABLE_TASK=list \
+PERSON_CURRENT_STATE_TABLE_SYNC_RUN_ID=2026-03-03T19:58:41.277Z \
+npx ts-node src/dynamodb/PersonCurrentStateTable.ts
+
+# Delete and restore from previous run
+PERSON_CURRENT_STATE_TABLE_TASK=delete-restore \
+PERSON_CURRENT_STATE_TABLE_SYNC_RUN_ID=2026-03-03T19:58:41.277Z \
+npx ts-node src/dynamodb/PersonCurrentStateTable.ts
+```
+
+## Deleting Integration Runs
+
+All three table classes provide deletion methods for removing records associated with a specific integration run.
+
+### StatisticsTable.deleteByPartitionKey()
+
+Deletes all records (STATISTICS, FLAGS, METADATA, CHUNK_STATUS, ERROR records) for a specific integration run:
+
+```typescript
+const statsTable = new StatisticsTable(context);
+const deletedCount = await statsTable.deleteByPartitionKey('2026-03-03T19:58:41.277Z');
+console.log(`Deleted ${deletedCount} statistics records`);
+```
+
+**Harness:**
+```bash
+STATISTICS_TABLE_TASK=delete \
+STATISTICS_TABLE_INTEGRATION_TIMESTAMP=2026-03-03T19:58:41.277Z \
+npx ts-node src/dynamodb/StatisticsTable.ts
+```
+
+### PersonHistoryTable.deleteByPartitionKey()
+
+Deletes all history records (NEW, UPDATED, DELETED) for a specific sync run:
+
+```typescript
+const historyTable = new PersonHistoryTable(context);
+const deletedCount = await historyTable.deleteByPartitionKey('2026-03-03T19:58:41.277Z');
+console.log(`Deleted ${deletedCount} history records`);
+```
+
+**Note**: This method uses GSI1 (`syncRunId-changeType-index`) to efficiently find all records for the sync run.
+
+### PersonCurrentStateTable.deleteByPartitionKeyAndRestore()
+
+Restores person state records to their pre-run state for a specific sync run:
+
+```typescript
+const stateTable = new PersonCurrentStateTable(context);
+const historyTable = new PersonHistoryTable(context);
+
+const result = await stateTable.deleteByPartitionKeyAndRestore(
+  '2026-03-03T19:58:41.277Z',
+  historyTable
+);
+
+console.log(`Deleted: ${result.deletedCount}, Restored: ${result.restoredCount}`);
+```
+
+**Restoration Process**:
+1. Queries GSI to find all persons modified in the target sync run
+2. For each person, queries PersonHistory to find their state before the target run
+3. If previous state exists: **UPDATES** the person record with previous hash/syncRunId
+4. If no previous state exists: **DELETES** the person record (they were created in target run)
+
+**Key Behavior**: 
+- PersonCurrentState maintains **one record per person** showing their current state
+- When pruning a run, persons are **restored** to their previous state, not deleted wholesale
+- Only persons who were **created** in the target run (no previous history) are deleted
+- Example: If Person A was updated in Run 3, pruning Run 3 restores Person A to their Run 2 state
+
+**Edge Cases**: 
+- If a person's previous history entry is a DELETED record, they are deleted from PersonCurrentState
+- If a person has no history before the target run, they are deleted (created in target run)
+
+## IntegrationRunPruner (Orchestrator)
+
+**File**: `IntegrationRun.ts`
+
+Orchestrates the deletion of an integration run across all three tables, maintaining data integrity by restoring PersonCurrentState from the previous run.
+
+### Usage
+
+```typescript
+import { IntegrationRunPruner } from './dynamodb/IntegrationRun';
+
+const pruner = new IntegrationRunPruner('2026-03-03T19:58:41.277Z', context);
+const result = await pruner.prune();
+
+console.log(result);
+// {
+//   statisticsDeleted: 42,
+//   historyDeleted: 150,
+//   currentStateDeleted: 150,
+//   currentStateRestored: 148
+// }
+```
+
+### Execution Order
+
+The pruner executes deletions in this specific order:
+
+1. **StatisticsTable**: Remove run metadata, flags, errors (no dependencies)
+2. **PersonHistoryTable**: Remove audit trail records (needed for restoration)
+3. **PersonCurrentStateTable**: Remove current state and restore from previous run
+
+This order ensures that:
+- Statistics/metadata are cleaned first
+- History data is available when restoring PersonCurrentState
+- Current state is restored to maintain data integrity
+
+### Harness Execution
+
+```bash
+INTEGRATION_RUN_PRUNER_TIMESTAMP=2026-03-03T19:58:41.277Z \
+npx ts-node src/dynamodb/IntegrationRun.ts
+```
+
+### Use Cases
+
+- **Failed Integration Cleanup**: Remove partial/failed integration runs
+- **Test Data Cleanup**: Clean up test runs while preserving production data
+- **Selective Pruning**: Remove specific runs while maintaining data integrity
+- **Rollback**: Restore database to state before a problematic integration run
+
+### Validation
+
+The pruner validates the ISO timestamp format before executing:
+
+```typescript
+// Valid timestamps
+new IntegrationRunPruner('2026-03-03T19:58:41.277Z', context);
+new IntegrationRunPruner('2026-03-03T19:58:41+00:00', context);
+
+// Invalid - throws error
+new IntegrationRunPruner('2026-03-03', context); // Missing time
+new IntegrationRunPruner('invalid', context);    // Not ISO format
+```
+
+### IAM Permissions for Pruning
+
+The IntegrationRunPruner requires additional DynamoDB permissions beyond normal pipeline operations:
+
+**Required Permissions**:
+- `dynamodb:Query` - To find records matching partition keys
+- `dynamodb:BatchWriteItem` - To delete records in batches
+- `dynamodb:DeleteItem` - To delete individual items
+- `dynamodb:PutItem` - To restore PersonCurrentState records
+
+**Note**: Normal ECS tasks (Processor, Merger, Chunker) do NOT have these delete permissions by design, as deletion is not part of standard pipeline operations.
+
+**Deployment Options**:
+
+1. **Local Execution** (Recommended for manual cleanup):
+   ```bash
+   # Run locally with AWS credentials
+   INTEGRATION_RUN_PRUNER_TIMESTAMP=2026-03-03T19:58:41.277Z \
+   npx ts-node src/dynamodb/IntegrationRun.ts
+   ```
+   Requires AWS credentials with DynamoDB delete permissions.
+
+2. **Lambda Function** (For automated cleanup):
+   Create a Lambda with a custom IAM role:
+   ```typescript
+   const prunerLambda = new NodejsFunction(this, 'PrunerLambda', {
+     // ... config
+   });
+   
+   // Grant delete permissions
+   ['Statistics', 'PersonCurrentState', 'PersonHistory'].forEach(tableName => {
+     prunerLambda.addToRolePolicy(new PolicyStatement({
+       effect: Effect.ALLOW,
+       actions: [
+         'dynamodb:Query',
+         'dynamodb:BatchWriteItem',
+         'dynamodb:DeleteItem',
+         'dynamodb:PutItem',
+         'dynamodb:GetItem'
+       ],
+       resources: [
+         `arn:aws:dynamodb:${region}:${account}:table/${stackId}-${tableName.toLowerCase()}-${landscape}`,
+         `arn:aws:dynamodb:${region}:${account}:table/${stackId}-${tableName.toLowerCase()}-${landscape}/index/*`
+       ]
+     }));
+   });
+   ```
+
+3. **ECS Task** (For scheduled cleanup):
+   Add a dedicated pruner task definition with elevated permissions separate from normal pipeline tasks.
+
+**Security Consideration**: Deletion operations should be restricted to administrative roles and require explicit approval workflows in production environments.
+
 ## CDK Infrastructure
 
 **File**: `../../lib/DynamoDB.ts`

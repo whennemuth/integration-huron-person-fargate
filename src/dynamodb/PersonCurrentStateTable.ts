@@ -198,4 +198,196 @@ export class PersonCurrentStateTable {
   public async truncate(chunkSize?: number): Promise<void> {
     await this.table.truncateTable(chunkSize);
   }
+
+  /**
+   * Delete all person state records for a specific sync run and restore from previous run.
+   * This method:
+   * 1. Queries GSI to find all persons modified in the target sync run
+   * 2. For each person, queries their PersonHistory to find their previous state
+   * 3. If previous state exists: UPDATES the person record with previous hash/syncRunId
+   * 4. If no previous state exists: DELETES the person record (they were created in target run)
+   * 
+   * This is useful for:
+   * - Rolling back a failed integration run
+   * - Cleaning up test data while preserving prior state
+   * - Pruning integration runs while maintaining data integrity
+   * 
+   * @param syncRunId - ISO timestamp identifying the sync run to delete
+   * @param personHistoryTable - PersonHistoryTable instance for finding previous state
+   * @returns Object with deletedCount and restoredCount (updated)
+   */
+  public async deleteByPartitionKeyAndRestore(
+    syncRunId: string, 
+    personHistoryTable: any
+  ): Promise<{ deletedCount: number; restoredCount: number }> {
+    console.log(`Restoring PersonCurrentState to pre-${syncRunId} state...`);
+    
+    // Step 1: Find all persons modified in the target sync run
+    const personsInRun = await this.getPersonsInSyncRun(syncRunId);
+    
+    if (personsInRun.length === 0) {
+      console.log(`No person state records found for sync run ${syncRunId}`);
+      return { deletedCount: 0, restoredCount: 0 };
+    } 
+    
+    console.log(`Found ${personsInRun.length} person(s) to restore/delete`);
+    
+    let deletedCount = 0;
+    let restoredCount = 0;
+    const recordsToUpdate: PersonCurrentStateRecord[] = [];
+    const keysToDelete: any[] = [];
+    
+    // Step 2: For each person, find their previous state
+    for (const person of personsInRun) {
+      const previousState = await this.findPreviousPersonState(
+        person.personId,
+        syncRunId,
+        personHistoryTable
+      );
+      
+      if (previousState) {
+        // Previous state exists - restore it
+        recordsToUpdate.push({
+          personId: person.personId,
+          hash: previousState.hash,
+          syncRunId: previousState.syncRunId
+        });
+        restoredCount++;
+      } else {
+        // No previous state - person was created in target run, delete them
+        keysToDelete.push({
+          [DYNAMODB_PARTITION_KEY]: person.personId
+        });
+        deletedCount++;
+      }
+    }
+    
+    // Step 3: Execute batch updates and deletes
+    if (recordsToUpdate.length > 0) {
+      console.log(`Restoring ${recordsToUpdate.length} person(s) to previous state...`);
+      await this.batchWritePersonState(recordsToUpdate);
+    }
+    
+    if (keysToDelete.length > 0) {
+      console.log(`Deleting ${keysToDelete.length} person(s) with no previous state...`);
+      await this.table.batchWrite(keysToDelete, 'delete');
+    }
+    
+    console.log(`Restoration complete. Restored: ${restoredCount}, Deleted: ${deletedCount}`);
+    return { deletedCount, restoredCount };
+  }
+
+  /**
+   * Find the previous state for a specific person before a given sync run.
+   * Queries PersonHistory for the person and returns the state from the sync run
+   * immediately before the target.
+   * 
+   * @param personId - Person identifier
+   * @param targetSyncRunId - The sync run to roll back from
+   * @param personHistoryTable - PersonHistoryTable instance
+   * @returns Previous state (hash and syncRunId), or undefined if no previous state exists
+   */
+  private async findPreviousPersonState(
+    personId: string,
+    targetSyncRunId: string,
+    personHistoryTable: any
+  ): Promise<{ hash: string; syncRunId: string } | undefined> {
+    const { PersonHistoryTable } = await import('./PersonHistoryTable.js');
+    const historyTable = personHistoryTable as InstanceType<typeof PersonHistoryTable>;
+    
+    // Get all history for this person (sorted by syncRunId ascending)
+    const history = await historyTable.getPersonHistory(personId);
+    
+    if (history.length === 0) {
+      return undefined; // No history at all
+    }
+    
+    // Find the target syncRunId
+    const targetIndex = history.findIndex(h => h.syncRunId === targetSyncRunId);
+    
+    if (targetIndex <= 0) {
+      // Target not found, or it's the first entry (no previous state)
+      return undefined;
+    }
+    
+    // Get the previous entry (chronologically before target)
+    const previousEntry = history[targetIndex - 1];
+    
+    // If previous entry is a DELETED record, there's no valid previous state
+    if (previousEntry.changeType === 'DELETED') {
+      return undefined;
+    }
+    
+    // Return the previous state
+    return {
+      hash: previousEntry.hash,
+      syncRunId: previousEntry.syncRunId
+    };
+  }
 }
+
+
+if(require.main === module) {
+  const { TestEnvironment } = require('integration-core');
+  const testEnvironment = TestEnvironment('PERSON_CURRENT_STATE_TABLE');
+  [
+    'PERSON_CURRENT_STATE_TABLE_TASK',
+    'PERSON_CURRENT_STATE_TABLE_PERSON_ID',
+    'PERSON_CURRENT_STATE_TABLE_SYNC_RUN_ID',
+    'TRUNCATE_CHUNK_SIZE'
+  ].forEach(testEnvironment.getVar);
+
+  const { 
+    PERSON_CURRENT_STATE_TABLE_TASK: task,
+    PERSON_CURRENT_STATE_TABLE_PERSON_ID: personId,
+    PERSON_CURRENT_STATE_TABLE_SYNC_RUN_ID: syncRunId,
+    TRUNCATE_CHUNK_SIZE
+  } = process.env;
+
+  (async () => {
+    const context = require('../../context/context.json') as IContext;
+    const stateTable = new PersonCurrentStateTable(context);
+    
+    switch(task) {
+      case 'truncate':
+        const chunkSize = TRUNCATE_CHUNK_SIZE ? parseInt(TRUNCATE_CHUNK_SIZE, 10) : undefined;
+        await stateTable.truncate(chunkSize);
+        break;
+      case 'get':
+        if(!personId) {
+          console.error('Missing required PERSON_CURRENT_STATE_TABLE_PERSON_ID environment variable for get task!');
+          process.exit(1);
+        }
+        const state = await stateTable.getPersonState(personId);
+        if(state) {
+          console.log(`Current state for person ${personId}:`);
+          console.log(JSON.stringify(state, null, 2));
+        } else {
+          console.log(`No current state found for person ${personId}`);
+        }
+        break;
+      case 'list':
+        if(!syncRunId) {
+          console.error('Missing required PERSON_CURRENT_STATE_TABLE_SYNC_RUN_ID environment variable for list task!');
+          process.exit(1);
+        }
+        const persons = await stateTable.getPersonsInSyncRun(syncRunId);
+        console.log(`Found ${persons.length} person(s) in sync run ${syncRunId}:`);
+        console.log(JSON.stringify(persons, null, 2));
+        break;
+      case 'delete-restore':
+        if(!syncRunId) {
+          console.error('Missing required PERSON_CURRENT_STATE_TABLE_SYNC_RUN_ID environment variable for delete-restore task!');
+          process.exit(1);
+        }
+        const { PersonHistoryTable } = require('./PersonHistoryTable');
+        const historyTable = new PersonHistoryTable(context);
+        const result = await stateTable.deleteByPartitionKeyAndRestore(syncRunId, historyTable);
+        console.log(`Delete-restore complete. Deleted: ${result.deletedCount}, Restored: ${result.restoredCount}`);
+        break;
+      default:
+        console.error(`Unknown task: ${task}. Supported tasks: truncate, get, list, delete-restore`);
+    }
+  })();
+}
+

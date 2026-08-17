@@ -247,6 +247,23 @@ export class StatisticsTable {
     const statuses = await this.getAllChunkStatuses(syncRunId);
     return statuses.filter(item => item.status === 'FAILED').length;
   }
+
+  /**
+   * Delete all records for a specific integration run.
+   * Removes all records (STATISTICS, FLAGS, METADATA, CHUNK_STATUS, ERROR records)
+   * associated with the given syncRunId.
+   * 
+   * This is useful for:
+   * - Cleaning up failed integration runs
+   * - Removing test data
+   * - Pruning old integration runs
+   * 
+   * @param syncRunId - ISO timestamp identifying the integration run to delete
+   * @returns Number of records deleted
+   */
+  public async deleteByPartitionKey(syncRunId: string): Promise<number> {
+    return await this.table.deleteByPartitionKey(syncRunId);
+  }
 }
 
 
@@ -297,8 +314,16 @@ if(require.main === module) {
         console.log(`Found ${chunks.length} chunk(s) for integration run at ${timestamp}:`);
         console.log(JSON.stringify(chunks, null, 2));
         break;
+      case 'delete':
+        if(!timestamp) {
+          console.error('Missing required STATISTICS_TABLE_INTEGRATION_TIMESTAMP environment variable for delete task!');
+          process.exit(1);
+        }
+        const deletedCount = await statisticsTable.deleteByPartitionKey(timestamp);
+        console.log(`Deleted ${deletedCount} record(s) for integration run at ${timestamp}`);
+        break;
       default:
-        console.error(`Unknown task: ${task}. Supported tasks: truncate, statistics, list, chunks`);
+        console.error(`Unknown task: ${task}. Supported tasks: truncate, statistics, list, chunks, delete`);
     }
   })();
 }

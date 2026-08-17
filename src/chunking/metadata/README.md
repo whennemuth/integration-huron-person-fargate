@@ -2,10 +2,22 @@
 
 ## Purpose
 
-Manages two critical metadata types used in the 3-phase ECS Fargate chunking pipeline:
+Manages critical metadata types used in the 3-phase ECS Fargate chunking pipeline:
+
 1. **FLAGS**: Early configuration flags for processors (written before chunking begins)
+   - **Why Created**: Prevents race condition where processors start before chunking completes. Provides configuration context (bulkReset, trustPreviousStorage, syncPopulation) needed for processing logic.
+   - **What Waits**: Processor tasks (Phase 2) read flags from the first chunk they process to determine lookup mode, validation behavior, and removal handling.
+   - **Key Point**: Written IMMEDIATELY when chunker starts, BEFORE any chunks are created, ensuring processors always have configuration available.
+
 2. **METADATA**: Run manifest and configuration for post-run diagnostics (written after chunking completes)
-3. **TERMINAL_ERROR**: Catastrophic failure markers preventing normal pipeline completion
+   - **Why Created**: Records run manifest (itemsPerChunk, source, target, chunkDirectory, sync configuration) for post-run diagnostics, monitoring, and audit trails.
+   - **What Waits**: EventBridge rules poll for metadata existence to detect chunking completion and trigger Phase 3 (Merger). Merger uses metadata's createdAt timestamp to calculate full sync duration.
+   - **Key Point**: Written AFTER chunking completes successfully. Processors do NOT wait for metadata—they start immediately when chunks appear (via S3 event notifications).
+
+3. **Error Records (TERMINAL_ERROR | ERROR:{type})**: Logs catastrophic failures and individual record issues
+   - **Why Created**: Tracks both pipeline-halting failures (TERMINAL_ERROR) and individual record errors (ERROR:VALIDATION, ERROR:API_CALL, ERROR:THROTTLING, ERROR:NETWORK) for diagnostics and monitoring.
+   - **What Waits**: Merger checks for TERMINAL_ERROR before proceeding. If detected, merger skips the run. Non-terminal ERROR:{type} records are logged for diagnostics but don't block pipeline progression.
+   - **Key Point**: TERMINAL_ERROR halts the pipeline (source fetch failure, S3 write failure). ERROR:{type} logs individual failures but allows integration to continue.
 
 ## Template Pattern Implementation
 
@@ -163,6 +175,64 @@ Attributes: {
   chunkDirectory: "chunks/PersonFull/2024-01-15T10:30:00.000Z"
 }
 ```
+
+**Non-Terminal Error Records** (eventType = "ERROR:{category}"):
+
+Individual record failures are logged to StatisticsTable but do NOT halt the integration:
+
+```
+// Validation Error Example
+PK: "2024-01-15T10:30:00.000Z"
+SK: "ERROR:VALIDATION"
+Attributes: {
+  timestamp: "2024-01-15T10:32:15.000Z",
+  personId: "U12345678",
+  errorMessage: "Missing required field: email",
+  chunkId: "chunk-0003",
+  recordNumber: 47
+}
+
+// API Error Example
+PK: "2024-01-15T10:30:00.000Z"
+SK: "ERROR:API_CALL"
+Attributes: {
+  timestamp: "2024-01-15T10:33:20.000Z",
+  personId: "U87654321",
+  errorMessage: "Target API returned 500 Internal Server Error",
+  statusCode: 500,
+  endpoint: "/api/v2/persons/hrn123456",
+  chunkId: "chunk-0005"
+}
+
+// Throttling Error Example
+PK: "2024-01-15T10:30:00.000Z"
+SK: "ERROR:THROTTLING"
+Attributes: {
+  timestamp: "2024-01-15T10:34:10.000Z",
+  errorMessage: "Rate limit exceeded - 429 Too Many Requests",
+  statusCode: 429,
+  retryAfter: 5,
+  chunkId: "chunk-0007"
+}
+
+// Network Error Example
+PK: "2024-01-15T10:30:00.000Z"
+SK: "ERROR:NETWORK"
+Attributes: {
+  timestamp: "2024-01-15T10:35:45.000Z",
+  errorMessage: "Request timeout after 30000ms",
+  endpoint: "/api/v2/persons/hrn999999",
+  chunkId: "chunk-0010"
+}
+```
+
+**Error Behavior:**
+- Non-terminal errors are logged to both console and StatisticsTable
+- Integration continues despite individual record failures
+- Error counts accumulated in processor's errorTracker
+- Processor exits with code 1 if errors occurred (but doesn't write TERMINAL_ERROR)
+- Other chunks continue processing in parallel
+- Only catastrophic failures write TERMINAL_ERROR and halt the pipeline
 
 ### Key Extraction
 
