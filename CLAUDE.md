@@ -199,7 +199,7 @@ The pipeline supports two storage modes for delta state and metadata, controlled
   "storage": {
     "type": "s3"        // Traditional file-based mode
     // OR
-    "type": "dynamodb"  // DynamoDB state tracking mode
+    "type": "dynamodb"  // DynamoDB state tracking mode (default)
   }
 }
 ```
@@ -209,7 +209,7 @@ The pipeline supports two storage modes for delta state and metadata, controlled
 - DynamoDB mode: S3 bucket + DynamoDB table read/write (conditionally granted)
 
 **CDK Infrastructure** (`lib/DynamoDB.ts`):
-- Tables created only when `context.useDynamoDb === true`
+- Tables created when `context.PREVIOUS_STORAGE_TYPE === 'dynamodb'` or when `context.PREVIOUS_STORAGE_TYPE` is undefined (defaults to 'dynamodb')
 - Task definitions check `dynamoDbTables.personCurrentStateTable` before granting permissions
 - Zero infrastructure impact when using S3 mode
 

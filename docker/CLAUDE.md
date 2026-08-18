@@ -120,16 +120,16 @@ The pipeline supports two storage backends for delta state and metadata:
 **ProcessorMetadataFactory** (`src/chunking/metadata/ProcessorMetadataFactory.ts`) determines storage mode by checking environment variables:
 
 ```typescript
-// Check for DynamoDB-mode-specific tables (optional tables that only exist when useDynamoDb is true)
+// Check for DynamoDB-mode-specific tables (optional tables that only exist when PREVIOUS_STORAGE_TYPE is 'dynamodb')
 if (DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || DYNAMODB_PERSON_HISTORY_TABLE_NAME) {
   return MetadataForDynamoDb;  // DynamoDB mode
 }
-return MetadataForS3;  // S3 mode (default)
+return MetadataForS3;  // S3 mode (file-based)
 ```
 
 **Key Principle**: Statistics and atomic counter tables exist in BOTH modes. Only PersonCurrentStateTable and PersonHistoryTable are DynamoDB-mode-specific.
 
-### S3 Mode (Default)
+### S3 Mode (File-based)
 
 **Environment Variables:**
 - `DYNAMODB_STATISTICS_TABLE_NAME` - Required (error tracking)

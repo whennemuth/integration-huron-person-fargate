@@ -493,7 +493,7 @@ The IntegrationRunPruner requires additional DynamoDB permissions beyond normal 
 
 **File**: `../../lib/DynamoDB.ts`
 
-All three tables are created conditionally based on `context.useDynamoDb` flag:
+All three tables are created conditionally based on `context.PREVIOUS_STORAGE_TYPE` configuration:
 
 ```typescript
 import { DynamoDBTables } from '../lib/DynamoDB';
@@ -505,6 +505,8 @@ tables.grantReadWriteData(processorTask, TableResourceIds.STATISTICS_TABLE);
 tables.grantReadWriteData(processorTask, TableResourceIds.PERSON_CURRENT_STATE_TABLE);
 tables.grantReadWriteData(processorTask, TableResourceIds.PERSON_HISTORY_TABLE);
 ```
+
+**Default Behavior**: If `context.PREVIOUS_STORAGE_TYPE` is undefined, defaults to `'dynamodb'` mode (PersonCurrentState and PersonHistory tables are created).
 
 ## Design Principles
 

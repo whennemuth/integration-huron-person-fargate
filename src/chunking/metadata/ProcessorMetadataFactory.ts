@@ -16,7 +16,7 @@
  * ## Why Check for Person Tables (Not Statistics Table)?
  * The statistics table exists in BOTH S3 and DynamoDB modes (for error logging).
  * Only PersonCurrentStateTable and PersonHistoryTable are DynamoDB-mode-specific.
- * These optional tables are set as environment variables only when context.useDynamoDb is true.
+ * These optional tables are set as environment variables only when context.PREVIOUS_STORAGE_TYPE is 'dynamodb' (default).
  * 
  * ## Usage
  * ```typescript
@@ -45,7 +45,7 @@ export function getMetadataManager(): typeof MetadataForS3 | typeof MetadataForD
     DYNAMODB_PERSON_HISTORY_TABLE_NAME 
   } = process.env;
 
-  // Check for DynamoDB-mode-specific tables (optional tables that only exist when useDynamoDb is true)
+  // Check for DynamoDB-mode-specific tables (optional tables that only exist when PREVIOUS_STORAGE_TYPE is 'dynamodb')
   if (DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || DYNAMODB_PERSON_HISTORY_TABLE_NAME) {
     console.log('Using DynamoDB metadata storage (DynamoDB-mode-specific tables detected)');
     return MetadataForDynamoDb;

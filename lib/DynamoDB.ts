@@ -63,7 +63,9 @@ export class DynamoDbTables extends Construct {
     this.createAtomicCounterTable();
 
     // Conditionally create DynamoDB-based delta storage tables
-    if (params.props.context.useDynamoDb) {
+    // Default to 'dynamodb' mode if PREVIOUS_STORAGE_TYPE is not specified
+    const storageType = params.props.context.PREVIOUS_STORAGE_TYPE || 'dynamodb';
+    if (storageType === 'dynamodb') {
       this.createPersonCurrentStateTable();
       this.createPersonHistoryTable();
     }
@@ -314,12 +316,12 @@ export class DynamoDbTables extends Construct {
         return this.atomicCounterTable.grantReadWriteData(grantee);
       case TableResourceIds.PERSON_CURRENT_STATE_TABLE:
         if (!this.personCurrentStateTable) {
-          throw new Error('PersonCurrentStateTable not created - useDynamoDb is false');
+          throw new Error('PersonCurrentStateTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
         }
         return this.personCurrentStateTable.grantReadWriteData(grantee);
       case TableResourceIds.PERSON_HISTORY_TABLE:
         if (!this.personHistoryTable) {
-          throw new Error('PersonHistoryTable not created - useDynamoDb is false');
+          throw new Error('PersonHistoryTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
         }
         return this.personHistoryTable.grantReadWriteData(grantee);
       default:
@@ -338,12 +340,12 @@ export class DynamoDbTables extends Construct {
         return this.atomicCounterTable.grantReadData(grantee);
       case TableResourceIds.PERSON_CURRENT_STATE_TABLE:
         if (!this.personCurrentStateTable) {
-          throw new Error('PersonCurrentStateTable not created - useDynamoDb is false');
+          throw new Error('PersonCurrentStateTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
         }
         return this.personCurrentStateTable.grantReadData(grantee);
       case TableResourceIds.PERSON_HISTORY_TABLE:
         if (!this.personHistoryTable) {
-          throw new Error('PersonHistoryTable not created - useDynamoDb is false');
+          throw new Error('PersonHistoryTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
         }
         return this.personHistoryTable.grantReadData(grantee);
       default:

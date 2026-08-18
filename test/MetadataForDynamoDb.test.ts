@@ -8,7 +8,7 @@ jest.mock('../src/dynamodb/StatisticsTable');
 
 describe('MetadataForDynamoDb', () => {
   const mockContext = {
-    useDynamoDb: true,
+    PREVIOUS_STORAGE_TYPE: 'dynamodb' as const,
     // Add other required IContext fields as needed
   } as IContext;
 

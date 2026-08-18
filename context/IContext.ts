@@ -155,16 +155,25 @@ export interface IContext {
   /** Bulk reset configuration - controls whether to perform a bulk reset (delete all existing records in source system) before syncing */
   BULK_RESET?: boolean;
 
-  /** 
-   * Use DynamoDB for delta storage instead of S3 file-based storage.
-   * When true:
-   * - Creates PersonCurrentState and PersonHistory tables
-   * - Processors write directly to DynamoDB (no mini-delta files)
-   * - Merger simplified (deletion detection only, no file consolidation)
-   * - Eliminates "maintain the illusion" coordination problem
-   * Default: false (use file-based S3 delta storage)
+  /**
+   * Storage mode for delta state and metadata tracking.
+   * 
+   * Values:
+   * - 'dynamodb' (default): Database-backed storage using PersonCurrentStateTable and PersonHistoryTable.
+   *   Processors write directly to DynamoDB tables. Merger performs deletion detection only.
+   * 
+   * - 'database': Database-backed storage using PostgreSQL/MySQL tables with SQL transactions.
+   *   Similar to 'dynamodb' but uses relational database instead of DynamoDB.
+   * 
+   * - 's3'|'file': File-based delta storage using NDJSON files.
+   *   Processors write chunk-specific mini-deltas (if parallel processing is enabled). 
+   *   Merger consolidates mini-deltas into final delta.
+   * 
+   * See fargate CLAUDE.md "Storage Modes" section and integration-core delta-strategy/dynamodb/README.md comparison table.
+   * 
+   * Default: 'dynamodb' (DynamoDB-backed state tracking)
    */
-  useDynamoDb?: boolean;
+  PREVIOUS_STORAGE_TYPE?: HuronPersonConfig['storage']['type'];
 
   /** 
    * Trust previous storage configuration - controls whether to trust previously stored 

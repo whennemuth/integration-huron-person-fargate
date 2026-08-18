@@ -170,7 +170,8 @@ export class AppConstruct extends Construct {
     // ========================================
     // Only create merger service for file-based delta storage
     // DynamoDB strategy doesn't need file consolidation (atomic writes to shared tables)
-    if (!ctx.useDynamoDb) {
+    const storageType = ctx.PREVIOUS_STORAGE_TYPE || 'dynamodb';
+    if (storageType === 's3' || storageType === 'file' || storageType === 'database') {
       this.ecs.createMergerService(
         this.queue.mergerQueue,
         this.queue.mergerDeadLetterQueue

@@ -406,4 +406,4 @@ In DynamoDB mode, ECS task roles need additional permissions:
 }
 ```
 
-These permissions are automatically granted by CDK when `context.useDynamoDb === true`.
+These permissions are automatically granted by CDK when `context.PREVIOUS_STORAGE_TYPE === 'dynamodb'` or when `context.PREVIOUS_STORAGE_TYPE` is undefined (defaults to 'dynamodb').
