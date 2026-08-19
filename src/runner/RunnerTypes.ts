@@ -27,6 +27,9 @@ export interface RunnerEnv {
   sourceSimulatorMockTotalPopulation?: number;
   sourceSimulatorMockSimulatedDelaySeconds?: number;
   sourceSimulatorMockErrorRate?: number;
+  mockTarget?: boolean;
+  mockTargetResetState?: boolean;
+  mockTargetValidateOnly?: boolean;
 }
 
 /**
@@ -36,6 +39,19 @@ export interface Endpoint {
   baseUrl: string;
   fetchPath: string;
 }
+
+/**
+ * Target configuration metadata.
+ * Unlike source endpoints (which are always URLs), target config describes
+ * whether to use mock target (DynamoDB table) or real target (Huron API).
+ */
+export type TargetConfig = {
+  useMockTarget: boolean;
+  mockTargetValidateOnly?: boolean;
+  mockTargetResetState?: boolean;
+  // Optional: Include real endpoint when NOT using mock
+  endpoint?: Endpoint;
+};
 
 /**
  * Normalized population type for chunking operations
@@ -68,7 +84,10 @@ export const extractEnvironment = (): RunnerEnv => {
     CHUNKING_ONLY: chunkingOnly,
     SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION: sourceSimulatorMockTotalPopulation,
     SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS: sourceSimulatorMockSimulatedDelaySeconds,
-    SOURCE_SIMULATOR_MOCK_ERROR_RATE: sourceSimulatorMockErrorRate
+    SOURCE_SIMULATOR_MOCK_ERROR_RATE: sourceSimulatorMockErrorRate,
+    RUNNER_TARGET_MOCK: mockTarget,
+    RUNNER_TARGET_MOCK_RESET_STATE: mockTargetResetState,
+    RUNNER_TARGET_MOCK_VALIDATE_ONLY: mockTargetValidateOnly
   } = process.env;
 
   return {
@@ -93,7 +112,10 @@ export const extractEnvironment = (): RunnerEnv => {
     sourceSimulator: `${sourceSimulator}`.toLowerCase().trim() === 'true',
     sourceSimulatorMockTotalPopulation: sourceSimulatorMockTotalPopulation ? parseInt(sourceSimulatorMockTotalPopulation) : undefined,
     sourceSimulatorMockSimulatedDelaySeconds: sourceSimulatorMockSimulatedDelaySeconds ? parseInt(sourceSimulatorMockSimulatedDelaySeconds) : undefined,
-    sourceSimulatorMockErrorRate: sourceSimulatorMockErrorRate ? parseFloat(sourceSimulatorMockErrorRate) : undefined
+    sourceSimulatorMockErrorRate: sourceSimulatorMockErrorRate ? parseFloat(sourceSimulatorMockErrorRate) : undefined,
+    mockTarget: `${mockTarget}`.toLowerCase().trim() === 'true',
+    mockTargetResetState: `${mockTargetResetState}`.toLowerCase().trim() === 'true',
+    mockTargetValidateOnly: `${mockTargetValidateOnly}`.toLowerCase().trim() === 'true'
   } satisfies RunnerEnv;
 }
 
@@ -118,7 +140,10 @@ export const setTestEnvironment = (): void => {
     'SOURCE_SIMULATOR',
     'SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION',
     'SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS',
-    'SOURCE_SIMULATOR_MOCK_ERROR_RATE'
+    'SOURCE_SIMULATOR_MOCK_ERROR_RATE',
+    'RUNNER_TARGET_MOCK',
+    'RUNNER_TARGET_MOCK_RESET_STATE',
+    'RUNNER_TARGET_MOCK_VALIDATE_ONLY'
   ].forEach(testEnvironment.getVar);
 
   [

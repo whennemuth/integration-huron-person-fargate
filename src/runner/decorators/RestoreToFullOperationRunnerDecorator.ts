@@ -1,7 +1,8 @@
 import { FUNCTION_BASE_NAME as chunkerFunctionBaseName } from "../../chunking/fetch/ChunkerApiSubscriber";
 import { FUNCTION_BASE_NAME as processorFunctionBaseName } from "../../processing/ProcessorSubscriber";
 import { ChunkingServiceRunner } from "../AbstractRunner";
-import { Endpoint, NormalizedPopulationType } from "../RunnerTypes";
+import { Config } from "integration-huron-person";
+import { Endpoint, NormalizedPopulationType, TargetConfig } from "../RunnerTypes";
 import { ServiceToDisable, ServiceToggler } from "../ServiceToggler";
 
 /**
@@ -48,10 +49,18 @@ export class RestoreToFullOperationRunnerDecorator extends ChunkingServiceRunner
 
     return this.wrappedRunner.validatePrerequisites();
   }
-  public async resolveDataSource(config: any): Promise<Endpoint> {
+  public async resolveDataSource(config: Config): Promise<Endpoint> {
     return this.wrappedRunner.resolveDataSource(config);
   }
-  public async execute(endpoint: Endpoint, config: any, populationType: NormalizedPopulationType): Promise<void> {
-    return this.wrappedRunner.execute(endpoint, config, populationType);
+  public async resolveDataTarget(config: Config): Promise<TargetConfig> {
+    return this.wrappedRunner.resolveDataTarget(config);
+  }
+  public async execute(
+    sourceEndpoint: Endpoint,
+    targetConfig: TargetConfig,
+    config: Config,
+    populationType: NormalizedPopulationType
+  ): Promise<void> {
+    return this.wrappedRunner.execute(sourceEndpoint, targetConfig, config, populationType);
   }
 }

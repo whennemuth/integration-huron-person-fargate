@@ -1,6 +1,7 @@
 import { ChunkingServiceRunner } from './AbstractRunner';
 import { ChunkingOnlyRunnerDecorator } from './decorators/ChunkingOnlyRunnerDecorator';
 import { MessagingOnlyRunnerDecorator } from './decorators/MessagingOnlyRunnerDecorator';
+import { MockTargetRunnerDecorator } from './decorators/MockTargetRunnerDecorator';
 import { RestoreToFullOperationRunnerDecorator } from './decorators/RestoreToFullOperationRunnerDecorator';
 import { SourceSimulatorRunnerDecorator } from './decorators/SourceSimulatorRunnerDecorator';
 import { QueueSeedingRunner } from './RunnerForQueueSeeding';
@@ -37,7 +38,7 @@ import { extractEnvironment, setTestEnvironment } from './RunnerTypes';
 async function startChunkingService() {
   // Peek at environment to determine which runner to use
   let { 
-    buid, messagesToPrepopulate, messagingOnly, chunkingOnly, sourceSimulator, populationScope,
+    buid, messagesToPrepopulate, messagingOnly, chunkingOnly, sourceSimulator, mockTarget, populationScope,
   } = extractEnvironment();
   process.env.POPULATION_SCOPE = populationScope; // Set for downstream use in chunking service
 
@@ -78,6 +79,11 @@ async function startChunkingService() {
   }
   if(sourceSimulator) {
     runner = new SourceSimulatorRunnerDecorator(runner);
+  }
+  // SAFETY ENFORCEMENT: Mock target is ALWAYS used when source simulator is active.
+  // This prevents simulated data from reaching the real target API.
+  if(mockTarget || sourceSimulator) {
+    runner = new MockTargetRunnerDecorator(runner);
   }
   if ( !messagingOnly && !chunkingOnly && !sourceSimulator) {
     runner = new RestoreToFullOperationRunnerDecorator(runner);

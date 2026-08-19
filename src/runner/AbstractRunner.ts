@@ -1,7 +1,7 @@
 import { Config, ConfigManager } from "integration-huron-person";
 import { SyncPopulation } from "../../docker/chunkTypes";
 import { getLocalConfig } from "../Utils";
-import { Endpoint, NormalizedPopulationType, RunnerEnv, extractEnvironment } from './RunnerTypes';
+import { Endpoint, NormalizedPopulationType, RunnerEnv, TargetConfig, extractEnvironment } from './RunnerTypes';
 import { IContext } from "../../context/IContext";
 import { SourceSimulatorFunctionURL } from "../chunking/fetch/SourceSimulator";
 
@@ -39,14 +39,16 @@ export abstract class ChunkingServiceRunner {
 
     const config = await this.loadConfiguration();
 
-    const endpoint = await this.resolveDataSource(config);
+    const sourceEndpoint = await this.resolveDataSource(config);
     
-    if (!this.validateEndpoint(endpoint)) {
+    if (!this.validateEndpoint(sourceEndpoint)) {
       return;
     }
 
+    const targetConfig = await this.resolveDataTarget(config);
+
     const populationType = this.normalizePopulationType(env.populationType);
-    await this.execute(endpoint, config, populationType);
+    await this.execute(sourceEndpoint, targetConfig, config, populationType);
   }
 
   /**
@@ -169,12 +171,27 @@ export abstract class ChunkingServiceRunner {
   public abstract resolveDataSource(config: Config): Promise<Endpoint>;
 
   /**
-   * Execute the chunking operation.
+   * Resolve the data target configuration.
+   * Returns metadata about which target to use (mock vs real).
+   * Subclasses must implement this to determine target behavior.
+   */
+  public abstract resolveDataTarget(config: Config): Promise<TargetConfig>;
+
+  /**
+   * Execute the chunking operation with resolved source endpoint and target config.
    * Subclasses must implement this to perform their specific execution logic.
    */
   public abstract execute(
-    endpoint: Endpoint, 
-    config: Config, 
+    sourceEndpoint: Endpoint,
+    targetConfig: TargetConfig,
+    config: Config,
     populationType: NormalizedPopulationType
   ): Promise<void>;
+
+  // public abstract execute_proposed_change({ sourceEndpoint, targetEndpoint, config, populationType }: {
+  //   sourceEndpoint: Endpoint,
+  //   targetEndpoint: Endpoint,
+  //   config: Config, 
+  //   populationType: NormalizedPopulationType
+  // }): Promise<void>;
 }

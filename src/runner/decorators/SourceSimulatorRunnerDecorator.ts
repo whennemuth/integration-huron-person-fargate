@@ -2,7 +2,7 @@ import { Config, DataSourceConfig } from "integration-huron-person";
 import { ENVIRONMENT_VARIABLES_NAMES, SourceSimulatorFunctionURL, getSimulatorCounter, FUNCTION_BASE_NAME as sourceSimulatorFunctionBaseName } from "../../chunking/fetch/SourceSimulator";
 import { ChunkingServiceRunner } from "../AbstractRunner";
 import { LambdaFunctionEnvironmentVariable } from "../LambdaFunctionEnvironmentVariable";
-import { Endpoint, NormalizedPopulationType } from "../RunnerTypes";
+import { Endpoint, NormalizedPopulationType, TargetConfig } from "../RunnerTypes";
 
 /**
  * Decorator that uses the source simulator if enabled in the environment. This should 
@@ -131,7 +131,16 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
     return { baseUrl: baseUrl!, fetchPath: fetchPath! };
   }
 
-  public async execute(endpoint: Endpoint, config: Config, populationType: NormalizedPopulationType): Promise<void> {
-    return this.wrappedRunner.execute(endpoint, config, populationType);
+  public async resolveDataTarget(config: Config): Promise<TargetConfig> {
+    return this.wrappedRunner.resolveDataTarget(config);
+  }
+
+  public async execute(
+    sourceEndpoint: Endpoint,
+    targetConfig: TargetConfig,
+    config: Config,
+    populationType: NormalizedPopulationType
+  ): Promise<void> {
+    return this.wrappedRunner.execute(sourceEndpoint, targetConfig, config, populationType);
   }
 }

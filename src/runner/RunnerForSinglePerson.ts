@@ -1,7 +1,8 @@
 import { ApiChunkerEvent } from '../chunking/ChunkerSubscriber';
 import { handleApiEvent } from '../chunking/fetch/ChunkerApiSubscriber';
 import { ChunkingServiceRunner } from './AbstractRunner';
-import { Endpoint, NormalizedPopulationType } from './RunnerTypes';
+import { Config } from 'integration-huron-person';
+import { Endpoint, NormalizedPopulationType, TargetConfig } from './RunnerTypes';
 
 /**
  * Runner for single person testing mode.
@@ -23,7 +24,7 @@ export class SinglePersonRunner extends ChunkingServiceRunner {
     return true;
   }
 
-  public async resolveDataSource(config: any): Promise<Endpoint> {
+  public async resolveDataSource(config: Config): Promise<Endpoint> {
     const { env } = this;
     const { 
       endpointConfig: { baseUrl: personBaseUrl } = {}, 
@@ -31,27 +32,42 @@ export class SinglePersonRunner extends ChunkingServiceRunner {
     } = config.dataSource.person || {};
     
     return {
-      baseUrl: personBaseUrl,
-      fetchPath: `${personFetchPath}?buid=${env.buid}`
+      baseUrl: personBaseUrl || '',
+      fetchPath: personFetchPath ? `${personFetchPath}?buid=${env.buid}` : ''
+    };
+  }
+
+  public async resolveDataTarget(config: Config): Promise<TargetConfig> {
+    // Standard runners use real Huron API target
+    const { dataTarget } = config;
+    return {
+      useMockTarget: false,
+      endpoint: {
+        baseUrl: dataTarget?.endpointConfig?.baseUrl || '',
+        fetchPath: dataTarget?.personsPath || ''
+      }
     };
   }
 
   public async execute(
-    endpoint: Endpoint, 
-    config: any, 
+    sourceEndpoint: Endpoint,
+    targetConfig: TargetConfig,
+    config: Config,
     populationType: NormalizedPopulationType
   ): Promise<void> {
     const { 
       bulkReset, trustPreviousStorage, iterationLimit, buid, queueUrl 
     } = this.env;
     const apiChunkerEvent: ApiChunkerEvent = {
-      baseUrl: endpoint.baseUrl,
-      fetchPath: endpoint.fetchPath,
+      baseUrl: sourceEndpoint.baseUrl,
+      fetchPath: sourceEndpoint.fetchPath,
       populationType,
       bulkReset,
       trustPreviousStorage,
       iterationLimit: iterationLimit ? iterationLimit : 0,
       offset: 0,
+      useMockTarget: targetConfig.useMockTarget,
+      mockTargetValidateOnly: targetConfig.mockTargetValidateOnly,
       processingMetadata: {
         processedAt: new Date().toISOString(),
         processorVersion: '1.0.0'

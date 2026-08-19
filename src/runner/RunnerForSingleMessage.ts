@@ -4,7 +4,7 @@ import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from '../chunking/Ch
 import { ApiChunkerEvent } from '../chunking/ChunkerSubscriber';
 import { handleApiEvent } from '../chunking/fetch/ChunkerApiSubscriber';
 import { ChunkingServiceRunner } from './AbstractRunner';
-import { Endpoint, NormalizedPopulationType } from './RunnerTypes';
+import { Endpoint, NormalizedPopulationType, TargetConfig } from './RunnerTypes';
 
 /**
  * Runner for single message execution mode.
@@ -44,20 +44,35 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
     return { baseUrl: baseUrl!, fetchPath: fetchPath! };
   }
 
+  public async resolveDataTarget(config: Config): Promise<TargetConfig> {
+    // Standard runners use real Huron API target
+    const { dataTarget } = config;
+    return {
+      useMockTarget: false,
+      endpoint: {
+        baseUrl: dataTarget?.endpointConfig?.baseUrl || '',
+        fetchPath: dataTarget?.personsPath || ''
+      }
+    };
+  }
+
   public async execute(
-    endpoint: Endpoint, 
-    config: any, 
+    sourceEndpoint: Endpoint,
+    targetConfig: TargetConfig,
+    config: Config,
     populationType: NormalizedPopulationType
   ): Promise<void> {
     const { bulkReset, trustPreviousStorage, iterationLimit, stackId, region, landscape, queueUrl } = this.env;
     const apiChunkerEvent: ApiChunkerEvent = {
-      baseUrl: endpoint.baseUrl,
-      fetchPath: endpoint.fetchPath,
+      baseUrl: sourceEndpoint.baseUrl,
+      fetchPath: sourceEndpoint.fetchPath,
       populationType,
       bulkReset,
       trustPreviousStorage,
       iterationLimit: iterationLimit ? iterationLimit : 0,
       offset: 0,
+      useMockTarget: targetConfig.useMockTarget,
+      mockTargetValidateOnly: targetConfig.mockTargetValidateOnly,
       processingMetadata: {
         processedAt: new Date().toISOString(),
         processorVersion: '1.0.0'
