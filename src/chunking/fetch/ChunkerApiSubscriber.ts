@@ -23,6 +23,8 @@ const sqsClient = new SQSClient({ region });
  * with API endpoint parameters. The QueueProcessingFargateService monitors the queue depth and
  * auto-scales to process messages.
  * 
+ * NOTE: This function may also be called manually as part of Runner operation or any of its decorators.
+ * 
  * Sequence:
  * 1. EventBridge schedule triggers the main ChunkerSubscriber Lambda on a cron schedule
  * 2. ChunkerSubscriber delegates to this handler

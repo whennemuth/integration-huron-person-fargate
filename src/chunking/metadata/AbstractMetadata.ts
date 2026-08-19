@@ -84,6 +84,10 @@ export type Flags = {
   runFailed?: boolean;
   runFailureMessage?: string;
   runFailureTimestamp?: string;
+  /** Mock target configuration - when present, processors use MockDataTarget instead of real target API */
+  useMockTarget?: boolean;
+  /** Validation-only mode for mock target: log operations but don't execute */
+  mockTargetValidateOnly?: boolean;
   [key: string]: any; // Allow additional fields for flexibility
 }
 

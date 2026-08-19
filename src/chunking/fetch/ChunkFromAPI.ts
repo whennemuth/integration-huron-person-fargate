@@ -24,6 +24,8 @@ export type TaskParameters = {
   offset?: number;
   iterationLimit?: number;
   chunkDirectory?: string;
+  useMockTarget?: boolean;
+  mockTargetValidateOnly?: boolean;
 };
 
 /**
@@ -211,6 +213,8 @@ export class ChunkFromAPI implements IChunkFromSource {
     const chunkDirectory = messageBody.chunkDirectory;
     const bulkReset = messageBody.bulkReset;
     const trustPreviousStorage = messageBody.trustPreviousStorage;
+    const useMockTarget = messageBody.useMockTarget;
+    const mockTargetValidateOnly = messageBody.mockTargetValidateOnly;
 
     this.taskParameters = { 
       baseUrl, 
@@ -222,7 +226,9 @@ export class ChunkFromAPI implements IChunkFromSource {
       bulkReset: typeof bulkReset === 'boolean' ? bulkReset : bulkReset === 'true',
       trustPreviousStorage: typeof trustPreviousStorage === 'boolean'
         ? trustPreviousStorage
-        : trustPreviousStorage === 'true'
+        : trustPreviousStorage === 'true',
+      useMockTarget: typeof useMockTarget === 'boolean' ? useMockTarget : useMockTarget === 'true',
+      mockTargetValidateOnly: typeof mockTargetValidateOnly === 'boolean' ? mockTargetValidateOnly : mockTargetValidateOnly === 'true'
     };
 
     if (this.taskParameters.chunkDirectory) {
@@ -369,6 +375,22 @@ export class ChunkFromAPI implements IChunkFromSource {
    */
   public getSyncPopulation = (): SyncPopulation => {
     return (this.taskParameters?.populationType as SyncPopulation) || ChunkFromAPI.defaultPopulationType;
+  }
+
+  /**
+   * Get the useMockTarget flag from task parameters.
+   * Returns true if mock target mode should be enabled, false otherwise.
+   */
+  public getUseMockTarget = (): boolean => {
+    return this.taskParameters?.useMockTarget || false;
+  }
+
+  /**
+   * Get the mockTargetValidateOnly flag from task parameters.
+   * Returns true if validation-only mode should be used with mock target, false otherwise.
+   */
+  public getMockTargetValidateOnly = (): boolean => {
+    return this.taskParameters?.mockTargetValidateOnly || false;
   }
 
   /**

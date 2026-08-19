@@ -64,6 +64,8 @@ export type IChunkFromSource = {
   getBulkResetFlag?: () => boolean  // Optional getter for bulkReset flag from task parameters
   getTrustPreviousStorageFlag?: () => boolean  // Optional getter for trustPreviousStorage flag from task parameters
   getSyncPopulation?: () => SyncPopulation  // Optional getter for syncPopulation from task parameters
+  getUseMockTarget?: () => boolean  // Optional getter for useMockTarget flag from task parameters
+  getMockTargetValidateOnly?: () => boolean  // Optional getter for mockTargetValidateOnly flag from task parameters
 }
 
 export type ChunkFromParams = {
@@ -396,8 +398,16 @@ export async function main() {
         console.log('Chunk ordinal mode: offset-derived fallback (non-atomic)');
       }
 
-      // Send next chunking message BEFORE starting this task's processing
-      // This enables true parallelism: the next task can start before the current one finishes
+      // Send next chunking message BEFORE starting this task's processing.
+      // This enables true parallelism: the next task can start before the current one finishes.
+      //
+      // NOTE: Mock target flags (useMockTarget, mockTargetValidateOnly) are propagated through
+      // subsequent messages for consistency, even though only the first chunker task needs them
+      // (to write FLAGS to storage). Subsequent chunker tasks skip the write (conditional write 
+      // pattern), so they don't use these flags. Processor tasks read FLAGS from storage, not 
+      // from messages. Propagation of this FLAG data is not required for subsequent chunker 
+      // tasks - it's only needed for the first task. It's done for consistency and 
+      // self-describing messages, not functional necessity.
       await chunker.sendNextChunkingMessage(chunkerQueue, dryRun.toLowerCase() === 'true');
     }
 
@@ -426,6 +436,14 @@ export async function main() {
     const syncPopulation = chunker.getSyncPopulation?.() || SyncPopulation.PersonFull;
     console.log(`Sync population type: ${syncPopulation}`);
 
+    // Get target configuration from chunker
+    const useMockTarget = chunker.getUseMockTarget?.() || false;
+    const mockTargetValidateOnly = chunker.getMockTargetValidateOnly?.() || false;
+    console.log(`Mock target mode: ${useMockTarget ? 'enabled' : 'disabled'}`);
+    if (useMockTarget) {
+      console.log(`  - Validate only: ${mockTargetValidateOnly}`);
+    }
+
     // Write flags file BEFORE chunking starts so processor tasks can read it immediately
     const metadataManager = MetadataFactory.create({ config });
     await metadataManager.writeFlags({
@@ -434,6 +452,8 @@ export async function main() {
       bulkReset: chunkFromParams.bulkReset,
       trustPreviousStorage: chunkFromParams.trustPreviousStorage,
       syncPopulation,
+      useMockTarget,
+      mockTargetValidateOnly,
       dryRun: dryRun === 'true',
       region
     });

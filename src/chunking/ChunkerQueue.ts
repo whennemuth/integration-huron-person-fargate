@@ -13,6 +13,25 @@ export type ChunkerQueueParams = {
   landscape?: string
 };
 
+/**
+ * Message body structure for chunker queue messages.
+ * Contains all parameters needed for chunking task execution.
+ */
+export interface ChunkerMessageBody {
+  baseUrl: string;
+  fetchPath: string;
+  populationType: string;
+  offset: number;
+  iterationLimit: number;
+  bulkReset?: boolean;
+  trustPreviousStorage?: boolean;
+  chunkDirectory?: string;
+  /** Mock target configuration: when true, processors use MockDataTarget */
+  useMockTarget?: boolean;
+  /** Validation-only mode for mock target: log operations but don't execute */
+  mockTargetValidateOnly?: boolean;
+}
+
 export const CHUNKER_COUNTER_NAME = 'chunker-offset-counter';
 export const CHUNK_ORDINAL_COUNTER_NAME = 'chunker-chunk-ordinal-counter';
 
@@ -250,7 +269,9 @@ export class ChunkerQueue {
       fetchPath, 
       populationType, 
       bulkReset, 
-      trustPreviousStorage
+      trustPreviousStorage,
+      useMockTarget,
+      mockTargetValidateOnly
     } = taskParameters;
 
     // Don't create next message if iterationLimit is 0 (process all)
@@ -274,7 +295,9 @@ export class ChunkerQueue {
         trustPreviousStorage, 
         iterationLimit, 
         offset: nextOffset, 
-        chunkDirectory
+        chunkDirectory,
+        useMockTarget,
+        mockTargetValidateOnly
       } satisfies ApiChunkerEvent;
 
       // Send the SQS message
