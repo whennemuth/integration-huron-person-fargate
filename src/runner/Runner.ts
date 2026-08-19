@@ -38,9 +38,8 @@ import { extractEnvironment, setTestEnvironment } from './RunnerTypes';
 async function startChunkingService() {
   // Peek at environment to determine which runner to use
   let { 
-    buid, messagesToPrepopulate, messagingOnly, chunkingOnly, sourceSimulator, mockTarget, populationScope,
+    buid, messagesToPrepopulate, messagingOnly, chunkingOnly, sourceSimulator, mockTarget
   } = extractEnvironment();
-  process.env.POPULATION_SCOPE = populationScope; // Set for downstream use in chunking service
 
   // Validate messagesToPrepopulate is a valid number
   if (messagesToPrepopulate && isNaN(Number(messagesToPrepopulate))) {
