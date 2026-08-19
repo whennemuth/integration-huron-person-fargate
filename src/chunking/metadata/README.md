@@ -19,6 +19,136 @@ Manages critical metadata types used in the 3-phase ECS Fargate chunking pipelin
    - **What Waits**: Merger checks for TERMINAL_ERROR before proceeding. If detected, merger skips the run. Non-terminal ERROR:{type} records are logged for diagnostics but don't block pipeline progression.
    - **Key Point**: TERMINAL_ERROR halts the pipeline (source fetch failure, S3 write failure). ERROR:{type} logs individual failures but allows integration to continue.
 
+## Pipeline Flow: Metadata & Storage Interactions
+
+The following diagram shows how FLAGS, METADATA, and TERMINAL_ERROR markers flow through the 3-phase pipeline:
+
+```mermaid
+sequenceDiagram
+    participant C1 as First Chunker Task<br/>(Phase 1)
+    participant CN as Subsequent Chunker<br/>Tasks (Phase 1)
+    participant S as Storage<br/>(S3 or DynamoDB)
+    participant P as Processor Tasks<br/>(Phase 2)
+    participant M as Merger Task<br/>(Phase 3)
+
+    Note over C1,S: === NORMAL SUCCESS PATH ===
+    
+    C1->>S: 1. writeFlags()<br/>(bulkReset, trustPreviousStorage,<br/>syncPopulation, useMockTarget)
+    Note over C1: FLAGS written BEFORE<br/>chunking starts
+    
+    C1->>S: 2. Create chunk-XXXX.ndjson files<br/>(stream person records)
+    
+    par Parallel Processing
+        CN->>S: Check terminalErrorExists()
+        S-->>CN: false (no error)
+        Note over CN: Continue with next chunk
+    and
+        P->>S: readFlags(chunkDirectory)
+        S-->>P: Returns FLAGS
+        Note over P: Use bulkReset,<br/>syncPopulation,<br/>useMockTarget for processing
+        P->>P: Process chunk-XXXX.ndjson
+    end
+    
+    C1->>S: 3. write() METADATA<br/>(after chunking completes)
+    Note over S: METADATA includes:<br/>itemsPerChunk, source,<br/>target, timestamps
+    
+    M->>S: readFlags(chunkDirectory)
+    S-->>M: Returns FLAGS
+    M->>S: read(chunkDirectory)
+    S-->>M: Returns METADATA
+    Note over M: Use METADATA for<br/>merge orchestration
+
+    Note over C1,M: === FAILURE PATH ===
+    
+    C1->>C1: ❌ Catastrophic Error<br/>(network timeout, S3 failure)
+    C1->>S: writeFlags() with replace=true<br/>(runFailed=true,<br/>runFailureMessage,<br/>runFailureTimestamp)
+    C1->>S: markRunFailed()<br/>Write TERMINAL_ERROR marker
+    
+    CN->>S: Check terminalErrorExists()
+    S-->>CN: true (error found)
+    Note over CN: ⛔ Exit immediately<br/>(don't process)
+    
+    Note over P: Processors DON'T check<br/>terminal error markers.<br/>Continue processing<br/>existing chunks.
+```
+
+**Key Observations:**
+
+1. **FLAGS are written FIRST** (before any chunks) to prevent processor race conditions
+2. **Subsequent chunker tasks** check for terminal errors before starting work
+3. **Processor tasks** read FLAGS but NOT terminal error markers - they process whatever chunks exist
+4. **METADATA is written LAST** (after chunking completes successfully)
+5. **Merger tasks** read both FLAGS and METADATA for orchestration context
+6. **Failure markers** (TERMINAL_ERROR + FLAGS update) stop subsequent chunkers but not processors
+
+## Failure Handling Mechanism
+
+### The Dual Marker System
+
+When a chunking task encounters a catastrophic failure (network timeout, S3 write failure, API exhaustion), it writes **two separate markers**:
+
+1. **FLAGS Update**: The FLAGS record is updated with failure fields:
+   - `runFailed: true`
+   - `runFailureMessage: string` (error description)
+   - `runFailureTimestamp: string` (ISO timestamp)
+   
+   This is done via `writeFlags()` with `replace: true` parameter.
+
+2. **TERMINAL_ERROR Marker**: A separate marker is written via `markRunFailed()`:
+   - S3: `_terminal_error.json` file
+   - DynamoDB: Record with SK="TERMINAL_ERROR"
+
+### Why Two Markers?
+
+- **TERMINAL_ERROR** is the primary signal for **subsequent chunker tasks** to abort early
+- **FLAGS update** preserves failure context for **post-run diagnostics and auditing**
+- **METADATA** may also be updated with failure fields (if written at all)
+
+### Who Checks These Markers?
+
+**Subsequent Chunker Tasks (Phase 1):**
+- Check `terminalErrorExists()` before starting work (chunker.ts lines 363-369)
+- Exit immediately with code 1 if terminal error found
+- This prevents wasted processing on an already-failed run
+
+**Processor Tasks (Phase 2):**
+- **Do NOT check** `runFailed` or terminal error markers
+- Continue processing whatever chunks were created before failure
+- This is intentional: partial chunks may still be valuable for diagnostics
+
+**Merger Tasks (Phase 3):**
+- May check terminal error marker before merging (optional)
+- Incomplete runs naturally don't trigger merger due to missing chunk markers
+
+### When Are Failure Markers Written?
+
+1. **Unhandled exception in chunker.ts**: Catch block writes terminal error (line 490)
+2. **API retry exhaustion in ChunkFromAPI.ts**: After terminal error encountered (lines 569-577)
+3. **S3 write failures**: Caught by chunker error handling
+
+### Implementation Detail: FLAGS as Failure Record
+
+The `Flags` type includes three optional failure fields:
+
+```typescript
+type Flags = {
+  bulkReset: boolean;
+  trustPreviousStorage: boolean;
+  syncPopulation: SyncPopulation;
+  // Failure tracking (written when markRunFailed is called)
+  runFailed?: boolean;
+  runFailureMessage?: string;
+  runFailureTimestamp?: string;
+  // Mock target configuration
+  useMockTarget?: boolean;
+  mockTargetValidateOnly?: boolean;
+};
+```
+
+These fields are **not used by processors** during normal operation. They exist for:
+- Chunker-to-chunker coordination (subsequent tasks check and abort)
+- Post-run diagnostics and monitoring
+- Audit trail preservation
+
 ## Template Pattern Implementation
 
 The metadata module uses the template pattern with abstract base class and concrete implementations:
@@ -79,7 +209,9 @@ AbstractMetadata (abstract base)
 {
   "bulkReset": false,
   "trustPreviousStorage": true,
-  "syncPopulation": "PersonFull"
+  "syncPopulation": "PersonFull",
+  "useMockTarget": false,
+  "mockTargetValidateOnly": false
 }
 ```
 
@@ -159,7 +291,13 @@ SK: "FLAGS"
 Attributes: {
   bulkReset: false,
   trustPreviousStorage: true,
-  syncPopulation: "PersonFull"
+  syncPopulation: "PersonFull",
+  useMockTarget: false,
+  mockTargetValidateOnly: false,
+  // Optional failure tracking (present only after markRunFailed):
+  runFailed: false,
+  runFailureMessage: undefined,
+  runFailureTimestamp: undefined
 }
 ```
 
