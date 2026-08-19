@@ -443,7 +443,9 @@ export async function main(queueReader: QueueReader) {
       errorEventProcessor: errorTracker, // Inject error tracker for tracking errors and throttling
       retryStrategy, // Inject retry strategy for handling transient API failures (429, 5xx, network errors)
       cleanupPreviousData,
-      ignoreRemovals: syncPopulation === SyncPopulation.PersonDelta // Ignore removals in delta computation since chunk processing is only a partial population and merger determines removals at the end of the full sync
+      ignoreRemovals: syncPopulation === SyncPopulation.PersonDelta, // Ignore removals in delta computation since chunk processing is only a partial population and merger determines removals at the end of the full sync
+      flags, // Pass flags for mock target support
+      syncRunId: integrationTimestamp // Pass integration timestamp as sync run ID
     });
     
     /**

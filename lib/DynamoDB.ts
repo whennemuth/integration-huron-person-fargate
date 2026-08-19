@@ -30,12 +30,17 @@ import {
   DYNAMODB_GSI2_PARTITION_KEY as personHistoryGSI2PartitionKey,
   DYNAMODB_GSI2_SORT_KEY as personHistoryGSI2SortKey
 } from '../src/dynamodb/PersonHistoryTable';
+import {
+  DYNAMODB_TABLE_NAME as mockTargetStateTableName,
+  DYNAMODB_PARTITION_KEY as mockTargetStatePartitionKey
+} from '../src/dynamodb/MockTargetStateTable';
 
 export enum TableResourceIds {
   STATISTICS_TABLE = 'StatisticsTable',
   ATOMIC_COUNTER_TABLE = 'AtomicCounterTable',
   PERSON_CURRENT_STATE_TABLE = 'PersonCurrentStateTable',
-  PERSON_HISTORY_TABLE = 'PersonHistoryTable'
+  PERSON_HISTORY_TABLE = 'PersonHistoryTable',
+  MOCK_TARGET_STATE_TABLE = 'MockTargetStateTable'
 }
 export interface ProcessorStatisticsTableProps {
   context: IContext;
@@ -48,12 +53,14 @@ export interface ProcessorStatisticsTableProps {
  *   2) Atomic counters for various operations.
  *   3) Person current state (DynamoDB-based delta strategy, optional).
  *   4) Person history audit trail (DynamoDB-based delta strategy, optional).
+ *   5) Mock target state (for testing with source simulator, always created).
  */
 export class DynamoDbTables extends Construct {
   public statisticsTable: Table;
   public atomicCounterTable: Table;
   public personCurrentStateTable?: Table;
   public personHistoryTable?: Table;
+  public mockTargetStateTable: Table;
 
   constructor(private params: { scope: Construct, id: string, props: ProcessorStatisticsTableProps }) {
     super(params.scope, params.id);
@@ -61,6 +68,8 @@ export class DynamoDbTables extends Construct {
     this.createStatisticsTable();
 
     this.createAtomicCounterTable();
+
+    this.createMockTargetStateTable();
 
     // Conditionally create DynamoDB-based delta storage tables
     // Default to 'dynamodb' mode if PREVIOUS_STORAGE_TYPE is not specified
@@ -306,6 +315,53 @@ export class DynamoDbTables extends Construct {
   }
 
   /**
+   * DynamoDB table for storing mock target system state (for testing with source simulator).
+   * 
+   * Table Design:
+   * - Partition Key (PK): `personId` - Unique person identifier
+   * - No Sort Key: One record per person (overwrite on update)
+   * 
+   * Attributes:
+   * - personId: string - BUID
+   * - data: object - Full person record as it would exist in target system
+   * - lastModified: string - ISO timestamp of last update
+   * - createdAt: string - ISO timestamp when record was first created
+   * - syncRunId: string - ISO timestamp of sync run that last modified this person
+   * 
+   * Access Patterns:
+   * 1. Get person: GetItem by personId
+   * 2. Batch get: BatchGetItem by personIds
+   * 3. Create/Update: PutItem
+   * 4. Delete: DeleteItem
+   * 5. List all: Scan
+   * 
+   * Purpose:
+   * When flags.useMockTarget is true, processors use MockDataTarget which writes to this
+   * table instead of calling the real target API. This allows full end-to-end testing
+   * with source simulator without affecting real target system data.
+   */
+  private createMockTargetStateTable = () => {
+    const { context, tags } = this.params.props;
+
+    const { MOCK_TARGET_STATE_TABLE } = TableResourceIds;
+
+    this.mockTargetStateTable = new Table(this, MOCK_TARGET_STATE_TABLE, {
+      tableName: mockTargetStateTableName(context),
+      partitionKey: {
+        name: mockTargetStatePartitionKey,
+        type: AttributeType.STRING,
+      },
+      billingMode: BillingMode.PAY_PER_REQUEST,
+      encryption: TableEncryption.AWS_MANAGED,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true,
+        recoveryPeriodInDays: 35,
+      },
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+  }
+
+  /**
    * Grant read/write permissions to a principal
    */
   public grantReadWriteData(grantee: any, tableResourceId: TableResourceIds) {
@@ -324,6 +380,8 @@ export class DynamoDbTables extends Construct {
           throw new Error('PersonHistoryTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
         }
         return this.personHistoryTable.grantReadWriteData(grantee);
+      case TableResourceIds.MOCK_TARGET_STATE_TABLE:
+        return this.mockTargetStateTable.grantReadWriteData(grantee);
       default:
         throw new Error(`Unknown table resource ID: ${tableResourceId}`);
     }
@@ -348,6 +406,8 @@ export class DynamoDbTables extends Construct {
           throw new Error('PersonHistoryTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
         }
         return this.personHistoryTable.grantReadData(grantee);
+      case TableResourceIds.MOCK_TARGET_STATE_TABLE:
+        return this.mockTargetStateTable.grantReadData(grantee);
       default:
         throw new Error(`Unknown table resource ID: ${tableResourceId}`);
     }

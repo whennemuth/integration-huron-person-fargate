@@ -311,7 +311,9 @@ export async function main(queueReader: QueueReader) {
       errorEventProcessor: errorTracker,
       retryStrategy,
       cleanupPreviousData: false, // DynamoDB manages its own data, no cleanup needed
-      ignoreRemovals: syncPopulation === SyncPopulation.PersonDelta
+      ignoreRemovals: syncPopulation === SyncPopulation.PersonDelta,
+      flags, // Pass flags for mock target support
+      syncRunId: integrationTimestamp // Pass integration timestamp as sync run ID
     });
     
     const result = await integration.run(`Processing chunk: s3://${bucketName}/${s3Key}`, chunkId);

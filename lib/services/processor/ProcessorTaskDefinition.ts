@@ -67,6 +67,7 @@ export class ProcessorTaskDefinition extends Construct {
       REGION: region,
       SQS_QUEUE_URL: queueUrl,
       DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbTables.statisticsTable.tableName,
+      DYNAMODB_MOCK_TARGET_STATE_TABLE_NAME: dynamoDbTables.mockTargetStateTable.tableName,
       // CHUNKS_BUCKET and CHUNK_KEY are set from SQS messages at runtime (not env vars)
       STATIC_MAP_USAGE: '{ "orgMap": true, "stateMap": true, "countryMap": true }', // Used by processor to determine which static maps to load in data mapper
       SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
@@ -239,6 +240,26 @@ export class ProcessorTaskDefinition extends Construct {
         })
       );
     }
+
+    // Grant DynamoDB read/write permissions for MockTargetStateTable
+    // Used when flags.useMockTarget is true to simulate target system without calling real API
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'dynamodb:GetItem',
+          'dynamodb:PutItem',
+          'dynamodb:UpdateItem',
+          'dynamodb:DeleteItem',
+          'dynamodb:Query',
+          'dynamodb:Scan',
+          'dynamodb:BatchGetItem',
+        ],
+        resources: [
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.mockTargetStateTable.tableName}`,
+        ],
+      })
+    );
 
     // Grant ECS task protection permissions
     // This allows the running task to enable/disable scale-in protection via ECS agent endpoint
