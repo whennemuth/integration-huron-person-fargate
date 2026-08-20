@@ -109,7 +109,18 @@ You can skip verification by saying:
 **Components**:
 - DeferredDeleteHandler (soft delete coordination)
 - StatisticsTable (merge metrics)
-- Docker entrypoint: `docker/merger.ts`
+- Implementation classes: `src/merging/AbstractMerger.ts` (base class), `src/merging/MergerForS3.ts`, `src/merging/MergerForDynamoDB.ts`
+- Docker entrypoint: `docker/merger.ts` (router)
+
+**Architecture**: Template Method pattern with abstract base class
+- `AbstractMerger` (src/merging/): Base class with shared logic (getTaskParameters, processDeferredDeletes, main template method)
+- `MergerForS3` (src/merging/): S3-specific implementation (file consolidation, baseline merging)
+- `MergerForDynamoDB` (src/merging/): DynamoDB-specific implementation (minimal/no-op merge, state already in tables)
+- `merger.ts` (docker/): Router that detects storage mode and delegates to appropriate implementation
+
+**Critical Design Note**: BOTH storage modes require the merger service
+- S3 mode: File consolidation + deletion handling
+- DynamoDB mode: Deletion handling only (no file consolidation needed)
 
 **Harness Prefixes**:
 - DEFERRED_DELETE_HANDLER_*, STATISTICS_TABLE_*
@@ -306,12 +317,29 @@ CHUNK_FROM_API_BASE_URL=...
 **Harness Execution**: Run with npx to validate chunking before ECS deployment
 
 ### processor.ts
-**Purpose**: Container entry point for parallel processing tasks
+**Purpose**: Router entry point for parallel processing tasks
+
+**Architecture**: Switchboard pattern - detects storage mode and delegates to appropriate processor
+- ProcessorForS3 (src/processing/): S3-based processing with mini-deltas and marker files
+- ProcessorForDynamoDB (src/processing/): DynamoDB-based processing with direct table writes
+- processor.ts (docker/): Router that detects storage mode and delegates
+
+**Mode Detection**: Checks for DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME or DYNAMODB_PERSON_HISTORY_TABLE_NAME
 
 **Harness Prefix**: DOCKER_PROCESSOR
 
 ### merger.ts
-**Purpose**: Container entry point for result consolidation
+**Purpose**: Router entry point for result consolidation
+
+**Architecture**: Template Method pattern with mode-specific implementations
+- AbstractMerger (src/merging/): Base class with shared logic (getTaskParameters, processDeferredDeletes, main)
+- MergerForS3 (src/merging/): S3-specific file consolidation and baseline merging
+- MergerForDynamoDB (src/merging/): Minimal/no-op merge (state already in DynamoDB tables)
+- merger.ts (docker/): Router that detects storage mode and delegates
+
+**Critical**: Both modes require merger service for DeferredDeleteHandler
+
+**Mode Detection**: Checks for DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME or DYNAMODB_PERSON_HISTORY_TABLE_NAME
 
 **Harness Prefix**: DOCKER_MERGER
 

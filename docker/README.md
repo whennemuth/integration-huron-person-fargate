@@ -21,7 +21,21 @@ The chunker reads a large JSON file from S3, streams the person array, and write
 
 ### Processor Dual-Mode Operation
 
-The processor adapts to its environment automatically:
+The processor uses a router pattern (`docker/processor.ts`) that detects storage mode and delegates to the appropriate implementation:
+
+**ProcessorForS3 (src/processing/ProcessorForS3.ts - S3 Mode):**
+- Writes mini-deltas to S3 for each chunk
+- Maintains coordination via marker files
+- Merger consolidates all chunk deltas into single previous-input.ndjson
+
+**ProcessorForDynamoDB (src/processing/ProcessorForDynamoDb.ts - DynamoDB Mode):**
+- Writes directly to PersonCurrentState and PersonHistory tables
+- Uses atomic DynamoDB operations
+- No mini-deltas or marker files needed
+
+**Mode Detection:**
+- If `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` or `DYNAMODB_PERSON_HISTORY_TABLE_NAME` is set → DynamoDB mode
+- Otherwise → S3 mode (default)
 
 **Local Development (docker-compose):**
 - Reads `CHUNKS_BUCKET` and `CHUNK_KEY` environment variables
@@ -37,15 +51,45 @@ The processor adapts to its environment automatically:
 
 This dual-mode design allows identical code to run locally for testing and in Fargate for production.
 
-### Merger Operation
+### Merger Operation (Template Method Pattern)
 
-The merger runs after all processor tasks complete. It concatenates chunk output files into a single merged file for the next sync cycle.
+The merger uses an abstract base class with mode-specific implementations:
+
+**AbstractMerger (src/merging/AbstractMerger.ts - Base Class):**
+- Implements Template Method pattern for shared logic
+- `getTaskParameters()`: Reads from SQS or environment
+- `processDeferredDeletes()`: Handles soft-deletion of removed records
+- `main()`: Template method orchestrating full merge flow
+- `merge()`: Abstract method for mode-specific implementation
+
+**MergerForS3 (src/merging/MergerForS3.ts - S3 Mode Implementation):**
+- Consolidates delta chunk files from `deltas/{population}/{timestamp}/`
+- Merges with existing baseline (`previous-input.ndjson`)
+- Writes merged result to `delta-storage/previous-input.ndjson`
+- Cleans up temporary delta chunk files
+
+**MergerForDynamoDB (src/merging/MergerForDynamoDB.ts - DynamoDB Mode Implementation):**
+- No file consolidation needed (processors wrote directly to tables)
+- No baseline merging needed (state already in PersonCurrentStateTable)
+- `merge()` method is essentially a no-op
+- Still invokes DeferredDeleteHandler for soft-deletions
+
+**merger.ts (docker/merger.ts - Router):**
+- Detects storage mode using same logic as processor router
+- Routes to `MergerForS3` or `MergerForDynamoDB`
+- Single entry point for both modes
+
+**Critical Design Note:**
+- **BOTH modes require the merger service**
+- S3 mode: File consolidation + deletion handling
+- DynamoDB mode: Deletion handling only
+- Previous assumption that DynamoDB mode doesn't need merger was incorrect
 
 **Environment:**
-- Reads `CHUNKS_BUCKET` and `INPUT_BUCKET` environment variables
-- Lists all chunks: `{CHUNKS_BUCKET}/{INPUT_BUCKET}/chunks/chunk-*.ndjson`
-- Writes merged output: `{CHUNKS_BUCKET}/{INPUT_BUCKET}/previous-input.ndjson`
-- Deletes chunk files after successful merge
+- ECS Mode: Reads `SQS_QUEUE_URL` and processes messages
+- Local Mode: Reads `CHUNKS_BUCKET`, `CHUNK_DIRECTORY`, or `INPUT_KEY`
+- Writes to shared location: `{CHUNKS_BUCKET}/delta-storage/previous-input.ndjson`
+- Triggers DeferredDeleteHandler if configured
 
 **Trigger:**
 - In AWS: EventBridge rule polls metadata file and triggers merger when all chunks are processed

@@ -178,7 +178,7 @@ DOCKER_PROCESSOR_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret
 DOCKER_PROCESSOR_CACHE_ENABLED=true
 DOCKER_PROCESSOR_CACHE_PATH=.
 
-# ------- Harness Groups for docker/processor-dynamodb.ts ------- #
+# ------- Harness Groups for ProcessorForDynamoDb (src/processing/ProcessorForDynamoDb.ts) ------- #
 # DynamoDB-based processor (simplified - no mini-deltas, no marker files)
 # Writes directly to PersonCurrentState and PersonHistory tables
 # Note: Requires PERSON_CURRENT_STATE_TABLE_NAME and PERSON_HISTORY_TABLE_NAME

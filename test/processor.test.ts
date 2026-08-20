@@ -1,10 +1,16 @@
 /**
- * Comprehensive tests for processor.ts
+ * Comprehensive tests for ProcessorForS3 (src/processing/ProcessorForS3.ts)
  * 
  * Tests the Phase 2 processing logic that handles individual chunk files
  */
 
-import { extractChunkId, validateChunk, buildChunkConfig } from '../docker/processor';
+import { buildChunkConfig } from '../src/processing/ProcessorForS3';
+import { StandardMetadataUtils } from '../src/chunking/metadata/MetadataUtils';
+import { ChunkFileManager } from '../src/chunking/metadata';
+
+const metadataUtils = new StandardMetadataUtils({});
+const extractChunkId = (s3Key: string) => metadataUtils.extractChunkId(s3Key);
+const validateChunk = ChunkFileManager.validateChunk;
 
 // Simple mock for ConfigManager to avoid file system dependencies
 jest.mock('integration-huron-person', () => ({
