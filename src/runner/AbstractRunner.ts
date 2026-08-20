@@ -4,6 +4,8 @@ import { getLocalConfig } from "../Utils";
 import { Endpoint, NormalizedPopulationType, RunnerEnv, TargetConfig, extractEnvironment } from './RunnerTypes';
 import { IContext } from "../../context/IContext";
 import { SourceSimulatorFunctionURL } from "../chunking/fetch/SourceSimulator";
+import { AbstractAtomicCounter } from '../AtomicCounter';
+import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from '../chunking/ChunkerQueue';
 
 /**
  * Abstract base class implementing the Template Method pattern for chunking service runners.
@@ -46,6 +48,13 @@ export abstract class ChunkingServiceRunner {
     }
 
     const targetConfig = await this.resolveDataTarget(config);
+
+    // Reset atomic counters before execution (unless explicitly skipped)
+    if (!env.skipAtomicCounterReset) {
+      await this.resetAtomicCounters();
+    } else {
+      console.log('⚠️  Atomic counter reset skipped (SKIP_ATOMIC_COUNTER_RESET=true)');
+    }
 
     const populationType = this.normalizePopulationType(env.populationType);
     await this.execute(sourceEndpoint, targetConfig, config, populationType);
@@ -156,6 +165,48 @@ export abstract class ChunkingServiceRunner {
   protected normalizePopulationType(populationType?: string): NormalizedPopulationType {
     const { PersonDelta, PersonFull } = SyncPopulation;
     return populationType?.toLowerCase() === PersonDelta ? PersonDelta : PersonFull;
+  }
+
+  /**
+   * Reset atomic counters to ensure clean offsets and chunk ordinals for new runs.
+   * 
+   * Centralized implementation called automatically from base class start() method.
+   * Resets both chunker queue offset counter and chunk ordinal counter.
+   * 
+   * This method is BLOCKING - if reset fails, an error is thrown and execution stops.
+   * This ensures chunk ordinals always start at 0 for new sync runs.
+   * 
+   * To skip automatic reset (e.g., for continuing previous run), set environment
+   * variable SKIP_ATOMIC_COUNTER_RESET=true.
+   * 
+   * @throws Error if required environment variables (stackId, region, landscape) are missing
+   * @throws Error if atomic counter reset operations fail
+   */
+  protected async resetAtomicCounters(): Promise<void> {
+    const { stackId, region, landscape } = this.env;
+
+    if (!stackId || !region || !landscape) {
+      throw new Error(
+        'Cannot reset atomic counters: missing required environment variables ' +
+        `(stackId=${stackId}, region=${region}, landscape=${landscape})`
+      );
+    }
+
+    console.log(`\n📝 Resetting atomic counter for chunker queue: ${CHUNKER_COUNTER_NAME}\n`);
+    const offsetCounter = new class extends AbstractAtomicCounter {
+      getCounterName(): string {
+        return CHUNKER_COUNTER_NAME;
+      }
+    }({ stackId, region, landscape });
+    await offsetCounter.reset();
+
+    console.log(`\n📝 Resetting atomic counter for chunk ordinals: ${CHUNK_ORDINAL_COUNTER_NAME}\n`);
+    const chunkOrdinalCounter = new class extends AbstractAtomicCounter {
+      getCounterName(): string {
+        return CHUNK_ORDINAL_COUNTER_NAME;
+      }
+    }({ stackId, region, landscape });
+    await chunkOrdinalCounter.reset();
   }
 
   /**

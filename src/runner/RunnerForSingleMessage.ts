@@ -1,6 +1,4 @@
 import { Config, DataSourceConfig } from 'integration-huron-person';
-import { AbstractAtomicCounter } from '../AtomicCounter';
-import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from '../chunking/ChunkerQueue';
 import { ApiChunkerEvent } from '../chunking/ChunkerSubscriber';
 import { handleApiEvent } from '../chunking/fetch/ChunkerApiSubscriber';
 import { ChunkingServiceRunner } from './AbstractRunner';
@@ -62,7 +60,7 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
     config: Config,
     populationType: NormalizedPopulationType
   ): Promise<void> {
-    const { bulkReset, trustPreviousStorage, iterationLimit, stackId, region, landscape, queueUrl } = this.env;
+    const { bulkReset, trustPreviousStorage, iterationLimit, queueUrl } = this.env;
     const apiChunkerEvent: ApiChunkerEvent = {
       baseUrl: sourceEndpoint.baseUrl,
       fetchPath: sourceEndpoint.fetchPath,
@@ -79,24 +77,7 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
       }
     };
 
-    // Reset counters to ensure clean offsets and chunk ordinals for the new run.
-    if( stackId && region && landscape) {
-      console.log(`\n📝 Resetting atomic counter for chunker queue: ${CHUNKER_COUNTER_NAME}\n`);
-      const offsetCounter = new class extends AbstractAtomicCounter {
-        getCounterName(): string {
-          return CHUNKER_COUNTER_NAME;
-        }
-      }({ stackId, region, landscape });
-      await offsetCounter.reset();
-
-      console.log(`\n📝 Resetting atomic counter for chunk ordinals: ${CHUNK_ORDINAL_COUNTER_NAME}\n`);
-      const chunkOrdinalCounter = new class extends AbstractAtomicCounter {
-        getCounterName(): string {
-          return CHUNK_ORDINAL_COUNTER_NAME;
-        }
-      }({ stackId, region, landscape });
-      await chunkOrdinalCounter.reset();
-    }
+    // Note: Atomic counter reset now handled automatically by base class start() method
 
     console.log(`\n📨 Sending single initial message to trigger chunking process...\n`);
     await handleApiEvent(apiChunkerEvent, queueUrl!);

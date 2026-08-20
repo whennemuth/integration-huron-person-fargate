@@ -17,6 +17,7 @@ export interface RunnerEnv {
   landscape?: string;
   bulkReset?: boolean;
   trustPreviousStorage?: boolean;
+  skipAtomicCounterReset?: boolean;
   messagesToPrepopulate: string;
   desiredCount: number;
   clusterName?: string;
@@ -75,6 +76,7 @@ export const extractEnvironment = (): RunnerEnv => {
     LANDSCAPE: landscape,
     BULK_RESET: bulkReset,
     TRUST_PREVIOUS_STORAGE: trustPreviousStorage,
+    SKIP_ATOMIC_COUNTER_RESET: skipAtomicCounterReset,
     SOURCE_SIMULATOR: sourceSimulator,
     MESSAGES_TO_PREPOPULATE: messagesToPrepopulate = '0',
     DESIRED_COUNT,
@@ -106,6 +108,7 @@ export const extractEnvironment = (): RunnerEnv => {
     desiredCount: DESIRED_COUNT ? parseInt(DESIRED_COUNT) : 0,
     bulkReset: `${bulkReset}`.toLowerCase().trim() === 'true',
     trustPreviousStorage: `${trustPreviousStorage}`.toLowerCase().trim() === 'true',
+    skipAtomicCounterReset: `${skipAtomicCounterReset}`.toLowerCase().trim() === 'true',
     messagingOnly: `${messagingOnly}`.toLowerCase().trim() === 'true',
     chunkingOnly: `${chunkingOnly}`.toLowerCase().trim() === 'true',
     populationScope: buid ? 'single' : 'standard',
