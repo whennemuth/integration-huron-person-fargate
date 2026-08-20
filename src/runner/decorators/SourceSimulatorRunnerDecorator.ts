@@ -18,7 +18,8 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
       region, landscape, messagesToPrepopulate, iterationLimit, 
       sourceSimulatorMockSimulatedDelaySeconds: delay, 
       sourceSimulatorMockTotalPopulation: total,
-      sourceSimulatorMockErrorRate: errorRate
+      sourceSimulatorMockErrorRate: errorRate,
+      buid
     } = this.wrappedRunner.env;
 
     const { 
@@ -41,6 +42,17 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
         });
       }
       return lambda;
+    }
+
+    // AUTOMATIC OVERRIDE: If running in single-person mode (BUID specified), force MOCK_TOTAL_POPULATION to 1.
+    // This ensures the source simulator generates exactly one mock person for single-person testing,
+    // matching the expected behavior of SinglePersonRunner even though the BUID query parameter
+    // is discarded when using the source simulator.
+    if (buid) {
+      if (total && total !== 1) {
+        console.log(`⚠️  SINGLE_PERSON_BUID is set - automatically overriding MOCK_TOTAL_POPULATION from ${total} to 1`);
+      }
+      total = 1;
     }
 
     // Update all simulator environment overrides in one Lambda configuration update.
