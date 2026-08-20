@@ -60,16 +60,19 @@ import {
   TargetApiErrorEventProcessor
 } from 'integration-huron-person';
 import type { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
-import { getRetryStrategy } from '../src/ApiErrorRetryStrategy';
-import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../src/ApiErrorTracking';
-import { NextChunk, QueueReader } from '../src/Queue';
-import { TaskProtection } from '../src/TaskProtection';
-import { getLocalConfig } from '../src/Utils';
-import { Flags } from '../src/chunking/metadata';
-import { getMetadataManager } from '../src/chunking/metadata/ProcessorMetadataFactory';
-const MetadataManager = getMetadataManager();
-import { PersonCacheLookup } from '../src/person-cache/PersonCacheLookup';
-import { SyncPopulation } from './chunkTypes';
+import { getRetryStrategy } from '../ApiErrorRetryStrategy';
+import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../ApiErrorTracking';
+import { NextChunk, QueueReader } from '../Queue';
+import { TaskProtection } from '../TaskProtection';
+import { getLocalConfig } from '../Utils';
+import { ChunkFileManager, Flags } from '../chunking/metadata';
+import { MetadataFactoryForBootstrap } from '../chunking/metadata/MetadataFactory';
+import { StandardMetadataUtils } from '../chunking/metadata/MetadataUtils';
+import { PersonCacheLookup } from '../person-cache/PersonCacheLookup';
+import { SyncPopulation } from '../../docker/chunkTypes';
+
+const metadataStorage = new MetadataFactoryForBootstrap().createMetadataForBootstrap();
+const metadataUtils = new StandardMetadataUtils({});
 
 const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
@@ -132,48 +135,6 @@ export const buildChunkConfig = async (params: {
   } as Config;
 };
 
-/**
- * Extract chunk ID from S3 key
- */
-export const extractChunkId = (s3Key: string): string | undefined => {
-  const match = s3Key.match(/chunk-(\d+)\.ndjson$/);
-  return match ? match[1] : undefined;
-};
-
-/**
- * Extract integration timestamp from S3 key
- */
-export const extractIntegrationTimestamp = (s3Key: string): string | undefined => {
-  const match = s3Key.match(/\/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\//);
-  return match ? match[1] : undefined;
-};
-
-/**
- * Read flags file from S3
- */
-export const readFlagInfo = async (
-  bucketName: string,
-  s3Key: string,
-  region?: string
-): Promise<Partial<Flags>> => {
-  return MetadataManager.readFlagsFromChunkKey(bucketName, s3Key, region);
-};
-
-export const validateChunk = (chunk: NextChunk | undefined) => {
-  if (!chunk) {
-    throw new Error('No chunk information provided in SQS message or environment variables');
-  }
-  const { bucketName, s3Key } = chunk;
-  if (!bucketName) {
-    console.error('ERROR: CHUNKS_BUCKET environment variable or queue message required');
-    process.exit(1);
-  }
-  if (!s3Key) {
-    console.error('ERROR: CHUNK_KEY environment variable or queue message required');
-    process.exit(1);
-  }
-};
-
 export async function main(queueReader: QueueReader) {
   const { 
     REGION: region, 
@@ -221,10 +182,10 @@ export async function main(queueReader: QueueReader) {
   }
   
   const { bucketName, s3Key } = nextChunk || {};
-  validateChunk(nextChunk);
+  ChunkFileManager.validateChunk(nextChunk);
 
   // Read flags file
-  const flags = await readFlagInfo(bucketName!, s3Key!, region);
+  const flags = await metadataStorage.readFlagsFromChunkKey(bucketName, s3Key, region);
   const bulkReset = flags.bulkReset ?? (`${BULK_RESET}`.trim().toLowerCase() === 'true');
   const trustPreviousStorage = flags.trustPreviousStorage ?? true;
   const syncPopulation = flags.syncPopulation ?? SyncPopulation.PersonFull;
@@ -233,8 +194,8 @@ export async function main(queueReader: QueueReader) {
   console.log(`Trust Previous Storage: ${trustPreviousStorage}${flags.trustPreviousStorage !== undefined ? ' (from flags)' : ' (defaulted)'}`);
   console.log(`Sync Population: ${syncPopulation}${flags.syncPopulation !== undefined ? ' (from flags)' : ' (defaulted)'}`);
 
-  const chunkId = extractChunkId(s3Key!);
-  const integrationTimestamp = extractIntegrationTimestamp(s3Key!) || new Date().toISOString();
+  const chunkId = metadataUtils.extractChunkId(s3Key!);
+  const integrationTimestamp = metadataUtils.extractIntegrationTimestamp(s3Key!) || new Date().toISOString();
 
   console.log(`Processing chunk: s3://${bucketName}/${s3Key}`);
   if (chunkId) {
