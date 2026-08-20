@@ -1,9 +1,9 @@
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
-import { MetadataForS3 } from '../src/chunking/metadata';
-const MetadataManager = MetadataForS3;
+import { ChunkFileManager } from '../src/chunking/metadata';
 import { mockClient } from 'aws-sdk-client-mock';
 
 const s3Mock = mockClient(S3Client);
+const chunkManager = new ChunkFileManager();
 
 describe('Metadata Aggregation Helpers', () => {
   const bucketName = 'test-bucket';
@@ -27,7 +27,7 @@ describe('Metadata Aggregation Helpers', () => {
         IsTruncated: false,
       });
 
-      const result = await MetadataManager.listChunkFiles(bucketName, chunkDirectory, region);
+      const result = await chunkManager.listChunkFiles(bucketName, chunkDirectory, region);
 
       expect(result).toEqual(chunkFiles);
       expect(result.length).toBe(3);
@@ -59,7 +59,7 @@ describe('Metadata Aggregation Helpers', () => {
         }
       });
 
-      const result = await MetadataManager.listChunkFiles(bucketName, chunkDirectory, region);
+      const result = await chunkManager.listChunkFiles(bucketName, chunkDirectory, region);
 
       expect(result.length).toBe(4);
       expect(result).toEqual([
@@ -81,7 +81,7 @@ describe('Metadata Aggregation Helpers', () => {
         IsTruncated: false,
       });
 
-      const result = await MetadataManager.listChunkFiles(bucketName, chunkDirectory, region);
+      const result = await chunkManager.listChunkFiles(bucketName, chunkDirectory, region);
 
       expect(result).toEqual([
         'chunks/person-full/2026-05-26T15:00:00.000Z/chunk-0000.ndjson',
@@ -100,7 +100,7 @@ describe('Metadata Aggregation Helpers', () => {
         IsTruncated: false,
       });
 
-      const result = await MetadataManager.listChunkFiles(bucketName, chunkDirectory, region);
+      const result = await chunkManager.listChunkFiles(bucketName, chunkDirectory, region);
 
       expect(result).toEqual([
         'chunks/person-full/2026-05-26T15:00:00.000Z/chunk-0001.ndjson',
@@ -117,7 +117,7 @@ describe('Metadata Aggregation Helpers', () => {
       });
 
       await expect(
-        MetadataManager.listChunkFiles(bucketName, chunkDirectory, region)
+        chunkManager.listChunkFiles(bucketName, chunkDirectory, region)
       ).resolves.toEqual([]);
     });
   });
@@ -140,7 +140,7 @@ describe('Metadata Aggregation Helpers', () => {
         return responses[callCount++];
       });
 
-      const result = await MetadataManager.computeTotalRecords(bucketName, chunkKeys, region);
+      const result = await chunkManager.computeTotalRecords(bucketName, chunkKeys, region);
 
       expect(result).toBe(6);
     });
@@ -160,7 +160,7 @@ describe('Metadata Aggregation Helpers', () => {
         return responses[callCount++];
       });
 
-      const result = await MetadataManager.computeTotalRecords(bucketName, chunkKeys, region);
+      const result = await chunkManager.computeTotalRecords(bucketName, chunkKeys, region);
 
       expect(result).toBe(2);
     });
@@ -186,7 +186,7 @@ describe('Metadata Aggregation Helpers', () => {
         return responses[callCount++];
       });
 
-      const result = await MetadataManager.computeTotalRecords(bucketName, chunkKeys, region);
+      const result = await chunkManager.computeTotalRecords(bucketName, chunkKeys, region);
 
       expect(result).toBe(3);
     });
@@ -198,7 +198,7 @@ describe('Metadata Aggregation Helpers', () => {
         Body: { transformToString: async () => '\n\n   \n' } as any,
       });
 
-      const result = await MetadataManager.computeTotalRecords(bucketName, chunkKeys, region);
+      const result = await chunkManager.computeTotalRecords(bucketName, chunkKeys, region);
 
       expect(result).toBe(0);
     });
@@ -227,7 +227,7 @@ describe('Metadata Aggregation Helpers', () => {
         return responses[callCount++];
       });
 
-      const result = await MetadataManager.buildAggregatedMetadata(bucketName, chunkDirectory, region);
+      const result = await chunkManager.buildAggregatedMetadata(bucketName, chunkDirectory, region);
 
       expect(result).toEqual({
         chunkKeys: chunkFiles,
@@ -243,7 +243,7 @@ describe('Metadata Aggregation Helpers', () => {
       });
 
       await expect(
-        MetadataManager.buildAggregatedMetadata(bucketName, chunkDirectory, region)
+        chunkManager.buildAggregatedMetadata(bucketName, chunkDirectory, region)
       ).rejects.toThrow('No chunk files found');
     });
 
@@ -262,7 +262,7 @@ describe('Metadata Aggregation Helpers', () => {
         Body: { transformToString: async () => '{"id":1}\n{"id":2}' },
       }));
 
-      const result = await MetadataManager.buildAggregatedMetadata(bucketName, chunkDirectory, region);
+      const result = await chunkManager.buildAggregatedMetadata(bucketName, chunkDirectory, region);
 
       expect(result.chunkCount).toBe(result.chunkKeys.length);
       expect(result.chunkCount).toBe(10);
@@ -288,7 +288,7 @@ describe('Metadata Aggregation Helpers', () => {
         },
       }));
 
-      const result = await MetadataManager.buildAggregatedMetadata(bucketName, chunkDirectory, region);
+      const result = await chunkManager.buildAggregatedMetadata(bucketName, chunkDirectory, region);
 
       expect(result.chunkCount).toBe(480);
       expect(result.chunkKeys.length).toBe(480);

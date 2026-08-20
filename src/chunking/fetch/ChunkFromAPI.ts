@@ -8,7 +8,7 @@ import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { getRetryStrategy } from '../../ApiErrorRetryStrategy';
 import { ChunkerQueue } from '../ChunkerQueue';
-import { MetadataFactory, WriteMetadataParams } from "../metadata";
+import { MetadataFactory, WriteMetadataParams, ChunkFileManager } from "../metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig, ChunkOrdinalAllocator } from "./BigJsonFetch";
@@ -592,7 +592,8 @@ export class ChunkFromAPI implements IChunkFromSource {
         let aggregatedChunkKeys = result.chunkKeys;
 
         try {
-          const { chunkCount, totalRecords, chunkKeys } = await metadataManager.buildAggregatedMetadata(
+          const chunkManager = new ChunkFileManager();
+          const { chunkCount, totalRecords, chunkKeys } = await chunkManager.buildAggregatedMetadata(
             chunksBucket,
             chunkDirectory,
             region

@@ -1,9 +1,9 @@
-import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Config } from 'integration-huron-person';
 import { S3StorageAdapter } from '../../storage/S3StorageAdapter';
 import { objectExistsInS3 } from '../../Utils';
 import {
-  AbstractMetadata,
+  IMetadataStorage,
   ChunkMetadata,
   Flags,
   MarkRunFailedParams,
@@ -13,7 +13,8 @@ import {
   TerminalError,
   WriteFlagsParams,
   WriteMetadataParams
-} from './AbstractMetadata';
+} from './IMetadataStorage';
+import { StandardMetadataUtils, validateMetadata } from './MetadataUtils';
 
 /**
  * S3-based metadata management implementation.
@@ -33,12 +34,15 @@ import {
  * await metadata.write({ bucketName, chunkDirectory, itemsPerChunk, source, ...flags });
  * ```
  */
-export class MetadataForS3 extends AbstractMetadata {
+export class MetadataForS3 implements IMetadataStorage {
+  protected config: Config;
   private storage?: S3StorageAdapter;
+  private metadataUtils: StandardMetadataUtils;
 
   constructor(params: { config: Config; storage?: S3StorageAdapter }) {
-    super(params);
+    this.config = params.config;
     this.storage = params.storage;
+    this.metadataUtils = new StandardMetadataUtils({});
   }
 
   /**
@@ -67,8 +71,8 @@ export class MetadataForS3 extends AbstractMetadata {
       throw new Error('bucketName is required for S3 metadata operations');
     }
 
-    const metadataKey = AbstractMetadata.getMetadataKey(chunkDirectory);
-    const deltaStoragePath = AbstractMetadata.deriveDeltaStoragePath(chunkDirectory);
+    const metadataKey = this.metadataUtils.getMetadataKey(chunkDirectory);
+    const deltaStoragePath = this.metadataUtils.deriveDeltaStoragePath(chunkDirectory);
 
     const metadata: ChunkMetadata = {
       itemsPerChunk, source, chunkDirectory,
@@ -155,7 +159,7 @@ export class MetadataForS3 extends AbstractMetadata {
       throw new Error('bucketName is required for S3 metadata operations');
     }
 
-    const flagsKey = AbstractMetadata.getFlagsKey(chunkDirectory);
+    const flagsKey = this.metadataUtils.getFlagsKey(chunkDirectory);
     const flags: Flags = {
       bulkReset,
       trustPreviousStorage,
@@ -213,7 +217,7 @@ export class MetadataForS3 extends AbstractMetadata {
       return {};
     }
 
-    const metadataKey = AbstractMetadata.getMetadataKey(chunkDirectory);
+    const metadataKey = this.metadataUtils.getMetadataKey(chunkDirectory);
     const s3Client = new S3Client({ region });
 
     try {
@@ -236,7 +240,7 @@ export class MetadataForS3 extends AbstractMetadata {
       console.log(`✓ Metadata loaded: ${JSON.stringify(metadata)}`);
       
       // Log warnings for missing expected fields
-      this.validateMetadata(metadata);
+      validateMetadata(metadata);
       
       return metadata;
     } catch (error: any) {
@@ -262,7 +266,7 @@ export class MetadataForS3 extends AbstractMetadata {
       return {};
     }
 
-    const flagsKey = AbstractMetadata.getFlagsKey(chunkDirectory);
+    const flagsKey = this.metadataUtils.getFlagsKey(chunkDirectory);
     const s3Client = new S3Client({ region });
 
     try {
@@ -307,7 +311,7 @@ export class MetadataForS3 extends AbstractMetadata {
       throw new Error('bucketName is required for S3 metadata operations');
     }
 
-    const markerKey = AbstractMetadata.getTerminalErrorKey(chunkDirectory);
+    const markerKey = this.metadataUtils.getTerminalErrorKey(chunkDirectory);
     const marker: TerminalError = {
       stage: 'chunking',
       chunkDirectory,
@@ -344,7 +348,7 @@ export class MetadataForS3 extends AbstractMetadata {
       throw new Error('bucketName is required for S3 metadata operations');
     }
 
-    const key = AbstractMetadata.getTerminalErrorKey(chunkDirectory);
+    const key = this.metadataUtils.getTerminalErrorKey(chunkDirectory);
     return objectExistsInS3(bucketName, key, region);
   }
 
@@ -358,7 +362,7 @@ export class MetadataForS3 extends AbstractMetadata {
       throw new Error('bucketName is required for S3 metadata operations');
     }
 
-    const key = AbstractMetadata.getTerminalErrorKey(chunkDirectory);
+    const key = this.metadataUtils.getTerminalErrorKey(chunkDirectory);
     const s3Client = new S3Client({ region });
 
     try {
@@ -415,295 +419,5 @@ export class MetadataForS3 extends AbstractMetadata {
     const chunkDirectory = chunkS3Key.substring(0, chunkS3Key.lastIndexOf('/'));
     
     return this.read({ bucketName, chunkDirectory, region });
-  }
-
-  /**
-   * List all chunk files in a directory with pagination support.
-   * Returns sorted array of chunk file keys matching chunk-*.ndjson pattern.
-   * Handles S3 pagination to support 1000+ chunk files.
-   * 
-   * @param bucketName - S3 bucket name
-   * @param chunkDirectory - Chunk directory path (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z")
-   * @param region - AWS region
-   * @returns Array of chunk file keys sorted by chunk number
-   */
-  public async listChunkFiles(
-    bucketName: string | undefined,
-    chunkDirectory: string,
-    region?: string
-  ): Promise<string[]> {
-    if (!bucketName) {
-      throw new Error('bucketName is required for S3 metadata operations');
-    }
-
-    const s3Client = new S3Client({ region });
-    const prefix = `${chunkDirectory}/`;
-    const chunkFiles: string[] = [];
-    let continuationToken: string | undefined;
-
-    try {
-      do {
-        const response = await s3Client.send(
-          new ListObjectsV2Command({
-            Bucket: bucketName,
-            Prefix: prefix,
-            ContinuationToken: continuationToken,
-          })
-        );
-
-        // Filter for chunk-*.ndjson files
-        if (response.Contents) {
-          for (const obj of response.Contents) {
-            if (obj.Key && /chunk-\d+\.ndjson$/.test(obj.Key)) {
-              chunkFiles.push(obj.Key);
-            }
-          }
-        }
-
-        // Handle pagination
-        if (response.IsTruncated) {
-          continuationToken = response.NextContinuationToken;
-        } else {
-          continuationToken = undefined;
-        }
-      } while (continuationToken);
-
-      // Sort by chunk number to ensure deterministic ordering
-      chunkFiles.sort((a, b) => {
-        const numA = parseInt(a.match(/chunk-(\d+)\.ndjson$/)?.[1] || '0', 10);
-        const numB = parseInt(b.match(/chunk-(\d+)\.ndjson$/)?.[1] || '0', 10);
-        return numA - numB;
-      });
-
-      console.log(`✓ Listed ${chunkFiles.length} chunk files from s3://${bucketName}/${prefix}`);
-      return chunkFiles;
-    } catch (error: any) {
-      console.error(`Error listing chunk files: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Compute total records by summing NDJSON line counts across chunk files.
-   * Streams each file to avoid buffering large payloads.
-   * 
-   * @param bucketName - S3 bucket name
-   * @param chunkKeys - Array of chunk file S3 keys
-   * @param region - AWS region
-   * @returns Total record count across all chunks
-   */
-  public async computeTotalRecords(
-    bucketName: string | undefined,
-    chunkKeys: string[],
-    region?: string
-  ): Promise<number> {
-    if (!bucketName) {
-      throw new Error('bucketName is required for S3 metadata operations');
-    }
-
-    const s3Client = new S3Client({ region });
-    let totalRecords = 0;
-
-    for (const chunkKey of chunkKeys) {
-      try {
-        const response = await s3Client.send(
-          new GetObjectCommand({
-            Bucket: bucketName,
-            Key: chunkKey,
-          })
-        );
-
-        const body = await response.Body?.transformToString();
-        if (body) {
-          // Count non-empty lines (each NDJSON line is one record)
-          const lineCount = body.split('\n').filter(line => line.trim().length > 0).length;
-          totalRecords += lineCount;
-        }
-      } catch (error: any) {
-        console.warn(`Warning: Could not read chunk file ${chunkKey}: ${error.message}`);
-        // Continue with other chunks even if one fails
-      }
-    }
-
-    console.log(`✓ Computed total records: ${totalRecords} across ${chunkKeys.length} chunks`);
-    return totalRecords;
-  }
-
-  /**
-   * Build aggregated metadata from run-level S3 state.
-   * Discovers all chunk files in the directory and computes aggregate totals.
-   * Used when finalizing metadata at end-of-run to ensure all chunks are reflected.
-   * 
-   * @param bucketName - S3 bucket name
-   * @param chunkDirectory - Chunk directory path
-   * @param region - AWS region
-   * @returns Aggregated metadata with full chunk list and totals
-   */
-  public async buildAggregatedMetadata(
-    bucketName: string | undefined,
-    chunkDirectory: string,
-    region?: string
-  ): Promise<{ chunkKeys: string[]; totalRecords: number; chunkCount: number }> {
-    try {
-      // Discover all chunk files
-      const chunkKeys = await this.listChunkFiles(bucketName, chunkDirectory, region);
-
-      if (chunkKeys.length === 0) {
-        throw new Error(`No chunk files found in ${chunkDirectory}`);
-      }
-
-      // Compute total records
-      const totalRecords = await this.computeTotalRecords(bucketName, chunkKeys, region);
-
-      const chunkCount = chunkKeys.length;
-
-      console.log(`✓ Aggregated metadata: chunkCount=${chunkCount}, totalRecords=${totalRecords}`);
-
-      return { chunkKeys, totalRecords, chunkCount };
-    } catch (error: any) {
-      console.error(`Failed to build aggregated metadata: ${error.message}`);
-      throw error;
-    }
-  }
-
-  // ========================================
-  // Static wrapper methods for backward compatibility
-  // ========================================
-
-  /**
-   * Static wrapper for write() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async write(params: WriteMetadataParams): Promise<void> {
-    const instance = new MetadataForS3({ config: {} as Config });
-    return instance.write(params);
-  }
-
-  /**
-   * Static wrapper for writeFlags() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async writeFlags(params: WriteFlagsParams): Promise<void> {
-    const instance = new MetadataForS3({ config: {} as Config });
-    return instance.writeFlags(params);
-  }
-
-  /**
-   * Static wrapper for read() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async read(params: ReadMetadataParams): Promise<Partial<ChunkMetadata>> {
-    const instance = new MetadataForS3({ config: {} as Config });
-    return instance.read(params);
-  }
-
-  /**
-   * Static wrapper for readFlags() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async readFlags(params: ReadFlagsParams): Promise<Partial<Flags>> {
-    const instance = new MetadataForS3({ config: {} as Config });
-    return instance.readFlags(params);
-  }
-
-  /**
-   * Static wrapper for markRunFailed() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async markRunFailed(params: MarkRunFailedParams): Promise<void> {
-    const instance = new MetadataForS3({ config: {} as Config });
-    return instance.markRunFailed(params);
-  }
-
-  /**
-   * Static wrapper for isRunFailed() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async isRunFailed(params: ReadFlagsParams): Promise<boolean> {
-    const instance = new MetadataForS3({ config: {} as Config });
-    return instance.isRunFailed(params);
-  }
-
-  /**
-   * Static wrapper for terminalErrorExists() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async terminalErrorExists(params: ReadTerminalErrorParams): Promise<boolean> {
-    const instance = new MetadataForS3({ config: {} as Config });
-    return instance.terminalErrorExists(params);
-  }
-
-  /**
-   * Static wrapper for readTerminalError() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async readTerminalError(params: ReadTerminalErrorParams): Promise<TerminalError | undefined> {
-    const instance = new MetadataForS3({ config: {} as Config });
-    return instance.readTerminalError(params);
-  }
-
-  /**
-   * Static wrapper for readFlagsFromChunkKey() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async readFlagsFromChunkKey(
-    bucketName: string | undefined,
-    chunkS3Key: string,
-    region?: string
-  ): Promise<Partial<Flags>> {
-    const instance = new MetadataForS3({ config: {} as Config });
-    return instance.readFlagsFromChunkKey(bucketName, chunkS3Key, region);
-  }
-
-  /**
-   * Static wrapper for readFromChunkKey() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async readFromChunkKey(
-    bucketName: string | undefined,
-    chunkS3Key: string,
-    region?: string
-  ): Promise<Partial<ChunkMetadata>> {
-    const instance = new MetadataForS3({ config: {} as Config });
-    return instance.readFromChunkKey(bucketName, chunkS3Key, region);
-  }
-
-  /**
-   * Static wrapper for listChunkFiles() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async listChunkFiles(
-    bucketName: string | undefined,
-    chunkDirectory: string,
-    region?: string
-  ): Promise<string[]> {
-    const instance = new MetadataForS3({ config: {} as Config });
-    return instance.listChunkFiles(bucketName, chunkDirectory, region);
-  }
-
-  /**
-   * Static wrapper for computeTotalRecords() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async computeTotalRecords(
-    bucketName: string | undefined,
-    chunkKeys: string[],
-    region?: string
-  ): Promise<number> {
-    const instance = new MetadataForS3({ config: {} as Config });
-    return instance.computeTotalRecords(bucketName, chunkKeys, region);
-  }
-
-  /**
-   * Static wrapper for buildAggregatedMetadata() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async buildAggregatedMetadata(
-    bucketName: string | undefined,
-    chunkDirectory: string,
-    region?: string
-  ): Promise<{ chunkKeys: string[]; totalRecords: number; chunkCount: number }> {
-    const instance = new MetadataForS3({ config: {} as Config });
-    return instance.buildAggregatedMetadata(bucketName, chunkDirectory, region);
   }
 }

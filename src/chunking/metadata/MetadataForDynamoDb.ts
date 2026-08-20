@@ -2,7 +2,7 @@ import { Config } from 'integration-huron-person';
 import { StatisticsTable } from '../../dynamodb/StatisticsTable';
 import { IContext } from '../../../context/IContext';
 import {
-  AbstractMetadata,
+  IMetadataStorage,
   ChunkMetadata,
   Flags,
   MarkRunFailedParams,
@@ -12,7 +12,8 @@ import {
   TerminalError,
   WriteFlagsParams,
   WriteMetadataParams
-} from './AbstractMetadata';
+} from './IMetadataStorage';
+import { StandardMetadataUtils, validateMetadata } from './MetadataUtils';
 
 /**
  * DynamoDB-based metadata management implementation.
@@ -34,23 +35,30 @@ import {
  * DynamoDB implementation only stores metadata. The actual chunk files and
  * delta storage still use S3/file system.
  * 
- * Therefore, methods like listChunkFiles(), computeTotalRecords(), and
- * buildAggregatedMetadata() are NOT IMPLEMENTED because they require
- * filesystem access which DynamoDB doesn't provide.
+ * For chunk file operations (listChunkFiles, computeTotalRecords, buildAggregatedMetadata),
+ * use ChunkFileManager directly. These operations are not part of the metadata storage
+ * abstraction because chunk files are always stored in S3 regardless of metadata storage mode.
  * 
  * ## Usage:
  * ```typescript
  * const metadata = new MetadataForDynamoDb({ config, context });
  * await metadata.writeFlags({ chunkDirectory, ...flags });
  * await metadata.write({ chunkDirectory, itemsPerChunk, source, ...flags });
+ * 
+ * // For chunk file operations:
+ * const chunkManager = new ChunkFileManager();
+ * const chunkKeys = await chunkManager.listChunkFiles(bucket, chunkDirectory, region);
  * ```
  */
-export class MetadataForDynamoDb extends AbstractMetadata {
+export class MetadataForDynamoDb implements IMetadataStorage {
+  protected config: Config;
   private statisticsTable: StatisticsTable;
+  private metadataUtils: StandardMetadataUtils;
 
   constructor(params: { config: Config; context: IContext }) {
-    super(params);
+    this.config = params.config;
     this.statisticsTable = new StatisticsTable(params.context);
+    this.metadataUtils = new StandardMetadataUtils({});
   }
 
   /**
@@ -72,8 +80,8 @@ export class MetadataForDynamoDb extends AbstractMetadata {
       replace = false
     } = params;
 
-    const syncRunId = AbstractMetadata.extractSyncRunId(chunkDirectory);
-    const deltaStoragePath = AbstractMetadata.deriveDeltaStoragePath(chunkDirectory);
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
+    const deltaStoragePath = this.metadataUtils.deriveDeltaStoragePath(chunkDirectory);
 
     const metadata: ChunkMetadata = {
       itemsPerChunk, source, chunkDirectory,
@@ -134,7 +142,7 @@ export class MetadataForDynamoDb extends AbstractMetadata {
       replace = false
     } = params;
 
-    const syncRunId = AbstractMetadata.extractSyncRunId(chunkDirectory);
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
 
     const flags: Flags = {
       bulkReset,
@@ -183,7 +191,7 @@ export class MetadataForDynamoDb extends AbstractMetadata {
    */
   public async read(params: ReadMetadataParams): Promise<Partial<ChunkMetadata>> {
     const { chunkDirectory } = params;
-    const syncRunId = AbstractMetadata.extractSyncRunId(chunkDirectory);
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
 
     try {
       console.log(`Reading metadata from DynamoDB: syncRunId=${syncRunId}`);
@@ -198,7 +206,7 @@ export class MetadataForDynamoDb extends AbstractMetadata {
       console.log(`✓ Metadata loaded: ${JSON.stringify(metadata)}`);
       
       // Log warnings for missing expected fields
-      this.validateMetadata(metadata as ChunkMetadata);
+      validateMetadata(metadata as ChunkMetadata);
       
       return metadata as Partial<ChunkMetadata>;
     } catch (error: any) {
@@ -213,7 +221,7 @@ export class MetadataForDynamoDb extends AbstractMetadata {
    */
   public async readFlags(params: ReadFlagsParams): Promise<Partial<Flags>> {
     const { chunkDirectory } = params;
-    const syncRunId = AbstractMetadata.extractSyncRunId(chunkDirectory);
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
 
     try {
       console.log(`Reading flags from DynamoDB: syncRunId=${syncRunId}`);
@@ -241,7 +249,7 @@ export class MetadataForDynamoDb extends AbstractMetadata {
    */
   public async markRunFailed(params: MarkRunFailedParams): Promise<void> {
     const { chunkDirectory, errorMessage } = params;
-    const syncRunId = AbstractMetadata.extractSyncRunId(chunkDirectory);
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
 
     const marker: TerminalError = {
       stage: 'chunking',
@@ -272,7 +280,7 @@ export class MetadataForDynamoDb extends AbstractMetadata {
    */
   public async terminalErrorExists(params: ReadTerminalErrorParams): Promise<boolean> {
     const { chunkDirectory } = params;
-    const syncRunId = AbstractMetadata.extractSyncRunId(chunkDirectory);
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
 
     try {
       const error = await this.readTerminalError(params);
@@ -287,7 +295,7 @@ export class MetadataForDynamoDb extends AbstractMetadata {
    */
   public async readTerminalError(params: ReadTerminalErrorParams): Promise<TerminalError | undefined> {
     const { chunkDirectory } = params;
-    const syncRunId = AbstractMetadata.extractSyncRunId(chunkDirectory);
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
 
     try {
       // Query for TERMINAL_ERROR record
@@ -334,129 +342,5 @@ export class MetadataForDynamoDb extends AbstractMetadata {
     const chunkDirectory = chunkS3Key.substring(0, chunkS3Key.lastIndexOf('/'));
     
     return this.read({ chunkDirectory });
-  }
-
-  /**
-   * List all chunk files in a directory.
-   * 
-   * NOT IMPLEMENTED for DynamoDB storage because chunk files are stored in S3/file system,
-   * not in DynamoDB. DynamoDB only stores metadata about the run.
-   * 
-   * If you need to list chunk files when using DynamoDB metadata storage, you must
-   * still use S3/file system APIs to access the actual chunk files.
-   * 
-   * @throws Error indicating this operation is not supported
-   */
-  public async listChunkFiles(
-    bucketName: string | undefined,
-    chunkDirectory: string,
-    region?: string
-  ): Promise<string[]> {
-    throw new Error(
-      'listChunkFiles() is not implemented for DynamoDB metadata storage. ' +
-      'Chunk files are stored in S3/file system. Use S3StorageAdapter or FileSystemStorageAdapter ' +
-      'to list chunk files, or use MetadataForS3 for full S3-based metadata management.'
-    );
-  }
-
-  /**
-   * Compute total records by summing NDJSON line counts across chunk files.
-   * 
-   * NOT IMPLEMENTED for DynamoDB storage because chunk files are stored in S3/file system,
-   * not in DynamoDB. DynamoDB only stores metadata about the run.
-   * 
-   * @throws Error indicating this operation is not supported
-   */
-  public async computeTotalRecords(
-    bucketName: string | undefined,
-    chunkKeys: string[],
-    region?: string
-  ): Promise<number> {
-    throw new Error(
-      'computeTotalRecords() is not implemented for DynamoDB metadata storage. ' +
-      'Chunk files are stored in S3/file system. Use S3StorageAdapter or FileSystemStorageAdapter ' +
-      'to read chunk files and compute totals.'
-    );
-  }
-
-  /**
-   * Build aggregated metadata from run-level storage state.
-   * 
-   * NOT IMPLEMENTED for DynamoDB storage because chunk files are stored in S3/file system,
-   * not in DynamoDB. DynamoDB only stores metadata about the run.
-   * 
-   * @throws Error indicating this operation is not supported
-   */
-  public async buildAggregatedMetadata(
-    bucketName: string | undefined,
-    chunkDirectory: string,
-    region?: string
-  ): Promise<{ chunkKeys: string[]; totalRecords: number; chunkCount: number }> {
-    throw new Error(
-      'buildAggregatedMetadata() is not implemented for DynamoDB metadata storage. ' +
-      'Chunk files are stored in S3/file system. Use S3StorageAdapter or FileSystemStorageAdapter ' +
-      'to list chunk files and build aggregated metadata.'
-    );
-  }
-
-  // ============================================================================
-  // Static Wrapper Methods (Backward Compatibility)
-  // ============================================================================
-
-  /**
-   * Create minimal IContext from environment variables for static method usage.
-   * Used when config hasn't been loaded yet (e.g., early in processor initialization).
-   */
-  private static createMinimalContext(): IContext {
-    const { 
-      STATISTICS_TABLE_NAME,
-      PERSON_CURRENT_STATE_TABLE_NAME,
-      PERSON_HISTORY_TABLE_NAME 
-    } = process.env;
-
-    if (!STATISTICS_TABLE_NAME || !PERSON_CURRENT_STATE_TABLE_NAME || !PERSON_HISTORY_TABLE_NAME) {
-      throw new Error(
-        'DynamoDB table environment variables not found. Required: ' +
-        'STATISTICS_TABLE_NAME, PERSON_CURRENT_STATE_TABLE_NAME, PERSON_HISTORY_TABLE_NAME'
-      );
-    }
-
-    // Create minimal context with only DynamoDB table information
-    // Other fields are not needed for metadata operations
-    return {
-      dynamoDbTables: {
-        statisticsTable: { tableName: STATISTICS_TABLE_NAME },
-        personCurrentStateTable: { tableName: PERSON_CURRENT_STATE_TABLE_NAME },
-        personHistoryTable: { tableName: PERSON_HISTORY_TABLE_NAME }
-      }
-    } as unknown as IContext;
-  }
-
-  /**
-   * Static wrapper for readFlagsFromChunkKey() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async readFlagsFromChunkKey(
-    bucketName: string | undefined,
-    chunkS3Key: string,
-    region?: string
-  ): Promise<Partial<Flags>> {
-    const context = MetadataForDynamoDb.createMinimalContext();
-    const instance = new MetadataForDynamoDb({ config: {} as Config, context });
-    return instance.readFlagsFromChunkKey(bucketName, chunkS3Key, region);
-  }
-
-  /**
-   * Static wrapper for readFromChunkKey() method.
-   * Creates a temporary instance for backward compatibility with existing code.
-   */
-  public static async readFromChunkKey(
-    bucketName: string | undefined,
-    chunkS3Key: string,
-    region?: string
-  ): Promise<Partial<ChunkMetadata>> {
-    const context = MetadataForDynamoDb.createMinimalContext();
-    const instance = new MetadataForDynamoDb({ config: {} as Config, context });
-    return instance.readFromChunkKey(bucketName, chunkS3Key, region);
   }
 }

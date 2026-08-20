@@ -386,24 +386,4 @@ describe('MetadataForDynamoDb', () => {
       expect(call[0]).toBe('2026-01-01T00:00:00.000Z');
     });
   });
-
-  describe('not applicable methods', () => {
-    it('should throw error for listChunkFiles', async () => {
-      await expect(
-        metadata.listChunkFiles('bucket', chunkDirectory, 'us-east-1')
-      ).rejects.toThrow('is not implemented for DynamoDB metadata storage');
-    });
-
-    it('should throw error for computeTotalRecords', async () => {
-      await expect(
-        metadata.computeTotalRecords('bucket', ['chunk-0000.ndjson'], 'us-east-1')
-      ).rejects.toThrow('is not implemented for DynamoDB metadata storage');
-    });
-
-    it('should throw error for buildAggregatedMetadata', async () => {
-      await expect(
-        metadata.buildAggregatedMetadata('bucket', chunkDirectory, 'us-east-1')
-      ).rejects.toThrow('is not implemented for DynamoDB metadata storage');
-    });
-  });
 });
