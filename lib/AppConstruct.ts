@@ -168,18 +168,16 @@ export class AppConstruct extends Construct {
     // ========================================
     // 9. Merger Service (Phase 3)
     // ========================================
-    // Only create merger service for file-based delta storage
-    // DynamoDB strategy doesn't need file consolidation (atomic writes to shared tables)
-    const storageType = ctx.PREVIOUS_STORAGE_TYPE || 'dynamodb';
-    if (storageType === 's3' || storageType === 'file' || storageType === 'database') {
-      this.ecs.createMergerService(
-        this.queue.mergerQueue,
-        this.queue.mergerDeadLetterQueue
-      );
-      console.log('[MergerService] Created (file-based delta storage)');
-    } else {
-      console.log('[MergerService] Skipped (DynamoDB delta storage - no file consolidation needed)');
-    }
+    // Merger service is ALWAYS needed for both S3 and DynamoDB modes:
+    // - S3 mode: File consolidation + deferred deletion handling
+    // - DynamoDB mode: Deferred deletion handling (no file consolidation)
+    // 
+    // Both modes require DeferredDeleteHandler to soft-delete records removed from source.
+    this.ecs.createMergerService(
+      this.queue.mergerQueue,
+      this.queue.mergerDeadLetterQueue
+    );
+    console.log('[MergerService] Created (both S3 and DynamoDB modes require merger for deletion handling)');
 
     
     // Source Simulator (Optional) - Mock API for testing without 30-minute cooldown
