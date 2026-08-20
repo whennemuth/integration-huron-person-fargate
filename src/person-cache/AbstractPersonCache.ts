@@ -1,4 +1,5 @@
 import { Config } from "integration-huron-person";
+import { AbstractPersonTarget } from "./PersonTargetReal";
 
 /**
  * Abstract base class for person cache implementations.
@@ -38,11 +39,16 @@ import { Config } from "integration-huron-person";
  */
 export abstract class AbstractPersonCache {
   protected config: Config | undefined;
+  protected personTarget: AbstractPersonTarget | undefined;
 
   public static CACHE_FILE_NAME = '_personCache.txt';
 
-  constructor(params?: { config?: Config }) {
+  constructor(params?: { 
+    config?: Config;
+    personTarget?: AbstractPersonTarget;
+  }) {
     this.config = params?.config;
+    this.personTarget = params?.personTarget;
   }
 
   /**

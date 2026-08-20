@@ -1,6 +1,7 @@
 import { Config } from "integration-huron-person";
 import { AbstractPersonCache } from './AbstractPersonCache';
 import { PersonCacheForS3 } from './PersonCacheForS3';
+import { AbstractPersonTarget } from "./PersonTargetReal";
 
 /**
  * DynamoDB-based person cache implementation (FACADE PATTERN).
@@ -82,7 +83,10 @@ import { PersonCacheForS3 } from './PersonCacheForS3';
 export class PersonCacheForDynamoDb extends AbstractPersonCache {
   private s3Implementation: PersonCacheForS3;
 
-  constructor(params?: { config?: Config }) {
+  constructor(params?: { 
+    config?: Config;
+    personTarget: AbstractPersonTarget;
+  }) {
     super(params);
     
     // Facade delegates all operations to S3 implementation

@@ -460,11 +460,12 @@ export async function main() {
 
     /**
      * Writes the full population from the target API to an S3 file as a cache for lookup during chunk processing.
+     * In mock target mode, fetches population from MockTargetStateTable instead of real Huron API.
      */
     if(chunkFromParams.bulkReset || !chunkFromParams.trustPreviousStorage) {
       const config = await getConfig();
       const { CACHE_FILE_NAME } = AbstractPersonCache;
-      const cache = PersonCacheFactory.create(config);
+      const cache = PersonCacheFactory.create(config, useMockTarget);
       const fileParms = { 
         bucketName: chunksBucket, 
         key: chunker.getChunkDirectory() + `/${CACHE_FILE_NAME}`, 

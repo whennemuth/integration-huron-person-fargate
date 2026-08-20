@@ -62,7 +62,7 @@ export interface ApiChunkerEvent {
   iterationLimit?: number;
   offset?: number;
   chunkDirectory?: string;
-  /** Mock target configuration: when true, processors use MockDataTarget */
+  /** Mock target configuration: when true, processors use MockPersonDataTarget */
   useMockTarget?: boolean;
   /** Validation-only mode for mock target: log operations but don't execute */
   mockTargetValidateOnly?: boolean;

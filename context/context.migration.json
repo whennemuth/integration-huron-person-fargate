@@ -70,7 +70,7 @@
       "pollIntervalMinutes": 2
     },
     "sourceSimulator": {
-      "enabled": false,
+      "enabled": true,
       "timeoutSeconds": 60,
       "memorySizeMb": 256,
       "mockTotalPopulation": 1950,

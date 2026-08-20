@@ -196,6 +196,13 @@ The pipeline supports two storage modes for delta state and metadata, controlled
    - `PersonCacheForS3` (direct S3 implementation)
    - `PersonCacheForDynamoDb` (facade delegating to S3 - optimal for bulk data)
    - `PersonCacheFactory` switches on `config.storage.type`
+   
+   **Mock Target Support** (Strategy Pattern):
+   - `AbstractPersonTarget` interface: Abstracts person data source
+   - `PersonTargetReal`: Fetches from real Huron API via ListPeople
+   - `PersonTargetMocked`: Scans MockTargetStateTable (DynamoDB) for test data
+   - Factory injects appropriate PersonTarget based on `useMockTarget` flag
+   - Design: Dependency injection enables testing without environment coupling
 
 3. **Metadata** (src/chunking/metadata/)
    - `AbstractMetadata` with 19 methods (5 static, 14 abstract)

@@ -336,7 +336,7 @@ export class DynamoDbTables extends Construct {
    * 5. List all: Scan
    * 
    * Purpose:
-   * When flags.useMockTarget is true, processors use MockDataTarget which writes to this
+   * When flags.useMockTarget is true, processors use MockPersonDataTarget which writes to this
    * table instead of calling the real target API. This allows full end-to-end testing
    * with source simulator without affecting real target system data.
    */

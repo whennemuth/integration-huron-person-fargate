@@ -1,5 +1,5 @@
 import { IContext } from '../../context/IContext';
-import { MockDataTarget } from 'integration-huron-person';
+import { MockPersonDataTarget } from 'integration-huron-person';
 import { Config } from 'integration-huron-person';
 import { CrudOperation, FieldSet, PushOneParms, SinglePushResult } from 'integration-core';
 import { DynamoDBClient, ScanCommand, DeleteItemCommand, DescribeTableCommand } from '@aws-sdk/client-dynamodb';
@@ -29,7 +29,7 @@ import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
  * 5. List all persons: Scan (for validation/audit)
  * 
  * Usage:
- * When flags.useMockTarget is true, processors use MockDataTarget which writes to this table
+ * When flags.useMockTarget is true, processors use MockPersonDataTarget which writes to this table
  * instead of calling the real target API. This allows full end-to-end testing with source
  * simulator without affecting real target system data.
  */
@@ -55,11 +55,11 @@ export interface MockTargetStateRecord {
 /**
  * MockTargetStateTable utility class
  * 
- * Wraps MockDataTarget with DynamoDB-specific table management operations.
- * Acts as a decorator/wrapper around the inner MockDataTarget instance from integration-huron-person.
+ * Wraps MockPersonDataTarget with DynamoDB-specific table management operations.
+ * Acts as a decorator/wrapper around the inner MockPersonDataTarget instance from integration-huron-person.
  * 
  * Design:
- * - Composes with MockDataTarget (delegation pattern)
+ * - Composes with MockPersonDataTarget (delegation pattern)
  * - Adds table-level operations: listAll(), truncate(), tableExists()
  * - Provides test harness for validation and state inspection
  * - Matches pattern used by PersonCurrentStateTable wrapping DynamoDBTable
@@ -68,7 +68,7 @@ export interface MockTargetStateRecord {
  * ```typescript
  * const mockTable = new MockTargetStateTable({ config, context });
  * 
- * // Push single person (delegates to inner MockDataTarget)
+ * // Push single person (delegates to inner MockPersonDataTarget)
  * await mockTable.pushOne({ data: personFieldSet, crud: CrudOperation.CREATE });
  * 
  * // List all mock target records
@@ -82,7 +82,7 @@ export interface MockTargetStateRecord {
  * ```
  */
 export class MockTargetStateTable {
-  private mockDataTarget: MockDataTarget;
+  private mockDataTarget: MockPersonDataTarget;
   private dynamoDbClient: DynamoDBClient;
   private tableName: string;
 
@@ -105,8 +105,8 @@ export class MockTargetStateTable {
       throw new Error('MockTargetStateTable requires tableName, context, or DYNAMODB_MOCK_TARGET_STATE_TABLE_NAME');
     }
 
-    // Create inner MockDataTarget instance
-    this.mockDataTarget = new MockDataTarget({
+    // Create inner MockPersonDataTarget instance
+    this.mockDataTarget = new MockPersonDataTarget({
       config,
       tableName: this.tableName,
       syncRunId,
@@ -126,7 +126,7 @@ export class MockTargetStateTable {
 
   /**
    * Push a single person record to mock target.
-   * Delegates to inner MockDataTarget instance.
+   * Delegates to inner MockPersonDataTarget instance.
    * 
    * @param params - Push parameters (data and CRUD operation)
    * @returns Result of push operation
@@ -224,10 +224,10 @@ export class MockTargetStateTable {
   }
 
   /**
-   * Get the underlying MockDataTarget instance.
+   * Get the underlying MockPersonDataTarget instance.
    * Useful for advanced operations or direct access.
    */
-  public getInner(): MockDataTarget {
+  public getInner(): MockPersonDataTarget {
     return this.mockDataTarget;
   }
 

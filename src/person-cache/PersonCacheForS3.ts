@@ -1,7 +1,11 @@
 import { S3 } from '@aws-sdk/client-s3';
+import { DynamoDBClient, ScanCommand } from '@aws-sdk/client-dynamodb';
+import { unmarshall } from '@aws-sdk/util-dynamodb';
 import { TestEnvironment } from 'integration-core';
 import { BasicCache, Config, ConfigManager, getLocalConfig, HuronPerson, ListPeople } from "integration-huron-person";
 import { AbstractPersonCache } from './AbstractPersonCache';
+import { PersonTargetMocked } from './PersonTargetMocked';
+import { AbstractPersonTarget, PersonTargetReal } from './PersonTargetReal';
 
 /**
  * S3-based person cache implementation.
@@ -31,7 +35,11 @@ import { AbstractPersonCache } from './AbstractPersonCache';
 export class PersonCacheForS3 extends AbstractPersonCache {
   private cache: BasicCache | undefined;
 
-  constructor(params?: { cache?: BasicCache, config?: Config }) {
+  constructor(private params?: { 
+    cache?: BasicCache; 
+    config?: Config;
+    personTarget: AbstractPersonTarget;
+  }) {
     super(params);
     if (params?.cache) {
       this.cache = params.cache;
@@ -95,14 +103,20 @@ export class PersonCacheForS3 extends AbstractPersonCache {
 
   /**
    * Fetch full population from target API.
+   * 
+   * In mock target mode, "pretends" DynamoDB MockTargetStateTable is the Target API.
+   * In real mode, calls ListPeople to query actual Huron API.
+   * 
    * This is the source of truth for the cache.
    * 
    * @public Exposed primarily for testing, but can be called directly if needed.
    */
   public async getFullPopulationFromTargetAPI(): Promise<HuronPerson[]> {
-    const config = await this.getConfig();
-    const listPeople = new ListPeople(config, 500);
-    return listPeople.listSourceIdentifiers();
+    const { personTarget } = this.params || {};
+    if (!personTarget) {
+      throw new Error('PersonTarget is not initialized');
+    }
+    return personTarget.getFullPopulationFromTarget(this.config);
   }
 
   /**

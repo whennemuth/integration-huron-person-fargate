@@ -15,6 +15,33 @@ AbstractPersonCache (abstract)
 └── PersonCacheForDynamoDb (facade - delegates to S3)
 ```
 
+### Strategy Pattern for Target Access
+
+**PersonTarget Strategy** injects person data source via dependency injection:
+
+```
+AbstractPersonTarget (interface)
+├── PersonTargetReal → Queries real Huron API via ListPeople
+└── PersonTargetMocked → Scans MockTargetStateTable (DynamoDB) for test data
+```
+
+**Benefits**:
+- **Single Responsibility**: PersonTargetReal handles API, PersonTargetMocked handles DynamoDB
+- **Open/Closed**: Add new sources without modifying cache classes
+- **Dependency Inversion**: Cache depends on abstraction, not concrete implementations
+- **Testability**: Easily mock personTarget without environment setup
+- **Separation of Concerns**: Target access logic separated from cache storage
+
+**Factory Wiring**:
+```typescript
+// PersonCacheFactory.create(config, useMockTarget)
+const personTarget = useMockTarget ? 
+  new PersonTargetMocked() :   // ← Test mode: DynamoDB
+  new PersonTargetReal();       // ← Production: Huron API
+
+return new PersonCacheForS3({ config, personTarget });
+```
+
 ### Why S3 for Cache Storage?
 
 After architectural analysis, S3 was chosen over DynamoDB:
@@ -40,7 +67,11 @@ After architectural analysis, S3 was chosen over DynamoDB:
 ```typescript
 import { PersonCacheFactory } from './person-cache/PersonCacheFactory';
 
-const cache = PersonCacheFactory.create(config);
+// Production mode: Query real Huron API
+const cache = PersonCacheFactory.create(config, false);
+
+// Mock target mode: Query MockTargetStateTable (DynamoDB)
+const mockCache = PersonCacheFactory.create(config, true);
 
 // Write cache
 await cache.setCache({ 
@@ -59,12 +90,20 @@ const buids = await cache.getCache({
 console.log(`Cache contains ${buids.size} BUIDs`);
 ```
 
-### Direct Instantiation
+### Direct Instantiation with Injected Strategy
 
 ```typescript
 import { PersonCacheForS3 } from './person-cache/PersonCacheForS3';
+import { PersonTargetReal, PersonTargetMocked } from './person-cache/PersonTarget*';
 
-const cache = new PersonCacheForS3({ config });
+// With real target
+const personTarget = new PersonTargetReal();
+const cache = new PersonCacheForS3({ config, personTarget });
+
+// With mocked target
+const mockTarget = new PersonTargetMocked();
+const mockCache = new PersonCacheForS3({ config, personTarget: mockTarget });
+
 await cache.setCache({ bucketName, key, region });
 ```
 

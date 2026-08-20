@@ -1,4 +1,5 @@
 import { PersonCacheForS3 } from '../src/person-cache/PersonCacheForS3';
+import { AbstractPersonTarget } from '../src/person-cache/PersonTargetReal';
 import { S3, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { mockClient } from 'aws-sdk-client-mock';
 import { sdkStreamMixin } from '@smithy/util-stream';
@@ -33,6 +34,7 @@ describe('PersonCacheForS3', () => {
   let mockConfig: Config;
   let mockCache: jest.Mocked<BasicCache>;
   let mockListPeople: jest.Mocked<ListPeople>;
+  let mockPersonTarget: jest.Mocked<AbstractPersonTarget>;
 
   const createMockPerson = (sourceIdentifier: string): HuronPerson => ({
     sourceIdentifier,
@@ -96,22 +98,26 @@ describe('PersonCacheForS3', () => {
       listSourceIdentifiers: jest.fn()
     } as any;
     
+    mockPersonTarget = {
+      getFullPopulationFromTarget: jest.fn()
+    } as any;
+    
     (ListPeople as jest.Mock).mockImplementation(() => mockListPeople);
   });
 
   describe('Constructor', () => {
     it('should create instance with config', () => {
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       expect(cache).toBeDefined();
     });
 
     it('should create instance with cache', () => {
-      const cache = new PersonCacheForS3({ cache: mockCache });
+      const cache = new PersonCacheForS3({ cache: mockCache, personTarget: mockPersonTarget });
       expect(cache).toBeDefined();
     });
 
     it('should create instance with both config and cache', () => {
-      const cache = new PersonCacheForS3({ config: mockConfig, cache: mockCache });
+      const cache = new PersonCacheForS3({ config: mockConfig, cache: mockCache, personTarget: mockPersonTarget });
       expect(cache).toBeDefined();
     });
 
@@ -129,21 +135,20 @@ describe('PersonCacheForS3', () => {
         createMockPerson('SRC003')
       ];
       
-      mockListPeople.listSourceIdentifiers.mockResolvedValue(mockPeople);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue(mockPeople);
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       const result = await cache.getFullPopulationFromTargetAPI();
 
       expect(result).toEqual(mockPeople);
       expect(result).toHaveLength(3);
-      expect(ListPeople).toHaveBeenCalledWith(mockConfig, 500);
-      expect(mockListPeople.listSourceIdentifiers).toHaveBeenCalled();
+      expect(mockPersonTarget.getFullPopulationFromTarget).toHaveBeenCalledWith(mockConfig);
     });
 
     it('should handle empty population', async () => {
-      mockListPeople.listSourceIdentifiers.mockResolvedValue([]);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue([]);
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       const result = await cache.getFullPopulationFromTargetAPI();
 
       expect(result).toEqual([]);
@@ -151,9 +156,9 @@ describe('PersonCacheForS3', () => {
     });
 
     it('should propagate API errors', async () => {
-      mockListPeople.listSourceIdentifiers.mockRejectedValue(new Error('API connection failed'));
+      mockPersonTarget.getFullPopulationFromTarget.mockRejectedValue(new Error('API connection failed'));
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       await expect(cache.getFullPopulationFromTargetAPI()).rejects.toThrow('API connection failed');
     });
@@ -167,10 +172,10 @@ describe('PersonCacheForS3', () => {
         createMockPerson('SRC003')
       ];
       
-      mockListPeople.listSourceIdentifiers.mockResolvedValue(mockPeople);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue(mockPeople);
       s3Mock.onAnyCommand().resolves({});
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       await cache.setCache({
         bucketName: 'test-bucket',
@@ -207,10 +212,10 @@ describe('PersonCacheForS3', () => {
     });
 
     it('should handle empty population', async () => {
-      mockListPeople.listSourceIdentifiers.mockResolvedValue([]);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue([]);
       s3Mock.onAnyCommand().resolves({});
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       await cache.setCache({
         bucketName: 'test-bucket',
@@ -235,10 +240,10 @@ describe('PersonCacheForS3', () => {
         { ...createMockPerson('SRC004'), sourceIdentifier: null as any }
       ];
       
-      mockListPeople.listSourceIdentifiers.mockResolvedValue(mockPeople);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue(mockPeople);
       s3Mock.onAnyCommand().resolves({});
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       await cache.setCache({
         bucketName: 'test-bucket',
@@ -265,10 +270,10 @@ describe('PersonCacheForS3', () => {
         createMockPerson(`SRC${String(i).padStart(6, '0')}`)
       );
       
-      mockListPeople.listSourceIdentifiers.mockResolvedValue(mockPeople);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue(mockPeople);
       s3Mock.onAnyCommand().resolves({});
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       await cache.setCache({
         bucketName: 'test-bucket',
@@ -288,10 +293,10 @@ describe('PersonCacheForS3', () => {
     it('should throw error when S3 write fails', async () => {
       const mockPeople = [createMockPerson('SRC001')];
       
-      mockListPeople.listSourceIdentifiers.mockResolvedValue(mockPeople);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue(mockPeople);
       s3Mock.onAnyCommand().rejects(new Error('Access Denied'));
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       await expect(
         cache.setCache({
@@ -320,7 +325,7 @@ describe('PersonCacheForS3', () => {
       const sourceIds = ['SRC001', 'SRC002', 'SRC003'];
       s3Mock.onAnyCommand().resolves(createMockS3Response(sourceIds));
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       const result = await cache.getCache({
         bucketName: 'test-bucket',
@@ -347,7 +352,7 @@ describe('PersonCacheForS3', () => {
       const stream = sdkStreamMixin(Readable.from(['']));
       s3Mock.onAnyCommand().resolves({ Body: stream, Metadata: {} });
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       const result = await cache.getCache({
         bucketName: 'test-bucket',
@@ -364,7 +369,7 @@ describe('PersonCacheForS3', () => {
       const stream = sdkStreamMixin(Readable.from([content]));
       s3Mock.onAnyCommand().resolves({ Body: stream, Metadata: {} });
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       const result = await cache.getCache({
         bucketName: 'test-bucket',
@@ -385,7 +390,7 @@ describe('PersonCacheForS3', () => {
       );
       s3Mock.onAnyCommand().resolves(createMockS3Response(sourceIds));
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       const result = await cache.getCache({
         bucketName: 'test-bucket',
@@ -403,7 +408,7 @@ describe('PersonCacheForS3', () => {
       error.name = 'NoSuchKey';
       s3Mock.onAnyCommand().rejects(error);
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       const result = await cache.getCache({
         bucketName: 'test-bucket',
@@ -419,7 +424,7 @@ describe('PersonCacheForS3', () => {
     it('should handle cache file without Body', async () => {
       s3Mock.onAnyCommand().resolves({ Metadata: {} });
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       const result = await cache.getCache({
         bucketName: 'test-bucket',
@@ -434,7 +439,7 @@ describe('PersonCacheForS3', () => {
     it('should throw error for S3 access errors', async () => {
       s3Mock.onAnyCommand().rejects(new Error('Access Denied'));
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       await expect(
         cache.getCache({
@@ -450,7 +455,7 @@ describe('PersonCacheForS3', () => {
       const stream = sdkStreamMixin(Readable.from([content]));
       s3Mock.onAnyCommand().resolves({ Body: stream, Metadata: {} });
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       const result = await cache.getCache({
         bucketName: 'test-bucket',
@@ -474,7 +479,7 @@ describe('PersonCacheForS3', () => {
         createMockPerson('SRC003')
       ];
       
-      mockListPeople.listSourceIdentifiers.mockResolvedValue(mockPeople);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue(mockPeople);
       
       let writtenContent: string = '';
       
@@ -493,7 +498,7 @@ describe('PersonCacheForS3', () => {
         });
       });
 
-      const cache = new PersonCacheForS3({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       // Write cache
       await cache.setCache({

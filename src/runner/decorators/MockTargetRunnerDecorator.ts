@@ -7,7 +7,7 @@ import { Endpoint, NormalizedPopulationType, TargetConfig } from "../RunnerTypes
 /**
  * Decorator that enables mock target mode for testing with source simulator.
  * 
- * When enabled, processors use MockDataTarget instead of real Huron API.
+ * When enabled, processors use MockPersonDataTarget instead of real Huron API.
  * This prevents simulated data from affecting production systems.
  * 
  * SAFETY ENFORCEMENT: Mock target is ALWAYS enabled when source simulator is active,
@@ -22,7 +22,7 @@ import { Endpoint, NormalizedPopulationType, TargetConfig } from "../RunnerTypes
  * Table Operations:
  * - If resetState is true, truncates MockTargetStateTable during validatePrerequisites()
  * - Validates table exists before proceeding
- * - Sets flags for processors to use MockDataTarget instead of HuronPersonDataTarget
+ * - Sets flags for processors to use MockPersonDataTarget instead of HuronPersonDataTarget
  */
 export class MockTargetRunnerDecorator extends ChunkingServiceRunner {
   constructor(private readonly wrappedRunner: ChunkingServiceRunner) {
@@ -162,17 +162,30 @@ export class MockTargetRunnerDecorator extends ChunkingServiceRunner {
   /**
    * Get config using ConfigManager.
    * Same pattern as used in SourceSimulatorRunnerDecorator.
+   * 
+   * Override preLoadedMaps to prevent ReadOrganizations/ReadStates/ReadCountries calls
+   * in mock target mode. This forces use of lookup expressions instead of HRN literals.
    */
   private async getConfig() {
     const { configPath, secretArn } = this.wrappedRunner.env;
     const configManager = ConfigManager.getInstance();
     
-    return await configManager
+    const config = await configManager
       .reset()
       .fromJsonString('HURON_PERSON_CONFIG_JSON')
       .fromSecretManager(secretArn)
       .fromEnvironment()
       .fromFileSystem(configPath)
       .getConfigAsync('people');
+
+    // Override preLoadedMaps in mock target mode to prevent calls to real target system
+    // for organization/state/country lookups. Use lookup expressions instead.
+    config.preLoadedMaps = {
+      orgMap: false,
+      stateMap: false,
+      countryMap: false
+    };
+
+    return config;
   }
 }
