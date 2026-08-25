@@ -7,7 +7,7 @@ import { SourceSimulatorRunnerDecorator } from './decorators/SourceSimulatorRunn
 import { QueueSeedingRunner } from './RunnerForQueueSeeding';
 import { SingleMessageRunner } from './RunnerForSingleMessage';
 import { SinglePersonRunner } from './RunnerForSinglePerson';
-import { extractEnvironment, setTestEnvironment } from './RunnerTypes';
+import { extractEnvironment, RunnerEnv, setTestEnvironment } from './RunnerTypes';
 
 /**
  * FOR MANUAL INVOCATION ONLY:
@@ -37,54 +37,62 @@ import { extractEnvironment, setTestEnvironment } from './RunnerTypes';
  */
 async function startChunkingService() {
   // Peek at environment to determine which runner to use
-  let { 
-    buid, messagesToPrepopulate, messagingOnly, chunkingOnly, sourceSimulator, mockTarget
-  } = extractEnvironment();
-
+  const env: RunnerEnv = extractEnvironment();
+  
   // Validate messagesToPrepopulate is a valid number
-  if (messagesToPrepopulate && isNaN(Number(messagesToPrepopulate))) {
-    console.error(`Invalid MESSAGES_TO_PREPOPULATE environment variable: ${messagesToPrepopulate}. Must be a number.`);
+  if (env.messagesToPrepopulate && isNaN(Number(env.messagesToPrepopulate))) {
+    console.error(`Invalid MESSAGES_TO_PREPOPULATE environment variable: ${env.messagesToPrepopulate}. Must be a number.`);
     return;
   }
 
-  // Validate that if sourceSimulator is true, chunkingOnly must also be true
-  if (sourceSimulator && !chunkingOnly) {
-    console.warn('Source simulator enabled, but chunking-only mode is not explicitly set. Forcing chunking-only mode.');
-    chunkingOnly = true;
+  // Auto-correct: Force mock target to true when source simulator is enabled
+  if (env.sourceSimulator && !env.mockTarget) {
+    console.log('⚠️  Source simulator enabled without mock target - automatically enabling MOCK_TARGET.');
+    env.mockTarget = true;
   }
 
-  const seedNumber = parseInt(messagesToPrepopulate);
+  // Auto-correct: Force mock population to 1 when using single-person mode with source simulator
+  if (env.buid && env.sourceSimulator) {
+    if (env.sourceSimulatorMockTotalPopulation && env.sourceSimulatorMockTotalPopulation !== 1) {
+      console.log(`⚠️  SINGLE_PERSON_BUID is set - automatically overriding MOCK_TOTAL_POPULATION from ${env.sourceSimulatorMockTotalPopulation} to 1`);
+    }
+    env.sourceSimulatorMockTotalPopulation = 1;
+  }
+
+  const seedNumber = parseInt(env.messagesToPrepopulate);
 
   let runner: ChunkingServiceRunner;
 
   // Factory patterns: Select appropriate runner based on environment
-  if (buid) {
+  if (env.buid) {
     // Single person testing mode
-    runner = new SinglePersonRunner();
+    runner = new SinglePersonRunner(env);
   } else if (seedNumber > 0) {
     // Queue seeding mode for "pre-loaded" parallel processing
-    runner = new QueueSeedingRunner();
+    runner = new QueueSeedingRunner(env);
   } else {
     // Default: Single message mode for "slow ramp-up" parallel processing
-    runner = new SingleMessageRunner();
+    runner = new SingleMessageRunner(env);
   }
 
+  console.log(`\n🏃 Runner initialized with environment: ${JSON.stringify(runner.env, null, 2)}\n`);
+
   // Decorator patterns: Wrap the runnner with additional functionality.
-  if (messagingOnly) {
+  if (env.messagingOnly) {
     runner = new MessagingOnlyRunnerDecorator(runner);
   }
-  if(chunkingOnly) {
+  if(env.chunkingOnly) {
     runner = new ChunkingOnlyRunnerDecorator(runner);
   }
-  if(sourceSimulator) {
+  if(env.sourceSimulator) {
     runner = new SourceSimulatorRunnerDecorator(runner);
   }
   // SAFETY ENFORCEMENT: Mock target is ALWAYS used when source simulator is active.
   // This prevents simulated data from reaching the real target API.
-  if(mockTarget || sourceSimulator) {
+  if(env.mockTarget || env.sourceSimulator) {
     runner = new MockTargetRunnerDecorator(runner);
   }
-  if ( !messagingOnly && !chunkingOnly && !sourceSimulator) {
+  if ( !env.messagingOnly && !env.chunkingOnly && !env.sourceSimulator) {
     runner = new RestoreToFullOperationRunnerDecorator(runner);
   }
 

@@ -181,7 +181,7 @@ DOCKER_PROCESSOR_CACHE_PATH=.
 # ------- Harness Groups for ProcessorForDynamoDb (src/processing/ProcessorForDynamoDb.ts) ------- #
 # DynamoDB-based processor (simplified - no mini-deltas, no marker files)
 # Writes directly to PersonCurrentState and PersonHistory tables
-# Note: Requires PERSON_CURRENT_STATE_TABLE_NAME and PERSON_HISTORY_TABLE_NAME
+# Note: Requires DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME and DYNAMODB_PERSON_HISTORY_TABLE_NAME
 DOCKER_PROCESSOR_DYNAMODB_REGION=us-east-2
 DOCKER_PROCESSOR_DYNAMODB_CHUNKS_BUCKET=huron-person-chunks-dev
 DOCKER_PROCESSOR_DYNAMODB_CHUNK_KEY=chunks/person-full/2026-04-09T15:28:18.703Z/chunk-0000.ndjson

@@ -24,8 +24,16 @@ import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from '../chunking/Ch
 export abstract class ChunkingServiceRunner {
   public env: RunnerEnv;
 
-  constructor() {
-    this.env = this.extractEnvironment();
+  constructor(env?: RunnerEnv) {
+    if(env) {
+      this.env = env;
+    } else if (!this.env) {
+      this.env = this.extractEnvironment();
+    }
+  }
+
+  public getEnv(): RunnerEnv {
+    return this.env;
   }
 
   /**
@@ -92,23 +100,26 @@ export abstract class ChunkingServiceRunner {
   /**
    * Log the predicted chunking output based on MOCK_TOTAL_POPULATION environment variable or config 
    * value. Used when the source simulator is enabled.
-   * @param configTotalPopulation 
+   * @param totalOverride Optional override for total population (avoids Lambda race condition)
    */
-  protected async logSourceSimulatorPredictions(): Promise<void> {
-    const predictions = await this.getSourceSimulatorPredictions();
+  protected async logSourceSimulatorPredictions(totalOverride?: number): Promise<void> {
+    const predictions = await this.getSourceSimulatorPredictions(totalOverride);
     const { totalFullChunks, remainingItems, itemsPerChunk } = predictions;
     if(totalFullChunks > 0) {
       console.log(`Should generate ${totalFullChunks} full chunks of ${itemsPerChunk} items each, with ${remainingItems} remaining items in the last chunk.`);
+    }
+    else if(remainingItems > 0) {
+      console.log(`Should generate 1 chunk with ${remainingItems} items.`);
     }
     else {
       console.warn('MOCK_TOTAL_POPULATION is not set or is not a valid number. Cannot predict chunking output.');
     }
   }
 
-  protected async getSourceSimulatorPredictions(): Promise<{ 
+  protected async getSourceSimulatorPredictions(totalOverride?: number): Promise<{ 
     totalPopulation: number, totalFullChunks: number, remainingItems: number, itemsPerChunk: number 
   }> {
-    const { landscape, region,  } = this.env;
+    const { landscape, region } = this.env;
     const predictions = { totalPopulation: 0, totalFullChunks: 0, remainingItems: 0, itemsPerChunk: 0 };
 
     // Destructure variables from the stack context.
@@ -116,13 +127,18 @@ export abstract class ChunkingServiceRunner {
       ITEMS_PER_CHUNK, LAMBDA: { sourceSimulator: { mockTotalPopulation } = {}} = {} 
     } = (await this.loadContext());
 
+    // Use override if provided (avoids Lambda race condition), otherwise check Lambda environment.
     // Check the MOCK_TOTAL_POPULATION environment variable on the lambda function first, falling 
     // back to the config value.
-    const sourceSimulatorFunctionUrl = new SourceSimulatorFunctionURL({ landscape: landscape!, region: region! });
-    let envTotalPopulation = await sourceSimulatorFunctionUrl.getEnvironmentVariable('MOCK_TOTAL_POPULATION');
-    const totalPopulation = /\d+/.test(`${envTotalPopulation}`) ? 
-      parseInt(envTotalPopulation!) : 
-      mockTotalPopulation;
+    let totalPopulation: number | undefined = totalOverride;
+    
+    if (!totalPopulation) {
+      const sourceSimulatorFunctionUrl = new SourceSimulatorFunctionURL({ landscape: landscape!, region: region! });
+      let envTotalPopulation = await sourceSimulatorFunctionUrl.getEnvironmentVariable('MOCK_TOTAL_POPULATION');
+      totalPopulation = /\d+/.test(`${envTotalPopulation}`) ? 
+        parseInt(envTotalPopulation!) : 
+        mockTotalPopulation;
+    }
 
     // Proceed only if we have actual numeric values to work with.
     if(totalPopulation && !isNaN(totalPopulation)) {

@@ -14,7 +14,7 @@ export class MessagingOnlyRunnerDecorator extends ChunkingServiceRunner {
   private serviceToggler: ServiceToggler;
 
   constructor(private readonly wrappedRunner: ChunkingServiceRunner) {
-    super();
+    super(wrappedRunner.env);
     const env = this.wrappedRunner.env;
     this.serviceToggler = new ServiceToggler({
       service: ServiceToDisable.CHUNKER,

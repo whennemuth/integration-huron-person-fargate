@@ -12,7 +12,7 @@ import { ServiceToDisable, ServiceToggler } from "../ServiceToggler";
  */
 export class RestoreToFullOperationRunnerDecorator extends ChunkingServiceRunner {
   constructor(private readonly wrappedRunner: ChunkingServiceRunner) {
-    super();
+    super(wrappedRunner.env);
     console.log('Neither messaging-only nor chunking-only mode specified. Restoring all services to normal operation.');
   }
 

@@ -415,11 +415,10 @@ export async function main(queueReader: QueueReader) {
     console.log(`  - - Removed: ${result.removedCount}`);
     console.log(`  - ⧗ Duration: ${humanReadableFromMilliseconds(result.duration ?? 0)}`);
     
-    // Verify the math: push results should equal delta operations
-    const pushSum = result.successCount + result.failureCount + result.skippedCount;
+    // Verify the math: successful operations should equal delta operations (failures and skips don't produce deltas)
     const deltaSum = result.addedCount + result.updatedCount + result.removedCount;
-    if (pushSum !== deltaSum) {
-      console.warn(`  ⚠️  Math mismatch: Successful(${result.successCount}) + Failed(${result.failureCount}) + Skipped(${result.skippedCount}) = ${pushSum}, but Added(${result.addedCount}) + Updated(${result.updatedCount}) + Removed(${result.removedCount}) = ${deltaSum}`);
+    if (result.successCount !== deltaSum) {
+      console.warn(`  ⚠️  Math mismatch: Successful(${result.successCount}) should equal Added(${result.addedCount}) + Updated(${result.updatedCount}) + Removed(${result.removedCount}) = ${deltaSum}`);
     }
 
     console.log('\n✓ Chunk processing completed successfully');
@@ -458,25 +457,25 @@ export async function main(queueReader: QueueReader) {
     try {
       if (errorTracker instanceof TrackingTargetApiErrorProcessor) {
         const endTimestamp = new Date().toISOString();
-          // Extract chunk ID from sourceDescription (format: "chunk-0009")
-          const chunkIdFromDesc = chunkId ? `chunk-${chunkId}` : undefined;
-          
-          await errorTracker.writeStatistics({
-            startTimestamp,
-            endTimestamp,
-            chunkCount: 1, // This processor handles 1 chunk per run
-            chunkSize: processedRecordCount,
-            totalRecords: processedRecordCount,
-            sourceDescription: `chunk-${chunkId || 'unknown'}`,
-            chunkId: chunkIdFromDesc // Pass chunk ID to prevent overwrites
-          });
+        // Extract chunk ID from sourceDescription (format: "chunk-0009")
+        const chunkIdFromDesc = chunkId ? `chunk-${chunkId}` : undefined;
+        
+        await errorTracker.writeStatistics({
+          startTimestamp,
+          endTimestamp,
+          chunkCount: 1, // This processor handles 1 chunk per run
+          chunkSize: processedRecordCount,
+          totalRecords: processedRecordCount,
+          sourceDescription: `chunk-${chunkId || 'unknown'}`,
+          chunkId: chunkIdFromDesc // Pass chunk ID to prevent overwrites
+        });
 
-          // Log statistics summary
-          const stats = errorTracker.getStatisticsSummary();
-          console.log('\n=== Processing Statistics ===');
-          console.log(`Total errors: ${stats.totalErrors}`);
-          console.log(`Throttle events: ${stats.throttleCount}`);
-          console.log(`Errors by status:`, stats.errorsByStatus);
+        // Log statistics summary
+        const stats = errorTracker.getStatisticsSummary();
+        console.log('\n=== Processing Statistics ===');
+        console.log(`Total errors: ${stats.totalErrors}`);
+        console.log(`Throttle events: ${stats.throttleCount}`);
+        console.log(`Errors by status:`, stats.errorsByStatus);
       }
       timer.stop();
       timer.logElapsed('Total processing time');

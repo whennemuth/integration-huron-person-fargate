@@ -5,7 +5,7 @@ import { HuronPerson } from "integration-huron-person";
 
 /**
  * In mock target mode, we "pretend" DynamoDB is the Target API.
- * This class scans MockTargetStateTable to get all person records that have been
+ * This class scans mockTargetPersonTable to get all person records that have been
  * previously written by MockPersonDataTarget.
  */
 export class PersonTargetMocked implements AbstractPersonTarget {
@@ -13,17 +13,17 @@ export class PersonTargetMocked implements AbstractPersonTarget {
   constructor() { }
 
   /**
-   * Fetch full population from MockTargetStateTable (DynamoDB).
+   * Fetch full population from mockTargetPersonTable (DynamoDB).
    * 
-   * @throws Error if DYNAMODB_MOCK_TARGET_STATE_TABLE_NAME environment variable is not set
+   * @throws Error if DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME environment variable is not set
    */
   public async getFullPopulationFromTarget(): Promise<HuronPerson[]> {
-    const tableName = process.env.DYNAMODB_MOCK_TARGET_STATE_TABLE_NAME;
+    const tableName = process.env.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME;
     
     if (!tableName) {
       throw new Error(
         'Cannot fetch population from mock target: ' +
-        'DYNAMODB_MOCK_TARGET_STATE_TABLE_NAME environment variable is not set. ' +
+        'DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME environment variable is not set. ' +
         'This variable is required when useMockTarget=true.'
       );
     }
@@ -46,7 +46,7 @@ export class PersonTargetMocked implements AbstractPersonTarget {
         if (response.Items) {
           for (const item of response.Items) {
             const record = unmarshall(item);
-            // MockTargetStateTable stores: personId, data, createdAt, lastModified, syncRunId
+            // mockTargetPersonTable stores: personId, data, createdAt, lastModified, syncRunId
             // Extract sourceIdentifier from personId field
             if (record.personId) {
               people.push({ sourceIdentifier: record.personId } as HuronPerson);
@@ -65,7 +65,7 @@ export class PersonTargetMocked implements AbstractPersonTarget {
 
       return people;
     } catch (error) {
-      console.error(`  ❌ Error scanning MockTargetStateTable "${tableName}":`, error);
+      console.error(`  ❌ Error scanning mockTargetPersonTable "${tableName}":`, error);
       throw new Error(`Failed to fetch population from mock target: ${error}`);
     }
   }

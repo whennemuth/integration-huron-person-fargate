@@ -31,16 +31,16 @@ import {
   DYNAMODB_GSI2_SORT_KEY as personHistoryGSI2SortKey
 } from '../src/dynamodb/PersonHistoryTable';
 import {
-  DYNAMODB_TABLE_NAME as mockTargetStateTableName,
-  DYNAMODB_PARTITION_KEY as mockTargetStatePartitionKey
-} from '../src/dynamodb/MockTargetStateTable';
+  DYNAMODB_TABLE_NAME as mockTargetPersonTableName,
+  DYNAMODB_PARTITION_KEY as mockTargetPersonPartitionKey
+} from '../src/dynamodb/MockTargetPersonTable';
 
 export enum TableResourceIds {
   STATISTICS_TABLE = 'StatisticsTable',
   ATOMIC_COUNTER_TABLE = 'AtomicCounterTable',
   PERSON_CURRENT_STATE_TABLE = 'PersonCurrentStateTable',
   PERSON_HISTORY_TABLE = 'PersonHistoryTable',
-  MOCK_TARGET_STATE_TABLE = 'MockTargetStateTable'
+  MOCK_TARGET_PERSON_TABLE = 'MockTargetPersonTable'
 }
 export interface ProcessorStatisticsTableProps {
   context: IContext;
@@ -60,7 +60,7 @@ export class DynamoDbTables extends Construct {
   public atomicCounterTable: Table;
   public personCurrentStateTable?: Table;
   public personHistoryTable?: Table;
-  public mockTargetStateTable: Table;
+  public mockTargetPersonTable: Table;
 
   constructor(private params: { scope: Construct, id: string, props: ProcessorStatisticsTableProps }) {
     super(params.scope, params.id);
@@ -69,12 +69,12 @@ export class DynamoDbTables extends Construct {
 
     this.createAtomicCounterTable();
 
-    this.createMockTargetStateTable();
+    this.createMockTargetPersonTable();
 
     // Conditionally create DynamoDB-based delta storage tables
     // Default to 'dynamodb' mode if PREVIOUS_STORAGE_TYPE is not specified
-    const storageType = params.props.context.PREVIOUS_STORAGE_TYPE || 'dynamodb';
-    if (storageType === 'dynamodb') {
+    const previousStorageType = params.props.context.PREVIOUS_STORAGE_TYPE || 'dynamodb';
+    if (previousStorageType === 'dynamodb') {
       this.createPersonCurrentStateTable();
       this.createPersonHistoryTable();
     }
@@ -340,15 +340,15 @@ export class DynamoDbTables extends Construct {
    * table instead of calling the real target API. This allows full end-to-end testing
    * with source simulator without affecting real target system data.
    */
-  private createMockTargetStateTable = () => {
+  private createMockTargetPersonTable = () => {
     const { context, tags } = this.params.props;
 
-    const { MOCK_TARGET_STATE_TABLE } = TableResourceIds;
+    const { MOCK_TARGET_PERSON_TABLE } = TableResourceIds;
 
-    this.mockTargetStateTable = new Table(this, MOCK_TARGET_STATE_TABLE, {
-      tableName: mockTargetStateTableName(context),
+    this.mockTargetPersonTable = new Table(this, MOCK_TARGET_PERSON_TABLE, {
+      tableName: mockTargetPersonTableName(context),
       partitionKey: {
-        name: mockTargetStatePartitionKey,
+        name: mockTargetPersonPartitionKey,
         type: AttributeType.STRING,
       },
       billingMode: BillingMode.PAY_PER_REQUEST,
@@ -380,8 +380,8 @@ export class DynamoDbTables extends Construct {
           throw new Error('PersonHistoryTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
         }
         return this.personHistoryTable.grantReadWriteData(grantee);
-      case TableResourceIds.MOCK_TARGET_STATE_TABLE:
-        return this.mockTargetStateTable.grantReadWriteData(grantee);
+      case TableResourceIds.MOCK_TARGET_PERSON_TABLE:
+        return this.mockTargetPersonTable.grantReadWriteData(grantee);
       default:
         throw new Error(`Unknown table resource ID: ${tableResourceId}`);
     }
@@ -406,8 +406,8 @@ export class DynamoDbTables extends Construct {
           throw new Error('PersonHistoryTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
         }
         return this.personHistoryTable.grantReadData(grantee);
-      case TableResourceIds.MOCK_TARGET_STATE_TABLE:
-        return this.mockTargetStateTable.grantReadData(grantee);
+      case TableResourceIds.MOCK_TARGET_PERSON_TABLE:
+        return this.mockTargetPersonTable.grantReadData(grantee);
       default:
         throw new Error(`Unknown table resource ID: ${tableResourceId}`);
     }

@@ -11,15 +11,14 @@ import { Endpoint, NormalizedPopulationType, TargetConfig } from "../RunnerTypes
  */
 export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
   constructor(private readonly wrappedRunner: ChunkingServiceRunner) {
-    super();
+    super(wrappedRunner.env);
   }
   public async validatePrerequisites(): Promise<boolean> {
     let { 
       region, landscape, messagesToPrepopulate, iterationLimit, 
       sourceSimulatorMockSimulatedDelaySeconds: delay, 
       sourceSimulatorMockTotalPopulation: total,
-      sourceSimulatorMockErrorRate: errorRate,
-      buid
+      sourceSimulatorMockErrorRate: errorRate
     } = this.wrappedRunner.env;
 
     const { 
@@ -44,17 +43,6 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
       return lambda;
     }
 
-    // AUTOMATIC OVERRIDE: If running in single-person mode (BUID specified), force MOCK_TOTAL_POPULATION to 1.
-    // This ensures the source simulator generates exactly one mock person for single-person testing,
-    // matching the expected behavior of SinglePersonRunner even though the BUID query parameter
-    // is discarded when using the source simulator.
-    if (buid) {
-      if (total && total !== 1) {
-        console.log(`⚠️  SINGLE_PERSON_BUID is set - automatically overriding MOCK_TOTAL_POPULATION from ${total} to 1`);
-      }
-      total = 1;
-    }
-
     // Update all simulator environment overrides in one Lambda configuration update.
     // This avoids back-to-back update conflicts when multiple values are provided.
     const sourceSimulatorEnvOverrides: Record<string, string> = {};
@@ -76,13 +64,16 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
 
     const getNbr = (nbr: number | undefined): number => nbr && !isNaN(nbr) ? nbr : 0;
     
+    const { buid } = this.wrappedRunner.env;
+    
     // Warn if queue seeding is being carried out that we are not overseeding as determined by
-    // comparing the seedNumber math to source simulator predicted population. 
-    if (getNbrFromStr(messagesToPrepopulate) > 0 ) { 
+    // comparing the seedNumber math to source simulator predicted population.
+    // Skip this check for single-person mode (buid is set) since it doesn't use queue seeding.
+    if (!buid && getNbrFromStr(messagesToPrepopulate) > 0 ) { 
       const seedNumber = parseInt(messagesToPrepopulate);
 
       if(seedNumber > 0) {
-        const predictions = await this.getSourceSimulatorPredictions();
+        const predictions = await this.getSourceSimulatorPredictions(total);
         const { totalPopulation, itemsPerChunk } = predictions;
         iterationLimit = getNbr(iterationLimit);
         const singleTaskPopulation = iterationLimit * itemsPerChunk;
@@ -107,7 +98,7 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
   }
 
   public async resolveDataSource(config: Config): Promise<Endpoint> {
-    const { region, landscape, sourceSimulator, stackId } = this.wrappedRunner.env;
+    const { region, landscape, sourceSimulator, stackId, sourceSimulatorMockTotalPopulation: total } = this.wrappedRunner.env;
     let { 
       endpointConfig: { baseUrl } = {}, 
       fetchPath 
@@ -130,7 +121,7 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
     
     console.log(`Using source simulator: ${JSON.stringify({ baseUrl, fetchPath }, null, 2)}`);
 
-    await this.logSourceSimulatorPredictions();
+    await this.logSourceSimulatorPredictions(total);
 
     // Reset the atomic counter for the source simulator to ensure a clean state before starting the operation. This is important to avoid any residual state from previous runs affecting the current operation.
     const atomicCounter = getSimulatorCounter({ stackId, region, landscape });

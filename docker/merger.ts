@@ -67,8 +67,9 @@
  */
 
 import { TestEnvironment } from 'integration-core';
-import { MergerForS3 } from '../src/merging/MergerForS3';
+import { IContext } from '../context/IContext';
 import { MergerForDynamoDB } from '../src/merging/MergerForDynamoDB';
+import { MergerForS3 } from '../src/merging/MergerForS3';
 
 /**
  * Route to appropriate merger based on storage mode.
@@ -79,21 +80,33 @@ import { MergerForDynamoDB } from '../src/merging/MergerForDynamoDB';
  */
 async function main() {
   const { 
+    PREVIOUS_STORAGE_TYPE,
     DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME, 
     DYNAMODB_PERSON_HISTORY_TABLE_NAME 
   } = process.env;
 
+  if(!PREVIOUS_STORAGE_TYPE) {
+    throw new Error('PREVIOUS_STORAGE_TYPE environment variable is not set.');
+  }
+
   // Detect storage mode from environment
-  if (DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || DYNAMODB_PERSON_HISTORY_TABLE_NAME) {
-    console.log('🔀 Router: Detected DynamoDB mode (DynamoDB-mode-specific tables present)');
-    console.log('   Routing to MergerForDynamoDB\n');
-    const merger = new MergerForDynamoDB();
-    await merger.main();
-  } else {
-    console.log('🔀 Router: Detected S3 mode (no DynamoDB tables configured)');
-    console.log('   Routing to MergerForS3\n');
-    const merger = new MergerForS3();
-    await merger.main();
+  const previousStorageType = PREVIOUS_STORAGE_TYPE.toLowerCase() as IContext['PREVIOUS_STORAGE_TYPE'];
+  switch(previousStorageType) {
+    case 's3':
+      console.log('🔀 Router: Detected S3 mode (no DynamoDB tables configured)');
+      console.log('   Routing to MergerForS3\n');
+      await new MergerForS3().main();
+      break;
+    case 'dynamodb':
+      if (!DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || !DYNAMODB_PERSON_HISTORY_TABLE_NAME) {
+        throw new Error('DynamoDB mode requires both DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME and DYNAMODB_PERSON_HISTORY_TABLE_NAME to be set.');
+      }
+      console.log('🔀 Router: Detected DynamoDB mode (DynamoDB-mode-specific tables present)');
+      console.log('   Routing to MergerForDynamoDB\n');
+      await new MergerForDynamoDB().main();
+      break;
+    default:
+      throw new Error(`Unsupported storage type: ${previousStorageType}`);
   }
 }
 
@@ -109,7 +122,7 @@ if (require.main === module) {
     'CHUNK_DIRECTORY',
     'INPUT_KEY',
     'REGION',
-    'SHARED_DELTA_STORAGE_DIR',
+    'PREVIOUS_STORAGE_TYPE',
     'DRY_RUN',
     'IS_ECS_TASK',
     'ECS_AGENT_URI',
@@ -120,11 +133,12 @@ if (require.main === module) {
     'CACHE_ENABLED',
     'CACHE_PATH',
     
+    // S3 mode specific
+    'SHARED_DELTA_STORAGE_DIR',
+    
     // Mode detection (DynamoDB mode)
     'DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME',
     'DYNAMODB_PERSON_HISTORY_TABLE_NAME',
-    
-    // DynamoDB mode specific
     'DYNAMODB_STATISTICS_TABLE_NAME',
   ].forEach(testEnvironment.getVar);
 

@@ -200,7 +200,7 @@ The pipeline supports two storage modes for delta state and metadata, controlled
    **Mock Target Support** (Strategy Pattern):
    - `AbstractPersonTarget` interface: Abstracts person data source
    - `PersonTargetReal`: Fetches from real Huron API via ListPeople
-   - `PersonTargetMocked`: Scans MockTargetStateTable (DynamoDB) for test data
+   - `PersonTargetMocked`: Scans MockTargetPersonTable (DynamoDB) for test data
    - Factory injects appropriate PersonTarget based on `useMockTarget` flag
    - Design: Dependency injection enables testing without environment coupling
 

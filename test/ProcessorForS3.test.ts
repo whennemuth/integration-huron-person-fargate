@@ -4,6 +4,10 @@
  * Tests the Phase 2 processing logic that handles individual chunk files
  */
 
+// Set PREVIOUS_STORAGE_TYPE before importing ProcessorForS3
+// (ProcessorForS3 module has top-level call to MetadataFactoryForBootstrap which requires this)
+process.env.PREVIOUS_STORAGE_TYPE = 's3';
+
 import { buildChunkConfig } from '../src/processing/ProcessorForS3';
 import { StandardMetadataUtils } from '../src/chunking/metadata/MetadataUtils';
 import { ChunkFileManager } from '../src/chunking/metadata';

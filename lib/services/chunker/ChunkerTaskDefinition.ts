@@ -6,7 +6,7 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { RetryStrategyConfig } from '../../../src/ApiErrorRetryStrategy';
 import { HuronPersonSecrets } from '../../Secrets';
-import { DynamoDbTables } from '../../DynamoDB';
+import { StorageParams } from '../../TaskDefinitions';
 import { SERVICE_LOGICAL_ID } from './ChunkerService';
 
 export interface ChunkerTaskDefinitionProps {
@@ -19,10 +19,9 @@ export interface ChunkerTaskDefinitionProps {
   queueUrl: string;
   inputBucketName: string;
   chunksBucketName: string;
-  dynamoDbTables: DynamoDbTables;
   stackId: string;
   itemsPerChunk: number;
-  sharedDeltaStorageDir: string;
+  storageParams: StorageParams;
   region: string;
   ecsClusterName: string;
   maxScalingCapacity: number;
@@ -45,10 +44,11 @@ export class ChunkerTaskDefinition extends Construct {
     super(scope, id);
 
     const { 
-      huronPersonSecrets: { secret, secretArn , secretName } = {}, dynamoDbTables, logRetentionDays, 
+      huronPersonSecrets: { secret, secretArn } = {}, logRetentionDays, 
       memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, itemsPerChunk, chunksBucketName, 
       inputBucketName, repository, imageTag, ecsClusterName, maxScalingCapacity, stackId, 
-      ecsChunkerServiceName, landscape, dryRun, tags, retries
+      ecsChunkerServiceName, landscape, dryRun, tags, retries, 
+      storageParams: { previousStorageType, storageConfig: { sharedDeltaStorageDir, dynamodb } = {} }
     } = props;
 
     const environment: { [key: string]: string } = {
@@ -64,8 +64,8 @@ export class ChunkerTaskDefinition extends Construct {
       MAX_SCALING_CAPACITY: maxScalingCapacity.toString(),
       SQS_QUEUE_URL: queueUrl,
       CHUNKS_BUCKET: chunksBucketName,
-      SHARED_DELTA_STORAGE_DIR: props.sharedDeltaStorageDir,
-      DYNAMODB_ATOMIC_COUNTER_TABLE_NAME: dynamoDbTables.atomicCounterTable.tableName,
+      PREVIOUS_STORAGE_TYPE: previousStorageType!,
+      DYNAMODB_ATOMIC_COUNTER_TABLE_NAME: dynamodb!.atomicCounterTable.tableName,
       ITEMS_PER_CHUNK: itemsPerChunk.toString(),
       PERSON_ID_FIELD: 'personid',
       STACK_ID: stackId,
@@ -78,6 +78,28 @@ export class ChunkerTaskDefinition extends Construct {
 
     if (retries && (retries.retryStrategyOptions || retries.retryStrategyType)) {
       environment.RETRY_STRATEGY = JSON.stringify(retries);
+    }
+
+    // Set storage-mode-specific environment variables
+    switch(previousStorageType) {
+      case 's3':
+        if(sharedDeltaStorageDir) {
+          environment.SHARED_DELTA_STORAGE_DIR = sharedDeltaStorageDir;
+        }
+        break;
+      case 'dynamodb':
+        // Add DynamoDB-specific table names when using DynamoDB mode
+        const { 
+          personCurrentStateTable: { tableName: personCurrentStateTableName } = {},
+          mockTargetPersonTable: { tableName: mockTargetPersonTableName } = {},
+        } = dynamodb || {};
+        if (personCurrentStateTableName) {
+          environment.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME = personCurrentStateTableName;
+        }
+        if (mockTargetPersonTableName) {
+          environment.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = mockTargetPersonTableName;
+        }
+        break;
     }
 
     // Create CloudWatch log group
@@ -248,24 +270,43 @@ export class ChunkerTaskDefinition extends Construct {
           'dynamodb:GetItem',
         ],
         resources: [
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.atomicCounterTable.tableName}`,
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.atomicCounterTable.tableName}/index/*`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.atomicCounterTable.tableName}`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.atomicCounterTable.tableName}/index/*`,
         ],
       })
     );
 
     // Grant DynamoDB write permissions for PersonCurrentStateTable
     // Used for storing current sync state of each person in DynamoDB mode
-    if (dynamoDbTables.personCurrentStateTable) {
+    // Also grant read permission (Scan with Limit=1) to check if baseline data exists
+    if (dynamodb!.personCurrentStateTable) {
       this.taskDefinition.addToTaskRolePolicy(
         new PolicyStatement({
           effect: Effect.ALLOW,
           actions: [
+            'dynamodb:Scan',       // Read: Used by sharedDeltaStorageExists() to check if any baseline data exists
             'dynamodb:PutItem',
             'dynamodb:UpdateItem',
           ],
           resources: [
-            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.personCurrentStateTable.tableName}`,
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personCurrentStateTable.tableName}`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB read permissions for MockTargetPersonTable
+    // Used when PersonCache needs to fetch population from mock target (instead of real API)
+    if (dynamodb!.mockTargetPersonTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:Scan',
+            'dynamodb:Query',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockTargetPersonTable.tableName}`,
           ],
         })
       );
@@ -281,7 +322,7 @@ export class ChunkerTaskDefinition extends Construct {
           'dynamodb:UpdateItem',
         ],
         resources: [
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.statisticsTable.tableName}`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.statisticsTable.tableName}`,
         ],
       })
     );

@@ -22,7 +22,7 @@ AbstractPersonCache (abstract)
 ```
 AbstractPersonTarget (interface)
 ├── PersonTargetReal → Queries real Huron API via ListPeople
-└── PersonTargetMocked → Scans MockTargetStateTable (DynamoDB) for test data
+└── PersonTargetMocked → Scans mockTargetPersonTable (DynamoDB) for test data
 ```
 
 **Benefits**:
@@ -70,7 +70,7 @@ import { PersonCacheFactory } from './person-cache/PersonCacheFactory';
 // Production mode: Query real Huron API
 const cache = PersonCacheFactory.create(config, false);
 
-// Mock target mode: Query MockTargetStateTable (DynamoDB)
+// Mock target mode: Query mockTargetPersonTable (DynamoDB)
 const mockCache = PersonCacheFactory.create(config, true);
 
 // Write cache

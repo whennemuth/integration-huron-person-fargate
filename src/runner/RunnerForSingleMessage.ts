@@ -43,10 +43,11 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
   }
 
   public async resolveDataTarget(config: Config): Promise<TargetConfig> {
-    // Standard runners use real Huron API target
+    // Standard runners use real Huron API target (unless overridden by decorator)
     const { dataTarget } = config;
     return {
-      useMockTarget: false,
+      useMockTarget: this.env.mockTarget || false,
+      mockTargetValidateOnly: this.env.mockTargetValidateOnly,
       endpoint: {
         baseUrl: dataTarget?.endpointConfig?.baseUrl || '',
         fetchPath: dataTarget?.personsPath || ''

@@ -110,6 +110,7 @@ export class SubscribingLambdas extends Construct {
       timeoutSeconds: ctx.LAMBDA.mergerSubscriber.timeoutSeconds,
       memorySizeMb: ctx.LAMBDA.mergerSubscriber.memorySizeMb,
       dryRun: ctx.DRY_RUN?.lambda?.merger,
+      context: ctx,
       tags,
     });
   }

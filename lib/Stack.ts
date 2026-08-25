@@ -5,7 +5,7 @@ import { IContext } from '../context/IContext';
 import { Config } from 'integration-huron-person';
 
 export interface IntegrationHuronPersonLambdaStackProps extends StackProps {
-  config?: Config;
+  config: Config;
   context: IContext;
 }
 

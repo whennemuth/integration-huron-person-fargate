@@ -1,23 +1,33 @@
 import { IRepository } from 'aws-cdk-lib/aws-ecr';
 import { Construct } from 'constructs';
-import { IContext } from '../context/IContext';
-import { ChunkerTaskDefinition } from './services/chunker/ChunkerTaskDefinition';
-import { SERVICE_LOGICAL_ID } from './services/chunker/ChunkerService';
-import { MergerTaskDefinition } from './services/merger/MergerTaskDefinition';
-import { ProcessorTaskDefinition } from './services/processor/ProcessorTaskDefinition';
-import { HuronPersonSecrets } from './Secrets';
+import { DatabaseConfig, FileConfig, S3Config as S3FolderConfig } from 'integration-core';
 import { Config, TargetPersonDeleteType } from 'integration-huron-person';
-import { S3Config as S3FolderConfig } from 'integration-core';
+import { IContext } from '../context/IContext';
 import { DynamoDbTables } from './DynamoDB';
 import { CLUSTER_BASE_NAME } from './EcsInfrastructure';
+import { HuronPersonSecrets } from './Secrets';
+import { SERVICE_LOGICAL_ID } from './services/chunker/ChunkerService';
+import { ChunkerTaskDefinition } from './services/chunker/ChunkerTaskDefinition';
+import { MergerTaskDefinition } from './services/merger/MergerTaskDefinition';
+import { ProcessorTaskDefinition } from './services/processor/ProcessorTaskDefinition';
 
 export interface TaskDefinitionsProps {
   repository: IRepository;
   context: IContext;
   huronPersonSecrets: HuronPersonSecrets;
-  config?: Config;
+  config: Config;
   dynamoDbTables: DynamoDbTables;
   tags?: { [key: string]: string };
+}
+
+export type StorageParams = {
+  previousStorageType: IContext['PREVIOUS_STORAGE_TYPE'];
+  storageConfig: {
+    sharedDeltaStorageDir?: string;
+    s3?: S3FolderConfig;
+    dynamodb?: DynamoDbTables;
+    database?: DatabaseConfig;
+  }
 }
 
 /**
@@ -32,16 +42,53 @@ export class TaskDefinitions extends Construct {
   constructor(scope: Construct, id: string, props: TaskDefinitionsProps) {
     super(scope, id);
 
-    const { config, repository, context: ctx, dynamoDbTables, huronPersonSecrets, tags } = props;
-    let sharedDeltaStorageDir = 'delta-storage'; // Default value
-    const { storage, storage: { type: storageType, config: storageConfig } = {} } = props.config || {};
-    if(storage && storageType === 's3') {
-      const { keyPrefix } = storageConfig as S3FolderConfig;
-      if(keyPrefix) {
-        sharedDeltaStorageDir = keyPrefix.endsWith('/') ? keyPrefix.slice(0, -1) : keyPrefix; // Remove trailing slash if present
-      }
+    let { config, repository, context: ctx, dynamoDbTables, huronPersonSecrets, tags } = props;
+
+    const { storage, storage: { config: storageCfg } = {} } = props.config || {};
+    const previousStorageType = ctx.PREVIOUS_STORAGE_TYPE || storage?.type;
+
+    if( ! previousStorageType) {
+      throw new Error('context.HURON_PERSON_CONFIG.storage and config.storage.type are not defined. Please provide a valid storage configuration.');
     }
 
+    const storageParams: StorageParams = { previousStorageType, storageConfig: { } }
+
+    // For any storage type, we assume that we can also provide DynamoDB tables for statistics 
+    // tracking, atomic counters, and mock target person tables. The 'database' and 'file' types
+    // are not implemented yet, and it may not be practical for them to use dynamodb for the 
+    // tables listed above, so this blanket provisioning is tentative.
+    storageParams.storageConfig.dynamodb = dynamoDbTables;
+
+    switch(previousStorageType) {
+      case 's3':
+        const { keyPrefix } = storageCfg as S3FolderConfig;
+        if(keyPrefix) {
+          storageParams.storageConfig.sharedDeltaStorageDir = keyPrefix.endsWith('/') ? 
+            keyPrefix.slice(0, -1) : 
+            keyPrefix; // Remove trailing slash if present
+        }
+        storageParams.storageConfig.s3 = storageCfg as S3FolderConfig || 'delta-storage';
+        break;
+      case 'dynamodb':
+        break;
+      case 'database':
+        // Not supported yet, but we can provide a DatabaseConfig for future use.
+        storageParams.storageConfig.database = storageCfg as DatabaseConfig;
+        break;
+      case 'file':
+        // Not supported yet, but we can provide a FileConfig for future use.
+        let { path, outputPath } = storageCfg as FileConfig;
+        path = outputPath ? outputPath(path) : path;
+        if(path) {
+          storageParams.storageConfig.sharedDeltaStorageDir = path.endsWith('/') ? 
+            path.slice(0, -1) : 
+            path; // Remove trailing slash if present
+        }
+        break;
+      default:
+        throw new Error(`Unsupported storage type: ${previousStorageType}`);
+    }
+    
     // Chunker task definition
     this.chunker = new ChunkerTaskDefinition(this, 'chunker', {
       repository,
@@ -52,17 +99,16 @@ export class TaskDefinitions extends Construct {
       inputBucketName: ctx.S3.inputBucket,
       chunksBucketName: `${ctx.S3.chunksBucket}-${ctx.TAGS.Landscape.toLowerCase()}`,
       queueUrl: '', // Will be set after queue is created
-      dynamoDbTables,
       stackId: ctx.STACK_ID,
       itemsPerChunk: ctx.ITEMS_PER_CHUNK,
       huronPersonSecrets,
-      sharedDeltaStorageDir,
       region: ctx.REGION,
       ecsClusterName: `${CLUSTER_BASE_NAME}-${ctx.TAGS.Landscape.toLowerCase()}`,
       maxScalingCapacity: ctx.ECS.chunkerService?.maxScalingCapacity ?? 1,
       ecsChunkerServiceName: SERVICE_LOGICAL_ID,
       landscape: ctx.TAGS.Landscape.toLowerCase(),
       retries: ctx.ECS.chunkerTaskDefinition.retries,
+      storageParams,
       dryRun: ctx.DRY_RUN?.taskdef?.chunker,
       tags,
     });
@@ -76,10 +122,10 @@ export class TaskDefinitions extends Construct {
       logRetentionDays: ctx.ECS.processorTaskDefinition.logRetentionDays,
       chunksBucketName: `${ctx.S3.chunksBucket}-${ctx.TAGS.Landscape.toLowerCase()}`,
       queueUrl: '', // Will be set after queue is created
-      dynamoDbTables,
+      storageParams,
       huronPersonSecrets,
-      sharedDeltaStorageDir,
       context: ctx,
+      config,
       region: ctx.REGION,
       landscape: ctx.TAGS.Landscape.toLowerCase(),
       dryRun: ctx.DRY_RUN?.taskdef?.processor,
@@ -95,10 +141,9 @@ export class TaskDefinitions extends Construct {
       logRetentionDays: ctx.ECS.mergerTaskDefinition.logRetentionDays,
       inputBucketName: ctx.S3.inputBucket,
       chunksBucketName: `${ctx.S3.chunksBucket}-${ctx.TAGS.Landscape.toLowerCase()}`,
-      dynamoDbTables,
+      storageParams,
       huronPersonSecrets,
-      sharedDeltaStorageDir,
-      personDeleteType: props.config?.dataTarget?.personDeleteType || TargetPersonDeleteType.SOFT,
+      personDeleteType: config?.dataTarget?.personDeleteType || TargetPersonDeleteType.SOFT,
       region: ctx.REGION,
       landscape: ctx.TAGS.Landscape.toLowerCase(),
       dryRun: ctx.DRY_RUN?.taskdef?.merger,

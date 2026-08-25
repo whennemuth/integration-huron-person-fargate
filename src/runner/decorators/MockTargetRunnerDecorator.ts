@@ -1,5 +1,5 @@
 import { ChunkingServiceRunner } from "../AbstractRunner";
-import { MockTargetStateTable } from "../../dynamodb/MockTargetStateTable";
+import { MockTargetPersonTable } from "../../dynamodb/MockTargetPersonTable";
 import { Config, ConfigManager } from "integration-huron-person";
 import { IContext } from "../../../context/IContext";
 import { Endpoint, NormalizedPopulationType, TargetConfig } from "../RunnerTypes";
@@ -20,13 +20,13 @@ import { Endpoint, NormalizedPopulationType, TargetConfig } from "../RunnerTypes
  * - RUNNER_TARGET_MOCK_VALIDATE_ONLY: Dry-run mode, log operations but don't execute (boolean)
  * 
  * Table Operations:
- * - If resetState is true, truncates MockTargetStateTable during validatePrerequisites()
+ * - If resetState is true, truncates mockTargetPersonTable during validatePrerequisites()
  * - Validates table exists before proceeding
  * - Sets flags for processors to use MockPersonDataTarget instead of HuronPersonDataTarget
  */
 export class MockTargetRunnerDecorator extends ChunkingServiceRunner {
   constructor(private readonly wrappedRunner: ChunkingServiceRunner) {
-    super();
+    super(wrappedRunner.env);
   }
 
   /**
@@ -35,7 +35,7 @@ export class MockTargetRunnerDecorator extends ChunkingServiceRunner {
    * If mockTargetResetState is true:
    * 1. Resolves config using ConfigManager
    * 2. Creates IContext from environment variables
-   * 3. Instantiates MockTargetStateTable
+   * 3. Instantiates mockTargetPersonTable
    * 4. Truncates table to clear previous test data
    * 
    * Also validates that the mock target table exists.
@@ -67,14 +67,14 @@ export class MockTargetRunnerDecorator extends ChunkingServiceRunner {
         if (mockTargetResetState) {
           console.log('   🗑️  Resetting mock target state...');
           const config = await this.getConfig();
-          const mockTable = new MockTargetStateTable({ config, context });
+          const mockTable = new MockTargetPersonTable({ config, context });
           await mockTable.truncate();
           console.log('   ✓ Mock target reset complete');
         }
         
       } catch (error: any) {
         console.error(`   ✗ Failed to access mock target table: ${error.message}`);
-        console.error('   Ensure the MockTargetStateTable exists in DynamoDB');
+        console.error('   Ensure the mockTargetPersonTable exists in DynamoDB');
         return false;
       }
     }
@@ -118,13 +118,6 @@ export class MockTargetRunnerDecorator extends ChunkingServiceRunner {
     config: Config,
     populationType: NormalizedPopulationType
   ): Promise<void> {
-    // Inject mock target flags via environment variables for chunker to read
-    if (targetConfig.useMockTarget) {
-      process.env.USE_MOCK_TARGET = 'true';
-      process.env.MOCK_TARGET_VALIDATE_ONLY = targetConfig.mockTargetValidateOnly ? 'true' : 'false';
-      console.log('🎭 Mock target flags injected via environment variables');
-    }
-    
     return this.wrappedRunner.execute(sourceEndpoint, targetConfig, config, populationType);
   }
 
@@ -155,7 +148,7 @@ export class MockTargetRunnerDecorator extends ChunkingServiceRunner {
    * Uses same naming convention as PersonCurrentStateTable.
    */
   private getTableName(context: IContext): string {
-    const { DYNAMODB_TABLE_NAME } = require('../../dynamodb/MockTargetStateTable');
+    const { DYNAMODB_TABLE_NAME } = require('../../dynamodb/MockTargetPersonTable');
     return DYNAMODB_TABLE_NAME(context);
   }
 

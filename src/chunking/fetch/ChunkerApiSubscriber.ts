@@ -66,7 +66,7 @@ export async function handleApiEvent(event: ApiChunkerEvent, chunkerQueueUrl?:st
   // Extract API parameters from event
   const { 
     baseUrl, fetchPath, populationType, bulkReset, trustPreviousStorage = false, iterationLimit = 0, offset = 0,
-    chunkDirectory, processingMetadata: { processedAt, processorVersion } = {} 
+    chunkDirectory, useMockTarget, mockTargetValidateOnly, processingMetadata: { processedAt, processorVersion } = {} 
   } = event;
 
   const { PersonDelta, PersonFull } = SyncPopulation;
@@ -118,6 +118,8 @@ export async function handleApiEvent(event: ApiChunkerEvent, chunkerQueueUrl?:st
     trustPreviousStorage: `${trustPreviousStorage}`.toLowerCase() === 'true',
     iterationLimit,
     offset,
+    useMockTarget: `${useMockTarget}`.toLowerCase() === 'true',
+    mockTargetValidateOnly: `${mockTargetValidateOnly}`.toLowerCase() === 'true',
   } as TaskParameters;
 
   if(chunkDirectory) {

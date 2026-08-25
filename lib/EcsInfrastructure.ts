@@ -20,7 +20,7 @@ export interface EcsInfrastructureProps {
   repository: IRepository;
   context: IContext;
   huronPersonSecrets: HuronPersonSecrets;  
-  config?: Config;
+  config: Config;
   stackScope: Construct;  // Stack reference for escape hatches
   dynamoDbTables: DynamoDbTables;
   tags?: { [key: string]: string };
@@ -47,7 +47,7 @@ export class EcsInfrastructure extends Construct {
   constructor(scope: Construct, id: string, props: EcsInfrastructureProps) {
     super(scope, id);
 
-    const { repository, context: ctx, huronPersonSecrets, stackScope, dynamoDbTables, tags } = props;
+    const { repository, context: ctx, config, huronPersonSecrets, stackScope, dynamoDbTables, tags } = props;
     this.context = ctx;
     this.huronPersonSecrets = huronPersonSecrets;
     this.stackScope = stackScope;
@@ -136,6 +136,7 @@ export class EcsInfrastructure extends Construct {
     this.taskDefinitions = new TaskDefinitions(this, 'TaskDefs', {
       repository,
       context: ctx,
+      config,
       huronPersonSecrets, // Pass HuronPersonSecrets for task definitions
       dynamoDbTables, // Pass DynamoDB table name for processor task definition
       tags,

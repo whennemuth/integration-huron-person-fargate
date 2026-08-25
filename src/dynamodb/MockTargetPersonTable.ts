@@ -36,15 +36,15 @@ import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 
 export const DYNAMODB_TABLE_NAME = (context: IContext): string => {
   const { STACK_ID, TAGS: { Landscape } } = context;
-  return `${STACK_ID}-mock-target-state-${Landscape.toLowerCase()}`;
+  return `${STACK_ID}-mock-target-person-${Landscape.toLowerCase()}`;
 };
 
 export const DYNAMODB_PARTITION_KEY = 'personId';
 
 /**
- * Record stored in MockTargetStateTable
+ * Record stored in MockTargetPersonTable
  */
-export interface MockTargetStateRecord {
+export interface MockTargetPersonRecord {
   personId: string;
   data: Record<string, any>;
   createdAt: string;
@@ -53,7 +53,7 @@ export interface MockTargetStateRecord {
 }
 
 /**
- * MockTargetStateTable utility class
+ * MockTargetPersonTable utility class
  * 
  * Wraps MockPersonDataTarget with DynamoDB-specific table management operations.
  * Acts as a decorator/wrapper around the inner MockPersonDataTarget instance from integration-huron-person.
@@ -66,7 +66,7 @@ export interface MockTargetStateRecord {
  * 
  * Usage:
  * ```typescript
- * const mockTable = new MockTargetStateTable({ config, context });
+ * const mockTable = new MockTargetPersonTable({ config, context });
  * 
  * // Push single person (delegates to inner MockPersonDataTarget)
  * await mockTable.pushOne({ data: personFieldSet, crud: CrudOperation.CREATE });
@@ -81,7 +81,7 @@ export interface MockTargetStateRecord {
  * const exists = await mockTable.tableExists();
  * ```
  */
-export class MockTargetStateTable {
+export class MockTargetPersonTable {
   private mockDataTarget: MockPersonDataTarget;
   private dynamoDbClient: DynamoDBClient;
   private tableName: string;
@@ -98,11 +98,11 @@ export class MockTargetStateTable {
     // Resolve table name from context or param
     this.tableName = tableName || 
       (context ? DYNAMODB_TABLE_NAME(context) : '') ||
-      process.env.DYNAMODB_MOCK_TARGET_STATE_TABLE_NAME || 
+      process.env.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME || 
       '';
 
     if (!this.tableName) {
-      throw new Error('MockTargetStateTable requires tableName, context, or DYNAMODB_MOCK_TARGET_STATE_TABLE_NAME');
+      throw new Error('MockTargetPersonTable requires tableName, context, or DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME');
     }
 
     // Create inner MockPersonDataTarget instance
@@ -139,10 +139,10 @@ export class MockTargetStateTable {
    * List all records in mock target table.
    * Useful for validation and audit.
    * 
-   * @returns Array of all MockTargetStateRecord entries
+   * @returns Array of all MockTargetPersonRecord entries
    */
-  public async listAll(): Promise<MockTargetStateRecord[]> {
-    const records: MockTargetStateRecord[] = [];
+  public async listAll(): Promise<MockTargetPersonRecord[]> {
+    const records: MockTargetPersonRecord[] = [];
     let lastEvaluatedKey: Record<string, any> | undefined = undefined;
 
     do {
@@ -155,7 +155,7 @@ export class MockTargetStateTable {
 
       if (response.Items) {
         for (const item of response.Items) {
-          records.push(unmarshall(item) as MockTargetStateRecord);
+          records.push(unmarshall(item) as MockTargetPersonRecord);
         }
       }
 
@@ -173,13 +173,13 @@ export class MockTargetStateTable {
    * @param chunkSize - Batch size for deletion (default: 25, max: 25)
    */
   public async truncate(chunkSize: number = 25): Promise<void> {
-    console.log(`[MockTargetStateTable] Truncating table: ${this.tableName}`);
+    console.log(`[MockTargetPersonTable] Truncating table: ${this.tableName}`);
     
     const allRecords = await this.listAll();
-    console.log(`[MockTargetStateTable] Found ${allRecords.length} records to delete`);
+    console.log(`[MockTargetPersonTable] Found ${allRecords.length} records to delete`);
 
     if (allRecords.length === 0) {
-      console.log(`[MockTargetStateTable] Table is already empty`);
+      console.log(`[MockTargetPersonTable] Table is already empty`);
       return;
     }
 
@@ -197,10 +197,10 @@ export class MockTargetStateTable {
       );
 
       deleteCount += batch.length;
-      console.log(`[MockTargetStateTable] Deleted ${deleteCount}/${allRecords.length} records`);
+      console.log(`[MockTargetPersonTable] Deleted ${deleteCount}/${allRecords.length} records`);
     }
 
-    console.log(`[MockTargetStateTable] ✓ Truncation complete`);
+    console.log(`[MockTargetPersonTable] ✓ Truncation complete`);
   }
 
   /**
@@ -242,11 +242,11 @@ export class MockTargetStateTable {
 // ==================== TEST HARNESS ====================
 
 /**
- * Test harness for MockTargetStateTable
+ * Test harness for MockTargetPersonTable
  * 
- * Environment Variables (with prefix MOCK_TARGET_STATE_TABLE_):
+ * Environment Variables (with prefix MOCK_TARGET_PERSON_TABLE_):
  * - REGION: AWS region
- * - DYNAMODB_MOCK_TARGET_STATE_TABLE_NAME: Table name
+ * - DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME: Table name
  * - STACK_ID: Stack identifier (for table name resolution)
  * - LANDSCAPE: Environment landscape (for table name resolution)
  * 
@@ -258,18 +258,18 @@ export class MockTargetStateTable {
  */
 async function main() {
   const { TestEnvironment } = await import('integration-core');
-  const testEnvironment = TestEnvironment('MOCK_TARGET_STATE_TABLE');
+  const testEnvironment = TestEnvironment('MOCK_TARGET_PERSON_TABLE');
 
   [
     'REGION',
-    'DYNAMODB_MOCK_TARGET_STATE_TABLE_NAME',
+    'DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME',
     'STACK_ID',
     'LANDSCAPE'
   ].forEach(testEnvironment.getVarOrEmptyString);
 
   const {
     REGION: region,
-    DYNAMODB_MOCK_TARGET_STATE_TABLE_NAME: tableName,
+    DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME: tableName,
     STACK_ID: stackId,
     LANDSCAPE: landscape
   } = process.env;
@@ -289,7 +289,7 @@ async function main() {
     .fromEnvironment()
     .getConfigAsync('people');
 
-  const mockTable = new MockTargetStateTable({
+  const mockTable = new MockTargetPersonTable({
     config,
     context,
     tableName,
@@ -298,7 +298,7 @@ async function main() {
 
   const task = process.argv[2] || 'list';
 
-  console.log(`\n=== MockTargetStateTable Harness: ${task} ===`);
+  console.log(`\n=== MockTargetPersonTable Harness: ${task} ===`);
   console.log(`Table: ${mockTable.getTableName()}`);
   console.log(`Region: ${region}\n`);
 

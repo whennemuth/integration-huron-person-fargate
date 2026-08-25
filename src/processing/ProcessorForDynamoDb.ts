@@ -23,8 +23,8 @@
  * - CHUNKS_BUCKET: Bucket containing the chunk file (or from SQS message)
  * - CHUNK_KEY: Key of the NDJSON chunk file to process (or from SQS message)
  * - SQS_QUEUE_URL: URL of the SQS queue to read chunk messages from
- * - PERSON_CURRENT_STATE_TABLE_NAME: DynamoDB table for current person hash state
- * - PERSON_HISTORY_TABLE_NAME: DynamoDB table for person history audit trail
+ * - DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME: DynamoDB table for current person hash state
+ * - DYNAMODB_PERSON_HISTORY_TABLE_NAME: DynamoDB table for person history audit trail
  * - STATIC_MAP_USAGE: JSON string specifying which static maps to load
  * - BULK_RESET: If "true", will upsert all persons (ignore previous state)
  * - DRY_RUN: If "true", runs without making API calls
@@ -44,8 +44,8 @@
  * ```bash
  * CHUNKS_BUCKET=my-bucket \
  * CHUNK_KEY=chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0000.ndjson \
- * PERSON_CURRENT_STATE_TABLE_NAME=my-stack-person-current-state-preview \
- * PERSON_HISTORY_TABLE_NAME=my-stack-person-history-preview \
+ * DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME=my-stack-person-current-state-preview \
+ * DYNAMODB_PERSON_HISTORY_TABLE_NAME=my-stack-person-history-preview \
  * node dist/processor-dynamodb.js
  * ```
  */
@@ -205,11 +205,11 @@ export async function main(queueReader: QueueReader) {
   console.log(`Region: ${region || 'default (us-east-1)'}\n`);
 
   // Get DynamoDB table names from environment variables (required)
-  const currentStateTableName = process.env.PERSON_CURRENT_STATE_TABLE_NAME;
-  const historyTableName = process.env.PERSON_HISTORY_TABLE_NAME;
+  const currentStateTableName = process.env.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME;
+  const historyTableName = process.env.DYNAMODB_PERSON_HISTORY_TABLE_NAME;
 
   if (!currentStateTableName || !historyTableName) {
-    console.error('ERROR: PERSON_CURRENT_STATE_TABLE_NAME and PERSON_HISTORY_TABLE_NAME environment variables required');
+    console.error('ERROR: DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME and DYNAMODB_PERSON_HISTORY_TABLE_NAME environment variables required');
     process.exit(1);
   }
 
@@ -237,6 +237,7 @@ export async function main(queueReader: QueueReader) {
     errorTracker = new LoggingTargetApiErrorProcessor();
   }
 
+  const startTimestamp = new Date().toISOString();
   let processedRecordCount = 0;
   let processingError: Error | null = null;
 
@@ -291,38 +292,79 @@ export async function main(queueReader: QueueReader) {
     console.log(`  - - Removed: ${result.removedCount}`);
     console.log(`  - ⧗ Duration: ${humanReadableFromMilliseconds(result.duration ?? 0)}`);
     
+    // Verify the math: successful operations should equal delta operations (failures and skips don't produce deltas)
+    const deltaSum = result.addedCount + result.updatedCount + result.removedCount;
+    if (result.successCount !== deltaSum) {
+      console.warn(`  ⚠️  Math mismatch: Successful(${result.successCount}) should equal Added(${result.addedCount}) + Updated(${result.updatedCount}) + Removed(${result.removedCount}) = ${deltaSum}`);
+    }
+    
     console.log('\n✓ Chunk processing completed successfully');
     console.log('✓ DynamoDB tables updated (no marker files needed)');
 
   } catch (error: any) {
     console.error(`\n✗ Processing chunk: s3://${bucketName}/${s3Key} failed:`, error.message);
     console.error(error.stack);
+    // Store error for reporting in finally block
     processingError = error;
   } finally {
     // No marker files needed with DynamoDB strategy!
-    // DynamoDB handles concurrency atomically
+    // DynamoDB handles concurrency atomically via BatchWriteItem
     // Merger queries DynamoDB directly for deletion detection
 
-    timer.stop();
-    const durationMs = timer.getElapsedMilliseconds();
-    
-    console.log(`\n=== Processing Summary ===`);
-    console.log(`Chunk: ${s3Key}`);
-    console.log(`Status: ${processingError ? '✗ FAILED' : '✓ SUCCESS'}`);
-    console.log(`Records processed: ${processedRecordCount}`);
-    console.log(`Duration: ${humanReadableFromMilliseconds(durationMs)}`);
-    
-    if (processingError) {
-      console.error(`\nError: ${processingError.message}`);
-      
-      // Note: SQS message deletion is handled automatically by QueueReader.receiveMessage()
-      // when using SQSQueueReader. No explicit deleteMessage() call needed.
-      
-      process.exit(1);
-    }
+    // Write statistics to DynamoDB
+    try {
+      if (errorTracker instanceof TrackingTargetApiErrorProcessor) {
+        const endTimestamp = new Date().toISOString();
+        // Extract chunk ID from S3 key (format: "chunk-0009")
+        const chunkIdFromDesc = chunkId ? `chunk-${chunkId}` : undefined;
+        
+        await errorTracker.writeStatistics({
+          startTimestamp,
+          endTimestamp,
+          chunkCount: 1, // This processor handles 1 chunk per run
+          chunkSize: processedRecordCount,
+          totalRecords: processedRecordCount,
+          sourceDescription: `chunk-${chunkId || 'unknown'}`,
+          chunkId: chunkIdFromDesc // Pass chunk ID to prevent overwrites
+        });
 
-    console.log('\n✓ Processor task completed successfully');
+        // Log statistics summary
+        const stats = errorTracker.getStatisticsSummary();
+        console.log('\n=== Processing Statistics ===');
+        console.log(`Total errors: ${stats.totalErrors}`);
+        console.log(`Throttle events: ${stats.throttleCount}`);
+        console.log(`Errors by status:`, stats.errorsByStatus);
+      }
+      
+      timer.stop();
+      const durationMs = timer.getElapsedMilliseconds();
+      
+      console.log(`\n=== Processing Summary ===`);
+      console.log(`Chunk: ${s3Key}`);
+      console.log(`Status: ${processingError ? '✗ FAILED' : '✓ SUCCESS'}`);
+      console.log(`Records processed: ${processedRecordCount}`);
+      console.log(`Duration: ${humanReadableFromMilliseconds(durationMs)}`);
+      
+      if (processingError) {
+        console.error(`\nError: ${processingError.message}`);
+      } else {
+        console.log('\n✓ Processor task completed successfully');
+      }
+    } 
+    catch (statsError: any) {
+      console.error('Failed to write statistics to DynamoDB:', statsError);
+      // Don't fail the entire process if statistics write fails
+    }
+    finally {
+      // Always disable task protection, even if statistics write fails
+      await new TaskProtection().disable();
+    }
   }
+  
+  // Exit after finally block completes
+  // Exit code 0 for success, 1 if there was an error
+  const exitCode = (errorTracker instanceof TrackingTargetApiErrorProcessor && errorTracker.getStatisticsSummary().totalErrors > 0) ? 1 : 0;
+  process.exit(exitCode);
 }
 
 // Entry point
@@ -335,8 +377,8 @@ if (require.main === module) {
     'CHUNKS_BUCKET',
     'CHUNK_KEY',
     'SQS_QUEUE_URL',
-    'PERSON_CURRENT_STATE_TABLE_NAME',
-    'PERSON_HISTORY_TABLE_NAME',
+    'DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME',
+    'DYNAMODB_PERSON_HISTORY_TABLE_NAME',
     'STATIC_MAP_USAGE',
     'DRY_RUN',
     'BULK_RESET',

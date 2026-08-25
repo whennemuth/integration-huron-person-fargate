@@ -8,6 +8,7 @@ import { EventType, IBucket } from 'aws-cdk-lib/aws-s3';
 import { LambdaDestination } from 'aws-cdk-lib/aws-s3-notifications';
 import { Construct } from 'constructs';
 import { FUNCTION_BASE_NAME } from '../../../src/merging/MergerSubscriber';
+import { IContext } from '../../../context/IContext';
 
 export interface MergerSubscribingLambdaProps {
   vpc: IVpc;
@@ -19,6 +20,7 @@ export interface MergerSubscribingLambdaProps {
   timeoutSeconds: number;
   memorySizeMb: number;
   dryRun?: boolean;
+  context: IContext;
   tags?: { [key: string]: string };
 }
 
@@ -83,6 +85,13 @@ export class MergerSubscribingLambda extends Construct {
         MERGER_QUEUE_URL: props.mergerQueueUrl,
         CHUNKS_BUCKET_NAME: props.chunksBucketName,
         DRY_RUN: props.dryRun ? 'true' : 'false',
+        PREVIOUS_STORAGE_TYPE: props.context.PREVIOUS_STORAGE_TYPE || 's3',
+        // Conditionally add DynamoDB table names when in DynamoDB mode
+        ...(props.context.PREVIOUS_STORAGE_TYPE === 'dynamodb' && {
+          DYNAMODB_STATISTICS_TABLE_NAME: props.context.dynamoDbTables?.statisticsTable?.tableName,
+          DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME: props.context.dynamoDbTables?.personCurrentStateTable?.tableName,
+          DYNAMODB_PERSON_HISTORY_TABLE_NAME: props.context.dynamoDbTables?.personHistoryTable?.tableName,
+        }),
         DESCRIPTION1:
           `Sends SQS message to merger queue to trigger Fargate task that checks completeness 
           of the delta chunks by referencing a metadata file created by the chunker.`,
@@ -127,6 +136,45 @@ export class MergerSubscribingLambda extends Construct {
         resources: [queueArn],
       })
     );
+
+    // Grant DynamoDB permissions if in DynamoDB mode
+    if (props.context.PREVIOUS_STORAGE_TYPE === 'dynamodb' && props.context.dynamoDbTables) {
+      const { personCurrentStateTable, personHistoryTable, statisticsTable } = props.context.dynamoDbTables;
+      const tableArns: string[] = [];
+      
+      if (statisticsTable) {
+        tableArns.push(
+          `arn:aws:dynamodb:${props.region}:*:table/${statisticsTable.tableName}`,
+          `arn:aws:dynamodb:${props.region}:*:table/${statisticsTable.tableName}/index/*`
+        );
+      }
+      if (personCurrentStateTable) {
+        tableArns.push(
+          `arn:aws:dynamodb:${props.region}:*:table/${personCurrentStateTable.tableName}`,
+          `arn:aws:dynamodb:${props.region}:*:table/${personCurrentStateTable.tableName}/index/*`
+        );
+      }
+      if (personHistoryTable) {
+        tableArns.push(
+          `arn:aws:dynamodb:${props.region}:*:table/${personHistoryTable.tableName}`,
+          `arn:aws:dynamodb:${props.region}:*:table/${personHistoryTable.tableName}/index/*`
+        );
+      }
+
+      if (tableArns.length > 0) {
+        this.function.addToRolePolicy(
+          new PolicyStatement({
+            effect: Effect.ALLOW,
+            actions: [
+              'dynamodb:GetItem',
+              'dynamodb:Query',
+              'dynamodb:Scan',
+            ],
+            resources: tableArns,
+          })
+        );
+      }
+    }
 
     // Add S3 event notification to trigger Lambda when marker files are created
     // Marker files indicate a chunk has finished processing and prevent race conditions

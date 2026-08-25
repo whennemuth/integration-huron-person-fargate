@@ -49,6 +49,8 @@ describe('Chunker Main - Message Deletion', () => {
     process.env.ITEMS_PER_CHUNK = '200';
     process.env.PERSON_ID_FIELD = 'personid';
     process.env.DRY_RUN = 'false';
+    process.env.PREVIOUS_STORAGE_TYPE = 's3';  // Set storage mode for chunker.ts main() logging
+    process.env.SHARED_DELTA_STORAGE_DIR = 'delta-storage';  // Required for S3 mode
 
     // Create mock message
     mockMessage = {

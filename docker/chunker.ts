@@ -271,31 +271,90 @@ const getChunkerInstance = async (config: Config, chunkerQueue: ChunkerQueue): P
 }
 
 /**
- * Determine if the shared delta storage file exists in S3, which indicates that a previous sync 
- * operation was run and we have a baseline to compare against for delta processing. Without this
- * baseline, there is no other way to check if any given person exists in the target system, except
- * by looking them up first, which requires the bulkReset flag be set to true (env var: BULK_RESET=true).
+ * Check if there is any previous delta storage (baseline person data) to use for delta processing.
+ * The existence or absence of previous data determines whether bulkReset should be enabled.
+ * 
+ * Storage Mode Detection:
+ * - S3 mode: Checks for previous-input.ndjson file in SHARED_DELTA_STORAGE_DIR
+ * - DynamoDB mode: Queries PersonCurrentStateTable for any existing records
+ * 
+ * If no baseline exists, the chunker must set bulkReset=true to force target system lookups
+ * for each person (to determine CREATE vs UPDATE operations).
  * @param bucket 
  * @param region 
  */
-const sharedDeltaStorageFileExists = async (bucket: string, region?: string): Promise<boolean> => {
-  const { SHARED_DELTA_STORAGE_DIR='delta-storage' } = process.env;
-  const deltaStorageKey = `${SHARED_DELTA_STORAGE_DIR}/previous-input.ndjson`;
-  const retval = await objectExistsInS3(bucket, deltaStorageKey, region);
-  if(retval) {
-    console.log(`✓ Found existing delta storage file at s3://${bucket}/${deltaStorageKey}`);
-  } else {
-    console.warn(`✗ No existing delta storage file found at s3://${bucket}/${deltaStorageKey} - ` +
-      `setting/overriding bulkReset=true to force target system lookups to determine create vs ` +
-      `update for each person record (this may cause the sync to run slower than usual, or this ` +
-      `may be the first time a sync has been run and you forgot to set the BULK_RESET ` +
-      `environment variable to true)`);
+const sharedDeltaStorageExists = async (bucket: string, region?: string): Promise<boolean> => {
+  const { SHARED_DELTA_STORAGE_DIR='delta-storage', PREVIOUS_STORAGE_TYPE } = process.env;
+  
+  if (!PREVIOUS_STORAGE_TYPE) {
+    throw new Error('PREVIOUS_STORAGE_TYPE environment variable is required but not set. Cannot determine storage backend.');
   }
-  return retval;
+  
+  const storageType = PREVIOUS_STORAGE_TYPE.toLowerCase();
+  
+  switch(storageType) {
+    case 's3':
+      // S3 mode: Check for previous-input.ndjson file
+      const deltaStorageKey = `${SHARED_DELTA_STORAGE_DIR}/previous-input.ndjson`;
+      const s3Exists = await objectExistsInS3(bucket, deltaStorageKey, region);
+      if(s3Exists) {
+        console.log(`✓ Found existing delta storage file at s3://${bucket}/${deltaStorageKey} (S3 mode)`);
+      } else {
+        console.warn(`✗ No existing delta storage file found at s3://${bucket}/${deltaStorageKey} (S3 mode) - ` +
+          `setting/overriding bulkReset=true to force target system lookups to determine create vs ` +
+          `update for each person record (this may cause the sync to run slower than usual, or this ` +
+          `may be the first time a sync has been run and you forgot to set the BULK_RESET ` +
+          `environment variable to true)`);
+      }
+      return s3Exists;
+      
+    case 'dynamodb':
+      // DynamoDB mode: Check if PersonCurrentStateTable has any records
+      const { DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME } = process.env;
+      if (!DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME) {
+        throw new Error('DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME is required for DynamoDB storage mode');
+      }
+      
+      // Query PersonCurrentStateTable to check if any baseline data exists
+      const { DynamoDBClient } = await import('@aws-sdk/client-dynamodb');
+      const { DynamoDBDocumentClient, ScanCommand } = await import('@aws-sdk/lib-dynamodb');
+      
+      const client = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
+      const scanResult = await client.send(new ScanCommand({
+        TableName: DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME,
+        Limit: 1  // Only need to know if ANY record exists
+      }));
+      
+      const dynamoDbHasRecords = (scanResult.Items && scanResult.Items.length > 0) || false;
+      if(dynamoDbHasRecords) {
+        console.log(`✓ Found existing baseline data in PersonCurrentStateTable (DynamoDB mode)`);
+      } else {
+        console.warn(`✗ No baseline data found in PersonCurrentStateTable (DynamoDB mode) - ` +
+          `setting/overriding bulkReset=true to force target system lookups to determine create vs ` +
+          `update for each person record (this may cause the sync to run slower than usual, or this ` +
+          `may be the first time a sync has been run)`);
+      }
+      return dynamoDbHasRecords;
+      
+    default:
+      throw new Error(`Unsupported PREVIOUS_STORAGE_TYPE: ${PREVIOUS_STORAGE_TYPE}. Must be 's3', 'file', or 'dynamodb'.`);
+  }
 }
 
 export async function main() {
   console.log('=== Phase 1: Chunker ===\n');
+
+  // Log storage mode and mock target configuration at startup
+  const storageMode = process.env.PREVIOUS_STORAGE_TYPE || 'undefined';
+  const mockTargetTableName = process.env.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME;
+  console.log(`Storage mode: ${storageMode}`);
+  if (storageMode === 'dynamodb') {
+    console.log(`  - PersonCurrentStateTable: ${process.env.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || 'not set'}`);
+    console.log(`  - MockTargetPersonTable: ${mockTargetTableName || 'not set'}`);
+  } else if (storageMode === 's3') {
+    console.log(`  - Shared delta storage dir: ${process.env.SHARED_DELTA_STORAGE_DIR || 'not set'}`);
+  }
+  console.log();
 
   let chunker: IChunkFromSource | undefined;
   let chunkerQueue: ChunkerQueue = new ChunkerQueue({
@@ -411,21 +470,21 @@ export async function main() {
       await chunker.sendNextChunkingMessage(chunkerQueue, dryRun.toLowerCase() === 'true');
     }
 
-    // Check if shared delta storage file exists in S3 to determine if we have a baseline for doing 
-    // lookups during chunk processing, or if we need to set the bulkReset flag to true to force lookups 
-    // for every record.
+    // Check if shared delta storage file exists (S3 or DynamoDB) to determine if we have a baseline 
+    // for doing lookups during chunk processing, or if we need to set the bulkReset flag to true to 
+    // force lookups for every record.
     // Priority: SQS message bulkReset > No historical data check
-    const hasHistoricalData = await sharedDeltaStorageFileExists(chunksBucket, region);
+    const hasHistoricalData = await sharedDeltaStorageExists(chunksBucket, region);
     const bulkResetFromMessage = chunker.getBulkResetFlag?.() || false;
     
     if (bulkResetFromMessage) {
       console.log('✓ bulkReset=true from SQS message - will create person cache for lookups (if not already created).');
       chunkFromParams.bulkReset = true;
     } else if (!hasHistoricalData) {
-      console.log('✓ No historical data found - setting bulkReset=true to force target system lookups');
+      console.log(`✓ No historical data found (checked ${storageMode} storage) - setting bulkReset=true to force target system lookups`);
       chunkFromParams.bulkReset = true;
     } else {
-      console.log('✓ Historical data exists and bulkReset not requested - using delta comparison');
+      console.log(`✓ Historical data exists in ${storageMode} storage and bulkReset not requested - using delta comparison`);
       chunkFromParams.bulkReset = false;
     }
 
@@ -460,7 +519,7 @@ export async function main() {
 
     /**
      * Writes the full population from the target API to an S3 file as a cache for lookup during chunk processing.
-     * In mock target mode, fetches population from MockTargetStateTable instead of real Huron API.
+     * In mock target mode, fetches population from MockTargetPersonTable instead of real Huron API.
      */
     if(chunkFromParams.bulkReset || !chunkFromParams.trustPreviousStorage) {
       const config = await getConfig();

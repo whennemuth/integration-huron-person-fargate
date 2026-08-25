@@ -1,5 +1,6 @@
 import { Config as HuronPersonConfig } from 'integration-huron-person';
 import { RetryStrategyConfig } from '../src/ApiErrorRetryStrategy';
+import { DynamoDbTables } from '../lib/DynamoDB';
 
 export interface IContext {
 
@@ -210,4 +211,10 @@ export interface IContext {
       merger?: boolean;
     };
   };
+
+  /** 
+   * DynamoDB tables reference (injected by AppConstruct after table creation)
+   * This allows Lambda functions to access table names and grant permissions
+   */
+  dynamoDbTables?: DynamoDbTables;
 }

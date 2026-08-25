@@ -1,11 +1,8 @@
 import { S3 } from '@aws-sdk/client-s3';
-import { DynamoDBClient, ScanCommand } from '@aws-sdk/client-dynamodb';
-import { unmarshall } from '@aws-sdk/util-dynamodb';
 import { TestEnvironment } from 'integration-core';
-import { BasicCache, Config, ConfigManager, getLocalConfig, HuronPerson, ListPeople } from "integration-huron-person";
+import { BasicCache, Config, ConfigManager, getLocalConfig, HuronPerson } from "integration-huron-person";
 import { AbstractPersonCache } from './AbstractPersonCache';
-import { PersonTargetMocked } from './PersonTargetMocked';
-import { AbstractPersonTarget, PersonTargetReal } from './PersonTargetReal';
+import { AbstractPersonTarget } from './PersonTargetReal';
 
 /**
  * S3-based person cache implementation.
@@ -104,7 +101,7 @@ export class PersonCacheForS3 extends AbstractPersonCache {
   /**
    * Fetch full population from target API.
    * 
-   * In mock target mode, "pretends" DynamoDB MockTargetStateTable is the Target API.
+   * In mock target mode, "pretends" DynamoDB mockTargetPersonTable is the Target API.
    * In real mode, calls ListPeople to query actual Huron API.
    * 
    * This is the source of truth for the cache.

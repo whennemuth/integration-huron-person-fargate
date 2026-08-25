@@ -47,8 +47,8 @@
  * - SHARED_DELTA_STORAGE_DIR: Path for merged previous-input.ndjson
  * 
  * DynamoDB Mode Specific:
- * - PERSON_CURRENT_STATE_TABLE_NAME: Current state table
- * - PERSON_HISTORY_TABLE_NAME: History audit table
+ * - DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME: Current state table
+ * - DYNAMODB_PERSON_HISTORY_TABLE_NAME: History audit table
  * - DYNAMODB_STATISTICS_TABLE_NAME: Error tracking table
  */
 
@@ -56,8 +56,9 @@ import { TestEnvironment } from 'integration-core';
 import { QueueReader } from '../src/Queue';
 
 // Import both processor implementations
-import { main as mainS3 } from '../src/processing/ProcessorForS3';
+import { IContext } from '../context/IContext';
 import { main as mainDynamoDb } from '../src/processing/ProcessorForDynamoDb';
+import { main as mainS3 } from '../src/processing/ProcessorForS3';
 
 /**
  * Route to appropriate processor based on storage mode.
@@ -68,19 +69,33 @@ import { main as mainDynamoDb } from '../src/processing/ProcessorForDynamoDb';
  */
 async function main(queueReader: QueueReader) {
   const { 
+    PREVIOUS_STORAGE_TYPE,
     DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME, 
     DYNAMODB_PERSON_HISTORY_TABLE_NAME 
   } = process.env;
 
+  if(!PREVIOUS_STORAGE_TYPE) {
+    throw new Error('PREVIOUS_STORAGE_TYPE environment variable is not set.');
+  }
+
   // Detect storage mode from environment
-  if (DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || DYNAMODB_PERSON_HISTORY_TABLE_NAME) {
-    console.log('🔀 Router: Detected DynamoDB mode (DynamoDB-mode-specific tables present)');
-    console.log('   Routing to processor-dynamodb.ts\n');
-    await mainDynamoDb(queueReader);
-  } else {
-    console.log('🔀 Router: Detected S3 mode (default - no DynamoDB tables configured)');
-    console.log('   Routing to processor-s3.ts\n');
-    await mainS3(queueReader);
+  const previousStorageType = PREVIOUS_STORAGE_TYPE.toLowerCase() as IContext['PREVIOUS_STORAGE_TYPE'];
+  switch(previousStorageType) {
+    case 's3':
+      console.log('🔀 Router: Detected S3 mode (no DynamoDB tables configured)');
+      console.log('   Routing to mainS3\n');
+      await mainS3(queueReader);
+      break;
+    case 'dynamodb':
+      if (!DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || !DYNAMODB_PERSON_HISTORY_TABLE_NAME) {
+        throw new Error('DynamoDB mode requires both DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME and DYNAMODB_PERSON_HISTORY_TABLE_NAME to be set.');
+      }
+      console.log('🔀 Router: Detected DynamoDB mode (DynamoDB-mode-specific tables present)');
+      console.log('   Routing to mainDynamoDb\n');
+      await mainDynamoDb(queueReader);
+      break;
+    default:
+      throw new Error(`Unsupported storage type: ${previousStorageType}`);
   }
 }
 
@@ -97,6 +112,7 @@ if (require.main === module) {
     'SQS_QUEUE_URL',
     'HURON_PERSON_CONFIG_JSON',
     'STATIC_MAP_USAGE',
+    'PREVIOUS_STORAGE_TYPE',
     'DRY_RUN',
     'BULK_RESET',
     'RETRY_STRATEGY',

@@ -13,7 +13,7 @@ import { HuronPersonSecrets } from './Secrets';
 
 export interface AppConstructProps {
   context: IContext;
-  config?: Config;
+  config: Config;
   tags?: { [key: string]: string };
 }
 
@@ -134,6 +134,8 @@ export class AppConstruct extends Construct {
     // ========================================
     // Create subscribing lambdas before services so chunker lambda can be
     // passed to ChunkerService for EventBridge schedule configuration
+    // Inject dynamoDbTables into context so Lambda can access table names
+    const ctxWithTables: IContext = { ...ctx, dynamoDbTables: this.dynamoDbTables };
     this.subscribingLambdas = new SubscribingLambdas(this, 'SubscribingLambdas', {
       ecsInfra: this.ecs,
       chunksBucket: this.chunksBucket,
@@ -142,7 +144,7 @@ export class AppConstruct extends Construct {
       processorQueueArn: this.queue.processorQueue.queueArn,
       mergerQueueUrl: this.queue.mergerQueue.queueUrl,
       stackScope: scope,
-      context: ctx,
+      context: ctxWithTables,
       tags,
     });
 
