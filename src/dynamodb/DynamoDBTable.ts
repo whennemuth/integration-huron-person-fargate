@@ -9,6 +9,39 @@ import {
   ScanCommandInput 
 } from '@aws-sdk/lib-dynamodb';
 
+export type AbstractDynamoDbTable = {
+  truncateTable: (chunkSize?: number) => Promise<void>;
+  deleteByPartitionKey: (
+    { partitionKeyValue, chunkSize }: 
+    { partitionKeyValue: string, chunkSize?: number }) => Promise<number>;
+  getItem: (
+    { partitionKeyValue, sortKeyValue }: 
+    { partitionKeyValue: string, sortKeyValue?: string }) => Promise<any | undefined>;
+  queryGSI: (
+    { 
+      indexName, 
+      gsiPartitionKey, 
+      partitionKeyValue, 
+      gsiSortKey, 
+      sortKeyValue,
+      sortKeyOperator
+    }: {
+      indexName: string, 
+      gsiPartitionKey: string, 
+      partitionKeyValue: string,
+      gsiSortKey?: string,
+      sortKeyValue?: string,
+      sortKeyOperator?: '=' | 'begins_with' | '<' | '>' | '<=' | '>=' | 'between',
+    }
+  ) => Promise<any[]>;
+  queryByPartitionKey: (
+    { partitionKeyValue, sortKeyPrefix }: 
+    { partitionKeyValue: string, sortKeyPrefix?: string }
+  ) => Promise<any[]>;
+  batchWrite: ({ items, operation }: { items: any[], operation?: 'put' | 'delete' }) => Promise<void>;
+  putItem: (item: any) => Promise<void>;
+}
+
 /**
  * Generic DynamoDB table wrapper providing common operations.
  * 
@@ -31,7 +64,7 @@ import {
  * const items = await table.queryByPartitionKey('user-123');
  * ```
  */
-export class DynamoDBTable {
+export class DynamoDBTable implements AbstractDynamoDbTable {
   private client: DynamoDBDocumentClient;
   
   constructor(private params: { 
@@ -123,14 +156,15 @@ export class DynamoDBTable {
    * @param chunkSize - Number of items to delete per batch (default: 25, max: 25)
    * @returns Number of items deleted
    */
-  public async deleteByPartitionKey(partitionKeyValue: string, chunkSize: number = 25): Promise<number> {
+  public async deleteByPartitionKey(parms: { partitionKeyValue: string, chunkSize?: number } ): Promise<number> {
     const { client, params: { tableName, partitionKey, sortKey } } = this;
+    const { partitionKeyValue, chunkSize = 25 } = parms;
     console.log(`Deleting items with ${partitionKey} = ${partitionKeyValue} from table: ${tableName}`);
   
     let itemsDeleted = 0;
     
     // Query all items with this partition key
-    const items = await this.queryByPartitionKey(partitionKeyValue);
+    const items = await this.queryByPartitionKey({ partitionKeyValue });
     
     if (items.length === 0) {
       console.log('No items found to delete.');
@@ -172,8 +206,9 @@ export class DynamoDBTable {
    * @param sortKeyValue - Value of the sort key (required if table has sort key)
    * @returns The item if found, undefined otherwise
    */
-  public async getItem(partitionKeyValue: string, sortKeyValue?: string): Promise<any | undefined> {
+  public async getItem(parms: { partitionKeyValue: string, sortKeyValue?: string }): Promise<any | undefined> {
     const { client, params: { tableName, partitionKey, sortKey } } = this;
+    const { partitionKeyValue, sortKeyValue } = parms;
     
     if (sortKey && !sortKeyValue) {
       throw new Error('getItem requires sortKeyValue when table has a sort key');
@@ -208,15 +243,19 @@ export class DynamoDBTable {
    * @param sortKeyOperator - Optional operator for sort key condition ('=', 'begins_with', '<', '>', '<=', '>=', 'between')
    * @returns Array of all items matching the query
    */
-  public async queryGSI(
+  public async queryGSI(parms: {
     indexName: string, 
     gsiPartitionKey: string, 
     partitionKeyValue: string,
     gsiSortKey?: string,
     sortKeyValue?: string,
-    sortKeyOperator: '=' | 'begins_with' | '<' | '>' | '<=' | '>=' | 'between' = '='
-  ): Promise<any[]> {
+    sortKeyOperator?: '=' | 'begins_with' | '<' | '>' | '<=' | '>=' | 'between',
+  }): Promise<any[]> {
     const { client, params: { tableName } } = this;
+    const { 
+      indexName, gsiPartitionKey, partitionKeyValue, 
+      sortKeyOperator = '=', gsiSortKey, sortKeyValue 
+    } = parms;
     const items: any[] = [];
     let lastEvaluatedKey = undefined;
 
@@ -271,9 +310,11 @@ export class DynamoDBTable {
    * @param sortKeyPrefix - Optional prefix for sort key (uses begins_with)
    * @returns Array of all items matching the query
    */
-  public async queryByPartitionKey(partitionKeyValue: string, sortKeyPrefix?: string): Promise<any[]> {
+  public async queryByPartitionKey(parms: { partitionKeyValue: string, sortKeyPrefix?: string }): Promise<any[]> {
     const { client, params: { tableName, partitionKey, sortKey } } = this;
     
+    const { partitionKeyValue, sortKeyPrefix } = parms;
+
     if (!sortKey && sortKeyPrefix) {
       throw new Error('Cannot use sortKeyPrefix when table has no sort key');
     }
@@ -322,10 +363,11 @@ export class DynamoDBTable {
    * @param items - Array of items to write
    * @param operation - 'put' or 'delete' (default: 'put')
    */
-  public async batchWrite(items: any[], operation: 'put' | 'delete' = 'put'): Promise<void> {
+  public async batchWrite(parms: { items: any[], operation?: 'put' | 'delete' } ): Promise<void> {
     const { client, params: { tableName } } = this;
     const batchSize = 25; // DynamoDB limit
 
+    const { items, operation = 'put' } = parms;
     for (let i = 0; i < items.length; i += batchSize) {
       const batch = items.slice(i, i + batchSize);
       const requests = batch.map(item => 
@@ -346,6 +388,6 @@ export class DynamoDBTable {
    * @param item - The item to write
    */
   public async putItem(item: any): Promise<void> {
-    await this.batchWrite([item], 'put');
+    await this.batchWrite({ items: [item], operation: 'put' });
   }
 }

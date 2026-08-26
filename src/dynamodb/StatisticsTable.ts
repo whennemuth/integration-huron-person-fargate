@@ -1,7 +1,7 @@
 import { TestEnvironment } from 'integration-core';
 import { IContext } from '../../context/IContext';
 import { StatisticsItem } from '../ApiErrorTracking';
-import { DynamoDBTable } from './DynamoDBTable';
+import { AbstractDynamoDbTable, DynamoDBTable } from './DynamoDBTable';
 
 export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-statistics-${context.TAGS.Landscape.toLowerCase()}`;
 export const DYNAMODB_PARTITION_KEY = 'integrationTimestamp';
@@ -10,14 +10,18 @@ export const DYNAMODB_SORT_KEY = 'eventType';
 export const DYNAMODB_GSI_INDEX_NAME = 'errorType-timestamp-index';
 
 export class StatisticsTable {
-  private table: DynamoDBTable;
+  private table: AbstractDynamoDbTable;
 
-  constructor(private context: IContext) {
-    const region = context.REGION;
-    const tableName = DYNAMODB_TABLE_NAME(context);
-    const partitionKey = DYNAMODB_PARTITION_KEY;
-    const sortKey = DYNAMODB_SORT_KEY;
-    this.table = new DynamoDBTable({ region, tableName, partitionKey, sortKey });
+  constructor(private context: IContext, table?: AbstractDynamoDbTable) {
+    if (table) {
+      this.table = table;
+    } else {
+      const region = context.REGION;
+      const tableName = DYNAMODB_TABLE_NAME(context);
+      const partitionKey = DYNAMODB_PARTITION_KEY;
+      const sortKey = DYNAMODB_SORT_KEY;
+      this.table = new DynamoDBTable({ region, tableName, partitionKey, sortKey });
+    }
   }
 
   public truncate = async (chunkSize?: number): Promise<void> => {
@@ -37,7 +41,9 @@ export class StatisticsTable {
    */
   public getStatistics = async (integrationTimestamp: string): Promise<StatisticsItem | undefined> => {
     const eventType = 'STATISTICS';
-    const item = await this.table.getItem(integrationTimestamp, eventType);
+    const item = await this.table.getItem({ 
+      partitionKeyValue: integrationTimestamp, sortKeyValue: eventType 
+    });
     return item as StatisticsItem | undefined;
   }
 
@@ -50,7 +56,9 @@ export class StatisticsTable {
    */
   public getChunkStatistics = async (integrationTimestamp: string, chunkId: string): Promise<StatisticsItem | undefined> => {
     const eventType = `STATISTICS-${chunkId}`;
-    const item = await this.table.getItem(integrationTimestamp, eventType);
+    const item = await this.table.getItem({ 
+      partitionKeyValue: integrationTimestamp, sortKeyValue: eventType 
+    });
     return item as StatisticsItem | undefined;
   }
 
@@ -80,11 +88,11 @@ export class StatisticsTable {
    */
   public getSyncList = async (): Promise<string[]> => {
     // Query the GSI with errorType = "STATISTICS" to get all statistics records
-    const items = await this.table.queryGSI(
-      DYNAMODB_GSI_INDEX_NAME,
-      DYNAMODB_SECONDARY_PARTITION_KEY,
-      'STATISTICS'
-    );
+    const items = await this.table.queryGSI({
+      indexName: DYNAMODB_GSI_INDEX_NAME,
+      gsiPartitionKey: DYNAMODB_SECONDARY_PARTITION_KEY,
+      partitionKeyValue: 'STATISTICS'
+    });
 
     // Extract and return the integrationTimestamp from each item
     // Results are already sorted chronologically by the GSI's sort key
@@ -134,7 +142,9 @@ export class StatisticsTable {
    * @returns FLAGS object if found, undefined otherwise
    */
   public async readFlags(syncRunId: string): Promise<Record<string, any> | undefined> {
-    const item = await this.table.getItem(syncRunId, 'FLAGS');
+    const item = await this.table.getItem({ 
+      partitionKeyValue: syncRunId, sortKeyValue: 'FLAGS' 
+    });
     if (!item) return undefined;
     
     // Remove PK/SK from result
@@ -173,7 +183,9 @@ export class StatisticsTable {
    * @returns METADATA object if found, undefined otherwise
    */
   public async readMetadata(syncRunId: string): Promise<Record<string, any> | undefined> {
-    const item = await this.table.getItem(syncRunId, 'METADATA');
+    const item = await this.table.getItem({ 
+      partitionKeyValue: syncRunId, sortKeyValue: 'METADATA' 
+    });
     if (!item) return undefined;
     
     // Remove PK/SK from result
@@ -262,7 +274,7 @@ export class StatisticsTable {
    * @returns Number of records deleted
    */
   public async deleteByPartitionKey(syncRunId: string): Promise<number> {
-    return await this.table.deleteByPartitionKey(syncRunId);
+    return await this.table.deleteByPartitionKey({ partitionKeyValue: syncRunId });
   }
 }
 

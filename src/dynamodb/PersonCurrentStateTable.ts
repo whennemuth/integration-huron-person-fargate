@@ -153,7 +153,7 @@ export class PersonCurrentStateTable {
    * @param records - Array of PersonCurrentStateRecord to write
    */
   public async batchWritePersonState(records: PersonCurrentStateRecord[]): Promise<void> {
-    await this.table.batchWrite(records, 'put');
+    await this.table.batchWrite({ items: records, operation: 'put' });
   }
 
   /**
@@ -168,11 +168,11 @@ export class PersonCurrentStateTable {
    * @returns Array of PersonCurrentStateRecord matching the sync run
    */
   public async getPersonsInSyncRun(syncRunId: string): Promise<PersonCurrentStateRecord[]> {
-    const items = await this.table.queryGSI(
-      DYNAMODB_GSI_INDEX_NAME,
-      DYNAMODB_GSI_PARTITION_KEY,
-      syncRunId
-    );
+    const items = await this.table.queryGSI({
+      indexName: DYNAMODB_GSI_INDEX_NAME,
+      gsiPartitionKey: DYNAMODB_GSI_PARTITION_KEY,
+      partitionKeyValue: syncRunId
+    });
     
     return items as PersonCurrentStateRecord[];
   }
@@ -184,7 +184,7 @@ export class PersonCurrentStateTable {
    * @returns PersonCurrentStateRecord if found, undefined otherwise
    */
   public async getPersonState(personId: string): Promise<PersonCurrentStateRecord | undefined> {
-    const item = await this.table.getItem(personId);
+    const item = await this.table.getItem({ partitionKeyValue: personId });
     return item as PersonCurrentStateRecord | undefined;
   }
 
@@ -270,7 +270,7 @@ export class PersonCurrentStateTable {
     
     if (keysToDelete.length > 0) {
       console.log(`Deleting ${keysToDelete.length} person(s) with no previous state...`);
-      await this.table.batchWrite(keysToDelete, 'delete');
+      await this.table.batchWrite({ items: keysToDelete, operation: 'delete' });
     }
     
     console.log(`Restoration complete. Restored: ${restoredCount}, Deleted: ${deletedCount}`);

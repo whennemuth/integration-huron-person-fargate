@@ -1,5 +1,5 @@
 import { IContext } from '../../context/IContext';
-import { DynamoDBTable } from './DynamoDBTable';
+import { AbstractDynamoDbTable, DynamoDBTable } from './DynamoDBTable';
 
 /**
  * PersonHistory DynamoDB Table Constants
@@ -125,19 +125,14 @@ export interface PersonHistoryRecord {
  * ```
  */
 export class PersonHistoryTable {
-  private table: DynamoDBTable;
+  private table: AbstractDynamoDbTable;
 
-  constructor(private context: IContext) {
-    const region = context.REGION;
-    const tableName = DYNAMODB_TABLE_NAME(context);
-    const partitionKey = DYNAMODB_PARTITION_KEY;
-    const sortKey = DYNAMODB_SORT_KEY;
-    
-    this.table = new DynamoDBTable({ 
-      region, 
-      tableName, 
-      partitionKey,
-      sortKey
+  constructor(private context: IContext, table?: AbstractDynamoDbTable) { 
+    this.table = table ?? new DynamoDBTable({ 
+      region: context.REGION, 
+      tableName: DYNAMODB_TABLE_NAME(context), 
+      partitionKey: DYNAMODB_PARTITION_KEY,
+      sortKey: DYNAMODB_SORT_KEY
     });
   }
 
@@ -158,7 +153,7 @@ export class PersonHistoryTable {
    * @param records - Array of PersonHistoryRecord to write
    */
   public async batchWriteHistory(records: PersonHistoryRecord[]): Promise<void> {
-    await this.table.batchWrite(records, 'put');
+    await this.table.batchWrite({ items: records, operation: 'put' });
   }
 
   /**
@@ -169,7 +164,7 @@ export class PersonHistoryTable {
    * @returns Array of PersonHistoryRecord sorted by syncRunId
    */
   public async getPersonHistory(personId: string): Promise<PersonHistoryRecord[]> {
-    const items = await this.table.queryByPartitionKey(personId);
+    const items = await this.table.queryByPartitionKey({ partitionKeyValue: personId });
     return items as PersonHistoryRecord[];
   }
 
@@ -185,14 +180,14 @@ export class PersonHistoryTable {
     syncRunId: string, 
     changeType?: 'NEW' | 'UPDATED' | 'DELETED'
   ): Promise<PersonHistoryRecord[]> {
-    const items = await this.table.queryGSI(
-      DYNAMODB_GSI1_INDEX_NAME,
-      DYNAMODB_GSI1_PARTITION_KEY,
-      syncRunId,
-      changeType ? DYNAMODB_GSI1_SORT_KEY : undefined,
-      changeType,
-      '=' // Exact match on changeType
-    );
+    const items = await this.table.queryGSI({
+      indexName: DYNAMODB_GSI1_INDEX_NAME,
+      gsiPartitionKey: DYNAMODB_GSI1_PARTITION_KEY,
+      partitionKeyValue: syncRunId,
+      gsiSortKey: changeType ? DYNAMODB_GSI1_SORT_KEY : undefined,
+      sortKeyValue: changeType,
+      sortKeyOperator: '=' // Exact match on changeType
+    });
     
     return items as PersonHistoryRecord[];
   }
@@ -210,14 +205,14 @@ export class PersonHistoryTable {
     changeType: 'NEW' | 'UPDATED' | 'DELETED',
     syncRunIdStart?: string
   ): Promise<PersonHistoryRecord[]> {
-    const items = await this.table.queryGSI(
-      DYNAMODB_GSI2_INDEX_NAME,
-      DYNAMODB_GSI2_PARTITION_KEY,
-      changeType,
-      syncRunIdStart ? DYNAMODB_GSI2_SORT_KEY : undefined,
-      syncRunIdStart,
-      syncRunIdStart ? '>=' : '='
-    );
+    const items = await this.table.queryGSI({
+      indexName: DYNAMODB_GSI2_INDEX_NAME,
+      gsiPartitionKey: DYNAMODB_GSI2_PARTITION_KEY,
+      partitionKeyValue: changeType,
+      gsiSortKey: syncRunIdStart ? DYNAMODB_GSI2_SORT_KEY : undefined,
+      sortKeyValue: syncRunIdStart,
+      sortKeyOperator: syncRunIdStart ? '>=' : '='
+    });
     
     return items as PersonHistoryRecord[];
   }
@@ -263,11 +258,11 @@ export class PersonHistoryTable {
   public async deleteByPartitionKey(syncRunId: string): Promise<number> {
     // Note: PersonHistory table uses personId as PK, syncRunId as SK
     // We need to query GSI1 to find all records for this syncRunId
-    const items = await this.table.queryGSI(
-      DYNAMODB_GSI1_INDEX_NAME,
-      DYNAMODB_GSI1_PARTITION_KEY,
-      syncRunId
-    );
+    const items = await this.table.queryGSI({
+      indexName: DYNAMODB_GSI1_INDEX_NAME,
+      gsiPartitionKey: DYNAMODB_GSI1_PARTITION_KEY,
+      partitionKeyValue: syncRunId
+    });
     
     if (items.length === 0) {
       console.log(`No history records found for sync run ${syncRunId}`);
@@ -282,7 +277,7 @@ export class PersonHistoryTable {
       [DYNAMODB_SORT_KEY]: item.syncRunId
     }));
     
-    await this.table.batchWrite(keys, 'delete');
+    await this.table.batchWrite({ items: keys, operation: 'delete' });
     
     console.log(`Deleted ${keys.length} history records for sync run ${syncRunId}`);
     return keys.length;
