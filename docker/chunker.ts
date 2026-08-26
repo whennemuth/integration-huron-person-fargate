@@ -213,6 +213,7 @@ const getChunkerInstance = async (config: Config, chunkerQueue: ChunkerQueue): P
         getMessage = () => undefined
         getChunkDirectory = () => ''
         getSyncPopulation = () => SyncPopulation.PersonFull
+        acquiredCacheLock = false
       }();
     }
     
@@ -518,24 +519,20 @@ export async function main() {
     });
 
     /**
-     * Writes the full population from the target API to an S3 file as a cache for lookup during chunk processing.
+     * Ensure population cache exists for processor lookup.
      * In mock target mode, fetches population from MockTargetPersonTable instead of real Huron API.
+     * Cache creation is thread-safe; concurrent tasks will coordinate using marker file locks.
      */
     if(chunkFromParams.bulkReset || !chunkFromParams.trustPreviousStorage) {
       const config = await getConfig();
       const { CACHE_FILE_NAME } = AbstractPersonCache;
       const cache = PersonCacheFactory.create(config, useMockTarget);
-      const fileParms = { 
+      const cacheParams = { 
         bucketName: chunksBucket, 
         key: chunker.getChunkDirectory() + `/${CACHE_FILE_NAME}`, 
         region: region! 
-      }
-      if(await cache.cacheExists(fileParms)) {
-        console.log(`✓ Population cache file already exists in S3 at s3://${fileParms.bucketName}/${fileParms.key}`);
-      }
-      else {
-        await cache.setCache(fileParms);
-      }
+      };
+      await cache.ensureCache(cacheParams);
     }
 
     await chunker.runChunking(chunkFromParams);

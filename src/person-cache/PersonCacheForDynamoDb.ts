@@ -145,4 +145,53 @@ export class PersonCacheForDynamoDb extends AbstractPersonCache {
   public async writeToFile(filePath: string): Promise<void> {
     return this.s3Implementation.writeToFile(filePath);
   }
+
+  /**
+   * Acquire cache lock (delegates to S3).
+   * 
+   * Lock file is always stored in S3, even in DynamoDB mode,
+   * since the cache file itself is in S3.
+   */
+  public async acquireCacheLock(params: { 
+    bucketName: string; 
+    key: string; 
+    region: string 
+  }): Promise<boolean> {
+    return this.s3Implementation.acquireCacheLock(params);
+  }
+
+  /**
+   * Release cache lock (delegates to S3).
+   */
+  public async releaseCacheLock(params: { 
+    bucketName: string; 
+    key: string; 
+    region: string 
+  }): Promise<void> {
+    return this.s3Implementation.releaseCacheLock(params);
+  }
+
+  /**
+   * Check if lock is active (delegates to S3).
+   */
+  public async isLockActive(params: { 
+    bucketName: string; 
+    key: string; 
+    region: string 
+  }): Promise<boolean> {
+    return this.s3Implementation.isLockActive(params);
+  }
+
+  /**
+   * Ensure cache exists (delegates to S3).
+   * 
+   * Cache file and lock file are always in S3, even in DynamoDB mode.
+   */
+  public async ensureCache(params: { 
+    bucketName: string; 
+    key: string; 
+    region: string;
+  }): Promise<{ existed: boolean; created: boolean; skipped: boolean }> {
+    return this.s3Implementation.ensureCache(params);
+  }
 }

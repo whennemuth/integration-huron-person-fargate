@@ -99,6 +99,158 @@ export class PersonCacheForS3 extends AbstractPersonCache {
   }
 
   /**
+   * Attempt to acquire cache creation lock by creating a marker file.
+   * 
+   * Uses S3 PutObject to create a lock marker file. If the file already exists,
+   * this indicates another task is creating the cache.
+   * 
+   * Lock file contains metadata for debugging:
+   * - taskId: ECS task ID that acquired the lock
+   * - timestamp: When the lock was acquired
+   * - expiresAt: Unix timestamp when lock expires (10 minutes)
+   * 
+   * @returns True if lock acquired successfully, false if lock already held
+   */
+  public async acquireCacheLock(params: { bucketName: string; key: string; region: string }): Promise<boolean> {
+    const { bucketName, key, region } = params;
+    const lockKey = key.replace(AbstractPersonCache.CACHE_FILE_NAME, AbstractPersonCache.CACHE_LOCK_FILE_NAME);
+    const s3 = new S3({ region });
+
+    try {
+      // Check if lock already exists
+      if (await this.isLockActive({ bucketName, key, region })) {
+        return false;
+      }
+
+      // Try to create lock file
+      const lockData = {
+        taskId: process.env.ECS_TASK_ID || process.env.HOSTNAME || 'unknown',
+        timestamp: new Date().toISOString(),
+        expiresAt: Date.now() + 600000, // 10 minutes TTL
+      };
+
+      await s3.putObject({
+        Bucket: bucketName,
+        Key: lockKey,
+        Body: JSON.stringify(lockData, null, 2),
+        ContentType: 'application/json',
+      });
+
+      console.log(`✓ Acquired cache lock: s3://${bucketName}/${lockKey}`);
+      return true;
+    } catch (error: any) {
+      console.error(`Failed to acquire cache lock:`, error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Release cache creation lock by deleting the marker file.
+   */
+  public async releaseCacheLock(params: { bucketName: string; key: string; region: string }): Promise<void> {
+    const { bucketName, key, region } = params;
+    const lockKey = key.replace(AbstractPersonCache.CACHE_FILE_NAME, AbstractPersonCache.CACHE_LOCK_FILE_NAME);
+    const s3 = new S3({ region });
+
+    try {
+      await s3.deleteObject({
+        Bucket: bucketName,
+        Key: lockKey,
+      });
+      console.log(`✓ Released cache lock: s3://${bucketName}/${lockKey}`);
+    } catch (error: any) {
+      // Ignore errors (lock file may not exist)
+      console.warn(`Warning: Failed to release cache lock (may not exist): ${error.message}`);
+    }
+  }
+
+  /**
+   * Check if cache creation lock is active and hasn't expired.
+   * 
+   * Reads lock file and validates TTL. If lock has expired, it's considered inactive.
+   */
+  public async isLockActive(params: { bucketName: string; key: string; region: string }): Promise<boolean> {
+    const { bucketName, key, region } = params;
+    const lockKey = key.replace(AbstractPersonCache.CACHE_FILE_NAME, AbstractPersonCache.CACHE_LOCK_FILE_NAME);
+    const s3 = new S3({ region });
+
+    try {
+      const response = await s3.getObject({
+        Bucket: bucketName,
+        Key: lockKey,
+      });
+
+      if (!response.Body) {
+        return false;
+      }
+
+      const lockDataStr = await response.Body.transformToString();
+      const lockData = JSON.parse(lockDataStr);
+
+      // Check if lock has expired
+      if (lockData.expiresAt && Date.now() > lockData.expiresAt) {
+        console.log(`⏱️  Cache lock expired (created at ${lockData.timestamp})`);
+        return false;
+      }
+
+      return true;
+    } catch (error: any) {
+      if (error.name === 'NoSuchKey' || error.name === 'NotFound') {
+        return false;
+      }
+      // If we can't read the lock file, assume it doesn't exist
+      console.warn(`Warning: Error checking lock status: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Ensure person cache exists, creating it if necessary.
+   * 
+   * Thread-safe implementation using marker file lock pattern.
+   */
+  public async ensureCache(params: { 
+    bucketName: string; 
+    key: string; 
+    region: string;
+  }): Promise<{ existed: boolean; created: boolean; skipped: boolean }> {
+    // Check if cache already exists
+    if (await this.cacheExists(params)) {
+      console.log(`✓ Cache already exists: s3://${params.bucketName}/${params.key}`);
+      return { existed: true, created: false, skipped: false };
+    }
+
+    // Check if another task is creating the cache
+    if (await this.isLockActive(params)) {
+      console.log(`⏳ Another task is creating cache - skipping (cache will be available when processor runs)`);
+      return { existed: false, created: false, skipped: true };
+    }
+
+    // Try to acquire lock and create cache
+    if (await this.acquireCacheLock(params)) {
+      try {
+        // Double-check cache doesn't exist (another task might have created it between checks)
+        if (await this.cacheExists(params)) {
+          console.log(`✓ Cache created by another task - continuing`);
+          return { existed: true, created: false, skipped: false };
+        }
+
+        console.log(`🔒 Acquired lock - creating cache...`);
+        await this.setCache(params);
+        console.log(`✓ Cache created successfully`);
+        return { existed: false, created: true, skipped: false };
+      } finally {
+        // Always release lock, even if creation failed
+        await this.releaseCacheLock(params);
+      }
+    }
+
+    // Lock acquisition failed - another task beat us to it
+    console.log(`⏳ Another task acquired lock - skipping cache creation`);
+    return { existed: false, created: false, skipped: true };
+  }
+
+  /**
    * Fetch full population from target API.
    * 
    * In mock target mode, "pretends" DynamoDB mockTargetPersonTable is the Target API.

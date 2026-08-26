@@ -42,6 +42,7 @@ export abstract class AbstractPersonCache {
   protected personTarget: AbstractPersonTarget | undefined;
 
   public static CACHE_FILE_NAME = '_personCache.txt';
+  public static CACHE_LOCK_FILE_NAME = '_personCache.creating';
 
   constructor(params?: { 
     config?: Config;
@@ -97,4 +98,74 @@ export abstract class AbstractPersonCache {
    * @param filePath - Local filesystem path
    */
   public abstract writeToFile(filePath: string): Promise<void>;
+
+  /**
+   * Attempt to acquire cache creation lock.
+   * 
+   * Creates a marker file to signal that cache creation is in progress.
+   * This prevents multiple concurrent tasks from attempting to create the cache.
+   * 
+   * @param params - Storage location parameters
+   * @returns True if lock was acquired, false if another task holds the lock
+   */
+  public abstract acquireCacheLock(params: { 
+    bucketName: string; 
+    key: string; 
+    region: string 
+  }): Promise<boolean>;
+
+  /**
+   * Release cache creation lock.
+   * 
+   * Deletes the marker file created by acquireCacheLock().
+   * 
+   * @param params - Storage location parameters
+   */
+  public abstract releaseCacheLock(params: { 
+    bucketName: string; 
+    key: string; 
+    region: string 
+  }): Promise<void>;
+
+  /**
+   * Check if cache creation lock is active.
+   * 
+   * Checks for existence of lock marker file and validates TTL.
+   * 
+   * @param params - Storage location parameters
+   * @returns True if lock exists and hasn't expired, false otherwise
+   */
+  public abstract isLockActive(params: { 
+    bucketName: string; 
+    key: string; 
+    region: string 
+  }): Promise<boolean>;
+
+  /**
+   * Ensure person cache exists, creating it if necessary.
+   * 
+   * Uses marker file lock pattern to prevent race conditions when multiple
+   * concurrent tasks attempt cache creation simultaneously. This method is
+   * thread-safe: multiple callers can safely invoke it concurrently.
+   * 
+   * ## Behavior:
+   * - If cache exists: returns immediately
+   * - If another task is creating cache: skips (returns immediately)
+   * - If no cache and no lock: acquires lock, creates cache, releases lock
+   * 
+   * ## Race Condition Prevention:
+   * Multiple concurrent chunker tasks may start simultaneously (queue seeding scenario).
+   * Only one task will create the cache; others will skip gracefully.
+   * 
+   * @param params - Storage location parameters
+   * @returns Result indicating what happened:
+   *   - existed: cache already existed before this call
+   *   - created: this task created the cache
+   *   - skipped: another task is/was creating it
+   */
+  public abstract ensureCache(params: { 
+    bucketName: string; 
+    key: string; 
+    region: string;
+  }): Promise<{ existed: boolean; created: boolean; skipped: boolean }>;
 }
