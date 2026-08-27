@@ -9,6 +9,9 @@ import { LambdaDestination } from 'aws-cdk-lib/aws-s3-notifications';
 import { Construct } from 'constructs';
 import { FUNCTION_BASE_NAME } from '../../../src/merging/MergerSubscriber';
 import { IContext } from '../../../context/IContext';
+import { DYNAMODB_TABLE_NAME as STATISTICS_TABLE_NAME } from '../../../src/dynamodb/StatisticsTable';
+import { DYNAMODB_TABLE_NAME as PERSON_CURRENT_STATE_TABLE_NAME } from '../../../src/dynamodb/PersonCurrentStateTable';
+import { DYNAMODB_TABLE_NAME as PERSON_HISTORY_TABLE_NAME } from '../../../src/dynamodb/PersonHistoryTable';
 
 export interface MergerSubscribingLambdaProps {
   vpc: IVpc;
@@ -88,9 +91,9 @@ export class MergerSubscribingLambda extends Construct {
         PREVIOUS_STORAGE_TYPE: props.context.PREVIOUS_STORAGE_TYPE || 's3',
         // Conditionally add DynamoDB table names when in DynamoDB mode
         ...(props.context.PREVIOUS_STORAGE_TYPE === 'dynamodb' && {
-          DYNAMODB_STATISTICS_TABLE_NAME: props.context.dynamoDbTables?.statisticsTable?.tableName,
-          DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME: props.context.dynamoDbTables?.personCurrentStateTable?.tableName,
-          DYNAMODB_PERSON_HISTORY_TABLE_NAME: props.context.dynamoDbTables?.personHistoryTable?.tableName,
+          DYNAMODB_STATISTICS_TABLE_NAME: STATISTICS_TABLE_NAME(props.context),
+          DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME: PERSON_CURRENT_STATE_TABLE_NAME(props.context),
+          DYNAMODB_PERSON_HISTORY_TABLE_NAME: PERSON_HISTORY_TABLE_NAME(props.context),
         }),
         DESCRIPTION1:
           `Sends SQS message to merger queue to trigger Fargate task that checks completeness 
@@ -138,42 +141,31 @@ export class MergerSubscribingLambda extends Construct {
     );
 
     // Grant DynamoDB permissions if in DynamoDB mode
-    if (props.context.PREVIOUS_STORAGE_TYPE === 'dynamodb' && props.context.dynamoDbTables) {
-      const { personCurrentStateTable, personHistoryTable, statisticsTable } = props.context.dynamoDbTables;
-      const tableArns: string[] = [];
+    if (props.context.PREVIOUS_STORAGE_TYPE === 'dynamodb') {
+      const statisticsTableName = STATISTICS_TABLE_NAME(props.context);
+      const personCurrentStateTableName = PERSON_CURRENT_STATE_TABLE_NAME(props.context);
+      const personHistoryTableName = PERSON_HISTORY_TABLE_NAME(props.context);
       
-      if (statisticsTable) {
-        tableArns.push(
-          `arn:aws:dynamodb:${props.region}:*:table/${statisticsTable.tableName}`,
-          `arn:aws:dynamodb:${props.region}:*:table/${statisticsTable.tableName}/index/*`
-        );
-      }
-      if (personCurrentStateTable) {
-        tableArns.push(
-          `arn:aws:dynamodb:${props.region}:*:table/${personCurrentStateTable.tableName}`,
-          `arn:aws:dynamodb:${props.region}:*:table/${personCurrentStateTable.tableName}/index/*`
-        );
-      }
-      if (personHistoryTable) {
-        tableArns.push(
-          `arn:aws:dynamodb:${props.region}:*:table/${personHistoryTable.tableName}`,
-          `arn:aws:dynamodb:${props.region}:*:table/${personHistoryTable.tableName}/index/*`
-        );
-      }
+      const tableArns: string[] = [
+        `arn:aws:dynamodb:${props.region}:*:table/${statisticsTableName}`,
+        `arn:aws:dynamodb:${props.region}:*:table/${statisticsTableName}/index/*`,
+        `arn:aws:dynamodb:${props.region}:*:table/${personCurrentStateTableName}`,
+        `arn:aws:dynamodb:${props.region}:*:table/${personCurrentStateTableName}/index/*`,
+        `arn:aws:dynamodb:${props.region}:*:table/${personHistoryTableName}`,
+        `arn:aws:dynamodb:${props.region}:*:table/${personHistoryTableName}/index/*`,
+      ];
 
-      if (tableArns.length > 0) {
-        this.function.addToRolePolicy(
-          new PolicyStatement({
-            effect: Effect.ALLOW,
-            actions: [
-              'dynamodb:GetItem',
-              'dynamodb:Query',
-              'dynamodb:Scan',
-            ],
-            resources: tableArns,
-          })
-        );
-      }
+      this.function.addToRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:GetItem',
+            'dynamodb:Query',
+            'dynamodb:Scan',
+          ],
+          resources: tableArns,
+        })
+      );
     }
 
     // Add S3 event notification to trigger Lambda when marker files are created

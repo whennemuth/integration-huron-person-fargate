@@ -70,7 +70,7 @@ export class StatisticsTable {
    * @returns Array of statistics items for all chunks, sorted by sort key
    */
   public getAllChunkStatistics = async (integrationTimestamp: string): Promise<StatisticsItem[]> => {
-    const items = await this.table.queryByPartitionKey(integrationTimestamp, 'STATISTICS-chunk-');
+    const items = await this.table.queryByPartitionKey({ partitionKeyValue: integrationTimestamp, sortKeyPrefix: 'STATISTICS-chunk-' });
     return items as StatisticsItem[];
   }
 
@@ -232,7 +232,9 @@ export class StatisticsTable {
    * @returns Array of chunk status records
    */
   public async getAllChunkStatuses(syncRunId: string): Promise<any[]> {
-    const items = await this.table.queryByPartitionKey(syncRunId, 'CHUNK_STATUS_');
+    const items = await this.table.queryByPartitionKey({ 
+      partitionKeyValue: syncRunId, sortKeyPrefix: 'CHUNK_STATUS_' 
+    });
     return items;
   }
 

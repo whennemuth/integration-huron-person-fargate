@@ -126,16 +126,11 @@ export class MetadataFactoryForBootstrap {
       );
     }
 
-    // Create minimal context with only DynamoDB table information
+    // Create minimal context with only PREVIOUS_STORAGE_TYPE
+    // Table names are read from environment variables by the table modules themselves
     // Other fields are not needed for metadata operations
     return {
       PREVIOUS_STORAGE_TYPE: 'dynamodb',
-      dynamoDbTables: {
-        statisticsTable: { tableName: DYNAMODB_STATISTICS_TABLE_NAME },
-        personCurrentStateTable: { tableName: DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME },
-        personHistoryTable: { tableName: DYNAMODB_PERSON_HISTORY_TABLE_NAME },
-        mockTargetPersonTable: { tableName: DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME }
-      }
     } as unknown as IContext;
   }
 

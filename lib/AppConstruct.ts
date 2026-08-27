@@ -27,9 +27,9 @@ export class AppConstruct extends Construct {
   public readonly queue: QueueInfrastructure;
   public readonly chunksBucket: Bucket;
   public readonly subscribingLambdas: SubscribingLambdas;
-  public readonly dynamoDbTables: DynamoDbTables;
   public readonly sourceSimulator?: SourceSimulator;
   public readonly huronPersonSecrets: HuronPersonSecrets;
+  public readonly dynamoDbTables: DynamoDbTables;
 
   constructor(scope: Construct, id: string, props: AppConstructProps) {
     super(scope, id);
@@ -68,7 +68,7 @@ export class AppConstruct extends Construct {
       config,
       huronPersonSecrets: this.huronPersonSecrets,
       stackScope: scope,  // Pass stack reference for escape hatches
-      dynamoDbTables: this.dynamoDbTables, // Pass DynamoDB tables to ECS infrastructure for task definitions
+      dynamoDbTables: this.dynamoDbTables, // Pass DynamoDB tables for task definitions (not in IContext)
       tags,
     });
 
@@ -134,8 +134,6 @@ export class AppConstruct extends Construct {
     // ========================================
     // Create subscribing lambdas before services so chunker lambda can be
     // passed to ChunkerService for EventBridge schedule configuration
-    // Inject dynamoDbTables into context so Lambda can access table names
-    const ctxWithTables: IContext = { ...ctx, dynamoDbTables: this.dynamoDbTables };
     this.subscribingLambdas = new SubscribingLambdas(this, 'SubscribingLambdas', {
       ecsInfra: this.ecs,
       chunksBucket: this.chunksBucket,
@@ -144,7 +142,7 @@ export class AppConstruct extends Construct {
       processorQueueArn: this.queue.processorQueue.queueArn,
       mergerQueueUrl: this.queue.mergerQueue.queueUrl,
       stackScope: scope,
-      context: ctxWithTables,
+      context: ctx,
       tags,
     });
 

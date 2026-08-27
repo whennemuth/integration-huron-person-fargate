@@ -54,9 +54,7 @@ export class TaskDefinitions extends Construct {
     const storageParams: StorageParams = { previousStorageType, storageConfig: { } }
 
     // For any storage type, we assume that we can also provide DynamoDB tables for statistics 
-    // tracking, atomic counters, and mock target person tables. The 'database' and 'file' types
-    // are not implemented yet, and it may not be practical for them to use dynamodb for the 
-    // tables listed above, so this blanket provisioning is tentative.
+    // tracking, atomic counters, and mock target person tables.
     storageParams.storageConfig.dynamodb = dynamoDbTables;
 
     switch(previousStorageType) {

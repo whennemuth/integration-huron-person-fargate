@@ -138,7 +138,7 @@ export class EcsInfrastructure extends Construct {
       context: ctx,
       config,
       huronPersonSecrets, // Pass HuronPersonSecrets for task definitions
-      dynamoDbTables, // Pass DynamoDB table name for processor task definition
+      dynamoDbTables, // Pass DynamoDB tables for environment variables and IAM permissions
       tags,
     });
   }

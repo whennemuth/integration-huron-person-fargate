@@ -3,6 +3,7 @@ import { Construct } from 'constructs';
 import { AppConstruct } from './AppConstruct';
 import { IContext } from '../context/IContext';
 import { Config } from 'integration-huron-person';
+import { DYNAMODB_TABLE_NAME as STATISTICS_TABLE_NAME } from '../src/dynamodb/StatisticsTable';
 
 export interface IntegrationHuronPersonLambdaStackProps extends StackProps {
   config: Config;
@@ -95,7 +96,7 @@ export class IntegrationHuronPersonLambdaStack extends Stack {
     });
 
     new CfnOutput(this, `StatisticsTableName-${landscape}`, {
-      value: app.dynamoDbTables.statisticsTable.tableName,
+      value: STATISTICS_TABLE_NAME(ctx),
       description: 'DynamoDB table for processor statistics and error tracking',
     });
 
