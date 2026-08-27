@@ -371,12 +371,13 @@ export async function main(queueReader: QueueReader) {
       bulkReset, // Pass through bulk reset flag from environment variable
       trustPreviousStorage, // Pass through trust flag - cache is used when false to force upsert lookup path
       cache, // Shared cache for JWT tokens
-      lookupPersonInTargetSystemCache: async (person: FieldSet | string) => {
-        // Provide a lookup against s3 for a list of ALL buids, which is retained as a cache.
-        return new PersonCacheLookup({ 
-          config, region, bucketName 
-        }).lookupPersonInTargetSystemCache({ person, s3Key });
-      },
+      lookupPersonInTargetSystemCache: (() => {
+        // Create PersonCacheLookup instance once for entire chunk processing (once due to closure)
+        const personCacheLookup = new PersonCacheLookup({ config, region, bucketName });
+        // Return the lookup function that uses the cached instance
+        return (person: FieldSet | string) => 
+          personCacheLookup.lookupPersonInTargetSystemCache({ person, s3Key });
+      })(),
       errorEventProcessor: errorTracker, // Inject error tracker for tracking errors and throttling
       retryStrategy, // Inject retry strategy for handling transient API failures (429, 5xx, network errors)
       cleanupPreviousData,

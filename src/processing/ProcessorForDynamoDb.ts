@@ -264,12 +264,13 @@ export async function main(queueReader: QueueReader) {
       bulkReset,
       trustPreviousStorage,
       cache,
-      lookupPersonInTargetSystemCache: async (person: FieldSet | string) => {
-        // Provide a lookup against s3 for a list of ALL buids, which is retained as a cache.
-        return new PersonCacheLookup({ 
-          config, region, bucketName 
-        }).lookupPersonInTargetSystemCache({ person, s3Key });
-      },
+      lookupPersonInTargetSystemCache: (() => {
+        // Create PersonCacheLookup instance once for entire chunk processing
+        const personCacheLookup = new PersonCacheLookup({ config, region, bucketName });
+        // Return the lookup function that uses the cached instance
+        return (person: FieldSet | string) => 
+          personCacheLookup.lookupPersonInTargetSystemCache({ person, s3Key });
+      })(),
       errorEventProcessor: errorTracker,
       retryStrategy,
       cleanupPreviousData: false, // DynamoDB manages its own data, no cleanup needed
