@@ -76,6 +76,9 @@ export class MetadataForDynamoDb implements IMetadataStorage {
       runFailed,
       runFailureMessage,
       runFailureTimestamp,
+      chunkCount,
+      totalRecords,
+      chunkKeys,
       dryRun = false,
       replace = false
     } = params;
@@ -101,6 +104,17 @@ export class MetadataForDynamoDb implements IMetadataStorage {
     }
     if (runFailureTimestamp !== undefined) {
       metadata.runFailureTimestamp = runFailureTimestamp;
+    }
+
+    // Add aggregate data for merger completion validation
+    if (chunkCount !== undefined) {
+      metadata.chunkCount = chunkCount;
+    }
+    if (totalRecords !== undefined) {
+      metadata.totalRecords = totalRecords;
+    }
+    if (chunkKeys !== undefined) {
+      metadata.chunkKeys = chunkKeys;
     }
 
     if (dryRun) {

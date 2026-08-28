@@ -34,25 +34,37 @@ type CoreMetadataFields = Flags & {
 /**
  * Stored metadata format - what gets persisted to storage.
  * This is the canonical definition used throughout the codebase.
+ * 
+ * Aggregate fields usage:
+ * - chunkCount: REQUIRED by merger for completion validation (ensures all expected chunks are processed)
+ * - totalRecords: Used for statistics and audit trail
+ * - chunkKeys: Used for debugging and audit trail (not used by merger for validation)
  */
 export type ChunkMetadata = CoreMetadataFields & {
   deltaStoragePath: string;
   createdAt: string;
+  chunkCount?: number;
+  totalRecords?: number;
+  chunkKeys?: string[];
 };
 
 /**
  * Input parameters for writing metadata.
  * Extends core fields with write-specific operational parameters.
  * 
- * Note: chunkCount, totalRecords, and chunkKeys are NOT included here.
- * These are informational only and should be computed on-demand from marker files
- * rather than persisted. Callers should log these values separately if needed.
+ * Aggregate values usage:
+ * - chunkCount: Should be provided for merger completion validation
+ * - totalRecords: Optional, used for statistics and audit trail
+ * - chunkKeys: Optional, used for debugging and audit trail
  */
 export type WriteMetadataParams = CoreMetadataFields & {
   bucketName?: string;
   dryRun?: boolean;
   replace?: boolean; // Whether to replace existing metadata file if it exists (default: false)
   region?: string;
+  chunkCount?: number;
+  totalRecords?: number;
+  chunkKeys?: string[];
 };
 
 /**

@@ -47,9 +47,8 @@ export class MetadataForS3 implements IMetadataStorage {
 
   /**
    * Write chunk metadata to S3.
-   * Persists only the run manifest (flags, paths, timestamps).
-   * Parameters like chunkCount, totalRecords, chunkKeys are accepted for caller convenience but NOT persisted.
-   * These values are now determined from contiguous marker files and S3 state, not from metadata.
+   * Persists the run manifest (flags, paths, timestamps) and aggregate data (chunkCount, totalRecords, chunkKeys).
+   * Aggregate data is used by merger for completion validation to ensure all expected chunks are processed.
    */
   public async write(params: WriteMetadataParams): Promise<void> {
     const { 
@@ -62,6 +61,9 @@ export class MetadataForS3 implements IMetadataStorage {
       runFailed,
       runFailureMessage,
       runFailureTimestamp,
+      chunkCount,
+      totalRecords,
+      chunkKeys,
       dryRun = false,
       region,
       replace = false
@@ -91,6 +93,17 @@ export class MetadataForS3 implements IMetadataStorage {
     }
     if (runFailureTimestamp !== undefined) {
       metadata.runFailureTimestamp = runFailureTimestamp;
+    }
+
+    // Add aggregate data for merger completion validation
+    if (chunkCount !== undefined) {
+      metadata.chunkCount = chunkCount;
+    }
+    if (totalRecords !== undefined) {
+      metadata.totalRecords = totalRecords;
+    }
+    if (chunkKeys !== undefined) {
+      metadata.chunkKeys = chunkKeys;
     }
 
     const metadataJson = JSON.stringify(metadata, null, 2);

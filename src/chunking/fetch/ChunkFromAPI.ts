@@ -624,8 +624,8 @@ export class ChunkFromAPI implements IChunkFromSource {
           aggregatedChunkKeys.forEach(key => console.log(`  - s3://${chunksBucket}/${key}`));
         }
 
-        // Write metadata manifest (source, target, paths, timestamps, flags)
-        // Merger will verify completion via contiguous marker ordinals, not metadata fields
+        // Write metadata manifest (source, target, paths, timestamps, flags, aggregate data)
+        // Merger will verify completion via contiguous marker ordinals AND matching chunkCount
         await writeChunkMetadata(this.config, {
           storage: chunksStorage,
           bucketName: chunksBucket,
@@ -637,13 +637,16 @@ export class ChunkFromAPI implements IChunkFromSource {
           bulkReset,
           trustPreviousStorage,
           syncPopulation: this.taskParameters.populationType as SyncPopulation,
+          chunkCount: aggregatedChunkCount,
+          totalRecords: aggregatedTotalRecords,
+          chunkKeys: aggregatedChunkKeys,
           region
         } satisfies WriteMetadataParams);
 
         console.log(`\n✓ Chunking complete with aggregated metadata:`);
         console.log(`   Total chunks: ${aggregatedChunkCount}`);
         console.log(`   Total records: ${aggregatedTotalRecords}`);
-        console.log(`\n📝 Note: Merger will verify completion via contiguous marker ordinals (0..${aggregatedChunkCount - 1}), not metadata.chunkCount`);
+        console.log(`\n📝 Note: Merger will verify completion via contiguous marker ordinals (0..${aggregatedChunkCount - 1}) AND chunkCount=${aggregatedChunkCount}`);
       }
       
     } catch (e: any) {
