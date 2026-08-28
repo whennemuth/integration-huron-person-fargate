@@ -1,10 +1,14 @@
 /**
- * Source Simulator Lambda - Mock API for Person Data
+ * Source Simulator Lambda - Mock API for Person and Terms Data
  * 
- * This Lambda simulates the source person API for testing purposes, eliminating the
- * 30-minute cooldown constraint of the real API.
+ * This Lambda simulates both the source person API and current terms API for testing,
+ * eliminating the 30-minute cooldown constraint of the real APIs.
  * 
- * **Design:**
+ * **Endpoints:**
+ * - `/` or empty path: Person data endpoint (people API)
+ * - `/terms` or `/current-terms`: Current terms endpoint
+ * 
+ * **Design (Person Endpoint):**
  * - Stateful depletion model: Every request claims the next contiguous slice of available records
  * - Non-deterministic by request params: `offset` is accepted for compatibility but does not drive allocation
  * - Validates API key from Secrets Manager against incoming requests
@@ -12,9 +16,15 @@
  * - Matches real API response structure: `{ response: [persons] }`
  * - Simulates slow API: Optional delay before responding via MOCK_SIMULATED_DELAY_SECONDS
  * 
- * **Query Parameters:**
+ * **Design (Terms Endpoint):**
+ * - Returns static list of 6 terms (2 current, 2 past, 2 future)
+ * - No pagination (terms are small dataset)
+ * - Matches real API response structure: `{ response: [terms] }`
+ * 
+ * **Query Parameters (Person Endpoint):**
  * - `recordCount`: Number of records to return (default: 200)
  * - `offset`: Batch offset for pagination (default: 0)
+ * - `nonCurrentTermRate`: Probability (0.0-1.0) that students have non-current term (default: 0.0)
  * 
  * **Headers:**
  * - `Authorization`: Bearer token containing API key
@@ -45,6 +55,18 @@ import { APIGatewayProxyEventV2, APIGatewayProxyResultV2, Context } from 'aws-la
 import { ConfigManager, DataSourceConfig, EndpointConfigForApiKey } from 'integration-huron-person';
 import { LambdaFunctionEnvironmentVariable } from '../../runner/LambdaFunctionEnvironmentVariable';
 import { AbstractAtomicCounter } from '../../dynamodb/AtomicCounter';
+
+/**
+ * Term interface matching CurrentTermsDataSource
+ */
+interface Term {
+  term: string;
+  termDescription: string;
+  academicCareer: string;
+  termBeginDate: string;
+  termEndDate: string;
+  currentInd: string;
+}
 
 export const FUNCTION_BASE_NAME = 'source-simulator';
 export const SIMULATOR_COUNTER_NAME = 'simulator-offset-counter';
@@ -127,9 +149,12 @@ interface MockPerson {
  * Generate a mock person record with deterministic ID based on index.
  * 
  * @param index - Zero-based index for person ID generation
+ * @param options - Optional configuration
+ * @param options.nonCurrentTermRate - Probability (0.0-1.0) that students have non-current term (default: 0.0)
  * @returns Mock person object with minimal fields DataMapper uses
  */
-function generateMockPerson(index: number): MockPerson {
+function generateMockPerson(index: number, options?: { nonCurrentTermRate?: number }): MockPerson {
+  const nonCurrentTermRate = options?.nonCurrentTermRate ?? 0.0;
   const personid = `U${String(index + 1).padStart(7, '0')}`;
   const bu_id = String(index + 1).padStart(8, '0');
 
@@ -165,13 +190,18 @@ function generateMockPerson(index: number): MockPerson {
   }
   // Student (33% of population)
   else if (personType === 1) {
+    // Probabilistic term assignment based on nonCurrentTermRate
+    // If random() < rate, assign past term "2256", else assign current term "2261"
+    const useNonCurrentTerm = Math.random() < nonCurrentTermRate;
+    const termCode = useNonCurrentTerm ? '2256' : '2261';
+
     basePerson.studentInfo = {
       studentSemester: [
         {
           studentSemesterInfo: {
             academicTerm: {
               term: {
-                code: '2261',
+                code: termCode,
               },
             },
             academicCareer: {
@@ -334,7 +364,88 @@ function validateApiKey(event: APIGatewayProxyEventV2, expectedApiKey: string | 
 }
 
 /**
+ * Determine which endpoint is being requested based on the raw path.
+ * 
+ * @param rawPath - The raw path from the Lambda event (e.g., '/', '/terms', '/current-terms')
+ * @returns 'people' for person data endpoint, 'terms' for current terms endpoint
+ */
+function getEndpointType(rawPath: string): 'people' | 'terms' {
+  const normalized = (rawPath || '/').toLowerCase().trim();
+  
+  // If path contains 'term', route to terms endpoint
+  if (normalized.includes('term')) {
+    return 'terms';
+  }
+  
+  // Default to people endpoint
+  return 'people';
+}
+
+/**
+ * Generate mock current terms data for testing.
+ * Returns static list of 6 terms covering current, past, and future semesters.
+ * 
+ * @returns Array of Term objects matching CurrentTermsDataSource format
+ */
+function generateMockTerms(): Term[] {
+  return [
+    // Current terms (currentInd='Y')
+    {
+      term: '2261',
+      termDescription: 'Spring 2026',
+      academicCareer: 'UGRD',
+      termBeginDate: '2026-01-20',
+      termEndDate: '2026-05-15',
+      currentInd: 'Y'
+    },
+    {
+      term: '2262',
+      termDescription: 'Spring 2026',
+      academicCareer: 'GRAD',
+      termBeginDate: '2026-01-20',
+      termEndDate: '2026-05-15',
+      currentInd: 'Y'
+    },
+    // Past terms (currentInd='N')
+    {
+      term: '2256',
+      termDescription: 'Fall 2025',
+      academicCareer: 'UGRD',
+      termBeginDate: '2025-09-03',
+      termEndDate: '2025-12-20',
+      currentInd: 'N'
+    },
+    {
+      term: '2257',
+      termDescription: 'Fall 2025',
+      academicCareer: 'GRAD',
+      termBeginDate: '2025-09-03',
+      termEndDate: '2025-12-20',
+      currentInd: 'N'
+    },
+    // Future terms (currentInd='N')
+    {
+      term: '2264',
+      termDescription: 'Summer 2026',
+      academicCareer: 'UGRD',
+      termBeginDate: '2026-05-20',
+      termEndDate: '2026-08-15',
+      currentInd: 'N'
+    },
+    {
+      term: '2265',
+      termDescription: 'Summer 2026',
+      academicCareer: 'LAW',
+      termBeginDate: '2026-05-20',
+      termEndDate: '2026-08-15',
+      currentInd: 'N'
+    }
+  ];
+}
+
+/**
  * Main Lambda handler for Function URL requests.
+ * Supports both person data endpoint (/) and current terms endpoint (/terms).
  */
 export async function handler(event: APIGatewayProxyEventV2, context: Context): Promise<APIGatewayProxyResultV2> {
   const requestStartTime = Date.now();
@@ -373,14 +484,63 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
       body: JSON.stringify({ error: 'Unauthorized: Invalid API key' }),
     };
   }
+
+  // Determine which endpoint is being requested
+  const endpointType = getEndpointType(event.rawPath || '/');
+
+  // Route to terms endpoint if requested
+  if (endpointType === 'terms') {
+    console.log('Routing to terms endpoint');
+
+    // Simulate slow API (optional delay)
+    const simulatedDelaySeconds = parseFloat(process.env.MOCK_SIMULATED_DELAY_SECONDS || '0');
+    if (simulatedDelaySeconds > 0) {
+      console.log(`Simulating API delay: ${simulatedDelaySeconds} seconds`);
+      await new Promise((resolve) => setTimeout(resolve, simulatedDelaySeconds * 1000));
+    }
+
+    // Simulate error (optional error rate)
+    const errorRate = parseFloat(process.env.MOCK_ERROR_RATE || '0.0');
+    if (Math.random() < errorRate) {
+      console.error('Simulating random error response');
+      return {
+        statusCode: 500,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Simulated random error' }),
+      };
+    }
+
+    // Generate mock terms
+    const terms = generateMockTerms();
+    
+    const requestDurationMs = Date.now() - requestStartTime;
+    console.log(`Terms request completed in ${requestDurationMs}ms, returning ${terms.length} terms`);
+
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ response: terms }),
+    };
+  }
+
+  // Continue with people endpoint logic
   // Parse query parameters
   const queryParams = event.queryStringParameters || {};
   const recordCount = parseInt(queryParams.recordCount || '200', 10);
   const offset = parseInt(queryParams.offset || '0', 10);
   const totalPopulation = parseInt(process.env.MOCK_TOTAL_POPULATION || '10000', 10);
   const errorRate = parseFloat(process.env.MOCK_ERROR_RATE || '0.0');
+  
+  // Parse optional nonCurrentTermRate parameter (0.0 to 1.0, default 0.0)
+  // Controls probability that students have non-current term
+  let nonCurrentTermRate = parseFloat(queryParams.nonCurrentTermRate || '0.0');
+  // Clamp to valid range [0.0, 1.0]
+  if (nonCurrentTermRate < 0.0 || nonCurrentTermRate > 1.0) {
+    console.warn(`Invalid nonCurrentTermRate=${nonCurrentTermRate}, clamping to [0.0, 1.0]`);
+    nonCurrentTermRate = Math.max(0.0, Math.min(1.0, nonCurrentTermRate));
+  }
 
-  console.log(`Generating mock data: offset=${offset}, recordCount=${recordCount}, totalPopulation=${totalPopulation}`);
+  console.log(`Generating mock data: offset=${offset}, recordCount=${recordCount}, totalPopulation=${totalPopulation}, nonCurrentTermRate=${nonCurrentTermRate}`);
   console.log('Note: offset is accepted for API compatibility but ignored for stateful depletion allocation');
 
   // Simulate errors based on configured error rate
@@ -408,7 +568,7 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
   // Generate mock persons for this range
   const persons: MockPerson[] = [];
   for (let i = startIndex; i < endIndex; i++) {
-    persons.push(generateMockPerson(i));
+    persons.push(generateMockPerson(i, { nonCurrentTermRate }));
   }
 
   // Match real API response structure: { response: [persons] }
