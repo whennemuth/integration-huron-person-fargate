@@ -3,7 +3,7 @@ import { DesiredCount } from '../DesiredCount';
 import { QueueSeeder } from '../chunking/fetch/QueueSeeder';
 import { ChunkingServiceRunner } from './AbstractRunner';
 import { Endpoint, NormalizedPopulationType, RunnerEnv, TargetConfig } from './RunnerTypes';
-import { AbstractAtomicCounter } from '../AtomicCounter';
+import { AbstractAtomicCounter } from '../dynamodb/AtomicCounter';
 import { CHUNKER_COUNTER_NAME } from '../chunking/ChunkerQueue';
 import { MetricsCatchupDelay } from './MetricsCatchupDelay';
 

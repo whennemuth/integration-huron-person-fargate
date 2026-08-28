@@ -44,7 +44,7 @@ import { GetFunctionUrlConfigCommand, LambdaClient } from '@aws-sdk/client-lambd
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2, Context } from 'aws-lambda';
 import { ConfigManager, DataSourceConfig, EndpointConfigForApiKey } from 'integration-huron-person';
 import { LambdaFunctionEnvironmentVariable } from '../../runner/LambdaFunctionEnvironmentVariable';
-import { AbstractAtomicCounter } from '../../AtomicCounter';
+import { AbstractAtomicCounter } from '../../dynamodb/AtomicCounter';
 
 export const FUNCTION_BASE_NAME = 'source-simulator';
 export const SIMULATOR_COUNTER_NAME = 'simulator-offset-counter';

@@ -4,7 +4,7 @@ import { handleApiEvent } from './ChunkerApiSubscriber';
 import { ApiChunkerEvent } from '../ChunkerSubscriber';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 import { extractChunkDirectory } from '../filedrop/ChunkPathUtils';
-import { AbstractAtomicCounter } from '../../AtomicCounter';
+import { AbstractAtomicCounter } from '../../dynamodb/AtomicCounter';
 import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from '../ChunkerQueue';
 
 export type QueueSeederParams = {

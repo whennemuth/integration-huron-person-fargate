@@ -199,7 +199,7 @@ npx ts-node src/TaskProtection.ts
 **Purpose**: DynamoDB-backed atomic counter for offset generation
 
 ```bash
-npx ts-node src/AtomicCounter.ts
+npx ts-node src/dynamodb/AtomicCounter.ts
 ```
 
 ## Execution Methods

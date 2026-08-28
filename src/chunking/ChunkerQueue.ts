@@ -1,6 +1,6 @@
 import { DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput, Message, ReceiveMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { TestEnvironment } from "integration-core";
-import { AbstractAtomicCounter } from "../AtomicCounter";
+import { AbstractAtomicCounter } from "../dynamodb/AtomicCounter";
 import { ApiChunkerEvent } from "./ChunkerSubscriber";
 import { handleApiEvent } from "./fetch/ChunkerApiSubscriber";
 import { TaskParameters } from "./fetch/ChunkFromAPI";

@@ -4,7 +4,7 @@ import { getLocalConfig } from "../Utils";
 import { Endpoint, NormalizedPopulationType, RunnerEnv, TargetConfig, extractEnvironment } from './RunnerTypes';
 import { IContext } from "../../context/IContext";
 import { SourceSimulatorFunctionURL } from "../chunking/fetch/SourceSimulator";
-import { AbstractAtomicCounter } from '../AtomicCounter';
+import { AbstractAtomicCounter } from '../dynamodb/AtomicCounter';
 import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from '../chunking/ChunkerQueue';
 
 /**

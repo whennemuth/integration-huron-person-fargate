@@ -11,7 +11,7 @@ import {
 import {
   DYNAMODB_TABLE_NAME as atomicCounterTableName,
   DYNAMODB_PARTITION_KEY as atomicCounterPartitionKey
-} from '../src/AtomicCounter';
+} from '../src/dynamodb/AtomicCounter';
 import {
   DYNAMODB_TABLE_NAME as personCurrentStateTableName,
   DYNAMODB_PARTITION_KEY as personCurrentStatePartitionKey,
