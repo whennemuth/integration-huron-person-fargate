@@ -50,6 +50,7 @@
  * ```
  */
 
+import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { FieldSet, humanReadableFromMilliseconds, TestEnvironment, Timer } from 'integration-core';
 import {
   BasicCache,
@@ -70,9 +71,57 @@ import { MetadataFactoryForBootstrap } from '../chunking/metadata/MetadataFactor
 import { StandardMetadataUtils } from '../chunking/metadata/MetadataUtils';
 import { PersonCacheLookup } from '../person-cache/PersonCacheLookup';
 import { SyncPopulation } from '../../docker/chunkTypes';
+import { StatisticsTable } from '../dynamodb/StatisticsTable';
+import { IContext } from '../../context/IContext';
 
 const metadataStorage = new MetadataFactoryForBootstrap().createMetadataForBootstrap();
 const metadataUtils = new StandardMetadataUtils({});
+
+/**
+ * Triggers the merger Fargate task by sending a message to SQS.
+ * Used in DynamoDB mode when the last processor detects all chunks are complete.
+ * 
+ * @param chunkDirectory - The chunk directory path to pass to merger
+ * @param createdAt - ISO timestamp when chunking started
+ * @param mergerQueueUrl - URL of the merger SQS queue
+ * @param bucketName - S3 bucket name
+ * @param region - AWS region
+ * @returns true if message sent successfully, false otherwise
+ */
+async function triggerMerger(
+  chunkDirectory: string, 
+  createdAt: string,
+  mergerQueueUrl: string,
+  bucketName: string,
+  region?: string
+): Promise<boolean> {
+  if (!mergerQueueUrl) {
+    console.error('Missing required MERGER_QUEUE_URL environment variable');
+    return false;
+  }
+
+  console.log('🚀 Last processor detected completion - triggering merger via SQS queue...');
+
+  const message = {
+    chunksBucket: bucketName,
+    chunkDirectory,
+    createdAt
+  };
+
+  try {
+    const sqsClient = new SQSClient({ region });
+    console.log('Sending message to merger queue:', JSON.stringify(message, null, 2));
+    await sqsClient.send(new SendMessageCommand({
+      QueueUrl: mergerQueueUrl,
+      MessageBody: JSON.stringify(message),
+    }));
+    console.log('✅ Merger trigger message sent successfully');
+    return true;
+  } catch (error: any) {
+    console.error(`❌ Failed to send merger trigger message: ${error.message}`);
+    return false;
+  }
+}
 
 const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
@@ -146,7 +195,8 @@ export async function main(queueReader: QueueReader) {
     DRY_RUN,
     BULK_RESET,
     DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbStatisticsTableName,
-    RETRY_STRATEGY
+    RETRY_STRATEGY,
+    MERGER_QUEUE_URL: mergerQueueUrl
   } = process.env;
   
   const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
@@ -196,6 +246,7 @@ export async function main(queueReader: QueueReader) {
 
   const chunkId = metadataUtils.extractChunkId(s3Key!);
   const integrationTimestamp = metadataUtils.extractIntegrationTimestamp(s3Key!) || new Date().toISOString();
+  const chunkDirectory = s3Key!.substring(0, s3Key!.lastIndexOf('/'));
 
   console.log(`Processing chunk: s3://${bucketName}/${s3Key}`);
   if (chunkId) {
@@ -351,6 +402,59 @@ export async function main(queueReader: QueueReader) {
       } else {
         console.log('\n✓ Processor task completed successfully');
       }
+
+      // DynamoDB Mode: Write CHUNK_STATUS and check for completion to trigger merger
+      if (dynamoDbStatisticsTableName && chunkId && integrationTimestamp) {
+        try {
+          // Load context to create StatisticsTable
+          const context = require('../../context/context.json') as IContext;
+          const statisticsTable = new StatisticsTable(context);
+
+          // Step 1: Write this processor's CHUNK_STATUS
+          const chunkStatus = {
+            status: processingError ? 'FAILED' : 'COMPLETED',
+            endTime: new Date().toISOString(),
+            recordCount: processedRecordCount,
+            ...(processingError && { error: processingError.message })
+          };
+          
+          await statisticsTable.writeChunkStatus(integrationTimestamp, chunkId, chunkStatus);
+          console.log(`✓ CHUNK_STATUS written: ${chunkId} = ${chunkStatus.status}`);
+
+          // Step 2: Only check for completion if this chunk succeeded
+          if (!processingError) {
+            const completedCount = await statisticsTable.getCompletedChunkCount(integrationTimestamp);
+            const metadata = await statisticsTable.readMetadata(integrationTimestamp);
+            
+            if (metadata?.chunkCount && completedCount === metadata.chunkCount) {
+              // Step 3: We're the last processor - trigger merger!
+              console.log(`✅ Last processor (chunk-${chunkId}): All ${metadata.chunkCount} chunks complete, triggering merger`);
+              
+              const triggered = await triggerMerger(
+                chunkDirectory!,
+                metadata.createdAt || integrationTimestamp,
+                mergerQueueUrl!,
+                bucketName!,
+                region
+              );
+
+              if (triggered) {
+                // Step 4: Mark merger as triggered for audit trail
+                await statisticsTable.updateMetadata(integrationTimestamp, {
+                  mergerTriggered: true,
+                  mergerTriggeredAt: new Date().toISOString(),
+                  mergerTriggeredBy: chunkId
+                });
+              }
+            } else {
+              console.log(`⏳ Processor (chunk-${chunkId}): ${completedCount} of ${metadata?.chunkCount || '?'} chunks complete, waiting...`);
+            }
+          }
+        } catch (completionError: any) {
+          console.error('Failed to check/trigger merger completion:', completionError.message);
+          // Don't fail the processor just because merger trigger check failed
+        }
+      }
     } 
     catch (statsError: any) {
       console.error('Failed to write statistics to DynamoDB:', statsError);
@@ -385,6 +489,7 @@ if (require.main === module) {
     'BULK_RESET',
     'DYNAMODB_STATISTICS_TABLE_NAME',
     'RETRY_STRATEGY',
+    'MERGER_QUEUE_URL',
     'HURON_PERSON_CONFIG_PATH',
     'SECRET_ARN',
     'STACK_ID',

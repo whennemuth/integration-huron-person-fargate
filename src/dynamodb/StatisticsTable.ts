@@ -194,6 +194,39 @@ export class StatisticsTable {
   }
 
   /**
+   * Update METADATA record with additional fields.
+   * Merges new fields into existing METADATA record without overwriting other fields.
+   * 
+   * This is useful for marking completion milestones such as:
+   * - mergerTriggered: true
+   * - mergerTriggeredAt: ISO timestamp
+   * - mergerTriggeredBy: chunkId
+   * 
+   * @param syncRunId - ISO timestamp identifying the sync run
+   * @param updates - Object containing fields to add/update in metadata
+   */
+  public async updateMetadata(syncRunId: string, updates: Record<string, any>): Promise<void> {
+    // Read existing metadata
+    const existing = await this.readMetadata(syncRunId);
+    if (!existing) {
+      throw new Error(`Cannot update metadata: METADATA record not found for syncRunId ${syncRunId}`);
+    }
+
+    // Merge updates with existing data
+    const merged = {
+      ...existing,
+      ...updates
+    };
+
+    // Write back to DynamoDB (putItem with PK/SK will overwrite the record)
+    await this.table.putItem({
+      [DYNAMODB_PARTITION_KEY]: syncRunId,
+      [DYNAMODB_SORT_KEY]: 'METADATA',
+      ...merged
+    });
+  }
+
+  /**
    * Write CHUNK_STATUS record for a specific chunk in a sync run.
    * 
    * CHUNK_STATUS record format:
