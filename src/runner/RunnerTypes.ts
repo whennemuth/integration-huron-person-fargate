@@ -77,19 +77,19 @@ export const extractEnvironment = (): RunnerEnv => {
     BULK_RESET: bulkReset,
     TRUST_PREVIOUS_STORAGE: trustPreviousStorage,
     SKIP_ATOMIC_COUNTER_RESET: skipAtomicCounterReset,
-    SOURCE_SIMULATOR: sourceSimulator,
     MESSAGES_TO_PREPOPULATE: messagesToPrepopulate = '0',
     DESIRED_COUNT,
     ECS_CLUSTER_NAME: clusterName,
     ECS_SERVICE_NAME: serviceName,
     MESSAGING_ONLY: messagingOnly,
     CHUNKING_ONLY: chunkingOnly,
+    SOURCE_SIMULATOR: sourceSimulator,
     SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION: sourceSimulatorMockTotalPopulation,
     SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS: sourceSimulatorMockSimulatedDelaySeconds,
     SOURCE_SIMULATOR_MOCK_ERROR_RATE: sourceSimulatorMockErrorRate,
-    RUNNER_TARGET_MOCK: mockTarget,
-    RUNNER_TARGET_MOCK_RESET_STATE: mockTargetResetState,
-    RUNNER_TARGET_MOCK_VALIDATE_ONLY: mockTargetValidateOnly
+    USE_MOCK_TARGET: mockTarget,
+    MOCK_TARGET_RESET_STATE: mockTargetResetState,
+    MOCK_TARGET_VALIDATE_ONLY: mockTargetValidateOnly
   } = process.env;
 
   return {
@@ -144,9 +144,9 @@ export const setTestEnvironment = (): void => {
     'SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION',
     'SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS',
     'SOURCE_SIMULATOR_MOCK_ERROR_RATE',
-    'RUNNER_TARGET_MOCK',
-    'RUNNER_TARGET_MOCK_RESET_STATE',
-    'RUNNER_TARGET_MOCK_VALIDATE_ONLY'
+    'USE_MOCK_TARGET',
+    'MOCK_TARGET_RESET_STATE',
+    'MOCK_TARGET_VALIDATE_ONLY'
   ].forEach(testEnvironment.getVar);
 
   [

@@ -67,6 +67,26 @@ If you cannot fully verify an abstraction's behavior:
 - **Ask whether to search for implementation first**
 - **Do NOT proceed on "educated guesses"**
 
+### Real Example: config.preLoadedMaps Dead Code
+
+A runner decorator (`MockTargetRunnerDecorator`) mutated `config.preLoadedMaps = {orgMap:false, ...}` believing this would prevent organization/state/country lookups from calling the real Huron API in mock target mode:
+- **Assumption**: Setting this field on the Runner's `Config` object would reach the running processor task
+- **Reality**: `config.preLoadedMaps` is only ever read by CDK at deploy time (`ProcessorTaskDefinition.ts`) to bake `STATIC_MAP_USAGE` into the ECS task's environment variables - from an entirely different `Config` object loaded from disk, not the one the Runner mutated at invocation time
+- **Result**: The override compiled and ran with zero errors, logged nothing wrong, and had absolutely no effect - mock-mode runs could still trigger real organization API calls
+
+This was fixed by forcing `StaticMapUsage` at the point it's actually consumed - inside the processor, immediately after `flags.useMockTarget` is read from chunk metadata (the same channel already used to select the mock data target) - rather than trying to inject it upstream through a Config object that never reaches the running task. The lesson: a runtime override that "looks right" and produces no errors can still be a no-op if it mutates the wrong instance of a config object that exists in two different lifecycles (deploy-time vs invocation-time).
+
+### Source Simulator
+
+The source simulator (`src/chunking/fetch/SourceSimulator.ts`) is a Lambda Function URL that provides mock API responses for full 3-phase integration testing without the real API's 30-minute cooldown constraint.
+
+**Endpoints** (path-based routing):
+- `/` (default): mock person data, using a stateful depletion model (see repo memory `source-simulator-semantics.md` for allocator semantics)
+- `/terms`: mock current-terms data (6 static terms: 2 current, 2 past, 2 future) - required because `DataMapperOrg.isCurrentSemester()` needs terms data to filter student semesters, and running with `RUNNER_CHUNKING_ONLY=false` exercises this path
+- Optional `nonCurrentTermRate` query parameter (0.0-1.0, default 0.0): probability that a simulated student is assigned a non-current term, for testing semester-filtering logic
+
+**Safety enforcement - source simulation entails target simulation**: `RUNNER_SOURCE_SIMULATOR=true` automatically forces `useMockTarget=true` (in `Runner.ts` and, redundantly, in `MockTargetRunnerDecorator`) whenever the processor phase is enabled (`RUNNER_CHUNKING_ONLY=false`). There is no supported way to run simulated source data against the real Huron target API - this is enforced in code, not just documented as a convention.
+
 ### User Override
 
 You can skip verification by saying:
@@ -203,6 +223,9 @@ The pipeline supports two storage modes for delta state and metadata, controlled
    - `PersonTargetMocked`: Scans MockTargetPersonTable (DynamoDB) for test data
    - Factory injects appropriate PersonTarget based on `useMockTarget` flag
    - Design: Dependency injection enables testing without environment coupling
+   - `MockPersonDataTarget.getPersonByBuid()` (integration-huron-person): single-person existence check used by `UpsertDeltaStrategy` when `flags.useMockTarget` is true, so the create-vs-update lookup never hits the real Huron API in mock mode
+   - DELETE against the mock target is a soft-delete (`deactivated`/`deactivatedAt` attributes), matching Huron's soft-delete-only requirement - records are never removed from MockTargetPersonTable, only marked inactive
+   - `StaticMapUsage` is forced to `{orgMap:false, stateMap:false, countryMap:false}` at runtime (via `resolveStaticMapUsage()` in ProcessorForS3.ts/ProcessorForDynamoDb.ts) whenever `flags.useMockTarget` is true, overriding whatever `STATIC_MAP_USAGE` was baked into the task at deploy time
 
 3. **Metadata** (src/chunking/metadata/)
    - `AbstractMetadata` with 19 methods (5 static, 14 abstract)

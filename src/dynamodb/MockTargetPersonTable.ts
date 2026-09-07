@@ -20,6 +20,8 @@ import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
  * - lastModified: string - ISO timestamp of last update
  * - createdAt: string - ISO timestamp when record was first created
  * - syncRunId: string - ISO timestamp of sync run that last modified this person
+ * - deactivated: boolean - True if the person has been soft-deleted (real Huron only supports soft deletes)
+ * - deactivatedAt: string - ISO timestamp when the person was deactivated (if applicable)
  * 
  * Access Patterns:
  * 1. Get person by ID: GetItem by personId

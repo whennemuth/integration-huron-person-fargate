@@ -155,9 +155,11 @@ export class MockTargetRunnerDecorator extends ChunkingServiceRunner {
   /**
    * Get config using ConfigManager.
    * Same pattern as used in SourceSimulatorRunnerDecorator.
-   * 
-   * Override preLoadedMaps to prevent ReadOrganizations/ReadStates/ReadCountries calls
-   * in mock target mode. This forces use of lookup expressions instead of HRN literals.
+   *
+   * NOTE: config.preLoadedMaps only affects CDK's ProcessorTaskDefinition at deploy time (it
+   * bakes STATIC_MAP_USAGE into the Fargate task env vars). Mutating it here on a Runner-time
+   * Config object has no effect on the already-deployed task. StaticMapUsage is instead forced
+   * to all-false at runtime in ProcessorForS3.ts/ProcessorForDynamoDb.ts based on flags.useMockTarget.
    */
   private async getConfig() {
     const { configPath, secretArn } = this.wrappedRunner.env;
@@ -170,14 +172,6 @@ export class MockTargetRunnerDecorator extends ChunkingServiceRunner {
       .fromEnvironment()
       .fromFileSystem(configPath)
       .getConfigAsync('people');
-
-    // Override preLoadedMaps in mock target mode to prevent calls to real target system
-    // for organization/state/country lookups. Use lookup expressions instead.
-    config.preLoadedMaps = {
-      orgMap: false,
-      stateMap: false,
-      countryMap: false
-    };
 
     return config;
   }

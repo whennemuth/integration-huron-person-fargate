@@ -8,7 +8,7 @@
 // (ProcessorForS3 module has top-level call to MetadataFactoryForBootstrap which requires this)
 process.env.PREVIOUS_STORAGE_TYPE = 's3';
 
-import { buildChunkConfig } from '../src/processing/ProcessorForS3';
+import { buildChunkConfig, resolveStaticMapUsage } from '../src/processing/ProcessorForS3';
 import { StandardMetadataUtils } from '../src/chunking/metadata/MetadataUtils';
 import { ChunkFileManager } from '../src/chunking/metadata';
 
@@ -270,6 +270,28 @@ describe('Processor (Phase 2)', () => {
         const outputPath = basePath.replace('previous-input.ndjson', `chunk-${chunkId}.ndjson`);
         expect(outputPath).toBe(`chunks/client-abc/2026-03-03T19:58:41.277Z/chunk-${chunkId}.ndjson`);
       });
+    });
+  });
+
+  describe('resolveStaticMapUsage', () => {
+    it('forces all maps to false when useMockTarget is true, regardless of the deploy-time value', () => {
+      const result = resolveStaticMapUsage({ orgMap: true, stateMap: true, countryMap: true }, true);
+      expect(result).toEqual({ orgMap: false, stateMap: false, countryMap: false });
+    });
+
+    it('leaves staticMapUsage unchanged when useMockTarget is false', () => {
+      const staticMapUsage = { orgMap: true, stateMap: true, countryMap: false };
+      expect(resolveStaticMapUsage(staticMapUsage, false)).toBe(staticMapUsage);
+    });
+
+    it('leaves staticMapUsage unchanged when useMockTarget is undefined', () => {
+      const staticMapUsage = { orgMap: true, stateMap: true, countryMap: false };
+      expect(resolveStaticMapUsage(staticMapUsage, undefined)).toBe(staticMapUsage);
+    });
+
+    it('forces all maps to false when useMockTarget is true even if staticMapUsage was undefined', () => {
+      const result = resolveStaticMapUsage(undefined, true);
+      expect(result).toEqual({ orgMap: false, stateMap: false, countryMap: false });
     });
   });
 });

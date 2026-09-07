@@ -217,6 +217,16 @@ async function createProcessingCompleteMarker(
   }
 }
 
+/**
+ * Mock target mode never calls the real org/state/country APIs, regardless of the deploy-time STATIC_MAP_USAGE env var
+ */
+export function resolveStaticMapUsage(staticMapUsage: StaticMapUsage | undefined, useMockTarget: boolean | undefined): StaticMapUsage | undefined {
+  if (useMockTarget) {
+    return { orgMap: false, stateMap: false, countryMap: false };
+  }
+  return staticMapUsage;
+}
+
 export async function main(queueReader: QueueReader) {
   // Check for expected environment variables
   const { 
@@ -233,7 +243,7 @@ export async function main(queueReader: QueueReader) {
     SHARED_DELTA_STORAGE_DIR='delta-storage'
   } = process.env;  
   const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
-  const staticMapUsage: StaticMapUsage | undefined = STATIC_MAP_USAGE ? JSON.parse(STATIC_MAP_USAGE) : undefined;
+  let staticMapUsage: StaticMapUsage | undefined = STATIC_MAP_USAGE ? JSON.parse(STATIC_MAP_USAGE) : undefined;
 
   const timer = new Timer();
   timer.start();
@@ -289,6 +299,11 @@ export async function main(queueReader: QueueReader) {
   // Get syncPopulation from flags if available, otherwise default to PersonFull
   const syncPopulation = flags.syncPopulation ?? SyncPopulation.PersonFull;
   console.log(`Sync Population: ${syncPopulation}${flags.syncPopulation !== undefined ? ' (from flags file)' : ' (defaulted)'}`);
+
+  staticMapUsage = resolveStaticMapUsage(staticMapUsage, flags.useMockTarget);
+  if (flags.useMockTarget) {
+    console.log(`Static map usage overridden for mock target mode: ${JSON.stringify(staticMapUsage)}`);
+  }
 
   // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
   const chunkId = metadataUtils.extractChunkId(s3Key!);

@@ -35,9 +35,9 @@ import { extractEnvironment, RunnerEnv, setTestEnvironment } from './RunnerTypes
  * This is because the data is fake and should never be taken up by the processor service, which 
  * would send it to the target system.
  */
-async function startChunkingService() {
+export async function startChunkingService(env?: RunnerEnv) {
   // Peek at environment to determine which runner to use
-  const env: RunnerEnv = extractEnvironment();
+  env = env ?? extractEnvironment();
   
   // Validate messagesToPrepopulate is a valid number
   if (env.messagesToPrepopulate && isNaN(Number(env.messagesToPrepopulate))) {
@@ -103,7 +103,7 @@ async function startChunkingService() {
 // Run if executed directly
 if (require.main === module) {
 
-  setTestEnvironment()
+  setTestEnvironment();
 
   startChunkingService();
 }

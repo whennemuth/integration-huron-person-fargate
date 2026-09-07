@@ -4,7 +4,7 @@ import { unmarshall } from "@aws-sdk/util-dynamodb";
 import { HuronPerson } from "integration-huron-person";
 
 /**
- * In mock target mode, we "pretend" DynamoDB is the Target API.
+ * In mock target mode, we "pretend" the Target API is Huron, but it is really DynamoDB.
  * This class scans mockTargetPersonTable to get all person records that have been
  * previously written by MockPersonDataTarget.
  */
@@ -46,8 +46,9 @@ export class PersonTargetMocked implements AbstractPersonTarget {
         if (response.Items) {
           for (const item of response.Items) {
             const record = unmarshall(item);
-            // mockTargetPersonTable stores: personId, data, createdAt, lastModified, syncRunId
-            // Extract sourceIdentifier from personId field
+            // mockTargetPersonTable stores: personId, data, createdAt, lastModified, syncRunId, deactivated, deactivatedAt
+            // Deactivated (soft-deleted) people are still included here - they still "exist" in the
+            // target, matching real Huron's includeInactive lookup behavior, so they aren't recreated.
             if (record.personId) {
               people.push({ sourceIdentifier: record.personId } as HuronPerson);
             }

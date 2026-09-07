@@ -184,6 +184,16 @@ export const buildChunkConfig = async (params: {
   } as Config;
 };
 
+/**
+ * Mock target mode never calls the real org/state/country APIs, regardless of the deploy-time STATIC_MAP_USAGE env var
+ */
+export function resolveStaticMapUsage(staticMapUsage: StaticMapUsage | undefined, useMockTarget: boolean | undefined): StaticMapUsage | undefined {
+  if (useMockTarget) {
+    return { orgMap: false, stateMap: false, countryMap: false };
+  }
+  return staticMapUsage;
+}
+
 export async function main(queueReader: QueueReader) {
   const { 
     REGION: region, 
@@ -200,7 +210,7 @@ export async function main(queueReader: QueueReader) {
   } = process.env;
   
   const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
-  const staticMapUsage: StaticMapUsage | undefined = STATIC_MAP_USAGE ? JSON.parse(STATIC_MAP_USAGE) : undefined;
+  let staticMapUsage: StaticMapUsage | undefined = STATIC_MAP_USAGE ? JSON.parse(STATIC_MAP_USAGE) : undefined;
 
   const timer = new Timer();
   timer.start();
@@ -239,6 +249,11 @@ export async function main(queueReader: QueueReader) {
   const bulkReset = flags.bulkReset ?? (`${BULK_RESET}`.trim().toLowerCase() === 'true');
   const trustPreviousStorage = flags.trustPreviousStorage ?? true;
   const syncPopulation = flags.syncPopulation ?? SyncPopulation.PersonFull;
+
+  staticMapUsage = resolveStaticMapUsage(staticMapUsage, flags.useMockTarget);
+  if (flags.useMockTarget) {
+    console.log(`Static map usage overridden for mock target mode: ${JSON.stringify(staticMapUsage)}`);
+  }
 
   console.log(`Bulk Reset: ${bulkReset}${flags.bulkReset !== undefined ? ' (from flags)' : ' (from environment)'}`);
   console.log(`Trust Previous Storage: ${trustPreviousStorage}${flags.trustPreviousStorage !== undefined ? ' (from flags)' : ' (defaulted)'}`);
