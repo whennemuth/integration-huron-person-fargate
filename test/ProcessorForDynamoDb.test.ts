@@ -19,18 +19,29 @@ process.env.DYNAMODB_STATISTICS_TABLE_NAME = 'test-statistics-table';
 
 // Mock StatisticsTable to avoid context requirements during module load
 jest.mock('../src/dynamodb/StatisticsTable', () => ({
-  StatisticsTable: jest.fn().mockImplementation(() => ({
-    writeFlags: jest.fn(),
-    readFlags: jest.fn(),
-    writeMetadata: jest.fn(),
-    readMetadata: jest.fn(),
-  })),
+  StatisticsTable: Object.assign(
+    jest.fn().mockImplementation(() => ({
+      writeFlags: jest.fn(),
+      readFlags: jest.fn(),
+      writeMetadata: jest.fn(),
+      readMetadata: jest.fn(),
+    })),
+    {
+      fromTableName: jest.fn(() => ({
+        writeFlags: jest.fn(),
+        readFlags: jest.fn(),
+        writeMetadata: jest.fn(),
+        readMetadata: jest.fn(),
+        writeChunkStatus: jest.fn(),
+        getCompletedChunkCount: jest.fn(),
+        updateMetadata: jest.fn(),
+      }))
+    }
+  ),
   DYNAMODB_TABLE_NAME: jest.fn((context: any) => 'test-statistics-table'),
   DYNAMODB_PARTITION_KEY: 'integrationTimestamp',
   DYNAMODB_SORT_KEY: 'eventType',
-}));
-
-import { buildChunkConfig, resolveStaticMapUsage, resolveTableName } from '../src/processing/ProcessorForDynamoDb';
+}));import { buildChunkConfig, resolveStaticMapUsage, resolveTableName } from '../src/processing/ProcessorForDynamoDb';
 import { ChunkFileManager } from '../src/chunking/metadata';
 
 const validateChunk = ChunkFileManager.validateChunk;

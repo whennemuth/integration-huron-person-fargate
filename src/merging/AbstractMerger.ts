@@ -163,7 +163,11 @@ export abstract class AbstractMerger {
 
     // First check if the population type for this sync is compatible with deletion processing
     const config = await getConfig();
-    const metadataManager = MetadataFactory.create({ config });
+    const metadataManager = MetadataFactory.create({
+      config,
+      previousStorageType: process.env.PREVIOUS_STORAGE_TYPE,
+      statisticsTableName: process.env.DYNAMODB_STATISTICS_TABLE_NAME
+    });
     const flags = await metadataManager.readFlags({ bucketName, chunkDirectory: chunkDir, region });
     const { syncPopulation, useMockTarget } = flags;
 

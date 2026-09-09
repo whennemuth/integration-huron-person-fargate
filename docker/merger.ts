@@ -142,5 +142,8 @@ if (require.main === module) {
     'DYNAMODB_STATISTICS_TABLE_NAME',
   ].forEach(testEnvironment.getVar);
 
-  main();
+  main().catch(error => {
+    console.error('Fatal error in merger router:', error);
+    process.exit(1);
+  });
 }

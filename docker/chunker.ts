@@ -81,12 +81,22 @@ export type ChunkFromParams = {
 const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
 /**
+ * Resolve MetadataFactory params from env vars - the DynamoDB table name is already baked
+ * into the task definition at deploy time, so no IContext object is needed here.
+ */
+const createMetadataManager = (config: Config) => MetadataFactory.create({
+  config,
+  previousStorageType: process.env.PREVIOUS_STORAGE_TYPE,
+  statisticsTableName: process.env.DYNAMODB_STATISTICS_TABLE_NAME
+});
+
+/**
  * Write metadata file for merger trigger detection
  * @param config Configuration to determine storage type
  * @param params Write metadata parameters
  */
 export async function writeChunkMetadata(config: Config, params: WriteMetadataParams) {
-  const metadata = MetadataFactory.create({ config });
+  const metadata = createMetadataManager(config);
   await metadata.write(params);
   console.log('\n✓ Metadata written');
 }
@@ -106,7 +116,7 @@ export async function chunkingAlreadyFinished(config: Config, params: {
   bucketName: string, chunkDirectory: string, region: string | undefined 
 }): Promise<boolean> {
   const { bucketName, chunkDirectory, region } = params;
-  const metadata = MetadataFactory.create({ config });
+  const metadata = createMetadataManager(config);
   const result = await metadata.read({ 
     bucketName, chunkDirectory, region 
   } satisfies ReadMetadataParams);
@@ -136,7 +146,7 @@ export async function chunkingTerminalErrorEncountered(config: Config, params: {
   bucketName: string, chunkDirectory: string, region: string | undefined
 }): Promise<boolean> {
   const { bucketName, chunkDirectory, region } = params;
-  const metadata = MetadataFactory.create({ config });
+  const metadata = createMetadataManager(config);
   return metadata.terminalErrorExists({ bucketName, chunkDirectory, region });
 }
 
@@ -505,7 +515,7 @@ export async function main() {
     }
 
     // Write flags file BEFORE chunking starts so processor tasks can read it immediately
-    const metadataManager = MetadataFactory.create({ config });
+    const metadataManager = createMetadataManager(config);
     await metadataManager.writeFlags({
       bucketName: chunksBucket,
       chunkDirectory: chunker.getChunkDirectory(),
@@ -543,7 +553,7 @@ export async function main() {
     if (chunkDirectory) {
       try {
         const config = await getConfig();
-        const metadataManager = MetadataFactory.create({ config });
+        const metadataManager = createMetadataManager(config);
         await metadataManager.markRunFailed({
           bucketName: process.env.CHUNKS_BUCKET!,
           chunkDirectory,

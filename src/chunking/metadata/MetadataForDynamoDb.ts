@@ -1,6 +1,5 @@
 import { Config } from 'integration-huron-person';
 import { StatisticsTable } from '../../dynamodb/StatisticsTable';
-import { IContext } from '../../../context/IContext';
 import {
   IMetadataStorage,
   ChunkMetadata,
@@ -41,7 +40,7 @@ import { StandardMetadataUtils, validateMetadata } from './MetadataUtils';
  * 
  * ## Usage:
  * ```typescript
- * const metadata = new MetadataForDynamoDb({ config, context });
+ * const metadata = new MetadataForDynamoDb({ config, statisticsTableName });
  * await metadata.writeFlags({ chunkDirectory, ...flags });
  * await metadata.write({ chunkDirectory, itemsPerChunk, source, ...flags });
  * 
@@ -55,9 +54,9 @@ export class MetadataForDynamoDb implements IMetadataStorage {
   private statisticsTable: StatisticsTable;
   private metadataUtils: StandardMetadataUtils;
 
-  constructor(params: { config: Config; context: IContext }) {
+  constructor(params: { config: Config; statisticsTableName: string; region?: string }) {
     this.config = params.config;
-    this.statisticsTable = new StatisticsTable(params.context);
+    this.statisticsTable = StatisticsTable.fromTableName(params.statisticsTableName, params.region);
     this.metadataUtils = new StandardMetadataUtils({});
   }
 

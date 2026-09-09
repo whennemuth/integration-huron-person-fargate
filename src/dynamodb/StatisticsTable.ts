@@ -26,6 +26,18 @@ export class StatisticsTable {
     }
   }
 
+  /**
+   * Build a StatisticsTable from an explicit table name instead of an IContext, for runtime
+   * paths (chunker/processor/merger Docker entry points) where a full IContext isn't available.
+   */
+  public static fromTableName(tableName: string, region?: string): StatisticsTable {
+    const table = new DynamoDBTable({
+      region: region || process.env.REGION || 'us-east-1',
+      tableName, partitionKey: DYNAMODB_PARTITION_KEY, sortKey: DYNAMODB_SORT_KEY
+    });
+    return new StatisticsTable({} as IContext, table);
+  }
+
   public truncate = async (chunkSize?: number): Promise<void> => {
     await this.table.truncateTable(chunkSize);
   }

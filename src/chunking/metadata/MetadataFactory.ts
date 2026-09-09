@@ -8,7 +8,7 @@ import { MetadataForDynamoDb } from './MetadataForDynamoDb';
 /**
  * Factory for creating metadata instances based on storage configuration.
  * 
- * Selects the appropriate metadata implementation based on context.PREVIOUS_STORAGE_TYPE or config.storage.type:
+ * Selects the appropriate metadata implementation based on params.previousStorageType or config.storage.type:
  * - 'file' | 's3' → MetadataForS3
  * - 'dynamodb' → MetadataForDynamoDb
  * - 'database' → MetadataForS3 (fallback)
@@ -19,8 +19,8 @@ import { MetadataForDynamoDb } from './MetadataForDynamoDb';
  * const metadata = MetadataFactory.create({ config });
  * await metadata.writeFlags({ bucketName, chunkDirectory, ...flags });
  * 
- * // DynamoDB mode (requires context)
- * const metadata = MetadataFactory.create({ config, context });
+ * // DynamoDB mode (requires statisticsTableName)
+ * const metadata = MetadataFactory.create({ config, previousStorageType, statisticsTableName });
  * await metadata.writeFlags({ chunkDirectory, ...flags });
  * ```
  * 
@@ -38,7 +38,8 @@ import { MetadataForDynamoDb } from './MetadataForDynamoDb';
  * 
  * ### DynamoDB Mode (MetadataForDynamoDb):
  * - Stores metadata as records in StatisticsTable
- * - Requires IContext for StatisticsTable initialization
+ * - Requires an explicit statisticsTableName (no IContext dependency - table names are
+ *   baked into task definitions as env vars at deploy time)
  * - Does NOT support file system operations (chunk files still in S3)
  * - Record structure: PK=syncRunId, SK=eventType ("METADATA" | "FLAGS" | "TERMINAL_ERROR")
  */
@@ -47,33 +48,37 @@ export class MetadataFactory {
    * Create metadata instance based on storage configuration.
    * 
    * @param params.config - Configuration object with storage.type field
-   * @param params.context - IContext for DynamoDB operations (required for DynamoDB mode)
+   * @param params.previousStorageType - Explicit storage type override (takes precedence over config.storage.type)
+   * @param params.statisticsTableName - DynamoDB statistics table name (required for DynamoDB mode)
+   * @param params.region - AWS region (DynamoDB mode)
    * @param params.storage - Optional S3StorageAdapter for S3 mode
    * @returns IMetadataStorage implementation (S3 or DynamoDB)
    */
   public static create(params: {
     config: Config;
-    context?: IContext;
+    previousStorageType?: string;
+    statisticsTableName?: string;
+    region?: string;
     storage?: S3StorageAdapter;
   }): IMetadataStorage {
-    const { config, context, storage } = params;
+    const { config, previousStorageType, statisticsTableName, region, storage } = params;
 
-    const previousStorageType = context?.PREVIOUS_STORAGE_TYPE || config.storage.type;
+    const resolvedStorageType = previousStorageType || config.storage.type;
 
-    switch (previousStorageType) {
+    switch (resolvedStorageType) {
       case 's3':
       case 'file':
       case 'database': // Fallback to S3 for database mode
         return new MetadataForS3({ config, storage });
       
       case 'dynamodb':
-        if (!context) {
-          throw new Error('IContext is required for DynamoDB metadata storage');
+        if (!statisticsTableName) {
+          throw new Error('statisticsTableName is required for DynamoDB metadata storage');
         }
-        return new MetadataForDynamoDb({ config, context });
+        return new MetadataForDynamoDb({ config, statisticsTableName, region });
       
       default:
-        throw new Error(`Unsupported storage type for metadata: ${previousStorageType}`);
+        throw new Error(`Unsupported storage type for metadata: ${resolvedStorageType}`);
     }
   }
 }
@@ -97,42 +102,16 @@ export class MetadataFactory {
  * - Otherwise → S3 mode (MetadataForS3)
  * 
  * Instances are created with minimal configuration (empty Config object for S3,
- * minimal IContext for DynamoDB) which is sufficient for bootstrap operations.
+ * an explicit statisticsTableName read from env vars for DynamoDB) which is
+ * sufficient for bootstrap operations - no IContext object is built or needed.
  * 
  * ## Why Check for Person Tables (Not Statistics Table)?
  * The statistics table exists in BOTH S3 and DynamoDB modes (for error logging).
  * Only PersonCurrentStateTable and PersonHistoryTable are DynamoDB-mode-specific.
- * These optional tables are set as environment variables only when context.PREVIOUS_STORAGE_TYPE is 'dynamodb' (default).
+ * These optional tables are set as environment variables only when PREVIOUS_STORAGE_TYPE is 'dynamodb' (default).
  * 
  */
 export class MetadataFactoryForBootstrap {
-
-  /**
-   * Create minimal IContext from environment variables for DynamoDB bootstrap.
-   * Used when config hasn't been loaded yet (e.g., early in processor initialization).
-   */
-  createMinimalContextForDynamoDbBootstrap = (): IContext => {
-    const { 
-      DYNAMODB_STATISTICS_TABLE_NAME,
-      DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME,
-      DYNAMODB_PERSON_HISTORY_TABLE_NAME,
-      DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME
-    } = process.env;
-
-    if (!DYNAMODB_STATISTICS_TABLE_NAME || !DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || !DYNAMODB_PERSON_HISTORY_TABLE_NAME) {
-      throw new Error(
-        'DynamoDB table environment variables not found. Required: ' +
-        'DYNAMODB_STATISTICS_TABLE_NAME, DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME, DYNAMODB_PERSON_HISTORY_TABLE_NAME'
-      );
-    }
-
-    // Create minimal context with only PREVIOUS_STORAGE_TYPE
-    // Table names are read from environment variables by the table modules themselves
-    // Other fields are not needed for metadata operations
-    return {
-      PREVIOUS_STORAGE_TYPE: 'dynamodb',
-    } as unknown as IContext;
-  }
 
   /**
    * Create metadata storage instance for processor bootstrap.
@@ -150,7 +129,9 @@ export class MetadataFactoryForBootstrap {
     const { 
       PREVIOUS_STORAGE_TYPE,
       DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME, 
-      DYNAMODB_PERSON_HISTORY_TABLE_NAME 
+      DYNAMODB_PERSON_HISTORY_TABLE_NAME,
+      DYNAMODB_STATISTICS_TABLE_NAME,
+      REGION
     } = process.env;
     
     const previousStorageType = `${PREVIOUS_STORAGE_TYPE}`.toLowerCase() as IContext['PREVIOUS_STORAGE_TYPE'];
@@ -159,9 +140,11 @@ export class MetadataFactoryForBootstrap {
       case 'dynamodb':
         // Check for DynamoDB-mode-specific tables (optional tables that only exist when PREVIOUS_STORAGE_TYPE is 'dynamodb')
         if (DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || DYNAMODB_PERSON_HISTORY_TABLE_NAME) {
+          if (!DYNAMODB_STATISTICS_TABLE_NAME) {
+            throw new Error('DYNAMODB_STATISTICS_TABLE_NAME environment variable is required for DynamoDB metadata storage bootstrap.');
+          }
           console.log('Using DynamoDB metadata storage (DynamoDB-mode-specific tables detected)');
-          const context = this.createMinimalContextForDynamoDbBootstrap();
-          return new MetadataForDynamoDb({ config: {} as Config, context });
+          return new MetadataForDynamoDb({ config: {} as Config, statisticsTableName: DYNAMODB_STATISTICS_TABLE_NAME, region: REGION });
         }
         throw new Error('DynamoDB storage type detected but required tables not found. Ensure DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME and DYNAMODB_PERSON_HISTORY_TABLE_NAME are set.');
       case 's3':

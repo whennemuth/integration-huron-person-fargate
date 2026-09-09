@@ -267,95 +267,100 @@ export async function main(queueReader: QueueReader) {
   console.log(`Huron person config json: ${HURON_PERSON_CONFIG_JSON?.substring(0, 10)}...`);
   console.log(`Static map usage: ${JSON.stringify(staticMapUsage ?? {})}`);
   console.log(`DynamoDB table: ${dynamoDbStatisticsTableName || 'not configured'}`);
-  
-  // Read chunk information from queue or environment
-  let nextChunk: NextChunk | undefined;
-  if(chunksBucket && chunkKey) {
-    nextChunk = {bucketName: chunksBucket, s3Key: chunkKey};
-  } 
-  else if(queueUrl) {
-    console.log('Reading chunk information from SQS queue...');
-    nextChunk = await queueReader.receiveMessage() as NextChunk;
-    if(isEcsTask() && !nextChunk) {
-      console.log('Empty queue - this probably means that the desired count for the ' +
-        'service has not scaled down yet to zero after processing the last message and deleting ' +
-        'it from the queue. An empty queue will eventually cause the service to scale down to ' +
-        'zero, but in the meantime we should just exit the task.');
-      console.log('✗ Task cancelled.');
-      process.exit(0);
-    }
-  } 
-  else {
-    console.error('ERROR: Either CHUNKS_BUCKET and CHUNK_KEY environment variables or SQS_QUEUE_URL must be provided');
-    process.exit(1);
-  }
-  const { bucketName, s3Key } = nextChunk || {};
 
-  // Validate required information
-  ChunkFileManager.validateChunk(nextChunk);
-
-  // Read flags file to get per-sync configuration (bulkReset, syncPopulation, trustPreviousStorage)
-  const flags = await metadataStorage.readFlagsFromChunkKey(bucketName, s3Key, region);
-  
-  // Use bulkReset from flags if available, otherwise fall back to environment variable
-  const bulkReset = flags.bulkReset ?? (`${BULK_RESET}`.trim().toLowerCase() === 'true');
-  console.log(`Bulk Reset: ${bulkReset}${flags.bulkReset !== undefined ? ' (from flags file)' : ' (from environment)'}`);
-
-  // Get trustPreviousStorage from flags if available, otherwise default to true (trust by default)
-  const trustPreviousStorage = flags.trustPreviousStorage ?? true;
-  console.log(`Trust Previous Storage: ${trustPreviousStorage}${flags.trustPreviousStorage !== undefined ? ' (from flags file)' : ' (defaulted)'}`);
-
-  // Get syncPopulation from flags if available, otherwise default to PersonFull
-  const syncPopulation = flags.syncPopulation ?? SyncPopulation.PersonFull;
-  console.log(`Sync Population: ${syncPopulation}${flags.syncPopulation !== undefined ? ' (from flags file)' : ' (defaulted)'}`);
-
-  staticMapUsage = resolveStaticMapUsage(staticMapUsage, flags.useMockTarget);
-  if (flags.useMockTarget) {
-    console.log(`Static map usage overridden for mock target mode: ${JSON.stringify(staticMapUsage)}`);
-  }
-
-  // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
-  const chunkId = metadataUtils.extractChunkId(s3Key!);
-
-  // Extract integration timestamp from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "2026-03-03T19:58:41.277Z")
-  const integrationTimestamp = metadataUtils.extractIntegrationTimestamp(s3Key!) || new Date().toISOString();
-
-  console.log(`Processing chunk: s3://${bucketName}/${s3Key}`);
-  if (chunkId) {
-    console.log(`Chunk ID: ${chunkId}`);
-  }
-  console.log(`Integration timestamp: ${integrationTimestamp}`);
-  console.log(`Region: ${region || 'default (us-east-1)'}\n`);
-
-  // Initialize a retry strategy based on environment variable configuration
-  const retryStrategy = getRetryStrategy(RETRY_STRATEGY);
-  if(retryStrategy) {
-    console.log(`Retry strategy initialized: ${RETRY_STRATEGY}`);
-  }
-
-  // Initialize error tracker for capturing errors and statistics to DynamoDB
-  // Redirected to the isolated mock statistics table when flags.useMockTarget is true, so bulk
-  // STATISTICS/ERROR records never mix with production data.
-  const errorTrackingStatisticsTableName = resolveTableName(dynamoDbStatisticsTableName, dynamoDbMockStatisticsTableName, flags.useMockTarget);
+  // Hoisted so the catch/finally below can report on however far execution got
+  let bucketName: string | undefined;
+  let s3Key: string | undefined;
+  let chunkId: string | undefined;
+  let integrationTimestamp: string | undefined;
   let errorTracker: TargetApiErrorEventProcessor | undefined;
-  if (errorTrackingStatisticsTableName) {
-    errorTracker = new TrackingTargetApiErrorProcessor({
-      tableName: errorTrackingStatisticsTableName,
-      integrationTimestamp,
-      region,
-      logToConsole: true
-    });
-    console.log(`Error tracker initialized with table: ${errorTrackingStatisticsTableName}`);
-  } else {
-    console.warn('WARNING: DYNAMODB_STATISTICS_TABLE_NAME not configured - error tracking disabled');
-    errorTracker = new LoggingTargetApiErrorProcessor();
-  }
-
-  const startTimestamp = new Date().toISOString();
   let processedRecordCount = 0;
   let processingError: Error | null = null;
+  const startTimestamp = new Date().toISOString();
 
   try {
+    // Read chunk information from queue or environment
+    let nextChunk: NextChunk | undefined;
+    if(chunksBucket && chunkKey) {
+      nextChunk = {bucketName: chunksBucket, s3Key: chunkKey};
+    } 
+    else if(queueUrl) {
+      console.log('Reading chunk information from SQS queue...');
+      nextChunk = await queueReader.receiveMessage() as NextChunk;
+      if(isEcsTask() && !nextChunk) {
+        console.log('Empty queue - this probably means that the desired count for the ' +
+          'service has not scaled down yet to zero after processing the last message and deleting ' +
+          'it from the queue. An empty queue will eventually cause the service to scale down to ' +
+          'zero, but in the meantime we should just exit the task.');
+        console.log('✗ Task cancelled.');
+        process.exit(0);
+      }
+    } 
+    else {
+      console.error('ERROR: Either CHUNKS_BUCKET and CHUNK_KEY environment variables or SQS_QUEUE_URL must be provided');
+      process.exit(1);
+    }
+    ({ bucketName, s3Key } = nextChunk || {});
+
+    // Validate required information
+    ChunkFileManager.validateChunk(nextChunk);
+
+    // Read flags file to get per-sync configuration (bulkReset, syncPopulation, trustPreviousStorage)
+    const flags = await metadataStorage.readFlagsFromChunkKey(bucketName, s3Key, region);
+    
+    // Use bulkReset from flags if available, otherwise fall back to environment variable
+    const bulkReset = flags.bulkReset ?? (`${BULK_RESET}`.trim().toLowerCase() === 'true');
+    console.log(`Bulk Reset: ${bulkReset}${flags.bulkReset !== undefined ? ' (from flags file)' : ' (from environment)'}`);
+
+    // Get trustPreviousStorage from flags if available, otherwise default to true (trust by default)
+    const trustPreviousStorage = flags.trustPreviousStorage ?? true;
+    console.log(`Trust Previous Storage: ${trustPreviousStorage}${flags.trustPreviousStorage !== undefined ? ' (from flags file)' : ' (defaulted)'}`);
+
+    // Get syncPopulation from flags if available, otherwise default to PersonFull
+    const syncPopulation = flags.syncPopulation ?? SyncPopulation.PersonFull;
+    console.log(`Sync Population: ${syncPopulation}${flags.syncPopulation !== undefined ? ' (from flags file)' : ' (defaulted)'}`);
+
+    staticMapUsage = resolveStaticMapUsage(staticMapUsage, flags.useMockTarget);
+    if (flags.useMockTarget) {
+      console.log(`Static map usage overridden for mock target mode: ${JSON.stringify(staticMapUsage)}`);
+    }
+
+    // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
+    chunkId = metadataUtils.extractChunkId(s3Key!);
+
+    // Extract integration timestamp from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "2026-03-03T19:58:41.277Z")
+    integrationTimestamp = metadataUtils.extractIntegrationTimestamp(s3Key!) || new Date().toISOString();
+
+    console.log(`Processing chunk: s3://${bucketName}/${s3Key}`);
+    if (chunkId) {
+      console.log(`Chunk ID: ${chunkId}`);
+    }
+    console.log(`Integration timestamp: ${integrationTimestamp}`);
+    console.log(`Region: ${region || 'default (us-east-1)'}\n`);
+
+    // Initialize a retry strategy based on environment variable configuration
+    const retryStrategy = getRetryStrategy(RETRY_STRATEGY);
+    if(retryStrategy) {
+      console.log(`Retry strategy initialized: ${RETRY_STRATEGY}`);
+    }
+
+    // Initialize error tracker for capturing errors and statistics to DynamoDB
+    // Redirected to the isolated mock statistics table when flags.useMockTarget is true, so bulk
+    // STATISTICS/ERROR records never mix with production data.
+    const errorTrackingStatisticsTableName = resolveTableName(dynamoDbStatisticsTableName, dynamoDbMockStatisticsTableName, flags.useMockTarget);
+    if (errorTrackingStatisticsTableName) {
+      errorTracker = new TrackingTargetApiErrorProcessor({
+        tableName: errorTrackingStatisticsTableName,
+        integrationTimestamp,
+        region,
+        logToConsole: true
+      });
+      console.log(`Error tracker initialized with table: ${errorTrackingStatisticsTableName}`);
+    } else {
+      console.warn('WARNING: DYNAMODB_STATISTICS_TABLE_NAME not configured - error tracking disabled');
+      errorTracker = new LoggingTargetApiErrorProcessor();
+    }
+
     // Build config with S3 data source pointing to this chunk
     const config = await buildChunkConfig({
       bucketName: bucketName!,
@@ -403,7 +408,7 @@ export async function main(queueReader: QueueReader) {
         const personCacheLookup = new PersonCacheLookup({ config, region, bucketName });
         // Return the lookup function that uses the cached instance
         return (person: FieldSet | string) => 
-          personCacheLookup.lookupPersonInTargetSystemCache({ person, s3Key });
+          personCacheLookup.lookupPersonInTargetSystemCache({ person, s3Key: s3Key! });
       })(),
       errorEventProcessor: errorTracker, // Inject error tracker for tracking errors and throttling
       retryStrategy, // Inject retry strategy for handling transient API failures (429, 5xx, network errors)

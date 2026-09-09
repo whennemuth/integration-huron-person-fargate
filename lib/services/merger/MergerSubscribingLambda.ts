@@ -10,8 +10,6 @@ import { Construct } from 'constructs';
 import { FUNCTION_BASE_NAME } from '../../../src/merging/MergerSubscriber';
 import { IContext } from '../../../context/IContext';
 import { DYNAMODB_TABLE_NAME as STATISTICS_TABLE_NAME } from '../../../src/dynamodb/StatisticsTable';
-import { DYNAMODB_TABLE_NAME as PERSON_CURRENT_STATE_TABLE_NAME } from '../../../src/dynamodb/PersonCurrentStateTable';
-import { DYNAMODB_TABLE_NAME as PERSON_HISTORY_TABLE_NAME } from '../../../src/dynamodb/PersonHistoryTable';
 
 export interface MergerSubscribingLambdaProps {
   vpc: IVpc;
@@ -89,11 +87,11 @@ export class MergerSubscribingLambda extends Construct {
         CHUNKS_BUCKET_NAME: props.chunksBucketName,
         DRY_RUN: props.dryRun ? 'true' : 'false',
         PREVIOUS_STORAGE_TYPE: props.context.PREVIOUS_STORAGE_TYPE || 's3',
-        // Conditionally add DynamoDB table names when in DynamoDB mode
+        // Conditionally add DynamoDB table name when in DynamoDB mode - only STATISTICS_TABLE_NAME
+        // is needed here since this Lambda only reads METADATA/TERMINAL_ERROR (control-plane
+        // records, always on the real table regardless of mock mode)
         ...(props.context.PREVIOUS_STORAGE_TYPE === 'dynamodb' && {
           DYNAMODB_STATISTICS_TABLE_NAME: STATISTICS_TABLE_NAME(props.context),
-          DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME: PERSON_CURRENT_STATE_TABLE_NAME(props.context),
-          DYNAMODB_PERSON_HISTORY_TABLE_NAME: PERSON_HISTORY_TABLE_NAME(props.context),
         }),
         DESCRIPTION1:
           `Sends SQS message to merger queue to trigger Fargate task that checks completeness 
@@ -140,30 +138,19 @@ export class MergerSubscribingLambda extends Construct {
       })
     );
 
-    // Grant DynamoDB permissions if in DynamoDB mode
+    // Grant DynamoDB permissions if in DynamoDB mode - GetItem only, since this Lambda only
+    // does a PK+SK lookup on the statistics table (readTerminalError/getChunkMetadata), never
+    // queries its GSI or touches PersonCurrentState/PersonHistory
     if (props.context.PREVIOUS_STORAGE_TYPE === 'dynamodb') {
       const statisticsTableName = STATISTICS_TABLE_NAME(props.context);
-      const personCurrentStateTableName = PERSON_CURRENT_STATE_TABLE_NAME(props.context);
-      const personHistoryTableName = PERSON_HISTORY_TABLE_NAME(props.context);
-      
-      const tableArns: string[] = [
-        `arn:aws:dynamodb:${props.region}:*:table/${statisticsTableName}`,
-        `arn:aws:dynamodb:${props.region}:*:table/${statisticsTableName}/index/*`,
-        `arn:aws:dynamodb:${props.region}:*:table/${personCurrentStateTableName}`,
-        `arn:aws:dynamodb:${props.region}:*:table/${personCurrentStateTableName}/index/*`,
-        `arn:aws:dynamodb:${props.region}:*:table/${personHistoryTableName}`,
-        `arn:aws:dynamodb:${props.region}:*:table/${personHistoryTableName}/index/*`,
-      ];
 
       this.function.addToRolePolicy(
         new PolicyStatement({
           effect: Effect.ALLOW,
           actions: [
             'dynamodb:GetItem',
-            'dynamodb:Query',
-            'dynamodb:Scan',
           ],
-          resources: tableArns,
+          resources: [`arn:aws:dynamodb:${props.region}:*:table/${statisticsTableName}`],
         })
       );
     }

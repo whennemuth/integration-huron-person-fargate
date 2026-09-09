@@ -1,17 +1,11 @@
 import { MetadataForDynamoDb } from '../src/chunking/metadata';
 import { StatisticsTable } from '../src/dynamodb/StatisticsTable';
-import { IContext } from '../context/IContext';
 import { SyncPopulation } from '../docker/chunkTypes';
 
 // Mock StatisticsTable
 jest.mock('../src/dynamodb/StatisticsTable');
 
 describe('MetadataForDynamoDb', () => {
-  const mockContext = {
-    PREVIOUS_STORAGE_TYPE: 'dynamodb' as const,
-    // Add other required IContext fields as needed
-  } as IContext;
-
   const mockConfig = {
     storage: { type: 'dynamodb' as const },
   };
@@ -33,10 +27,10 @@ describe('MetadataForDynamoDb', () => {
       readMetadata: jest.fn(),
     } as any;
 
-    // Mock the StatisticsTable constructor
-    (StatisticsTable as jest.MockedClass<typeof StatisticsTable>).mockImplementation(() => mockStatisticsTable);
+    // Mock the StatisticsTable.fromTableName() static factory
+    (StatisticsTable.fromTableName as jest.Mock) = jest.fn().mockReturnValue(mockStatisticsTable);
 
-    metadata = new MetadataForDynamoDb({ config: mockConfig as any, context: mockContext });
+    metadata = new MetadataForDynamoDb({ config: mockConfig as any, statisticsTableName: 'test-statistics-table' });
   });
 
   describe('write', () => {

@@ -132,5 +132,8 @@ if (require.main === module) {
     'DYNAMODB_STATISTICS_TABLE_NAME'
   ].forEach(testEnvironment.getVar);
 
-  main(QueueReader.getInstance());
+  main(QueueReader.getInstance()).catch(error => {
+    console.error('Fatal error in processor router:', error);
+    process.exit(1);
+  });
 }

@@ -477,7 +477,11 @@ export class ChunkFromAPI implements IChunkFromSource {
       const chunkDirectory = this.getChunkDirectory();
 
       // Create metadata manager for config.storage.type (S3 or DynamoDB)
-      const metadataManager = MetadataFactory.create({ config: this.config, context: this.context });
+      const metadataManager = MetadataFactory.create({
+        config: this.config,
+        previousStorageType: process.env.PREVIOUS_STORAGE_TYPE,
+        statisticsTableName: process.env.DYNAMODB_STATISTICS_TABLE_NAME
+      });
 
       console.log(`Chunks: s3://${chunksBucket}/${chunkDirectory}/`);
       console.log(`Region: ${region || 'default'}`);

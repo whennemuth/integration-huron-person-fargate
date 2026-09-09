@@ -72,7 +72,6 @@ import { StandardMetadataUtils } from '../chunking/metadata/MetadataUtils';
 import { PersonCacheLookup } from '../person-cache/PersonCacheLookup';
 import { SyncPopulation } from '../../docker/chunkTypes';
 import { StatisticsTable } from '../dynamodb/StatisticsTable';
-import { IContext } from '../../context/IContext';
 
 const metadataStorage = new MetadataFactoryForBootstrap().createMetadataForBootstrap();
 const metadataUtils = new StandardMetadataUtils({});
@@ -233,106 +232,112 @@ export async function main(queueReader: QueueReader) {
   console.log(`SQS queue URL: ${queueUrl || 'not set'}`);
   console.log(`Static map usage: ${JSON.stringify(staticMapUsage ?? {})}`);
   console.log(`DynamoDB statistics table: ${dynamoDbStatisticsTableName || 'not configured'}`);
-  
-  // Read chunk information from queue or environment
-  let nextChunk: NextChunk | undefined;
-  if (chunksBucket && chunkKey) {
-    nextChunk = { bucketName: chunksBucket, s3Key: chunkKey };
-  } else if (queueUrl) {
-    console.log('Reading chunk information from SQS queue...');
-    nextChunk = await queueReader.receiveMessage() as NextChunk;
-    if (isEcsTask() && !nextChunk) {
-      console.log('Empty queue - service will scale down. Exiting task.');
-      process.exit(0);
-    }
-  } else {
-    console.error('ERROR: Either CHUNKS_BUCKET and CHUNK_KEY or SQS_QUEUE_URL must be provided');
-    process.exit(1);
-  }
-  
-  const { bucketName, s3Key } = nextChunk || {};
-  ChunkFileManager.validateChunk(nextChunk);
 
-  // Read flags file
-  const flags = await metadataStorage.readFlagsFromChunkKey(bucketName, s3Key, region);
-  const bulkReset = flags.bulkReset ?? (`${BULK_RESET}`.trim().toLowerCase() === 'true');
-  const trustPreviousStorage = flags.trustPreviousStorage ?? true;
-  const syncPopulation = flags.syncPopulation ?? SyncPopulation.PersonFull;
-
-  staticMapUsage = resolveStaticMapUsage(staticMapUsage, flags.useMockTarget);
-  if (flags.useMockTarget) {
-    console.log(`Static map usage overridden for mock target mode: ${JSON.stringify(staticMapUsage)}`);
-  }
-
-  console.log(`Bulk Reset: ${bulkReset}${flags.bulkReset !== undefined ? ' (from flags)' : ' (from environment)'}`);
-  console.log(`Trust Previous Storage: ${trustPreviousStorage}${flags.trustPreviousStorage !== undefined ? ' (from flags)' : ' (defaulted)'}`);
-  console.log(`Sync Population: ${syncPopulation}${flags.syncPopulation !== undefined ? ' (from flags)' : ' (defaulted)'}`);
-
-  const chunkId = metadataUtils.extractChunkId(s3Key!);
-  const integrationTimestamp = metadataUtils.extractIntegrationTimestamp(s3Key!) || new Date().toISOString();
-  const chunkDirectory = s3Key!.substring(0, s3Key!.lastIndexOf('/'));
-
-  console.log(`Processing chunk: s3://${bucketName}/${s3Key}`);
-  if (chunkId) {
-    console.log(`Chunk ID: ${chunkId}`);
-  }
-  console.log(`Integration timestamp: ${integrationTimestamp}`);
-  console.log(`Region: ${region || 'default (us-east-1)'}\n`);
-
-  // Get DynamoDB table names from environment variables (required)
-  // Redirected to isolated mock tables when flags.useMockTarget is true, so DeltaStrategyForDynamoDB
-  // never mixes mocked person hash/history state with production data
-  const currentStateTableName = resolveTableName(
-    process.env.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME,
-    process.env.DYNAMODB_MOCK_PERSON_CURRENT_STATE_TABLE_NAME,
-    flags.useMockTarget
-  );
-  const historyTableName = resolveTableName(
-    process.env.DYNAMODB_PERSON_HISTORY_TABLE_NAME,
-    process.env.DYNAMODB_MOCK_PERSON_HISTORY_TABLE_NAME,
-    flags.useMockTarget
-  );
-
-  if (!currentStateTableName || !historyTableName) {
-    console.error('ERROR: DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME and DYNAMODB_PERSON_HISTORY_TABLE_NAME environment variables required');
-    process.exit(1);
-  }
-
-  console.log(`PersonCurrentState table: ${currentStateTableName}`);
-  console.log(`PersonHistory table: ${historyTableName}\n`);
-
-  // Initialize retry strategy
-  const retryStrategy = getRetryStrategy(RETRY_STRATEGY);
-  if (retryStrategy) {
-    console.log(`Retry strategy initialized: ${RETRY_STRATEGY}`);
-  }
-
-  // Initialize error tracker
-  // Redirected to the isolated mock statistics table when flags.useMockTarget is true, so bulk
-  // STATISTICS/ERROR records never mix with production data. Note: CHUNK_STATUS/METADATA
-  // (used below for completion detection) intentionally stay on the real table regardless of
-  // mock mode, since chunker always writes METADATA there and completion counting must be
-  // consistent with wherever chunkCount was recorded.
-  const errorTrackingStatisticsTableName = resolveTableName(dynamoDbStatisticsTableName, dynamoDbMockStatisticsTableName, flags.useMockTarget);
+  // Hoisted so the catch/finally below can report on however far execution got
+  let bucketName: string | undefined;
+  let s3Key: string | undefined;
+  let chunkId: string | undefined;
+  let integrationTimestamp: string | undefined;
+  let chunkDirectory: string | undefined;
   let errorTracker: TargetApiErrorEventProcessor | undefined;
-  if (errorTrackingStatisticsTableName) {
-    errorTracker = new TrackingTargetApiErrorProcessor({
-      tableName: errorTrackingStatisticsTableName,
-      integrationTimestamp,
-      region,
-      logToConsole: true
-    });
-    console.log(`Error tracker initialized with table: ${errorTrackingStatisticsTableName}`);
-  } else {
-    console.warn('WARNING: DYNAMODB_STATISTICS_TABLE_NAME not configured - error tracking disabled');
-    errorTracker = new LoggingTargetApiErrorProcessor();
-  }
-
-  const startTimestamp = new Date().toISOString();
   let processedRecordCount = 0;
   let processingError: Error | null = null;
+  const startTimestamp = new Date().toISOString();
 
   try {
+    // Read chunk information from queue or environment
+    let nextChunk: NextChunk | undefined;
+    if (chunksBucket && chunkKey) {
+      nextChunk = { bucketName: chunksBucket, s3Key: chunkKey };
+    } else if (queueUrl) {
+      console.log('Reading chunk information from SQS queue...');
+      nextChunk = await queueReader.receiveMessage() as NextChunk;
+      if (isEcsTask() && !nextChunk) {
+        console.log('Empty queue - service will scale down. Exiting task.');
+        process.exit(0);
+      }
+    } else {
+      console.error('ERROR: Either CHUNKS_BUCKET and CHUNK_KEY or SQS_QUEUE_URL must be provided');
+      process.exit(1);
+    }
+
+    ({ bucketName, s3Key } = nextChunk || {});
+    ChunkFileManager.validateChunk(nextChunk);
+
+    // Read flags file
+    const flags = await metadataStorage.readFlagsFromChunkKey(bucketName, s3Key, region);
+    const bulkReset = flags.bulkReset ?? (`${BULK_RESET}`.trim().toLowerCase() === 'true');
+    const trustPreviousStorage = flags.trustPreviousStorage ?? true;
+    const syncPopulation = flags.syncPopulation ?? SyncPopulation.PersonFull;
+
+    staticMapUsage = resolveStaticMapUsage(staticMapUsage, flags.useMockTarget);
+    if (flags.useMockTarget) {
+      console.log(`Static map usage overridden for mock target mode: ${JSON.stringify(staticMapUsage)}`);
+    }
+
+    console.log(`Bulk Reset: ${bulkReset}${flags.bulkReset !== undefined ? ' (from flags)' : ' (from environment)'}`);
+    console.log(`Trust Previous Storage: ${trustPreviousStorage}${flags.trustPreviousStorage !== undefined ? ' (from flags)' : ' (defaulted)'}`);
+    console.log(`Sync Population: ${syncPopulation}${flags.syncPopulation !== undefined ? ' (from flags)' : ' (defaulted)'}`);
+
+    chunkId = metadataUtils.extractChunkId(s3Key!);
+    integrationTimestamp = metadataUtils.extractIntegrationTimestamp(s3Key!) || new Date().toISOString();
+    chunkDirectory = s3Key!.substring(0, s3Key!.lastIndexOf('/'));
+
+    console.log(`Processing chunk: s3://${bucketName}/${s3Key}`);
+    if (chunkId) {
+      console.log(`Chunk ID: ${chunkId}`);
+    }
+    console.log(`Integration timestamp: ${integrationTimestamp}`);
+    console.log(`Region: ${region || 'default (us-east-1)'}\n`);
+
+    // Get DynamoDB table names from environment variables (required)
+    // Redirected to isolated mock tables when flags.useMockTarget is true, so DeltaStrategyForDynamoDB
+    // never mixes mocked person hash/history state with production data
+    const currentStateTableName = resolveTableName(
+      process.env.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME,
+      process.env.DYNAMODB_MOCK_PERSON_CURRENT_STATE_TABLE_NAME,
+      flags.useMockTarget
+    );
+    const historyTableName = resolveTableName(
+      process.env.DYNAMODB_PERSON_HISTORY_TABLE_NAME,
+      process.env.DYNAMODB_MOCK_PERSON_HISTORY_TABLE_NAME,
+      flags.useMockTarget
+    );
+
+    if (!currentStateTableName || !historyTableName) {
+      console.error('ERROR: DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME and DYNAMODB_PERSON_HISTORY_TABLE_NAME environment variables required');
+      process.exit(1);
+    }
+
+    console.log(`PersonCurrentState table: ${currentStateTableName}`);
+    console.log(`PersonHistory table: ${historyTableName}\n`);
+
+    // Initialize retry strategy
+    const retryStrategy = getRetryStrategy(RETRY_STRATEGY);
+    if (retryStrategy) {
+      console.log(`Retry strategy initialized: ${RETRY_STRATEGY}`);
+    }
+
+    // Initialize error tracker
+    // Redirected to the isolated mock statistics table when flags.useMockTarget is true, so bulk
+    // STATISTICS/ERROR records never mix with production data. Note: CHUNK_STATUS/METADATA
+    // (used below for completion detection) intentionally stay on the real table regardless of
+    // mock mode, since chunker always writes METADATA there and completion counting must be
+    // consistent with wherever chunkCount was recorded.
+    const errorTrackingStatisticsTableName = resolveTableName(dynamoDbStatisticsTableName, dynamoDbMockStatisticsTableName, flags.useMockTarget);
+    if (errorTrackingStatisticsTableName) {
+      errorTracker = new TrackingTargetApiErrorProcessor({
+        tableName: errorTrackingStatisticsTableName,
+        integrationTimestamp,
+        region,
+        logToConsole: true
+      });
+      console.log(`Error tracker initialized with table: ${errorTrackingStatisticsTableName}`);
+    } else {
+      console.warn('WARNING: DYNAMODB_STATISTICS_TABLE_NAME not configured - error tracking disabled');
+      errorTracker = new LoggingTargetApiErrorProcessor();
+    }
+
     // Build config with DynamoDB delta storage
     const config = await buildChunkConfig({
       bucketName: bucketName!,
@@ -360,7 +365,7 @@ export async function main(queueReader: QueueReader) {
         const personCacheLookup = new PersonCacheLookup({ config, region, bucketName });
         // Return the lookup function that uses the cached instance
         return (person: FieldSet | string) => 
-          personCacheLookup.lookupPersonInTargetSystemCache({ person, s3Key });
+          personCacheLookup.lookupPersonInTargetSystemCache({ person, s3Key: s3Key! });
       })(),
       errorEventProcessor: errorTracker,
       retryStrategy,
@@ -446,9 +451,8 @@ export async function main(queueReader: QueueReader) {
       // DynamoDB Mode: Write CHUNK_STATUS and check for completion to trigger merger
       if (dynamoDbStatisticsTableName && chunkId && integrationTimestamp) {
         try {
-          // Load context to create StatisticsTable
-          const context = require('../../context/context.json') as IContext;
-          const statisticsTable = new StatisticsTable(context);
+          // Completion detection always uses the real (not mock-redirected) statistics table
+          const statisticsTable = StatisticsTable.fromTableName(dynamoDbStatisticsTableName, region);
 
           // Step 1: Write this processor's CHUNK_STATUS
           const chunkStatus = {
