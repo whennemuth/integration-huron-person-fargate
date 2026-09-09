@@ -165,7 +165,7 @@ export abstract class AbstractMerger {
     const config = await getConfig();
     const metadataManager = MetadataFactory.create({ config });
     const flags = await metadataManager.readFlags({ bucketName, chunkDirectory: chunkDir, region });
-    const { syncPopulation } = flags;
+    const { syncPopulation, useMockTarget } = flags;
 
     if (syncPopulation === SyncPopulation.PersonDelta) {
       console.log(`  Sync population type is PersonDelta - Deletion handling does NOT apply.`);
@@ -186,6 +186,7 @@ export abstract class AbstractMerger {
         sourceKey,
         targetKey,
         primaryKeyFieldNames,
+        useMockTarget,
       });
 
       const deletionResult = await deleteHandler!.processDeletes();

@@ -1,6 +1,6 @@
 import { DeferredDeleteHandler, DeferredDeleteHandlerParams } from '../src/merging/DeferredDeleteHandler';
-import { TargetPersonDeleteType, Config, HuronPersonDataTarget, ReadPerson } from 'integration-huron-person';
-import { BatchStatus, FieldSet } from 'integration-core';
+import { TargetPersonDeleteType, Config, HuronPersonDataTarget, MockPersonDataTarget, ReadPerson } from 'integration-huron-person';
+import { BatchStatus, FieldSet, Status } from 'integration-core';
 import { TrackingTargetApiErrorProcessor } from '../src/ApiErrorTracking';
 import { mockClient } from 'aws-sdk-client-mock';
 import { S3, GetObjectCommand } from '@aws-sdk/client-s3';
@@ -10,6 +10,10 @@ import { Readable } from 'stream';
 // Mock pushAll at the prototype level
 const mockPushAll = jest.fn();
 HuronPersonDataTarget.prototype.pushAll = mockPushAll;
+
+// Mock MockPersonDataTarget.pushOne for mock-target mode tests (MockPersonDataTarget only implements pushOne)
+const mockPushOne = jest.fn();
+MockPersonDataTarget.prototype.pushOne = mockPushOne;
 
 // Mock ReadPerson for HRN lookups
 const mockReadPersonBySourceIdentifier = jest.fn();
@@ -591,6 +595,66 @@ describe('DeferredDeleteHandler', () => {
       });
 
       expect(result.deletedCount).toBe(1);
+    });
+  });
+
+  describe('handleSoftDeletes - mock target mode', () => {
+    beforeEach(() => {
+      process.env.PERSON_DELETE_TYPE = 'soft';
+      process.env.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = 'test-mock-target-person-table';
+    });
+
+    afterEach(() => {
+      delete process.env.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME;
+    });
+
+    it('uses MockPersonDataTarget instead of the real HuronPersonDataTarget when useMockTarget is true', async () => {
+      const baseline = [createMockFieldSet('U00000001', 'Alice')];
+      const consolidated: FieldSet[] = [];
+
+      s3Mock.on(GetObjectCommand, {
+        Bucket: 'test-bucket',
+        Key: 'deltas/person-full/2026-05-02/previous-input.ndjson'
+      }).resolves(mockNdjsonResponse(consolidated));
+
+      s3Mock.on(GetObjectCommand, {
+        Bucket: 'test-bucket',
+        Key: 'delta-storage/previous-input.ndjson'
+      }).resolves(mockNdjsonResponse(baseline));
+
+      mockPushOne.mockResolvedValue({ status: Status.SUCCESS, primaryKey: [{ personId: 'U00000001' }] });
+
+      const handler = new DeferredDeleteHandler({ ...mockParams, useMockTarget: true });
+      const result = await handler.processDeletes();
+
+      expect(mockPushOne).toHaveBeenCalledTimes(1);
+      expect(mockPushAll).not.toHaveBeenCalled();
+      expect(result.deletedCount).toBe(1);
+    });
+
+    it('skips real-API HRN enrichment when useMockTarget is true', async () => {
+      const baseline = [{
+        hash: 'hash-U00000001',
+        fieldValues: [{ sourceIdentifier: 'U00000001' }, { firstName: 'Alice' }] // No hrn field
+      }];
+      const consolidated: FieldSet[] = [];
+
+      s3Mock.on(GetObjectCommand, {
+        Bucket: 'test-bucket',
+        Key: 'deltas/person-full/2026-05-02/previous-input.ndjson'
+      }).resolves(mockNdjsonResponse(consolidated));
+
+      s3Mock.on(GetObjectCommand, {
+        Bucket: 'test-bucket',
+        Key: 'delta-storage/previous-input.ndjson'
+      }).resolves(mockNdjsonResponse(baseline));
+
+      mockPushOne.mockResolvedValue({ status: Status.SUCCESS, primaryKey: [{ personId: 'U00000001' }] });
+
+      const handler = new DeferredDeleteHandler({ ...mockParams, useMockTarget: true });
+      await handler.processDeletes();
+
+      expect(mockReadPersonBySourceIdentifier).not.toHaveBeenCalled();
     });
   });
 

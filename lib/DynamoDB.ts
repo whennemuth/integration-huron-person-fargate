@@ -1,12 +1,13 @@
 import { RemovalPolicy } from 'aws-cdk-lib';
-import { AttributeType, BillingMode, Table, TableEncryption } from 'aws-cdk-lib/aws-dynamodb';
+import { AttributeType, BillingMode, CfnTable, Table, TableEncryption } from 'aws-cdk-lib/aws-dynamodb';
 import { Construct } from 'constructs';
 import { IContext } from '../context/IContext';
 import { 
   DYNAMODB_PARTITION_KEY as statisticsPartitionKey, 
   DYNAMODB_SECONDARY_PARTITION_KEY as statisticsSecondaryPartitionKey, 
   DYNAMODB_SORT_KEY as statisticsSortKey, 
-  DYNAMODB_TABLE_NAME as statisticsTableName
+  DYNAMODB_TABLE_NAME as statisticsTableName,
+  DYNAMODB_MOCK_TABLE_NAME as mockStatisticsTableName
 } from '../src/dynamodb/StatisticsTable';
 import {
   DYNAMODB_TABLE_NAME as atomicCounterTableName,
@@ -14,6 +15,7 @@ import {
 } from '../src/dynamodb/AtomicCounter';
 import {
   DYNAMODB_TABLE_NAME as personCurrentStateTableName,
+  DYNAMODB_MOCK_TABLE_NAME as mockPersonCurrentStateTableName,
   DYNAMODB_PARTITION_KEY as personCurrentStatePartitionKey,
   DYNAMODB_GSI_INDEX_NAME as personCurrentStateGSIIndexName,
   DYNAMODB_GSI_PARTITION_KEY as personCurrentStateGSIPartitionKey,
@@ -21,6 +23,7 @@ import {
 } from '../src/dynamodb/PersonCurrentStateTable';
 import {
   DYNAMODB_TABLE_NAME as personHistoryTableName,
+  DYNAMODB_MOCK_TABLE_NAME as mockPersonHistoryTableName,
   DYNAMODB_PARTITION_KEY as personHistoryPartitionKey,
   DYNAMODB_SORT_KEY as personHistorySortKey,
   DYNAMODB_GSI1_INDEX_NAME as personHistoryGSI1IndexName,
@@ -40,7 +43,10 @@ export enum TableResourceIds {
   ATOMIC_COUNTER_TABLE = 'AtomicCounterTable',
   PERSON_CURRENT_STATE_TABLE = 'PersonCurrentStateTable',
   PERSON_HISTORY_TABLE = 'PersonHistoryTable',
-  MOCK_TARGET_PERSON_TABLE = 'MockTargetPersonTable'
+  MOCK_TARGET_PERSON_TABLE = 'MockTargetPersonTable',
+  MOCK_STATISTICS_TABLE = 'MockStatisticsTable',
+  MOCK_PERSON_CURRENT_STATE_TABLE = 'MockPersonCurrentStateTable',
+  MOCK_PERSON_HISTORY_TABLE = 'MockPersonHistoryTable'
 }
 export interface ProcessorStatisticsTableProps {
   context: IContext;
@@ -61,9 +67,17 @@ export class DynamoDbTables extends Construct {
   public personCurrentStateTable?: Table;
   public personHistoryTable?: Table;
   public mockTargetPersonTable: Table;
+  public mockStatisticsTable: Table;
+  public mockPersonCurrentStateTable?: Table;
+  public mockPersonHistoryTable?: Table;
+  mockConstruct: Construct;
 
   constructor(private params: { scope: Construct, id: string, props: ProcessorStatisticsTableProps }) {
     super(params.scope, params.id);
+
+    // Nested under `this` (not params.scope) so mock tables' aws:cdk:path shows as
+    // App/DynamoDb/Mocks/... rather than a sibling of DynamoDb
+    this.mockConstruct = new Construct(this, 'MockTables');
 
     this.createStatisticsTable();
 
@@ -71,12 +85,16 @@ export class DynamoDbTables extends Construct {
 
     this.createMockTargetPersonTable();
 
+    this.createMockStatisticsTable();
+
     // Conditionally create DynamoDB-based delta storage tables
     // Default to 'dynamodb' mode if PREVIOUS_STORAGE_TYPE is not specified
     const previousStorageType = params.props.context.PREVIOUS_STORAGE_TYPE || 'dynamodb';
     if (previousStorageType === 'dynamodb') {
       this.createPersonCurrentStateTable();
       this.createPersonHistoryTable();
+      this.createMockPersonCurrentStateTable();
+      this.createMockPersonHistoryTable();
     }
   }
 
@@ -345,7 +363,7 @@ export class DynamoDbTables extends Construct {
 
     const { MOCK_TARGET_PERSON_TABLE } = TableResourceIds;
 
-    this.mockTargetPersonTable = new Table(this, MOCK_TARGET_PERSON_TABLE, {
+    this.mockTargetPersonTable = new Table(this.mockConstruct, MOCK_TARGET_PERSON_TABLE, {
       tableName: mockTargetPersonTableName(context),
       partitionKey: {
         name: mockTargetPersonPartitionKey,
@@ -358,6 +376,133 @@ export class DynamoDbTables extends Construct {
         recoveryPeriodInDays: 35,
       },
       removalPolicy: RemovalPolicy.DESTROY,
+    });
+    // Pinned so the construct-path move doesn't change dependents' Ref values (IAM policies, task defs)
+    (this.mockTargetPersonTable.node.defaultChild as CfnTable).overrideLogicalId('AppDynamoDbMockTargetPersonTable2BE0D169');
+  }
+
+  /**
+   * Isolated statistics table for mocked (source simulator + mock target) runs.
+   * Only bulk STATISTICS/ERROR/CHUNK_STATUS records are redirected here - FLAGS/METADATA
+   * control-plane records always stay in the real StatisticsTable so every phase can
+   * bootstrap discovery of useMockTarget from one well-known location.
+   */
+  private createMockStatisticsTable = () => {
+    const { context } = this.params.props;
+
+    const { MOCK_STATISTICS_TABLE } = TableResourceIds;
+
+    this.mockStatisticsTable = new Table(this.mockConstruct, MOCK_STATISTICS_TABLE, {
+      tableName: mockStatisticsTableName(context),
+      partitionKey: {
+        name: statisticsPartitionKey,
+        type: AttributeType.STRING,
+      },
+      sortKey: {
+        name: statisticsSortKey,
+        type: AttributeType.STRING,
+      },
+      billingMode: BillingMode.PAY_PER_REQUEST,
+      encryption: TableEncryption.AWS_MANAGED,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    // Pinned so the construct-path move doesn't change dependents' Ref values (IAM policies, task defs)
+    (this.mockStatisticsTable.node.defaultChild as CfnTable).overrideLogicalId('AppDynamoDbMockStatisticsTable4840F10E');
+
+    this.mockStatisticsTable.addGlobalSecondaryIndex({
+      indexName: 'errorType-timestamp-index',
+      partitionKey: {
+        name: statisticsSecondaryPartitionKey,
+        type: AttributeType.STRING,
+      },
+      sortKey: {
+        name: statisticsPartitionKey,
+        type: AttributeType.STRING,
+      },
+    });
+  }
+
+  /**
+   * Isolated PersonCurrentState table for mocked runs (see createMockStatisticsTable comment).
+   */
+  private createMockPersonCurrentStateTable = () => {
+    const { context } = this.params.props;
+
+    const { MOCK_PERSON_CURRENT_STATE_TABLE } = TableResourceIds;
+
+    this.mockPersonCurrentStateTable = new Table(this.mockConstruct, MOCK_PERSON_CURRENT_STATE_TABLE, {
+      tableName: mockPersonCurrentStateTableName(context),
+      partitionKey: {
+        name: personCurrentStatePartitionKey,
+        type: AttributeType.STRING,
+      },
+      billingMode: BillingMode.PAY_PER_REQUEST,
+      encryption: TableEncryption.AWS_MANAGED,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    // Pinned so the construct-path move doesn't change dependents' Ref values (IAM policies, task defs)
+    (this.mockPersonCurrentStateTable.node.defaultChild as CfnTable).overrideLogicalId('AppDynamoDbMockPersonCurrentStateTable93F5EF37');
+
+    this.mockPersonCurrentStateTable.addGlobalSecondaryIndex({
+      indexName: personCurrentStateGSIIndexName,
+      partitionKey: {
+        name: personCurrentStateGSIPartitionKey,
+        type: AttributeType.STRING,
+      },
+      sortKey: {
+        name: personCurrentStateGSISortKey,
+        type: AttributeType.STRING,
+      },
+    });
+  }
+
+  /**
+   * Isolated PersonHistory table for mocked runs (see createMockStatisticsTable comment).
+   */
+  private createMockPersonHistoryTable = () => {
+    const { context } = this.params.props;
+
+    const { MOCK_PERSON_HISTORY_TABLE } = TableResourceIds;
+
+    this.mockPersonHistoryTable = new Table(this.mockConstruct, MOCK_PERSON_HISTORY_TABLE, {
+      tableName: mockPersonHistoryTableName(context),
+      partitionKey: {
+        name: personHistoryPartitionKey,
+        type: AttributeType.STRING,
+      },
+      sortKey: {
+        name: personHistorySortKey,
+        type: AttributeType.STRING,
+      },
+      billingMode: BillingMode.PAY_PER_REQUEST,
+      encryption: TableEncryption.AWS_MANAGED,
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    // Pinned so the construct-path move doesn't change dependents' Ref values (IAM policies, task defs)
+    (this.mockPersonHistoryTable.node.defaultChild as CfnTable).overrideLogicalId('AppDynamoDbMockPersonHistoryTableE99331A6');
+
+    this.mockPersonHistoryTable.addGlobalSecondaryIndex({
+      indexName: personHistoryGSI1IndexName,
+      partitionKey: {
+        name: personHistoryGSI1PartitionKey,
+        type: AttributeType.STRING,
+      },
+      sortKey: {
+        name: personHistoryGSI1SortKey,
+        type: AttributeType.STRING,
+      },
+    });
+
+    this.mockPersonHistoryTable.addGlobalSecondaryIndex({
+      indexName: personHistoryGSI2IndexName,
+      partitionKey: {
+        name: personHistoryGSI2PartitionKey,
+        type: AttributeType.STRING,
+      },
+      sortKey: {
+        name: personHistoryGSI2SortKey,
+        type: AttributeType.STRING,
+      },
     });
   }
 
@@ -382,6 +527,18 @@ export class DynamoDbTables extends Construct {
         return this.personHistoryTable.grantReadWriteData(grantee);
       case TableResourceIds.MOCK_TARGET_PERSON_TABLE:
         return this.mockTargetPersonTable.grantReadWriteData(grantee);
+      case TableResourceIds.MOCK_STATISTICS_TABLE:
+        return this.mockStatisticsTable.grantReadWriteData(grantee);
+      case TableResourceIds.MOCK_PERSON_CURRENT_STATE_TABLE:
+        if (!this.mockPersonCurrentStateTable) {
+          throw new Error('MockPersonCurrentStateTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
+        }
+        return this.mockPersonCurrentStateTable.grantReadWriteData(grantee);
+      case TableResourceIds.MOCK_PERSON_HISTORY_TABLE:
+        if (!this.mockPersonHistoryTable) {
+          throw new Error('MockPersonHistoryTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
+        }
+        return this.mockPersonHistoryTable.grantReadWriteData(grantee);
       default:
         throw new Error(`Unknown table resource ID: ${tableResourceId}`);
     }
@@ -408,6 +565,18 @@ export class DynamoDbTables extends Construct {
         return this.personHistoryTable.grantReadData(grantee);
       case TableResourceIds.MOCK_TARGET_PERSON_TABLE:
         return this.mockTargetPersonTable.grantReadData(grantee);
+      case TableResourceIds.MOCK_STATISTICS_TABLE:
+        return this.mockStatisticsTable.grantReadData(grantee);
+      case TableResourceIds.MOCK_PERSON_CURRENT_STATE_TABLE:
+        if (!this.mockPersonCurrentStateTable) {
+          throw new Error('MockPersonCurrentStateTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
+        }
+        return this.mockPersonCurrentStateTable.grantReadData(grantee);
+      case TableResourceIds.MOCK_PERSON_HISTORY_TABLE:
+        if (!this.mockPersonHistoryTable) {
+          throw new Error('MockPersonHistoryTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
+        }
+        return this.mockPersonHistoryTable.grantReadData(grantee);
       default:
         throw new Error(`Unknown table resource ID: ${tableResourceId}`);
     }

@@ -79,6 +79,7 @@ export class MergerTaskDefinition extends Construct {
       PERSON_DELETE_TYPE: personDeleteType,
       DRY_RUN: dryRun ? 'true' : 'false',
       DYNAMODB_STATISTICS_TABLE_NAME: dynamodb!.statisticsTable.tableName,
+      DYNAMODB_MOCK_STATISTICS_TABLE_NAME: dynamodb!.mockStatisticsTable.tableName, // Isolated statistics table for mocked runs (flags.useMockTarget)
       PREVIOUS_STORAGE_TYPE: previousStorageType!,
       SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
       DESCRIPTION1: 
@@ -106,6 +107,8 @@ export class MergerTaskDefinition extends Construct {
           personCurrentStateTable: { tableName: personCurrentStateTableName } = {}, 
           personHistoryTable: { tableName: personHistoryTableName } = {},
           mockTargetPersonTable: { tableName: mockTargetPersonTableName } = {},
+          mockPersonCurrentStateTable: { tableName: mockPersonCurrentStateTableName } = {},
+          mockPersonHistoryTable: { tableName: mockPersonHistoryTableName } = {},
         } = dynamodb || {};
         if (personCurrentStateTableName) {
           environment.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME = personCurrentStateTableName;
@@ -115,6 +118,12 @@ export class MergerTaskDefinition extends Construct {
         }
         if (mockTargetPersonTableName) {
           environment.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = mockTargetPersonTableName;
+        }
+        if (mockPersonCurrentStateTableName) {
+          environment.DYNAMODB_MOCK_PERSON_CURRENT_STATE_TABLE_NAME = mockPersonCurrentStateTableName;
+        }
+        if (mockPersonHistoryTableName) {
+          environment.DYNAMODB_MOCK_PERSON_HISTORY_TABLE_NAME = mockPersonHistoryTableName;
         }
         break;
       case 'database':
@@ -188,6 +197,24 @@ export class MergerTaskDefinition extends Construct {
       })
     );
 
+    // Grant DynamoDB permissions for writing error events and statistics to the isolated mock table
+    // Used when flags.useMockTarget is true so bulk STATISTICS/ERROR/CHUNK_STATUS records never mix with production data
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'dynamodb:PutItem',
+          'dynamodb:UpdateItem',
+          'dynamodb:Query',
+          'dynamodb:GetItem',
+        ],
+        resources: [
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}/index/*`,
+        ],
+      })
+    );
+
     // Grant DynamoDB query permissions for PersonCurrentStateTable
     // Used for deletion detection (finding persons in storage but not in source) in DynamoDB mode
     if (dynamodb!.personCurrentStateTable) {
@@ -219,6 +246,59 @@ export class MergerTaskDefinition extends Construct {
           ],
           resources: [
             `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personHistoryTable.tableName}`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB query permissions for mockPersonCurrentStateTable (deletion detection during mocked runs)
+    if (dynamodb!.mockPersonCurrentStateTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:Query',
+            'dynamodb:GetItem',
+            'dynamodb:Scan',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonCurrentStateTable.tableName}`,
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonCurrentStateTable.tableName}/index/*`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB write permissions for mockPersonHistoryTable (DELETED event records during mocked runs)
+    if (dynamodb!.mockPersonHistoryTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonHistoryTable.tableName}`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB read/write permissions for mockTargetPersonTable
+    // Used when flags.useMockTarget is true so deferred soft-deletes go through MockPersonDataTarget instead of the real Huron API
+    if (dynamodb!.mockTargetPersonTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:GetItem',
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+            'dynamodb:DeleteItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockTargetPersonTable.tableName}`,
           ],
         })
       );

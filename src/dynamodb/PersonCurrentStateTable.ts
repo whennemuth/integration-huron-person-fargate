@@ -33,6 +33,13 @@ export const DYNAMODB_TABLE_NAME = (context: IContext) =>
   `${context.STACK_ID}-person-current-state-${context.TAGS.Landscape.toLowerCase()}`;
 
 /**
+ * Isolated PersonCurrentState table for mocked (source simulator + mock target) runs, so
+ * simulated hash state never mixes with production person state.
+ */
+export const DYNAMODB_MOCK_TABLE_NAME = (context: IContext) => 
+  `${context.STACK_ID}-mock-person-current-state-${context.TAGS.Landscape.toLowerCase()}`;
+
+/**
  * Partition key: personId
  * Example: "U12345678"
  */

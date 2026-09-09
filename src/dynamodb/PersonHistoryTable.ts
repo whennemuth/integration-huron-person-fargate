@@ -43,6 +43,13 @@ export const DYNAMODB_TABLE_NAME = (context: IContext) =>
   `${context.STACK_ID}-person-history-${context.TAGS.Landscape.toLowerCase()}`;
 
 /**
+ * Isolated PersonHistory table for mocked (source simulator + mock target) runs, so simulated
+ * audit-trail entries never mix with the production history.
+ */
+export const DYNAMODB_MOCK_TABLE_NAME = (context: IContext) => 
+  `${context.STACK_ID}-mock-person-history-${context.TAGS.Landscape.toLowerCase()}`;
+
+/**
  * Partition key: personId
  * Example: "U12345678"
  */

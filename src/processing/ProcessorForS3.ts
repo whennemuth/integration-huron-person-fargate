@@ -227,6 +227,14 @@ export function resolveStaticMapUsage(staticMapUsage: StaticMapUsage | undefined
   return staticMapUsage;
 }
 
+/**
+ * Redirect to the isolated mock-mode table name when flags.useMockTarget is true, so mocked runs
+ * never mix bulk data (statistics/error events) with production tables.
+ */
+export function resolveTableName(realName: string | undefined, mockName: string | undefined, useMockTarget: boolean | undefined): string | undefined {
+  return useMockTarget ? mockName : realName;
+}
+
 export async function main(queueReader: QueueReader) {
   // Check for expected environment variables
   const { 
@@ -239,6 +247,7 @@ export async function main(queueReader: QueueReader) {
     DRY_RUN,
     BULK_RESET,
     DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbStatisticsTableName,
+    DYNAMODB_MOCK_STATISTICS_TABLE_NAME: dynamoDbMockStatisticsTableName,
     RETRY_STRATEGY,
     SHARED_DELTA_STORAGE_DIR='delta-storage'
   } = process.env;  
@@ -325,15 +334,18 @@ export async function main(queueReader: QueueReader) {
   }
 
   // Initialize error tracker for capturing errors and statistics to DynamoDB
+  // Redirected to the isolated mock statistics table when flags.useMockTarget is true, so bulk
+  // STATISTICS/ERROR records never mix with production data.
+  const errorTrackingStatisticsTableName = resolveTableName(dynamoDbStatisticsTableName, dynamoDbMockStatisticsTableName, flags.useMockTarget);
   let errorTracker: TargetApiErrorEventProcessor | undefined;
-  if (dynamoDbStatisticsTableName) {
+  if (errorTrackingStatisticsTableName) {
     errorTracker = new TrackingTargetApiErrorProcessor({
-      tableName: dynamoDbStatisticsTableName,
+      tableName: errorTrackingStatisticsTableName,
       integrationTimestamp,
       region,
       logToConsole: true
     });
-    console.log(`Error tracker initialized with table: ${dynamoDbStatisticsTableName}`);
+    console.log(`Error tracker initialized with table: ${errorTrackingStatisticsTableName}`);
   } else {
     console.warn('WARNING: DYNAMODB_STATISTICS_TABLE_NAME not configured - error tracking disabled');
     errorTracker = new LoggingTargetApiErrorProcessor();
@@ -525,6 +537,7 @@ if (require.main === module) {
     'DRY_RUN',
     'BULK_RESET',
     'DYNAMODB_STATISTICS_TABLE_NAME',
+    'DYNAMODB_MOCK_STATISTICS_TABLE_NAME',
     'RETRY_STRATEGY',
     'SHARED_DELTA_STORAGE_DIR',
     'IS_ECS_TASK',

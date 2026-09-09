@@ -81,7 +81,7 @@
     "configPath": "../integration-huron-person/config/config.preview.json"
   },
   "BULK_RESET": true,
-  "PREVIOUS_STORAGE_TYPE": "s3",
+  "PREVIOUS_STORAGE_TYPE": "dynamodb",
   "TRUST_PREVIOUS_STORAGE": false,
   "DRY_RUN": {
     "lambda": {

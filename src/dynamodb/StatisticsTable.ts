@@ -4,6 +4,8 @@ import { StatisticsItem } from '../ApiErrorTracking';
 import { AbstractDynamoDbTable, DynamoDBTable } from './DynamoDBTable';
 
 export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-statistics-${context.TAGS.Landscape.toLowerCase()}`;
+// Isolated statistics table for mocked (source simulator + mock target) runs, so bulk STATISTICS/ERROR/CHUNK_STATUS records never mix with production data
+export const DYNAMODB_MOCK_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-mock-statistics-${context.TAGS.Landscape.toLowerCase()}`;
 export const DYNAMODB_PARTITION_KEY = 'integrationTimestamp';
 export const DYNAMODB_SECONDARY_PARTITION_KEY = 'errorType';
 export const DYNAMODB_SORT_KEY = 'eventType';

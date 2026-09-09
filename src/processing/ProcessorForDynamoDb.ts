@@ -194,6 +194,14 @@ export function resolveStaticMapUsage(staticMapUsage: StaticMapUsage | undefined
   return staticMapUsage;
 }
 
+/**
+ * Redirect to the isolated mock-mode table name when flags.useMockTarget is true, so mocked runs
+ * never mix bulk data (person hash/history state, statistics/error events) with production tables.
+ */
+export function resolveTableName(realName: string | undefined, mockName: string | undefined, useMockTarget: boolean | undefined): string | undefined {
+  return useMockTarget ? mockName : realName;
+}
+
 export async function main(queueReader: QueueReader) {
   const { 
     REGION: region, 
@@ -205,6 +213,7 @@ export async function main(queueReader: QueueReader) {
     DRY_RUN,
     BULK_RESET,
     DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbStatisticsTableName,
+    DYNAMODB_MOCK_STATISTICS_TABLE_NAME: dynamoDbMockStatisticsTableName,
     RETRY_STRATEGY,
     MERGER_QUEUE_URL: mergerQueueUrl
   } = process.env;
@@ -271,8 +280,18 @@ export async function main(queueReader: QueueReader) {
   console.log(`Region: ${region || 'default (us-east-1)'}\n`);
 
   // Get DynamoDB table names from environment variables (required)
-  const currentStateTableName = process.env.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME;
-  const historyTableName = process.env.DYNAMODB_PERSON_HISTORY_TABLE_NAME;
+  // Redirected to isolated mock tables when flags.useMockTarget is true, so DeltaStrategyForDynamoDB
+  // never mixes mocked person hash/history state with production data
+  const currentStateTableName = resolveTableName(
+    process.env.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME,
+    process.env.DYNAMODB_MOCK_PERSON_CURRENT_STATE_TABLE_NAME,
+    flags.useMockTarget
+  );
+  const historyTableName = resolveTableName(
+    process.env.DYNAMODB_PERSON_HISTORY_TABLE_NAME,
+    process.env.DYNAMODB_MOCK_PERSON_HISTORY_TABLE_NAME,
+    flags.useMockTarget
+  );
 
   if (!currentStateTableName || !historyTableName) {
     console.error('ERROR: DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME and DYNAMODB_PERSON_HISTORY_TABLE_NAME environment variables required');
@@ -289,15 +308,21 @@ export async function main(queueReader: QueueReader) {
   }
 
   // Initialize error tracker
+  // Redirected to the isolated mock statistics table when flags.useMockTarget is true, so bulk
+  // STATISTICS/ERROR records never mix with production data. Note: CHUNK_STATUS/METADATA
+  // (used below for completion detection) intentionally stay on the real table regardless of
+  // mock mode, since chunker always writes METADATA there and completion counting must be
+  // consistent with wherever chunkCount was recorded.
+  const errorTrackingStatisticsTableName = resolveTableName(dynamoDbStatisticsTableName, dynamoDbMockStatisticsTableName, flags.useMockTarget);
   let errorTracker: TargetApiErrorEventProcessor | undefined;
-  if (dynamoDbStatisticsTableName) {
+  if (errorTrackingStatisticsTableName) {
     errorTracker = new TrackingTargetApiErrorProcessor({
-      tableName: dynamoDbStatisticsTableName,
+      tableName: errorTrackingStatisticsTableName,
       integrationTimestamp,
       region,
       logToConsole: true
     });
-    console.log(`Error tracker initialized with table: ${dynamoDbStatisticsTableName}`);
+    console.log(`Error tracker initialized with table: ${errorTrackingStatisticsTableName}`);
   } else {
     console.warn('WARNING: DYNAMODB_STATISTICS_TABLE_NAME not configured - error tracking disabled');
     errorTracker = new LoggingTargetApiErrorProcessor();
@@ -499,6 +524,9 @@ if (require.main === module) {
     'SQS_QUEUE_URL',
     'DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME',
     'DYNAMODB_PERSON_HISTORY_TABLE_NAME',
+    'DYNAMODB_MOCK_PERSON_CURRENT_STATE_TABLE_NAME',
+    'DYNAMODB_MOCK_PERSON_HISTORY_TABLE_NAME',
+    'DYNAMODB_MOCK_STATISTICS_TABLE_NAME',
     'STATIC_MAP_USAGE',
     'DRY_RUN',
     'BULK_RESET',

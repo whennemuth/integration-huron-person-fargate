@@ -116,7 +116,8 @@ export class ChunkerService extends AbstractService {
           bulkReset: false, // Default value; can be overridden by message parameters if needed
           trustPreviousStorage,
           processingMetadata: {
-            processedAt: new Date().toISOString(),
+            // processedAt: new Date().toISOString(),
+            processedAt: 'Placeholder. Override at runtime with ISO timestamp',
             processorVersion: '1.0.0'
           }
         })

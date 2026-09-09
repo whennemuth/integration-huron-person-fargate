@@ -1,6 +1,6 @@
 import { S3 } from '@aws-sdk/client-s3';
-import { FieldSet, TestEnvironment } from "integration-core";
-import { BasicCache, Cache, Config, ConfigManager, FieldDefinitions, HuronPersonDataTarget, ReadPerson, TargetPersonDeleteType } from "integration-huron-person";
+import { BasicPushAllOperation, FieldSet, TestEnvironment } from "integration-core";
+import { BasicCache, Cache, Config, ConfigManager, DataTargetFactory, FieldDefinitions, ReadPerson, TargetPersonDeleteType } from "integration-huron-person";
 import * as readline from 'readline';
 import { Readable } from 'stream';
 import { TrackingTargetApiErrorProcessor } from "../ApiErrorTracking";
@@ -15,6 +15,7 @@ export type DeferredDeleteHandlerParams = {
   config: Config;                // Configuration for PersonDataTarget initialization
   cache: Cache<string, string>;  // JWT token cache
   errorTracker: TrackingTargetApiErrorProcessor;
+  useMockTarget?: boolean;        // If true, soft-deletes go to MockPersonDataTarget instead of the real Huron API
 };
 
 export type DeferredDeleteResult = {
@@ -123,7 +124,7 @@ export class DeferredDeleteHandler {
    */
   public getRemovedRecords = async (): Promise<FieldSet[]> => {
     const { 
-      params: { bucketName, mergedNdjsonPath, baselineNdjsonPath }, 
+      params: { bucketName, mergedNdjsonPath, baselineNdjsonPath, useMockTarget }, 
       readNdjsonFile, findRemovedRecords, enrichRemovedRecordsWithHrn
     } = this;
 
@@ -140,8 +141,10 @@ export class DeferredDeleteHandler {
     // Step 3: Find records in baseline but NOT in consolidated (true removals)
     const removedRecords = findRemovedRecords(baseline, consolidated);
 
-    // Step 4: Enrich removed records with HRN if missing (lookup via sourceIdentifier)
-    const enrichedRecords = await enrichRemovedRecordsWithHrn(removedRecords);
+    // Step 4: Enrich removed records with HRN if missing (lookup via sourceIdentifier).
+    // Skipped in mock mode - MockPersonDataTarget keys deletes off sourceIdentifier, not HRN,
+    // so this real-API lookup is both unnecessary and would defeat mock isolation.
+    const enrichedRecords = useMockTarget ? removedRecords : await enrichRemovedRecordsWithHrn(removedRecords);
 
     return enrichedRecords;
   }
@@ -184,15 +187,22 @@ export class DeferredDeleteHandler {
 
       console.log(`\nIdentified ${removedRecords.length} record(s) for soft deletion`);
 
-      // Soft-delete via PersonDataTarget
-      const dataTarget = new HuronPersonDataTarget({ config, cache, errorEventProcessor });
+      // Select real vs mock target based on useMockTarget flag, so mocked runs never hit the real Huron API
+      const targetFactory = new DataTargetFactory({
+        config,
+        flags: { useMockTarget: this.params.useMockTarget },
+        cache,
+        errorEventProcessor
+      });
+      const dataTarget = targetFactory.create();
 
       console.log('Starting batch soft-delete operation...');
-      const batchResult = await dataTarget.pushAll({
-        added: [],
-        updated: [],
-        removed: removedRecords
-      });
+      const batchResult = dataTarget.pushAll
+        ? await dataTarget.pushAll({ added: [], updated: [], removed: removedRecords })
+        : await BasicPushAllOperation({
+            all: { added: [], updated: [], removed: removedRecords },
+            pusher: dataTarget
+          }).push();
 
       const successCount = batchResult.successes?.length || 0;
       const failureCount = batchResult.failures?.length || 0;
@@ -420,9 +430,10 @@ export class DeferredDeleteHandler {
     bucketName: string, 
     sourceKey: string, 
     targetKey: string, 
-    primaryKeyFieldNames: string[] 
+    primaryKeyFieldNames: string[],
+    useMockTarget?: boolean
   }): Promise<DeferredDeleteHandler | undefined> => {
-    const { region, bucketName, sourceKey, targetKey, primaryKeyFieldNames } = params;
+    const { region, bucketName, sourceKey, targetKey, primaryKeyFieldNames, useMockTarget } = params;
     // Load config for PersonDataTarget initialization
     const { HURON_PERSON_CONFIG_PATH, SECRET_ARN } = process.env;
     const configManager = ConfigManager.getInstance();
@@ -446,8 +457,13 @@ export class DeferredDeleteHandler {
     }
 
     // Create error tracker for deletion operations
+    // Redirected to the isolated mock statistics table when useMockTarget is true, so bulk
+    // STATISTICS/ERROR records never mix with production data
+    const statisticsTableName = useMockTarget
+      ? (process.env.DYNAMODB_MOCK_STATISTICS_TABLE_NAME || '')
+      : (process.env.DYNAMODB_STATISTICS_TABLE_NAME || '');
     const errorTracker = new TrackingTargetApiErrorProcessor({
-      tableName: process.env.DYNAMODB_STATISTICS_TABLE_NAME || '',
+      tableName: statisticsTableName,
       integrationTimestamp: new Date().toISOString(),
       region,
       logToConsole: true
@@ -462,7 +478,8 @@ export class DeferredDeleteHandler {
       primaryKeyFieldNames,                 // For identifying same records
       config,
       cache,
-      errorTracker
+      errorTracker,
+      useMockTarget
     });
   }
 }
@@ -481,6 +498,7 @@ if(require.main === module) {
       'SECRET_ARN',
       'HURON_PERSON_CONFIG_JSON',
       'DYNAMODB_STATISTICS_TABLE_NAME',
+      'DYNAMODB_MOCK_STATISTICS_TABLE_NAME',
       'CACHE_ENABLED',
       'CACHE_PATH'
     ].forEach(testEnvironment.getVar);
