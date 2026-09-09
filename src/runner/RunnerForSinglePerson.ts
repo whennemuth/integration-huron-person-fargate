@@ -57,7 +57,7 @@ export class SinglePersonRunner extends ChunkingServiceRunner {
     populationType: NormalizedPopulationType
   ): Promise<void> {
     const { 
-      bulkReset, trustPreviousStorage, iterationLimit, buid, queueUrl 
+      bulkReset, trustPreviousStorage, iterationLimit, buid, queueUrl, sourceSimulator 
     } = this.env;
     const apiChunkerEvent: ApiChunkerEvent = {
       baseUrl: sourceEndpoint.baseUrl,
@@ -75,7 +75,12 @@ export class SinglePersonRunner extends ChunkingServiceRunner {
       }
     };
 
-    console.log(`\n📝 Sending single person request for BUID: ${buid}\n`);
+    // Source simulator ignores the requested BUID and always generates its own synthetic person (U0000001)
+    if (sourceSimulator) {
+      console.log(`\n📝 Single person mode requested BUID: ${buid}, but source simulator is enabled - it will generate its own synthetic person (U0000001) instead\n`);
+    } else {
+      console.log(`\n📝 Sending single person request for BUID: ${buid}\n`);
+    }
     await handleApiEvent(apiChunkerEvent, queueUrl!);
     console.log(`\n✓ Single person request sent successfully\n`);
   }
