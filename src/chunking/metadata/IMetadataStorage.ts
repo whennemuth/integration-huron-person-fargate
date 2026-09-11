@@ -17,6 +17,15 @@ export type Flags = {
   useMockTarget?: boolean;
   /** Validation-only mode for mock target: log operations but don't execute */
   mockTargetValidateOnly?: boolean;
+  /**
+   * Comma-delimited list of personRecordProcessor Customization enum keys (see
+   * src/processing/custom/AbstractCustomPersonProcessor.ts) to activate for this run, e.g.
+   * 'ORG_COMPARISON_LOGGING' or 'ORG_COMPARISON_LOGGING,SOME_OTHER_CUSTOMIZATION'. Propagated
+   * from the Runner/EventBridge schedule through to processor tasks via this Flags record
+   * (not baked into task definition environment variables), so it can be changed per-run
+   * without a stack redeploy.
+   */
+  personRecordProcessorCustomizations?: string;
   [key: string]: any; // Allow additional fields for flexibility
 }
 

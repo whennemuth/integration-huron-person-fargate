@@ -26,6 +26,8 @@ export type TaskParameters = {
   chunkDirectory?: string;
   useMockTarget?: boolean;
   mockTargetValidateOnly?: boolean;
+  /** Comma-delimited list of personRecordProcessor Customization enum keys to activate for this run */
+  personRecordProcessorCustomizations?: string;
 };
 
 /**
@@ -215,6 +217,7 @@ export class ChunkFromAPI implements IChunkFromSource {
     const trustPreviousStorage = messageBody.trustPreviousStorage;
     const useMockTarget = messageBody.useMockTarget;
     const mockTargetValidateOnly = messageBody.mockTargetValidateOnly;
+    const personRecordProcessorCustomizations = messageBody.personRecordProcessorCustomizations;
 
     this.taskParameters = { 
       baseUrl, 
@@ -228,7 +231,8 @@ export class ChunkFromAPI implements IChunkFromSource {
         ? trustPreviousStorage
         : trustPreviousStorage === 'true',
       useMockTarget: typeof useMockTarget === 'boolean' ? useMockTarget : useMockTarget === 'true',
-      mockTargetValidateOnly: typeof mockTargetValidateOnly === 'boolean' ? mockTargetValidateOnly : mockTargetValidateOnly === 'true'
+      mockTargetValidateOnly: typeof mockTargetValidateOnly === 'boolean' ? mockTargetValidateOnly : mockTargetValidateOnly === 'true',
+      personRecordProcessorCustomizations
     };
 
     if (this.taskParameters.chunkDirectory) {
@@ -391,6 +395,13 @@ export class ChunkFromAPI implements IChunkFromSource {
    */
   public getMockTargetValidateOnly = (): boolean => {
     return this.taskParameters?.mockTargetValidateOnly || false;
+  }
+
+  /**
+   * Get the comma-delimited personRecordProcessorCustomizations string from task parameters, if any.
+   */
+  public getPersonRecordProcessorCustomizations = (): string | undefined => {
+    return this.taskParameters?.personRecordProcessorCustomizations;
   }
 
   /**

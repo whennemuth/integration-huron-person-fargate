@@ -22,6 +22,7 @@ export type QueueSeederParams = {
   dryRun?: boolean;
   useMockTarget?: boolean;
   mockTargetValidateOnly?: boolean;
+  personRecordProcessorCustomizations?: string;
 };
 
 /**
@@ -63,6 +64,7 @@ export class QueueSeeder {
   private chunkDirectory?: string;
   private useMockTarget?: boolean;
   private mockTargetValidateOnly?: boolean;
+  private personRecordProcessorCustomizations?: string;
 
   constructor(private params: QueueSeederParams) {
     const { REGION, STACK_ID, LANDSCAPE } = process.env;
@@ -71,7 +73,8 @@ export class QueueSeeder {
       region=REGION, 
       landscape=LANDSCAPE,
       useMockTarget,
-      mockTargetValidateOnly 
+      mockTargetValidateOnly,
+      personRecordProcessorCustomizations
     } = params || {};
     if(!stackId) {
       throw new Error('STACK_ID is required to initialize QueueSeeder');
@@ -85,6 +88,7 @@ export class QueueSeeder {
 
     this.useMockTarget = useMockTarget;
     this.mockTargetValidateOnly = mockTargetValidateOnly;
+    this.personRecordProcessorCustomizations = personRecordProcessorCustomizations;
 
     console.log('Atomic counters detected in QueueSeeder constructor');
     this.offsetCounter = new class extends AbstractAtomicCounter {
@@ -211,6 +215,7 @@ export class QueueSeeder {
         chunkDirectory: this.chunkDirectory,
         useMockTarget: this.useMockTarget,
         mockTargetValidateOnly: this.mockTargetValidateOnly,
+        personRecordProcessorCustomizations: this.personRecordProcessorCustomizations,
         processingMetadata: {
           processedAt: new Date().toISOString(),
           processorVersion: '1.0.0'

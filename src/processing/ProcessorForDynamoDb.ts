@@ -57,6 +57,7 @@ import {
   Config,
   ConfigManager,
   HuronPersonIntegration,
+  PersonRecordProcessor,
   S3DataSourceConfig,
   TargetApiErrorEventProcessor
 } from 'integration-huron-person';
@@ -72,6 +73,7 @@ import { StandardMetadataUtils } from '../chunking/metadata/MetadataUtils';
 import { PersonCacheLookup } from '../person-cache/PersonCacheLookup';
 import { SyncPopulation } from '../../docker/chunkTypes';
 import { StatisticsTable } from '../dynamodb/StatisticsTable';
+import { personRecordProcessorFactory } from './custom/PersonRecordProcessorFactory';
 
 const metadataStorage = new MetadataFactoryForBootstrap().createMetadataForBootstrap();
 const metadataUtils = new StandardMetadataUtils({});
@@ -201,7 +203,7 @@ export function resolveTableName(realName: string | undefined, mockName: string 
   return useMockTarget ? mockName : realName;
 }
 
-export async function main(queueReader: QueueReader) {
+export async function main(queueReader: QueueReader, personRecordProcessor?: PersonRecordProcessor) {
   const { 
     REGION: region, 
     CHUNKS_BUCKET: chunksBucket,
@@ -353,6 +355,12 @@ export async function main(queueReader: QueueReader) {
       console.log(`Cache instance created: ${cache.constructor.name}`);
     }
 
+    // Optional custom per-person async hook (e.g. outlier logging). Uses the explicitly injected
+    // processor if provided (see docker/processor.ts); otherwise resolves it from this run's
+    // Flags (flags.personRecordProcessorCustomizations) - no-op if neither is present.
+    const customPersonProcessor = personRecordProcessor
+      ?? (await personRecordProcessorFactory(flags.personRecordProcessorCustomizations))?.processRecord;
+
     // Create and run integration
     const integration = new HuronPersonIntegration({ 
       config,
@@ -372,7 +380,8 @@ export async function main(queueReader: QueueReader) {
       cleanupPreviousData: false, // DynamoDB manages its own data, no cleanup needed
       ignoreRemovals: syncPopulation === SyncPopulation.PersonDelta,
       flags, // Pass flags for mock target support
-      syncRunId: integrationTimestamp // Pass integration timestamp as sync run ID
+      syncRunId: integrationTimestamp, // Pass integration timestamp as sync run ID
+      personRecordProcessor: customPersonProcessor
     });
     
     const result = await integration.run(`Processing chunk: s3://${bucketName}/${s3Key}`, chunkId);

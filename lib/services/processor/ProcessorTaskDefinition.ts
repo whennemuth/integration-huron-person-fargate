@@ -74,6 +74,7 @@ export class ProcessorTaskDefinition extends Construct {
       // CHUNKS_BUCKET and CHUNK_KEY are set from SQS messages at runtime (not env vars)
       STATIC_MAP_USAGE: `{ "orgMap": ${orgMap}, "stateMap": ${stateMap}, "countryMap": ${countryMap} }`, // Used by processor to determine which static maps to load in data mapper
       DYNAMODB_MOCK_STATISTICS_TABLE_NAME: dynamodb!.mockStatisticsTable.tableName, // Isolated statistics table for mocked runs (flags.useMockTarget)
+      PERSON_RECORD_PROCESSOR_LOG_TABLE_NAME: dynamodb!.personRecordProcessorLogTable.tableName, // Shared log table for personRecordProcessor customizations
       SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
       IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
       DRY_RUN: dryRun ? 'true' : 'false',
@@ -273,6 +274,20 @@ export class ProcessorTaskDefinition extends Construct {
         })
       );
     }
+
+    // Grant DynamoDB write permissions for the shared personRecordProcessor log table
+    // Used by AbstractPersonRecordProcessor.logEntry() when a customization is configured
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'dynamodb:PutItem',
+        ],
+        resources: [
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personRecordProcessorLogTable.tableName}`,
+        ],
+      })
+    );
 
     // Grant DynamoDB read/write permissions for mockTargetPersonTable
     // Used when flags.useMockTarget is true to simulate target system without calling real API

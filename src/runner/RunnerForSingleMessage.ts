@@ -61,7 +61,7 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
     config: Config,
     populationType: NormalizedPopulationType
   ): Promise<void> {
-    const { bulkReset, trustPreviousStorage, iterationLimit, queueUrl } = this.env;
+    const { bulkReset, trustPreviousStorage, iterationLimit, queueUrl, personRecordProcessorCustomizations } = this.env;
     const apiChunkerEvent: ApiChunkerEvent = {
       baseUrl: sourceEndpoint.baseUrl,
       fetchPath: sourceEndpoint.fetchPath,
@@ -72,6 +72,7 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
       offset: 0,
       useMockTarget: targetConfig.useMockTarget,
       mockTargetValidateOnly: targetConfig.mockTargetValidateOnly,
+      personRecordProcessorCustomizations,
       processingMetadata: {
         processedAt: new Date().toISOString(),
         processorVersion: '1.0.0'

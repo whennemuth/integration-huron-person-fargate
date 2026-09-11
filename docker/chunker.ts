@@ -66,6 +66,7 @@ export type IChunkFromSource = {
   getSyncPopulation?: () => SyncPopulation  // Optional getter for syncPopulation from task parameters
   getUseMockTarget?: () => boolean  // Optional getter for useMockTarget flag from task parameters
   getMockTargetValidateOnly?: () => boolean  // Optional getter for mockTargetValidateOnly flag from task parameters
+  getPersonRecordProcessorCustomizations?: () => string | undefined  // Optional getter for personRecordProcessorCustomizations from task parameters
 }
 
 export type ChunkFromParams = {
@@ -514,6 +515,12 @@ export async function main() {
       console.log(`  - Validate only: ${mockTargetValidateOnly}`);
     }
 
+    // Get personRecordProcessor customization selection from chunker (comma-delimited Customization keys)
+    const personRecordProcessorCustomizations = chunker.getPersonRecordProcessorCustomizations?.();
+    if (personRecordProcessorCustomizations) {
+      console.log(`personRecordProcessor customization(s) requested: ${personRecordProcessorCustomizations}`);
+    }
+
     // Write flags file BEFORE chunking starts so processor tasks can read it immediately
     const metadataManager = createMetadataManager(config);
     await metadataManager.writeFlags({
@@ -524,6 +531,7 @@ export async function main() {
       syncPopulation,
       useMockTarget,
       mockTargetValidateOnly,
+      personRecordProcessorCustomizations,
       dryRun: dryRun === 'true',
       region
     });

@@ -31,6 +31,8 @@ export interface RunnerEnv {
   mockTarget?: boolean;
   mockTargetResetState?: boolean;
   mockTargetValidateOnly?: boolean;
+  /** Comma-delimited list of personRecordProcessor Customization enum keys to activate for this run */
+  personRecordProcessorCustomizations?: string;
 }
 
 /**
@@ -89,7 +91,8 @@ export const extractEnvironment = (): RunnerEnv => {
     SOURCE_SIMULATOR_MOCK_ERROR_RATE: sourceSimulatorMockErrorRate,
     USE_MOCK_TARGET: mockTarget,
     MOCK_TARGET_RESET_STATE: mockTargetResetState,
-    MOCK_TARGET_VALIDATE_ONLY: mockTargetValidateOnly
+    MOCK_TARGET_VALIDATE_ONLY: mockTargetValidateOnly,
+    PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS: personRecordProcessorCustomizations
   } = process.env;
 
   return {
@@ -118,7 +121,8 @@ export const extractEnvironment = (): RunnerEnv => {
     sourceSimulatorMockErrorRate: sourceSimulatorMockErrorRate ? parseFloat(sourceSimulatorMockErrorRate) : undefined,
     mockTarget: `${mockTarget}`.toLowerCase().trim() === 'true',
     mockTargetResetState: `${mockTargetResetState}`.toLowerCase().trim() === 'true',
-    mockTargetValidateOnly: `${mockTargetValidateOnly}`.toLowerCase().trim() === 'true'
+    mockTargetValidateOnly: `${mockTargetValidateOnly}`.toLowerCase().trim() === 'true',
+    personRecordProcessorCustomizations
   } satisfies RunnerEnv;
 }
 
@@ -146,7 +150,8 @@ export const setTestEnvironment = (): void => {
     'SOURCE_SIMULATOR_MOCK_ERROR_RATE',
     'USE_MOCK_TARGET',
     'MOCK_TARGET_RESET_STATE',
-    'MOCK_TARGET_VALIDATE_ONLY'
+    'MOCK_TARGET_VALIDATE_ONLY',
+    'PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS'
   ].forEach(testEnvironment.getVar);
 
   [

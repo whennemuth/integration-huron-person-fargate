@@ -45,6 +45,7 @@ import {
   Config,
   ConfigManager,
   HuronPersonIntegration,
+  PersonRecordProcessor,
   S3DataSourceConfig,
   TargetApiErrorEventProcessor
 } from 'integration-huron-person';
@@ -59,6 +60,7 @@ import { MetadataFactoryForBootstrap } from '../chunking/metadata/MetadataFactor
 import { StandardMetadataUtils } from '../chunking/metadata/MetadataUtils';
 import { PersonCacheLookup } from '../person-cache/PersonCacheLookup';
 import { SyncPopulation } from '../../docker/chunkTypes';
+import { personRecordProcessorFactory } from './custom/PersonRecordProcessorFactory';
 
 const metadataStorage = new MetadataFactoryForBootstrap().createMetadataForBootstrap();
 const metadataUtils = new StandardMetadataUtils({});
@@ -235,7 +237,7 @@ export function resolveTableName(realName: string | undefined, mockName: string 
   return useMockTarget ? mockName : realName;
 }
 
-export async function main(queueReader: QueueReader) {
+export async function main(queueReader: QueueReader, personRecordProcessor?: PersonRecordProcessor) {
   // Check for expected environment variables
   const { 
     REGION:region, 
@@ -396,6 +398,12 @@ export async function main(queueReader: QueueReader) {
      */
     const cleanupPreviousData = false;
 
+    // Optional custom per-person async hook (e.g. outlier logging). Uses the explicitly injected
+    // processor if provided (see docker/processor.ts); otherwise resolves it from this run's
+    // Flags (flags.personRecordProcessorCustomizations) - no-op if neither is present.
+    const customPersonProcessor = personRecordProcessor
+      ?? (await personRecordProcessorFactory(flags.personRecordProcessorCustomizations))?.processRecord;
+
     // Create and run integration using HuronPersonIntegration
     const integration = new HuronPersonIntegration({ 
       config,  // Pass pre-built config with S3 or API data source
@@ -415,7 +423,8 @@ export async function main(queueReader: QueueReader) {
       cleanupPreviousData,
       ignoreRemovals: syncPopulation === SyncPopulation.PersonDelta, // Ignore removals in delta computation since chunk processing is only a partial population and merger determines removals at the end of the full sync
       flags, // Pass flags for mock target support
-      syncRunId: integrationTimestamp // Pass integration timestamp as sync run ID
+      syncRunId: integrationTimestamp, // Pass integration timestamp as sync run ID
+      personRecordProcessor: customPersonProcessor
     });
     
     /**

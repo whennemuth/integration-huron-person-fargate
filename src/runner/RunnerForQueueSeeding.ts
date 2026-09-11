@@ -202,7 +202,8 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
       queueUrl: env.queueUrl!,
       dryRun: false,
       useMockTarget: targetConfig.useMockTarget,
-      mockTargetValidateOnly: targetConfig.mockTargetValidateOnly
+      mockTargetValidateOnly: targetConfig.mockTargetValidateOnly,
+      personRecordProcessorCustomizations: env.personRecordProcessorCustomizations
     });
     
     // Reset the atomic counters to ensure a clean slate for seeded messages and chunk ordinals

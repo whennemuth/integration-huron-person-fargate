@@ -53,6 +53,7 @@
  */
 
 import { TestEnvironment } from 'integration-core';
+import { PersonRecordProcessor } from 'integration-huron-person';
 import { QueueReader } from '../src/Queue';
 
 // Import both processor implementations
@@ -66,8 +67,13 @@ import { main as mainS3 } from '../src/processing/ProcessorForS3';
  * Detection logic matches MetadataFactoryForBootstrap:
  * - Checks for DynamoDB-mode-specific table names
  * - Falls back to S3 mode if not found
+ * 
+ * @param personRecordProcessor - Optional pre-resolved personRecordProcessor hook, threaded
+ * through to whichever implementation is routed to (DRY - callers/tests can inject one instead
+ * of relying on each implementation's own Flags-based resolution). If omitted, each
+ * implementation resolves it independently from the chunk's Flags.
  */
-async function main(queueReader: QueueReader) {
+async function main(queueReader: QueueReader, personRecordProcessor?: PersonRecordProcessor) {
   const { 
     PREVIOUS_STORAGE_TYPE,
     DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME, 
@@ -84,7 +90,7 @@ async function main(queueReader: QueueReader) {
     case 's3':
       console.log('🔀 Router: Detected S3 mode (no DynamoDB tables configured)');
       console.log('   Routing to mainS3\n');
-      await mainS3(queueReader);
+      await mainS3(queueReader, personRecordProcessor);
       break;
     case 'dynamodb':
       if (!DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || !DYNAMODB_PERSON_HISTORY_TABLE_NAME) {
@@ -92,7 +98,7 @@ async function main(queueReader: QueueReader) {
       }
       console.log('🔀 Router: Detected DynamoDB mode (DynamoDB-mode-specific tables present)');
       console.log('   Routing to mainDynamoDb\n');
-      await mainDynamoDb(queueReader);
+      await mainDynamoDb(queueReader, personRecordProcessor);
       break;
     default:
       throw new Error(`Unsupported storage type: ${previousStorageType}`);

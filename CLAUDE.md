@@ -411,6 +411,103 @@ Defines infrastructure parameters (VPC, subnet, image URIs, etc.) per deployment
 
 **Harness Testing**: Use Runner harness (`src/Runner.ts`) to validate chunking orchestration before deployment
 
+## personRecordProcessor Customization Framework
+
+**Location**: `src/processing/custom/` (concrete implementations live under `impl/`)
+
+Wires `integration-huron-person`'s `personRecordProcessor` hook (see that repo's
+`CLAUDE.md`/`src/data-mapper/CLAUDE.md`) into the processor tasks, letting custom per-person
+async logic (e.g. outlier logging/analysis) run during a live sync without touching
+`HuronPersonIntegration` itself. See `src/processing/custom/README.md` for the framework's
+design (dependency injection, multi-customization composition) and how to add a new
+implementation.
+
+**Files**: `AbstractCustomPersonProcessor.ts` (base class + `Customization` enum),
+`CustomizationParser.ts` (parses the comma-delimited config string - see below),
+`PersonRecordProcessorComposite.ts` (combines multiple active customizations),
+`PersonRecordProcessorFactory.ts` (registry/switchboard), `impl/OrgComparisonLogging.ts`
+(first concrete customization: for students - mapped `title === 'Student'`, set in
+`integration-huron-person`'s `src/data-mapper/DataMapperTitle.ts` from the *same*
+`orgAssignments.personType` that drove the `organization`/`secondaryUnit` assignment, a more
+accurate signal than an independent raw `studentInfo` check - whose primary/secondary org HRNs
+differ, logs `{ personid, primaryOrg, secondaryOrg }`).
+
+**Specifying customizations - key name or numeric value, either works**: `Customization` is a
+plain (numeric) TS enum with no explicit initializers, so config always identifies a
+customization by its enum **key name** (e.g. `'ORG_COMPARISON_LOGGING'`) - the underlying number
+is an implementation detail. `CustomizationParser.ts`'s `parseCustomizations()` additionally
+accepts the raw numeric value as a string (e.g. `'0'`) as an equivalent alternative, since some
+callers may find a stable numeric value more convenient to configure than a name. A token is
+tried as a number first (matched via the enum's reverse mapping) only if it looks like an
+integer; otherwise it's looked up by key name. Mixing both forms for the same customization in
+one comma-delimited list (e.g. `'ORG_COMPARISON_LOGGING,0'`) de-duplicates to a single instance
+rather than double-counting it. See `test/CustomizationParser.test.ts` for the full set of
+parsing permutations this covers.
+
+**Shared log table**: `src/dynamodb/PersonRecordProcessorLogTable.ts` + CDK table in
+`lib/DynamoDB.ts` (`personRecordProcessorLogTable`, single table, no mock-mode variant unlike
+most other tables here). Schema: PK=`customization` (groups entries by which customization wrote
+them), SK=`sortKey` (`${isoTimestamp}#${personid}`, chronologically browsable and collision-free
+per person), plus a generic `data` JSON attribute whose shape is defined entirely by the writing
+customization. This design lets any number of future customizations share one table with zero
+CDK/schema changes - only `AbstractCustomPersonProcessor`, `Customization`, and
+`PersonRecordProcessorFactory` need updating to add one. The log table name IS still baked into
+the task definition as `PERSON_RECORD_PROCESSOR_LOG_TABLE_NAME` (it's an infrastructure resource
+name, not a per-run behavioral toggle, so CDK-time baking is appropriate here - unlike *which*
+customization runs, see below).
+
+**Selecting which customization(s) run - Flags, not task-definition env vars**: Which
+customization is active is deliberately **not** an `IContext`/task-definition environment
+variable (that would require a full stack redeploy to change). Instead it follows the same
+runtime-configuration precedent as `flags.useMockTarget`: a `personRecordProcessorCustomizations`
+field (comma-delimited `Customization` keys) flows through
+`src/chunking/metadata/IMetadataStorage.ts`'s `Flags` type, which is written to S3/DynamoDB
+*before* chunking starts and read back by each processor task - so it can be changed per-run
+without redeploying anything. The full pipeline:
+1. **Manual invocation** (`src/runner/Runner.ts`, "FOR MANUAL INVOCATION ONLY"): reads the
+   `PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS` env var via `RunnerTypes.ts`'s `extractEnvironment()`
+   into `RunnerEnv.personRecordProcessorCustomizations`.
+2. Each runner (`RunnerForSingleMessage.ts`, `RunnerForSinglePerson.ts`, and
+   `RunnerForQueueSeeding.ts` via `QueueSeeder.ts`) copies that value into the `ApiChunkerEvent`
+   it sends (`ChunkerSubscriber.ts`'s `ApiChunkerEvent.personRecordProcessorCustomizations`).
+3. **Scheduled production invocation** (`lib/services/chunker/ChunkerService.ts`'s
+   `createApiChunkingSchedule()`): the EventBridge schedule's static `ScheduleTargetInput` also
+   includes a `personRecordProcessorCustomizations` field (currently left `undefined` as a
+   placeholder pending a decision on how to source a real value for scheduled runs - see the
+   `// TODO LATER` comment there) - the consuming side described below already handles it
+   whenever a value is present.
+4. `ChunkerApiSubscriber.ts`'s `handleApiEvent()` extracts it from the incoming event and forwards
+   it into the `TaskParameters` SQS message it sends to the chunker queue.
+5. `ChunkFromAPI.ts` parses it off the queue message into `TaskParameters.personRecordProcessorCustomizations`
+   and exposes it via `getPersonRecordProcessorCustomizations()`; `ChunkerQueue.ts`'s
+   `sendNextChunkingMessage()` re-forwards it into subsequent messages for parallel chunking.
+6. `docker/chunker.ts` reads that getter and includes it when calling `metadataManager.writeFlags(...)`
+   - so it's persisted to the run's Flags record before any processor task starts.
+7. `ProcessorForS3.ts`/`ProcessorForDynamoDb.ts` read it back via
+   `flags.personRecordProcessorCustomizations` (from the same `readFlagsFromChunkKey()` call
+   already used for `flags.useMockTarget` etc.) and pass it to `personRecordProcessorFactory()`.
+
+**Wiring/DI**: `docker/processor.ts` (the S3-vs-DynamoDB router) accepts an optional
+`personRecordProcessor: PersonRecordProcessor` parameter and threads it through to whichever of
+`ProcessorForS3.ts`/`ProcessorForDynamoDb.ts`'s `main()` it routes to - both of which now also
+accept that same optional parameter. If provided (e.g. by a test, or a future caller that already
+knows which processor to use), it's used as-is; otherwise each `main()` falls back to resolving
+it from its own chunk's Flags via `personRecordProcessorFactory()`. This exists so the
+factory-invocation logic isn't duplicated across processor variants (DRY), while still allowing
+Flags-based resolution to work correctly - the router itself can't resolve from Flags because
+those are chunk-specific and not known until deep inside each `main()`.
+
+**Adding a new customization**:
+1. Add a value to the `Customization` enum in `AbstractCustomPersonProcessor.ts`.
+2. Create a new file under `impl/` extending `AbstractPersonRecordProcessor`, setting
+   `customization` and implementing `processRecord`; call
+   `this.logEntry(this.customization, personid, data)` to persist findings.
+3. Register it in the `switch` in `PersonRecordProcessorFactory.ts`.
+4. Set `PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS` (env var read by `Runner.ts`, or the
+   `personRecordProcessorCustomizations` Flags field directly) to the enum *key* to activate it -
+   comma-delimit multiple keys to run several customizations at once (combined automatically via
+   `PersonRecordProcessorComposite`).
+
 ## Patterns to Follow
 
 ### Adding a New Harness

@@ -37,6 +37,11 @@ import {
   DYNAMODB_TABLE_NAME as mockTargetPersonTableName,
   DYNAMODB_PARTITION_KEY as mockTargetPersonPartitionKey
 } from '../src/dynamodb/MockTargetPersonTable';
+import {
+  DYNAMODB_TABLE_NAME as personRecordProcessorLogTableName,
+  DYNAMODB_PARTITION_KEY as personRecordProcessorLogPartitionKey,
+  DYNAMODB_SORT_KEY as personRecordProcessorLogSortKey
+} from '../src/dynamodb/PersonRecordProcessorLogTable';
 
 export enum TableResourceIds {
   STATISTICS_TABLE = 'StatisticsTable',
@@ -46,7 +51,8 @@ export enum TableResourceIds {
   MOCK_TARGET_PERSON_TABLE = 'MockTargetPersonTable',
   MOCK_STATISTICS_TABLE = 'MockStatisticsTable',
   MOCK_PERSON_CURRENT_STATE_TABLE = 'MockPersonCurrentStateTable',
-  MOCK_PERSON_HISTORY_TABLE = 'MockPersonHistoryTable'
+  MOCK_PERSON_HISTORY_TABLE = 'MockPersonHistoryTable',
+  PERSON_RECORD_PROCESSOR_LOG_TABLE = 'PersonRecordProcessorLogTable'
 }
 export interface ProcessorStatisticsTableProps {
   context: IContext;
@@ -70,6 +76,7 @@ export class DynamoDbTables extends Construct {
   public mockStatisticsTable: Table;
   public mockPersonCurrentStateTable?: Table;
   public mockPersonHistoryTable?: Table;
+  public personRecordProcessorLogTable: Table;
   mockConstruct: Construct;
 
   constructor(private params: { scope: Construct, id: string, props: ProcessorStatisticsTableProps }) {
@@ -86,6 +93,8 @@ export class DynamoDbTables extends Construct {
     this.createMockTargetPersonTable();
 
     this.createMockStatisticsTable();
+
+    this.createPersonRecordProcessorLogTable();
 
     // Conditionally create DynamoDB-based delta storage tables
     // Default to 'dynamodb' mode if PREVIOUS_STORAGE_TYPE is not specified
@@ -189,6 +198,40 @@ export class DynamoDbTables extends Construct {
       billingMode: BillingMode.PAY_PER_REQUEST, // No capacity planning needed
       encryption: TableEncryption.AWS_MANAGED, // Encrypt at rest
       removalPolicy: RemovalPolicy.DESTROY, // For now, delete table when stack is destroyed (change to RETAIN for production)
+    });
+  }
+
+  /**
+   * Shared log table for ALL personRecordProcessor customizations (see
+   * src/processing/custom/AbstractCustomPersonProcessor.ts).
+   *
+   * Table Design:
+   * - Partition Key (PK): `customization` - identifies which customization wrote the entry
+   * - Sort Key (SK): `sortKey` - `${isoTimestamp}#${personid}`, chronologically browsable and
+   *   collision-free per person
+   * - `data`: generic JSON blob whose shape is defined by the writing customization
+   *
+   * Kept as a single shared table (not one per customization, no mock variant) so future
+   * customizations require no CDK/schema changes.
+   */
+  private createPersonRecordProcessorLogTable = () => {
+    const { context } = this.params.props;
+
+    const { PERSON_RECORD_PROCESSOR_LOG_TABLE } = TableResourceIds;
+
+    this.personRecordProcessorLogTable = new Table(this, PERSON_RECORD_PROCESSOR_LOG_TABLE, {
+      tableName: personRecordProcessorLogTableName(context),
+      partitionKey: {
+        name: personRecordProcessorLogPartitionKey,
+        type: AttributeType.STRING,
+      },
+      sortKey: {
+        name: personRecordProcessorLogSortKey,
+        type: AttributeType.STRING,
+      },
+      billingMode: BillingMode.PAY_PER_REQUEST,
+      encryption: TableEncryption.AWS_MANAGED,
+      removalPolicy: RemovalPolicy.DESTROY,
     });
   }
 
@@ -539,6 +582,8 @@ export class DynamoDbTables extends Construct {
           throw new Error('MockPersonHistoryTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
         }
         return this.mockPersonHistoryTable.grantReadWriteData(grantee);
+      case TableResourceIds.PERSON_RECORD_PROCESSOR_LOG_TABLE:
+        return this.personRecordProcessorLogTable.grantReadWriteData(grantee);
       default:
         throw new Error(`Unknown table resource ID: ${tableResourceId}`);
     }
@@ -577,6 +622,8 @@ export class DynamoDbTables extends Construct {
           throw new Error('MockPersonHistoryTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
         }
         return this.mockPersonHistoryTable.grantReadData(grantee);
+      case TableResourceIds.PERSON_RECORD_PROCESSOR_LOG_TABLE:
+        return this.personRecordProcessorLogTable.grantReadData(grantee);
       default:
         throw new Error(`Unknown table resource ID: ${tableResourceId}`);
     }

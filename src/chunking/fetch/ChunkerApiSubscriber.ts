@@ -66,7 +66,8 @@ export async function handleApiEvent(event: ApiChunkerEvent, chunkerQueueUrl?:st
   // Extract API parameters from event
   const { 
     baseUrl, fetchPath, populationType, bulkReset, trustPreviousStorage = false, iterationLimit = 0, offset = 0,
-    chunkDirectory, useMockTarget, mockTargetValidateOnly, processingMetadata: { processedAt, processorVersion } = {} 
+    chunkDirectory, useMockTarget, mockTargetValidateOnly, personRecordProcessorCustomizations,
+    processingMetadata: { processedAt, processorVersion } = {} 
   } = event;
 
   const { PersonDelta, PersonFull } = SyncPopulation;
@@ -124,6 +125,10 @@ export async function handleApiEvent(event: ApiChunkerEvent, chunkerQueueUrl?:st
 
   if(chunkDirectory) {
     message.chunkDirectory = chunkDirectory;
+  }
+
+  if(personRecordProcessorCustomizations) {
+    message.personRecordProcessorCustomizations = personRecordProcessorCustomizations;
   }
 
   try {

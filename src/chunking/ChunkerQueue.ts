@@ -271,7 +271,8 @@ export class ChunkerQueue {
       bulkReset, 
       trustPreviousStorage,
       useMockTarget,
-      mockTargetValidateOnly
+      mockTargetValidateOnly,
+      personRecordProcessorCustomizations
     } = taskParameters;
 
     // Don't create next message if iterationLimit is 0 (process all)
@@ -297,7 +298,8 @@ export class ChunkerQueue {
         offset: nextOffset, 
         chunkDirectory,
         useMockTarget,
-        mockTargetValidateOnly
+        mockTargetValidateOnly,
+        personRecordProcessorCustomizations
       } satisfies ApiChunkerEvent;
 
       // Send the SQS message
