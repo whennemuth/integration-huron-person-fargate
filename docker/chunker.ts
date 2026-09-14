@@ -84,20 +84,25 @@ const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 /**
  * Resolve MetadataFactory params from env vars - the DynamoDB table name is already baked
  * into the task definition at deploy time, so no IContext object is needed here.
+ * Redirects to the isolated mock statistics table when useMockTarget is true, so mocked runs
+ * never mix their flags/metadata records with production statistics.
  */
-const createMetadataManager = (config: Config) => MetadataFactory.create({
+const createMetadataManager = (config: Config, useMockTarget: boolean = false) => MetadataFactory.create({
   config,
   previousStorageType: process.env.PREVIOUS_STORAGE_TYPE,
-  statisticsTableName: process.env.DYNAMODB_STATISTICS_TABLE_NAME
+  statisticsTableName: useMockTarget
+    ? process.env.DYNAMODB_MOCK_STATISTICS_TABLE_NAME
+    : process.env.DYNAMODB_STATISTICS_TABLE_NAME
 });
 
 /**
  * Write metadata file for merger trigger detection
  * @param config Configuration to determine storage type
  * @param params Write metadata parameters
+ * @param useMockTarget Route to the isolated mock statistics table when true (DynamoDB mode)
  */
-export async function writeChunkMetadata(config: Config, params: WriteMetadataParams) {
-  const metadata = createMetadataManager(config);
+export async function writeChunkMetadata(config: Config, params: WriteMetadataParams, useMockTarget: boolean = false) {
+  const metadata = createMetadataManager(config, useMockTarget);
   await metadata.write(params);
   console.log('\n✓ Metadata written');
 }
@@ -114,10 +119,10 @@ export async function writeChunkMetadata(config: Config, params: WriteMetadataPa
  * @returns true if chunking has already finished (metadata file exists), false otherwise
  */
 export async function chunkingAlreadyFinished(config: Config, params: { 
-  bucketName: string, chunkDirectory: string, region: string | undefined 
+  bucketName: string, chunkDirectory: string, region: string | undefined, useMockTarget?: boolean
 }): Promise<boolean> {
-  const { bucketName, chunkDirectory, region } = params;
-  const metadata = createMetadataManager(config);
+  const { bucketName, chunkDirectory, region, useMockTarget = false } = params;
+  const metadata = createMetadataManager(config, useMockTarget);
   const result = await metadata.read({ 
     bucketName, chunkDirectory, region 
   } satisfies ReadMetadataParams);
@@ -144,10 +149,10 @@ export async function chunkingAlreadyFinished(config: Config, params: {
  * @param params Parameters for checking terminal error
  */
 export async function chunkingTerminalErrorEncountered(config: Config, params: {
-  bucketName: string, chunkDirectory: string, region: string | undefined
+  bucketName: string, chunkDirectory: string, region: string | undefined, useMockTarget?: boolean
 }): Promise<boolean> {
-  const { bucketName, chunkDirectory, region } = params;
-  const metadata = createMetadataManager(config);
+  const { bucketName, chunkDirectory, region, useMockTarget = false } = params;
+  const metadata = createMetadataManager(config, useMockTarget);
   return metadata.terminalErrorExists({ bucketName, chunkDirectory, region });
 }
 
@@ -433,7 +438,8 @@ export async function main() {
     }
 
     const terminalErrorEncountered = await chunkingTerminalErrorEncountered(config, {
-      bucketName: chunksBucket, chunkDirectory: chunker?.getChunkDirectory(), region
+      bucketName: chunksBucket, chunkDirectory: chunker?.getChunkDirectory(), region,
+      useMockTarget: chunker?.getUseMockTarget?.() || false
     });
     if (terminalErrorEncountered) {
       console.log('⊘ Cancelling. A terminal chunking error marker already exists for this chunk directory.');
@@ -446,7 +452,8 @@ export async function main() {
     // In the simulator's stateful depletion model, allocation occurs at execution time from a shared
     // supply, so remaining late-arriving tasks are expected to return empty payloads and can be skipped.
     const alreadyFinished = await chunkingAlreadyFinished(config, {
-      bucketName: chunksBucket, chunkDirectory: chunker?.getChunkDirectory(), region
+      bucketName: chunksBucket, chunkDirectory: chunker?.getChunkDirectory(), region,
+      useMockTarget: chunker?.getUseMockTarget?.() || false
     });
     if (alreadyFinished) {
       let messageDetails = '';
@@ -522,7 +529,7 @@ export async function main() {
     }
 
     // Write flags file BEFORE chunking starts so processor tasks can read it immediately
-    const metadataManager = createMetadataManager(config);
+    const metadataManager = createMetadataManager(config, useMockTarget);
     await metadataManager.writeFlags({
       bucketName: chunksBucket,
       chunkDirectory: chunker.getChunkDirectory(),
@@ -561,7 +568,7 @@ export async function main() {
     if (chunkDirectory) {
       try {
         const config = await getConfig();
-        const metadataManager = createMetadataManager(config);
+        const metadataManager = createMetadataManager(config, chunker?.getUseMockTarget?.() || false);
         await metadataManager.markRunFailed({
           bucketName: process.env.CHUNKS_BUCKET!,
           chunkDirectory,

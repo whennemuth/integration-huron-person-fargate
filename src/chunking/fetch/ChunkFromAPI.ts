@@ -487,11 +487,14 @@ export class ChunkFromAPI implements IChunkFromSource {
       // Extract chunk base path (creates key like: chunks/person-full/2026-04-09T15:28:18.703Z)
       const chunkDirectory = this.getChunkDirectory();
 
-      // Create metadata manager for config.storage.type (S3 or DynamoDB)
+      // Create metadata manager for config.storage.type (S3 or DynamoDB) - routes to the isolated
+      // mock statistics table when running in mock target mode, mirroring chunker.ts's createMetadataManager()
       const metadataManager = MetadataFactory.create({
         config: this.config,
         previousStorageType: process.env.PREVIOUS_STORAGE_TYPE,
-        statisticsTableName: process.env.DYNAMODB_STATISTICS_TABLE_NAME
+        statisticsTableName: this.getUseMockTarget()
+          ? process.env.DYNAMODB_MOCK_STATISTICS_TABLE_NAME
+          : process.env.DYNAMODB_STATISTICS_TABLE_NAME
       });
 
       console.log(`Chunks: s3://${chunksBucket}/${chunkDirectory}/`);
@@ -586,7 +589,7 @@ export class ChunkFromAPI implements IChunkFromSource {
           runFailureTimestamp,
           replace: true,
           region
-        } satisfies WriteMetadataParams);
+        } satisfies WriteMetadataParams, this.getUseMockTarget());
 
         // Keep flags aligned with metadata so merger gating has the same terminal signal.
         await metadataManager.markRunFailed({
@@ -656,7 +659,7 @@ export class ChunkFromAPI implements IChunkFromSource {
           totalRecords: aggregatedTotalRecords,
           chunkKeys: aggregatedChunkKeys,
           region
-        } satisfies WriteMetadataParams);
+        } satisfies WriteMetadataParams, this.getUseMockTarget());
 
         console.log(`\n✓ Chunking complete with aggregated metadata:`);
         console.log(`   Total chunks: ${aggregatedChunkCount}`);

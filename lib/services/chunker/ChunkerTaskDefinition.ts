@@ -92,12 +92,21 @@ export class ChunkerTaskDefinition extends Construct {
         const { 
           personCurrentStateTable: { tableName: personCurrentStateTableName } = {},
           mockTargetPersonTable: { tableName: mockTargetPersonTableName } = {},
+          statisticsTable: { tableName: statisticsTableName } = {},
+          mockStatisticsTable: { tableName: mockStatisticsTableName } = {},
         } = dynamodb || {};
         if (personCurrentStateTableName) {
           environment.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME = personCurrentStateTableName;
         }
         if (mockTargetPersonTableName) {
           environment.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = mockTargetPersonTableName;
+        }
+        // Required by MetadataFactory.create() to route _flags.json/_metadata.json writes to DynamoDB
+        if (statisticsTableName) {
+          environment.DYNAMODB_STATISTICS_TABLE_NAME = statisticsTableName;
+        }
+        if (mockStatisticsTableName) {
+          environment.DYNAMODB_MOCK_STATISTICS_TABLE_NAME = mockStatisticsTableName;
         }
         break;
     }
