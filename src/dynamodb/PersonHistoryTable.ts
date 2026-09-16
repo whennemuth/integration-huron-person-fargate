@@ -144,6 +144,19 @@ export class PersonHistoryTable {
   }
 
   /**
+   * Build a PersonHistoryTable from an explicit table name instead of an IContext, so
+   * mock-mode table variants (e.g. the isolated mock table) can be targeted directly.
+   */
+  public static fromTableName(tableName: string, region?: string): PersonHistoryTable {
+    const resolvedRegion = region || process.env.REGION || 'us-east-1';
+    const table = new DynamoDBTable({
+      region: resolvedRegion, tableName,
+      partitionKey: DYNAMODB_PARTITION_KEY, sortKey: DYNAMODB_SORT_KEY
+    });
+    return new PersonHistoryTable({ REGION: resolvedRegion } as IContext, table);
+  }
+
+  /**
    * Write a history record for a person.
    * Used by processors (NEW/UPDATED) and merger (DELETED).
    * 
@@ -291,14 +304,14 @@ export class PersonHistoryTable {
   }
 }
 
-
-if(require.main === module) {
+export async function main() {
   const { TestEnvironment } = require('integration-core');
   const testEnvironment = TestEnvironment('PERSON_HISTORY_TABLE');
   [
     'PERSON_HISTORY_TABLE_TASK',
     'PERSON_HISTORY_TABLE_PERSON_ID',
     'PERSON_HISTORY_TABLE_SYNC_RUN_ID',
+    'PERSON_HISTORY_TABLE_NAME_OVERRIDE',
     'TRUNCATE_CHUNK_SIZE'
   ].forEach(testEnvironment.getVar);
 
@@ -306,12 +319,16 @@ if(require.main === module) {
     PERSON_HISTORY_TABLE_TASK: task,
     PERSON_HISTORY_TABLE_PERSON_ID: personId,
     PERSON_HISTORY_TABLE_SYNC_RUN_ID: syncRunId,
+    PERSON_HISTORY_TABLE_NAME_OVERRIDE: tableNameOverride,
     TRUNCATE_CHUNK_SIZE
   } = process.env;
 
   (async () => {
     const context = require('../../context/context.json') as IContext;
-    const historyTable = new PersonHistoryTable(context);
+    // Target a specific table (e.g. a mock variant) directly when overridden, bypassing IContext-based name resolution
+    const historyTable = tableNameOverride
+      ? PersonHistoryTable.fromTableName(tableNameOverride, context.REGION)
+      : new PersonHistoryTable(context);
     
     switch(task) {
       case 'truncate':
@@ -348,5 +365,9 @@ if(require.main === module) {
         console.error(`Unknown task: ${task}. Supported tasks: truncate, history, changes, delete`);
     }
   })();
+}
+
+if(require.main === module) {
+  main();
 }
 

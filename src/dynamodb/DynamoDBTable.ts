@@ -73,7 +73,10 @@ export class DynamoDBTable implements AbstractDynamoDbTable {
     partitionKey: string;
     sortKey?: string;
   }) { 
-    this.client = DynamoDBDocumentClient.from(new DynamoDBClient({ region: params.region }));
+    this.client = DynamoDBDocumentClient.from(
+      new DynamoDBClient({ region: params.region }),
+      { marshallOptions: { removeUndefinedValues: true } } // defense-in-depth: any future caller may pass optional fields left undefined
+    );
   }
 
   /**

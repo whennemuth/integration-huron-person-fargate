@@ -327,23 +327,27 @@ export class StatisticsTable {
   }
 }
 
-
-if(require.main === module) {
+export async function main() {
   const testEnvironment = TestEnvironment('STATISTICS_TABLE');
   [
     'STATISTICS_TABLE_TASK',
     'STATISTICS_TABLE_INTEGRATION_TIMESTAMP',
+    'STATISTICS_TABLE_NAME_OVERRIDE',
     'TRUNCATE_CHUNK_SIZE'
   ].forEach(testEnvironment.getVar);
 
   const { 
     STATISTICS_TABLE_TASK: task, STATISTICS_TABLE_INTEGRATION_TIMESTAMP: timestamp,
+    STATISTICS_TABLE_NAME_OVERRIDE: tableNameOverride,
     TRUNCATE_CHUNK_SIZE
   } = process.env;
 
   (async () => {
     const context = require('../../context/context.json') as IContext;
-    const statisticsTable = new StatisticsTable(context);
+    // Target a specific table (e.g. a mock variant) directly when overridden, bypassing IContext-based name resolution
+    const statisticsTable = tableNameOverride
+      ? StatisticsTable.fromTableName(tableNameOverride, context.REGION)
+      : new StatisticsTable(context);
     switch(task) {
       case 'truncate':
         const chunkSize = TRUNCATE_CHUNK_SIZE ? parseInt(TRUNCATE_CHUNK_SIZE, 10) : undefined;
@@ -389,3 +393,6 @@ if(require.main === module) {
   })();
 }
 
+if(require.main === module) {
+  main();
+}
