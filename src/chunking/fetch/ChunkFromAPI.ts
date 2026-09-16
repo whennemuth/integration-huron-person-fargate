@@ -410,15 +410,16 @@ export class ChunkFromAPI implements IChunkFromSource {
    * This is called BEFORE starting the current chunking task to enable true parallelism.
    * @param chunkerQueue The ChunkerQueue instance used to send the next message
    * @param dryRun If true, will not actually send the message but will log the parameters instead (default: false)
+   * @param finalOffsetProcessed If known, skip sending when the computed next offset would already exceed it
    * @returns true if message sent successfully, false if skipped
    */
-  public sendNextChunkingMessage = async (chunkerQueue: ChunkerQueue, dryRun: boolean = false): Promise<boolean> => {
+  public sendNextChunkingMessage = async (chunkerQueue: ChunkerQueue, dryRun: boolean = false, finalOffsetProcessed?: number): Promise<boolean> => {
     const { getIterationLimitAndOffset, getChunkDirectory, taskParameters } = this;
     const { iterationLimit, offset } = getIterationLimitAndOffset();
     const chunkDirectory = getChunkDirectory();
     
     return chunkerQueue.sendNextChunkingMessage({ 
-      iterationLimit, offset, chunkDirectory, taskParameters, dryRun 
+      iterationLimit, offset, chunkDirectory, taskParameters, dryRun, finalOffsetProcessed 
     });
   }
 
@@ -487,8 +488,11 @@ export class ChunkFromAPI implements IChunkFromSource {
       // Extract chunk base path (creates key like: chunks/person-full/2026-04-09T15:28:18.703Z)
       const chunkDirectory = this.getChunkDirectory();
 
-      // Create metadata manager for config.storage.type (S3 or DynamoDB) - routes to the isolated
-      // mock statistics table when running in mock target mode, mirroring chunker.ts's createMetadataManager()
+      // Create metadata manager for config.storage.type (S3 or DynamoDB) - routes ALL statistics-
+      // table records (FLAGS/METADATA/TERMINAL_ERROR) to the isolated mock table when this is a
+      // mock run, mirroring chunker.ts's createMetadataManager(). "Mock run" = useMockTarget true,
+      // covering both mock-target-only and source-simulator runs (which always force
+      // useMockTarget=true) - either way, the whole run's trail stays in exactly one table.
       const metadataManager = MetadataFactory.create({
         config: this.config,
         previousStorageType: process.env.PREVIOUS_STORAGE_TYPE,
@@ -603,7 +607,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       }
 
       if(result.reachedTheEndOfRecords) {
-        // Build aggregated metadata from run-level S3 state
+        // Build aggregated metadata from run-level state
         // This ensures metadata reflects ALL chunks across all parallel tasks, not just this task's local slice
         let aggregatedChunkCount = result.chunkCount;
         let aggregatedTotalRecords = result.totalRecords;
@@ -658,6 +662,7 @@ export class ChunkFromAPI implements IChunkFromSource {
           chunkCount: aggregatedChunkCount,
           totalRecords: aggregatedTotalRecords,
           chunkKeys: aggregatedChunkKeys,
+          finalOffsetProcessed: result.finalOffsetProcessed,
           region
         } satisfies WriteMetadataParams, this.getUseMockTarget());
 

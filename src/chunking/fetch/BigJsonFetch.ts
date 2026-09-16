@@ -100,6 +100,9 @@ export interface ChunkResult {
   /** Indicates if this chunk reached the end of records (indicates this is the final chunk of the overall sync operation) */
   reachedTheEndOfRecords: boolean;
 
+  /** Offset of the last page actually requested from the API; set only when reachedTheEndOfRecords is true. */
+  finalOffsetProcessed?: number;
+
   /** Indicates a terminal fetch/chunking error occurred (for run-level fast fail signaling). */
   terminalErrorEncountered: boolean;
 
@@ -299,6 +302,8 @@ export class BigJsonFetch {
       reachedTheEndOfRecords = true; // Treat as end of records to prevent further processing
     }
 
+    const finalOffsetProcessed = reachedTheEndOfRecords ? batchProcessor.getLastOffsetUsed() : undefined;
+
     timer.stop();
     timer.logElapsed(`Completed fetch and chunk into ${chunkKeys.length} chunks with ${totalRecords} records`);
     
@@ -307,6 +312,7 @@ export class BigJsonFetch {
       totalRecords,
       chunkCount: chunkKeys.length,
       reachedTheEndOfRecords,
+      finalOffsetProcessed,
       terminalErrorEncountered,
       terminalErrorMessage
     };
