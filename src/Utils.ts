@@ -1,6 +1,6 @@
 import { HeadObjectCommand } from "@aws-sdk/client-s3";
 import { IContext } from "../context/IContext";
-import { log, warn, error} from "integration-huron-person";
+import { Config, ConfigManager, log, warn, error} from "integration-huron-person";
 import { S3StreamProvider } from "integration-core";
 
 /**
@@ -70,6 +70,33 @@ export const getLocalConfig = (params?: { projectFolder?: string, configFileName
     console.error('Error determining local config path:', error);
     return undefined;
   }
+}
+
+/**
+ * Get configuration from environment variables, Secrets Manager, or local file system
+ * (for local dev). Priority:
+ *   HURON_PERSON_CONFIG_JSON (TaskDef secret injection) >
+ *   SECRET_ARN (Secrets Manager) >
+ *   Environment >
+ *   FileSystem (local dev)
+ */
+export const getConfig = async (): Promise<Config> => {
+  const {
+    /** SECRET_ARN: Secrets Manager ARN containing config */
+    SECRET_ARN,
+    /** HURON_PERSON_CONFIG_PATH: Path to config.json (fallback for local dev only) */
+    HURON_PERSON_CONFIG_PATH
+  } = process.env;
+
+  const configManager = ConfigManager.getInstance();
+  const localConfigPath = HURON_PERSON_CONFIG_PATH || getLocalConfig();
+  return await configManager
+    .reset()
+    .fromJsonString('HURON_PERSON_CONFIG_JSON')   // ← TaskDef secret injection
+    .fromSecretManager(SECRET_ARN)                // ← Fallback to Secrets Manager
+    .fromEnvironment()                            // ← Fallback to individual env var overrides
+    .fromFileSystem(localConfigPath)              // ← Local dev only
+    .getConfigAsync('people');
 }
 
 export const objectExistsInS3 = async (Bucket: string, Key: string, region?: string): Promise<boolean> => {

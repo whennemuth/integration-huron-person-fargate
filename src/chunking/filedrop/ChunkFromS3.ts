@@ -1,7 +1,7 @@
 import { Message } from '@aws-sdk/client-sqs';
 import { TestEnvironment } from 'integration-core';
-import { ChunkFromParams, IChunkFromSource, getConfig } from "../../../docker/chunker";
-import { SyncPopulation } from "../../../docker/chunkTypes";
+import { getConfig } from "../../Utils";
+import { ChunkFromParams, IChunkFromSource, SyncPopulation } from "../../../docker/chunkTypes";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { ChunkerQueue } from '../ChunkerQueue';
 import { MetadataBroker, WriteMetadataParams } from "../metadata";

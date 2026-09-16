@@ -45,7 +45,7 @@
 
 import { Message } from '@aws-sdk/client-sqs';
 import { TestEnvironment, Timer } from 'integration-core';
-import { Config, ConfigManager } from 'integration-huron-person';
+import { Config } from 'integration-huron-person';
 import { ChunkerQueue } from '../src/chunking/ChunkerQueue';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
@@ -53,31 +53,8 @@ import { MetadataBroker } from '../src/chunking/metadata';
 import { PersonCacheFactory } from '../src/person-cache/PersonCacheFactory';
 import { AbstractPersonCache } from '../src/person-cache/AbstractPersonCache';
 import { TaskProtection } from '../src/TaskProtection';
-import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
-import { SyncPopulation } from './chunkTypes';
-
-export type IChunkFromSource = {
-  runChunking: (params: ChunkFromParams) => Promise<void>
-  noMessagesFromQueue?: boolean
-  getMessage: () => Message | undefined
-  getChunkDirectory: () => string
-  getBulkResetFlag?: () => boolean  // Optional getter for bulkReset flag from task parameters
-  getTrustPreviousStorageFlag?: () => boolean  // Optional getter for trustPreviousStorage flag from task parameters
-  getSyncPopulation?: () => SyncPopulation  // Optional getter for syncPopulation from task parameters
-  getUseMockTarget?: () => boolean  // Optional getter for useMockTarget flag from task parameters
-  getMockTargetValidateOnly?: () => boolean  // Optional getter for mockTargetValidateOnly flag from task parameters
-  getPersonRecordProcessorCustomizations?: () => string | undefined  // Optional getter for personRecordProcessorCustomizations from task parameters
-}
-
-export type ChunkFromParams = {
-  chunksBucket: string,
-  region: string | undefined,
-  itemsPerChunk: number,
-  personIdField: string,
-  bulkReset?: boolean, // To override the bulkReset flag set in the TaskParameters of the chunker instance.
-  trustPreviousStorage?: boolean, // Controls whether previous delta storage is trusted for create-vs-patch decisions.
-  dryRun: string
-}
+import { getConfig, getLocalConfig, objectExistsInS3 } from '../src/Utils';
+import { ChunkFromParams, IChunkFromSource, SyncPopulation } from './chunkTypes';
 
 const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
@@ -103,36 +80,6 @@ const pauseBeforeEarlyExit = async (seconds: number) => {
   await new Promise(resolve => setTimeout(resolve, seconds * 1000));
   console.log(`⏳ Pause complete. Exiting now.`);
 };
-
-/**
- * Get configuration from environment variables, Secrets Manager, or local file system 
- * (for local dev)
- * Priority: 
- *   HURON_PERSON_CONFIG_JSON (TaskDef secret injection) > 
- *   SECRET_ARN (Secrets Manager) > 
- *   Environment > 
- *   FileSystem (local dev)
- * @returns 
- */
-export const getConfig = async (): Promise<Config> => {
-  const { 
-    /** SECRET_ARN: Secrets Manager ARN containing config */
-    SECRET_ARN,
-    /** HURON_PERSON_CONFIG_PATH: Path to config.json (fallback for local dev only) */
-    HURON_PERSON_CONFIG_PATH
-  } = process.env;
-
-  // Load configuration.
-  const configManager = ConfigManager.getInstance();
-  const localConfigPath = HURON_PERSON_CONFIG_PATH || getLocalConfig();
-  return await configManager
-    .reset()
-    .fromJsonString('HURON_PERSON_CONFIG_JSON')   // ← TaskDef secret injection
-    .fromSecretManager(SECRET_ARN)                // ← Fallback to Secrets Manager
-    .fromEnvironment()                            // ← Fallback to individual env var overrides
-    .fromFileSystem(localConfigPath)              // ← Local dev only
-    .getConfigAsync('people');
-}
 
 const getChunkerInstance = async (config: Config, chunkerQueue: ChunkerQueue): Promise<IChunkFromSource | undefined> => {
   
