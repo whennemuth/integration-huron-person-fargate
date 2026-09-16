@@ -154,6 +154,21 @@ describe('MetadataForDynamoDb', () => {
       expect(call.trustPreviousStorage).toBe(true);
       expect(call.syncPopulation).toBe(SyncPopulation.PersonDelta);
     });
+
+    it('should include personRecordProcessorCustomizations when present', async () => {
+      const params = {
+        chunkDirectory,
+        bulkReset: true,
+        trustPreviousStorage: false,
+        syncPopulation: SyncPopulation.PersonFull,
+        personRecordProcessorCustomizations: 'ORG_COMPARISON_LOGGING',
+      };
+
+      await metadata.writeFlags(params);
+
+      const call = mockStatisticsTable.writeFlags.mock.calls[0][1];
+      expect(call.personRecordProcessorCustomizations).toBe('ORG_COMPARISON_LOGGING');
+    });
   });
 
   describe('read', () => {
