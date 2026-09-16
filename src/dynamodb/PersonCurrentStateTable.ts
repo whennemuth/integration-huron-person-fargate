@@ -93,18 +93,30 @@ export class PersonCurrentStateTable {
   private table: DynamoDBTable;
   private tableName: string;
 
-  constructor(private context: IContext) {
+  constructor(private context: IContext, table?: DynamoDBTable, tableNameOverride?: string) {
     const region = context.REGION;
-    const tableName = DYNAMODB_TABLE_NAME(context);
+    const tableName = tableNameOverride ?? DYNAMODB_TABLE_NAME(context);
     const partitionKey = DYNAMODB_PARTITION_KEY;
     
     this.tableName = tableName;
-    this.table = new DynamoDBTable({ 
+    this.table = table ?? new DynamoDBTable({ 
       region, 
       tableName, 
       partitionKey 
       // No sortKey - single record per person
     });
+  }
+
+  /**
+   * Build a PersonCurrentStateTable from an explicit table name instead of an IContext, so
+   * mock-mode table variants (e.g. the isolated mock table) can be targeted directly.
+   */
+  public static fromTableName(tableName: string, region?: string): PersonCurrentStateTable {
+    const resolvedRegion = region || process.env.REGION || 'us-east-1';
+    const table = new DynamoDBTable({
+      region: resolvedRegion, tableName, partitionKey: DYNAMODB_PARTITION_KEY
+    });
+    return new PersonCurrentStateTable({ REGION: resolvedRegion } as IContext, table, tableName);
   }
 
   /**
@@ -333,14 +345,14 @@ export class PersonCurrentStateTable {
   }
 }
 
-
-if(require.main === module) {
+export async function main() {
   const { TestEnvironment } = require('integration-core');
   const testEnvironment = TestEnvironment('PERSON_CURRENT_STATE_TABLE');
   [
     'PERSON_CURRENT_STATE_TABLE_TASK',
     'PERSON_CURRENT_STATE_TABLE_PERSON_ID',
     'PERSON_CURRENT_STATE_TABLE_SYNC_RUN_ID',
+    'PERSON_CURRENT_STATE_TABLE_NAME_OVERRIDE',
     'TRUNCATE_CHUNK_SIZE'
   ].forEach(testEnvironment.getVar);
 
@@ -348,12 +360,16 @@ if(require.main === module) {
     PERSON_CURRENT_STATE_TABLE_TASK: task,
     PERSON_CURRENT_STATE_TABLE_PERSON_ID: personId,
     PERSON_CURRENT_STATE_TABLE_SYNC_RUN_ID: syncRunId,
+    PERSON_CURRENT_STATE_TABLE_NAME_OVERRIDE: tableNameOverride,
     TRUNCATE_CHUNK_SIZE
   } = process.env;
 
   (async () => {
     const context = require('../../context/context.json') as IContext;
-    const stateTable = new PersonCurrentStateTable(context);
+    // Target a specific table (e.g. a mock variant) directly when overridden, bypassing IContext-based name resolution
+    const stateTable = tableNameOverride
+      ? PersonCurrentStateTable.fromTableName(tableNameOverride, context.REGION)
+      : new PersonCurrentStateTable(context);
     
     switch(task) {
       case 'truncate':
@@ -398,3 +414,7 @@ if(require.main === module) {
   })();
 }
 
+
+if(require.main === module) {
+  main();
+}

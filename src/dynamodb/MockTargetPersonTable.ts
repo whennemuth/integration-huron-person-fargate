@@ -1,9 +1,10 @@
 import { IContext } from '../../context/IContext';
-import { MockPersonDataTarget } from 'integration-huron-person';
+import { ConfigManager, MockPersonDataTarget } from 'integration-huron-person';
 import { Config } from 'integration-huron-person';
 import { CrudOperation, FieldSet, PushOneParms, SinglePushResult } from 'integration-core';
 import { DynamoDBClient, ScanCommand, DeleteItemCommand, DescribeTableCommand } from '@aws-sdk/client-dynamodb';
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
+import { getLocalConfig } from '../Utils';
 
 /**
  * Mock Target State Table
@@ -251,6 +252,7 @@ export class MockTargetPersonTable {
  * - DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME: Table name
  * - STACK_ID: Stack identifier (for table name resolution)
  * - LANDSCAPE: Environment landscape (for table name resolution)
+ * - MOCK_TARGET_PERSON_TABLE_TASK: Task to run (defaults to "list")
  * 
  * Tasks:
  * - list: List all records
@@ -258,7 +260,7 @@ export class MockTargetPersonTable {
  * - test-push: Test CREATE/UPDATE/DELETE operations
  * - validate: Check if table exists
  */
-async function main() {
+export async function main() {
   const { TestEnvironment } = await import('integration-core');
   const testEnvironment = TestEnvironment('MOCK_TARGET_PERSON_TABLE');
 
@@ -266,14 +268,20 @@ async function main() {
     'REGION',
     'DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME',
     'STACK_ID',
-    'LANDSCAPE'
+    'LANDSCAPE',
+    'MOCK_TARGET_PERSON_TABLE_TASK'
   ].forEach(testEnvironment.getVarOrEmptyString);
 
   const {
     REGION: region,
     DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME: tableName,
     STACK_ID: stackId,
-    LANDSCAPE: landscape
+    LANDSCAPE: landscape,
+    MOCK_TARGET_PERSON_TABLE_TASK: task = 'list',
+    /** SECRET_ARN: Secrets Manager ARN containing config */
+    SECRET_ARN,
+    /** HURON_PERSON_CONFIG_PATH: Path to config.json (fallback for local dev only) */
+    HURON_PERSON_CONFIG_PATH
   } = process.env;
 
   // Create mock context for table name resolution
@@ -283,12 +291,15 @@ async function main() {
     REGION: region || 'us-east-1'
   } as IContext;
 
-  // Create minimal config
-  const { ConfigManager } = await import('integration-huron-person');
+  // Load configuration.
   const configManager = ConfigManager.getInstance();
+  const localConfigPath = HURON_PERSON_CONFIG_PATH || getLocalConfig();
   const config = await configManager
     .reset()
-    .fromEnvironment()
+    .fromJsonString('HURON_PERSON_CONFIG_JSON')   // ← TaskDef secret injection
+    .fromSecretManager(SECRET_ARN)                // ← Fallback to Secrets Manager
+    .fromEnvironment()                            // ← Fallback to individual env var overrides
+    .fromFileSystem(localConfigPath)              // ← Local dev only
     .getConfigAsync('people');
 
   const mockTable = new MockTargetPersonTable({
@@ -297,8 +308,6 @@ async function main() {
     tableName,
     syncRunId: new Date().toISOString()
   });
-
-  const task = process.argv[2] || 'list';
 
   console.log(`\n=== MockTargetPersonTable Harness: ${task} ===`);
   console.log(`Table: ${mockTable.getTableName()}`);
