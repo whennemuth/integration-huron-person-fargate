@@ -94,9 +94,19 @@ export function resetSourceSimulatorState(): void {
 interface MockPerson {
   personid: string;
   bu_id: string;
-  firstName?: string;
-  lastName?: string;
-  email?: string;
+  personBasic?: {
+    names: Array<{
+      firstName?: string;
+      lastName?: string;
+      nameType?: string;
+      source?: string;
+    }>;
+  };
+  email?: Array<{
+    address?: string;
+    type?: string;
+    source?: string;
+  }>;
   employeeInfo?: {
     positions: Array<{
       positionInfo: {
@@ -164,9 +174,15 @@ function generateMockPerson(index: number, options?: { nonCurrentTermRate?: numb
   const basePerson: MockPerson = {
     personid,
     bu_id,
-    firstName: `FirstName${index + 1}`,
-    lastName: `LastName${index + 1}`,
-    email: `${personid}@bu.edu`,
+    // Nested under personBasic.names[]/email[] to match the real CDM schema, not flat fields
+    personBasic: {
+      names: [
+        { firstName: `FirstName${index + 1}`, lastName: `LastName${index + 1}`, nameType: 'PRI', source: 'SAP' },
+      ],
+    },
+    email: [
+      { address: `${personid}@bu.edu`, type: 'University', source: 'SAP' },
+    ],
   };
 
   // Employee (33% of population)
