@@ -191,7 +191,8 @@ export class ProcessorTaskDefinition extends Construct {
       })
     );
 
-    // Grant SQS permissions for reading and deleting messages
+    // Grant SQS permissions for reading and deleting messages, and sending the merger-trigger
+    // message (DynamoDB mode: last processor notifies the merger queue directly).
     this.taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
@@ -199,6 +200,7 @@ export class ProcessorTaskDefinition extends Construct {
           'sqs:ReceiveMessage',
           'sqs:DeleteMessage',
           'sqs:GetQueueAttributes',
+          'sqs:SendMessage',
         ],
         resources: [
           `arn:aws:sqs:${region}:${Stack.of(this).account}:*`,
@@ -207,6 +209,7 @@ export class ProcessorTaskDefinition extends Construct {
     );
 
     // Grant DynamoDB permissions for writing error events and statistics
+    // BatchWriteItem is required because DynamoDBTable.putItem() routes through batchWrite() internally.
     this.taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
@@ -215,6 +218,7 @@ export class ProcessorTaskDefinition extends Construct {
           'dynamodb:UpdateItem',
           'dynamodb:Query',
           'dynamodb:GetItem',
+          'dynamodb:BatchWriteItem',
         ],
         resources: [
           `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.statisticsTable.tableName}`,
@@ -241,7 +245,9 @@ export class ProcessorTaskDefinition extends Construct {
     );
 
     // Grant DynamoDB read permissions for PersonCurrentStateTable
-    // Used for reading current person sync state during processing in DynamoDB mode
+    // Used for reading current person sync state during processing in DynamoDB mode.
+    // BatchGetItem/BatchWriteItem are required because PersonCurrentStateTable.batchGetPersonState()/
+    // batchWritePersonState() issue BatchGet/BatchWrite commands, not plain GetItem/PutItem.
     if (dynamodb!.personCurrentStateTable) {
       this.taskDefinition.addToTaskRolePolicy(
         new PolicyStatement({
@@ -249,6 +255,8 @@ export class ProcessorTaskDefinition extends Construct {
           actions: [
             'dynamodb:GetItem',
             'dynamodb:Query',
+            'dynamodb:BatchGetItem',
+            'dynamodb:BatchWriteItem',
           ],
           resources: [
             `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personCurrentStateTable.tableName}`,
@@ -259,7 +267,9 @@ export class ProcessorTaskDefinition extends Construct {
     }
 
     // Grant DynamoDB write permissions for PersonHistoryTable
-    // Used for writing person change history records during processing in DynamoDB mode
+    // Used for writing person change history records during processing in DynamoDB mode.
+    // BatchWriteItem is required because PersonHistoryTable.writeHistory() routes through
+    // DynamoDBTable.putItem() -> batchWrite() internally.
     if (dynamodb!.personHistoryTable) {
       this.taskDefinition.addToTaskRolePolicy(
         new PolicyStatement({
@@ -267,6 +277,7 @@ export class ProcessorTaskDefinition extends Construct {
           actions: [
             'dynamodb:PutItem',
             'dynamodb:UpdateItem',
+            'dynamodb:BatchWriteItem',
           ],
           resources: [
             `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personHistoryTable.tableName}`,
@@ -276,12 +287,15 @@ export class ProcessorTaskDefinition extends Construct {
     }
 
     // Grant DynamoDB write permissions for the shared personRecordProcessor log table
-    // Used by AbstractPersonRecordProcessor.logEntry() when a customization is configured
+    // Used by AbstractPersonRecordProcessor.logEntry() when a customization is configured.
+    // BatchWriteItem is required because PersonRecordProcessorLogTable.putEntry() routes through
+    // DynamoDBTable.putItem() -> batchWrite() internally.
     this.taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
         actions: [
           'dynamodb:PutItem',
+          'dynamodb:BatchWriteItem',
         ],
         resources: [
           `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personRecordProcessorLogTable.tableName}`,
@@ -319,6 +333,7 @@ export class ProcessorTaskDefinition extends Construct {
           'dynamodb:UpdateItem',
           'dynamodb:Query',
           'dynamodb:GetItem',
+          'dynamodb:BatchWriteItem',
         ],
         resources: [
           `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}`,

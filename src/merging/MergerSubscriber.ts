@@ -88,9 +88,13 @@ export async function handler(event: any): Promise<any> {
   console.log(`Chunk directory: ${chunkDirectory}`);
 
   try {
-    // Create metadata manager using bootstrap pattern (Lambda doesn't have full Config)
+    // Resolve which statistics table (mock or real) holds this run's records, since chunker may
+    // have written FLAGS/METADATA/TERMINAL_ERROR to either depending on flags.useMockTarget.
+    // See MetadataFactoryForBootstrap.resolveMockAwareFlags().
     const metadataFactory = new MetadataFactoryForBootstrap();
-    const metadataManager = metadataFactory.createMetadataForBootstrap();
+    const { metadata: metadataManager } = await metadataFactory.resolveMockAwareFlags({
+      bucketName: bucket, chunkDirectory, region
+    });
 
     const terminalError = await metadataManager.readTerminalError({
       bucketName: bucket,
@@ -375,7 +379,7 @@ async function triggerMerger(chunkDirectory: string, createdAt: string): Promise
   };
 
   try {
-    console.log('Sending message to merger queue:', JSON.stringify(message, null, 2));
+    console.log('Sending message to merger queue:', JSON.stringify(message));
     await sqsClient.send(new SendMessageCommand({
       QueueUrl: MERGER_QUEUE_URL,
       MessageBody: JSON.stringify(message),

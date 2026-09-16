@@ -1,7 +1,7 @@
 import { Config } from 'integration-huron-person';
 import { IContext } from '../../../context/IContext';
 import { S3StorageAdapter } from '../../storage/S3StorageAdapter';
-import { IMetadataStorage } from './IMetadataStorage';
+import { Flags, IMetadataStorage } from './IMetadataStorage';
 import { MetadataForS3 } from './MetadataForS3';
 import { MetadataForDynamoDb } from './MetadataForDynamoDb';
 
@@ -157,6 +157,50 @@ export class MetadataFactoryForBootstrap {
       default:
         throw new Error(`Unsupported storage type for bootstrap metadata: ${previousStorageType}`);
     }
+  }
+
+  /**
+   * Resolve which statistics table (mock or real) holds this run's FLAGS record, without needing
+   * to already know flags.useMockTarget - which is exactly what this determines. Chunker writes
+   * FLAGS/METADATA/TERMINAL_ERROR to the mock statistics table whenever flags.useMockTarget is
+   * true (see docker/chunker.ts's createMetadataManager()) - a "mock run" being either a
+   * mock-target-only run, or a source-simulator run (which always forces useMockTarget=true, per
+   * Runner.ts's safety enforcement) - so an entire run's statistics-table trail lives in exactly
+   * one table, never split across both.
+   *
+   * Tries the mock statistics table first (if DynamoDB mode and a mock table is configured); if
+   * no FLAGS record is found there, falls back to the real table. Whichever table actually has
+   * the FLAGS record for this run is the one bootstrap consumers (processor, merger) should keep
+   * using for the rest of that run's statistics-table reads/writes (METADATA, TERMINAL_ERROR,
+   * CHUNK_STATUS, STATISTICS, ERROR).
+   *
+   * No-op in S3 storage mode: FLAGS live in a single S3 location there (no mock/real split), so
+   * this just delegates to createMetadataForBootstrap().
+   */
+  public resolveMockAwareFlags = async (params: {
+    bucketName?: string;
+    chunkDirectory: string;
+    region?: string;
+  }): Promise<{ metadata: IMetadataStorage; flags: Partial<Flags>; statisticsTableName?: string }> => {
+    const { bucketName, chunkDirectory, region } = params;
+    const { PREVIOUS_STORAGE_TYPE, DYNAMODB_MOCK_STATISTICS_TABLE_NAME, DYNAMODB_STATISTICS_TABLE_NAME } = process.env;
+    const previousStorageType = `${PREVIOUS_STORAGE_TYPE}`.toLowerCase();
+
+    if (previousStorageType === 'dynamodb' && DYNAMODB_MOCK_STATISTICS_TABLE_NAME) {
+      const mockMetadata = new MetadataForDynamoDb({
+        config: {} as Config,
+        statisticsTableName: DYNAMODB_MOCK_STATISTICS_TABLE_NAME,
+        region
+      });
+      const mockFlags = await mockMetadata.readFlags({ bucketName, chunkDirectory, region });
+      if (Object.keys(mockFlags).length > 0) {
+        return { metadata: mockMetadata, flags: mockFlags, statisticsTableName: DYNAMODB_MOCK_STATISTICS_TABLE_NAME };
+      }
+    }
+
+    const realMetadata = this.createMetadataForBootstrap();
+    const realFlags = await realMetadata.readFlags({ bucketName, chunkDirectory, region });
+    return { metadata: realMetadata, flags: realFlags, statisticsTableName: DYNAMODB_STATISTICS_TABLE_NAME };
   }
 
   /**

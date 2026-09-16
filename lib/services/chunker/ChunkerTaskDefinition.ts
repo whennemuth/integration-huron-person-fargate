@@ -321,20 +321,45 @@ export class ChunkerTaskDefinition extends Construct {
       );
     }
 
-    // Grant DynamoDB write permissions for StatisticsTable
-    // Used for writing METADATA and FLAGS event records in DynamoDB mode
+    // Grant DynamoDB read/write permissions for StatisticsTable
+    // Used for reading/writing METADATA, FLAGS, and TERMINAL_ERROR event records in DynamoDB mode.
+    // BatchWriteItem is required because DynamoDBTable.putItem() routes through batchWrite() internally.
     this.taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
         actions: [
+          'dynamodb:GetItem',
+          'dynamodb:Query',
           'dynamodb:PutItem',
           'dynamodb:UpdateItem',
+          'dynamodb:BatchWriteItem',
         ],
         resources: [
           `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.statisticsTable.tableName}`,
         ],
       })
     );
+
+    // Grant DynamoDB read/write permissions for the isolated mock statistics table
+    // Used when the run is mock (flags.useMockTarget=true) so its entire statistics-table trail
+    // (FLAGS/METADATA/TERMINAL_ERROR/STATISTICS/ERROR/CHUNK_STATUS) stays in this table only
+    if (dynamodb!.mockStatisticsTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:GetItem',
+            'dynamodb:Query',
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+            'dynamodb:BatchWriteItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}`,
+          ],
+        })
+      );
+    }
 
     // Apply any resource-specific tags - tags not defined in IContext.TAGS
     if (tags) {

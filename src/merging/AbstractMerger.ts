@@ -25,8 +25,7 @@ import { Timer } from 'integration-core';
 import { FieldDefinitions } from 'integration-huron-person';
 import { extractChunkDirectory } from '../chunking/filedrop/ChunkPathUtils';
 import { DeferredDeleteHandler } from './DeferredDeleteHandler';
-import { MetadataFactory } from '../chunking/metadata';
-import { getConfig } from '../../docker/chunker';
+import { MetadataFactoryForBootstrap } from '../chunking/metadata';
 import { SyncPopulation } from '../../docker/chunkTypes';
 import { TaskProtection } from '../TaskProtection';
 
@@ -161,14 +160,13 @@ export abstract class AbstractMerger {
       return;
     }
 
-    // First check if the population type for this sync is compatible with deletion processing
-    const config = await getConfig();
-    const metadataManager = MetadataFactory.create({
-      config,
-      previousStorageType: process.env.PREVIOUS_STORAGE_TYPE,
-      statisticsTableName: process.env.DYNAMODB_STATISTICS_TABLE_NAME
+    // First check if the population type for this sync is compatible with deletion processing.
+    // Tries the mock statistics table first (if configured), falling back to the real table, since
+    // flags.useMockTarget (what determines which table chunker used) can only be learned from the
+    // flags themselves. See MetadataFactoryForBootstrap.resolveMockAwareFlags().
+    const { flags } = await new MetadataFactoryForBootstrap().resolveMockAwareFlags({
+      bucketName, chunkDirectory: chunkDir, region
     });
-    const flags = await metadataManager.readFlags({ bucketName, chunkDirectory: chunkDir, region });
     const { syncPopulation, useMockTarget } = flags;
 
     if (syncPopulation === SyncPopulation.PersonDelta) {

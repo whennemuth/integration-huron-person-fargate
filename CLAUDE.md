@@ -233,6 +233,56 @@ The pipeline supports two storage modes for delta state and metadata, controlled
    - `MetadataForDynamoDb` (StatisticsTable with `eventType` field)
    - `MetadataFactory` switches on `config.storage.type`
 
+### Mock-Run Statistics Isolation (DynamoDB Mode)
+
+**"Mock run" definition**: `flags.useMockTarget === true`. This single flag covers BOTH a
+mock-target-only run (real source API, mock target - a "hybrid") AND a source-simulator run
+(which always forces `useMockTarget=true`, per `Runner.ts`'s safety enforcement). Routing logic
+never needs to separately check `sourceSimulator` - checking `useMockTarget` alone is sufficient
+and already covers both cases identically.
+
+**What gets isolated**: ALL StatisticsTable record types for a mock run - `FLAGS`, `METADATA`,
+`TERMINAL_ERROR`, `STATISTICS`, `ERROR:*`, and `CHUNK_STATUS_*` - go to the isolated
+`DYNAMODB_MOCK_STATISTICS_TABLE_NAME` table instead of the real one. This guarantees a single
+sync run's statistics-table trail never spans both tables. (An earlier iteration of this design
+kept FLAGS/METADATA/TERMINAL_ERROR on the real table unconditionally, treating them as
+"control-plane" records exempt from isolation - that was corrected, since it caused a mock run's
+own bootstrap Flags lookup to silently miss and default `useMockTarget` back to `false`.)
+
+**The bootstrap circularity problem**: Processor and Merger need to read the FLAGS record to
+learn `flags.useMockTarget` - but that same flag determines which of the two tables FLAGS was
+written to. Neither the Processor's SQS message (a native S3 `ObjectCreated` event, forwarded
+verbatim by `ProcessorSubscriber.ts` - bucket/key only, no custom fields) nor the chunk file's S3
+object metadata carries `useMockTarget`, so there's no way to know which table to check ahead of
+time.
+
+**Solution**: `MetadataFactoryForBootstrap.resolveMockAwareFlags()` (src/chunking/metadata/MetadataFactory.ts)
+tries the mock statistics table first (if DynamoDB mode and a mock table is configured); if no
+FLAGS record is found there, falls back to the real table. Returns `{ metadata, flags,
+statisticsTableName }` so callers reuse the resolved table for everything else tied to that
+`syncRunId` (METADATA, TERMINAL_ERROR, CHUNK_STATUS, STATISTICS, ERROR) without re-resolving.
+
+**Where it's used**:
+- `ProcessorForDynamoDb.ts`: replaces a module-level, real-table-only bootstrap with a
+  per-invocation resolved call; the same resolved table also drives the error tracker AND the
+  "last processor triggers merger" completion-detection logic (`CHUNK_STATUS`/`METADATA`/
+  `mergerTriggered`), which previously hardcoded the real table.
+- `AbstractMerger.ts`'s `processDeferredDeletes()`: same pattern, for reading `syncPopulation`/
+  `useMockTarget` before deciding on deletion handling.
+- `MergerSubscriber.ts` (S3-triggered Lambda) + `MergerSubscribingLambda.ts` (CDK construct):
+  same pattern for `readTerminalError`/`read` (metadata) checks; the Lambda's IAM role and env
+  vars now include both `DYNAMODB_STATISTICS_TABLE_NAME` and `DYNAMODB_MOCK_STATISTICS_TABLE_NAME`.
+
+**Where it's NOT needed**:
+- `docker/chunker.ts` / `ChunkFromAPI.ts`: no circularity - `useMockTarget` is already known
+  directly from task parameters (the chunker's own SQS message, which unlike the processor's DOES
+  carry `useMockTarget` as a custom field) before any statistics-table read/write happens.
+- `ProcessorForS3.ts`: `docker/processor.ts` only routes to it when `PREVIOUS_STORAGE_TYPE=s3`,
+  in which case FLAGS/METADATA live in a single S3 file location (no mock/real table split at
+  all), so there's nothing to resolve. Its error tracker's mock/real table selection (via
+  `resolveTableName()`) already runs *after* flags are available from that single S3 read, with
+  no circularity.
+
 **Switching Between Modes**:
 ```typescript
 // In Secrets Manager or context.json:

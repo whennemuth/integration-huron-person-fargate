@@ -75,7 +75,6 @@ import { SyncPopulation } from '../../docker/chunkTypes';
 import { StatisticsTable } from '../dynamodb/StatisticsTable';
 import { personRecordProcessorFactory } from './custom/PersonRecordProcessorFactory';
 
-const metadataStorage = new MetadataFactoryForBootstrap().createMetadataForBootstrap();
 const metadataUtils = new StandardMetadataUtils({});
 
 /**
@@ -135,9 +134,10 @@ export const buildChunkConfig = async (params: {
   s3Key: string,
   personCurrentStateTableName: string,
   personHistoryTableName: string,
-  region?: string
+  region?: string,
+  integrationTimestamp?: string
 }): Promise<Config> => {
-  const { bucketName, s3Key, personCurrentStateTableName, personHistoryTableName, region } = params;
+  const { bucketName, s3Key, personCurrentStateTableName, personHistoryTableName, region, integrationTimestamp } = params;
   
   // Load base configuration
   const { HURON_PERSON_CONFIG_PATH, SECRET_ARN } = process.env;
@@ -175,7 +175,8 @@ export const buildChunkConfig = async (params: {
         region: region || baseRegion,
         personCurrentStateTableName,
         personHistoryTableName,
-        currentStateGSIName: 'syncRunId-personId-index'
+        currentStateGSIName: 'syncRunId-personId-index',
+        syncRunId: integrationTimestamp
       }
     },
     integration: {
@@ -214,7 +215,6 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     DRY_RUN,
     BULK_RESET,
     DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbStatisticsTableName,
-    DYNAMODB_MOCK_STATISTICS_TABLE_NAME: dynamoDbMockStatisticsTableName,
     RETRY_STRATEGY,
     MERGER_QUEUE_URL: mergerQueueUrl
   } = process.env;
@@ -242,6 +242,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
   let integrationTimestamp: string | undefined;
   let chunkDirectory: string | undefined;
   let errorTracker: TargetApiErrorEventProcessor | undefined;
+  let errorTrackingStatisticsTableName: string | undefined;
   let processedRecordCount = 0;
   let processingError: Error | null = null;
   const startTimestamp = new Date().toISOString();
@@ -265,9 +266,13 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
 
     ({ bucketName, s3Key } = nextChunk || {});
     ChunkFileManager.validateChunk(nextChunk);
+    chunkDirectory = s3Key!.substring(0, s3Key!.lastIndexOf('/'));
 
-    // Read flags file
-    const flags = await metadataStorage.readFlagsFromChunkKey(bucketName, s3Key, region);
+    // Read flags - tries the mock statistics table first (if configured), falling back to the
+    // real table, since flags.useMockTarget (what determines which table chunker used) can only
+    // be learned from the flags themselves. See MetadataFactoryForBootstrap.resolveMockAwareFlags().
+    const { flags, statisticsTableName: resolvedStatisticsTableName } = await new MetadataFactoryForBootstrap()
+      .resolveMockAwareFlags({ bucketName, chunkDirectory, region });
     const bulkReset = flags.bulkReset ?? (`${BULK_RESET}`.trim().toLowerCase() === 'true');
     const trustPreviousStorage = flags.trustPreviousStorage ?? true;
     const syncPopulation = flags.syncPopulation ?? SyncPopulation.PersonFull;
@@ -283,7 +288,6 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
 
     chunkId = metadataUtils.extractChunkId(s3Key!);
     integrationTimestamp = metadataUtils.extractIntegrationTimestamp(s3Key!) || new Date().toISOString();
-    chunkDirectory = s3Key!.substring(0, s3Key!.lastIndexOf('/'));
 
     console.log(`Processing chunk: s3://${bucketName}/${s3Key}`);
     if (chunkId) {
@@ -321,12 +325,10 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     }
 
     // Initialize error tracker
-    // Redirected to the isolated mock statistics table when flags.useMockTarget is true, so bulk
-    // STATISTICS/ERROR records never mix with production data. Note: CHUNK_STATUS/METADATA
-    // (used below for completion detection) intentionally stay on the real table regardless of
-    // mock mode, since chunker always writes METADATA there and completion counting must be
-    // consistent with wherever chunkCount was recorded.
-    const errorTrackingStatisticsTableName = resolveTableName(dynamoDbStatisticsTableName, dynamoDbMockStatisticsTableName, flags.useMockTarget);
+    // Uses the already-resolved statistics table (mock or real, whichever holds this run's FLAGS -
+    // see MetadataFactoryForBootstrap.resolveMockAwareFlags()), so STATISTICS/ERROR/CHUNK_STATUS/
+    // METADATA records for a mock run never mix with production data, and never split across tables.
+    errorTrackingStatisticsTableName = resolvedStatisticsTableName;
     if (errorTrackingStatisticsTableName) {
       errorTracker = new TrackingTargetApiErrorProcessor({
         tableName: errorTrackingStatisticsTableName,
@@ -346,7 +348,8 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
       s3Key: s3Key!,
       personCurrentStateTableName: currentStateTableName,
       personHistoryTableName: historyTableName,
-      region
+      region,
+      integrationTimestamp
     });
 
     // Create shared cache for JWT tokens
@@ -458,10 +461,11 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
       }
 
       // DynamoDB Mode: Write CHUNK_STATUS and check for completion to trigger merger
-      if (dynamoDbStatisticsTableName && chunkId && integrationTimestamp) {
+      if (errorTrackingStatisticsTableName && chunkId && integrationTimestamp) {
         try {
-          // Completion detection always uses the real (not mock-redirected) statistics table
-          const statisticsTable = StatisticsTable.fromTableName(dynamoDbStatisticsTableName, region);
+          // Uses the same resolved (mock-or-real) statistics table as the error tracker, so a
+          // mock run's completion detection never looks at the wrong table's chunkCount.
+          const statisticsTable = StatisticsTable.fromTableName(errorTrackingStatisticsTableName, region);
 
           // Step 1: Write this processor's CHUNK_STATUS
           const chunkStatus = {

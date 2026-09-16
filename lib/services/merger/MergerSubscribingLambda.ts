@@ -9,7 +9,7 @@ import { LambdaDestination } from 'aws-cdk-lib/aws-s3-notifications';
 import { Construct } from 'constructs';
 import { FUNCTION_BASE_NAME } from '../../../src/merging/MergerSubscriber';
 import { IContext } from '../../../context/IContext';
-import { DYNAMODB_TABLE_NAME as STATISTICS_TABLE_NAME } from '../../../src/dynamodb/StatisticsTable';
+import { DYNAMODB_TABLE_NAME as STATISTICS_TABLE_NAME, DYNAMODB_MOCK_TABLE_NAME as MOCK_STATISTICS_TABLE_NAME } from '../../../src/dynamodb/StatisticsTable';
 
 export interface MergerSubscribingLambdaProps {
   vpc: IVpc;
@@ -87,11 +87,13 @@ export class MergerSubscribingLambda extends Construct {
         CHUNKS_BUCKET_NAME: props.chunksBucketName,
         DRY_RUN: props.dryRun ? 'true' : 'false',
         PREVIOUS_STORAGE_TYPE: props.context.PREVIOUS_STORAGE_TYPE || 's3',
-        // Conditionally add DynamoDB table name when in DynamoDB mode - only STATISTICS_TABLE_NAME
-        // is needed here since this Lambda only reads METADATA/TERMINAL_ERROR (control-plane
-        // records, always on the real table regardless of mock mode)
+        // Conditionally add DynamoDB table names when in DynamoDB mode. Both real and mock
+        // table names are needed: chunker writes FLAGS/METADATA/TERMINAL_ERROR to whichever
+        // table matches flags.useMockTarget for that run, and this Lambda doesn't yet know
+        // which one until it tries (see MetadataFactoryForBootstrap.resolveMockAwareFlags()).
         ...(props.context.PREVIOUS_STORAGE_TYPE === 'dynamodb' && {
           DYNAMODB_STATISTICS_TABLE_NAME: STATISTICS_TABLE_NAME(props.context),
+          DYNAMODB_MOCK_STATISTICS_TABLE_NAME: MOCK_STATISTICS_TABLE_NAME(props.context),
         }),
         DESCRIPTION1:
           `Sends SQS message to merger queue to trigger Fargate task that checks completeness 
@@ -138,11 +140,13 @@ export class MergerSubscribingLambda extends Construct {
       })
     );
 
-    // Grant DynamoDB permissions if in DynamoDB mode - GetItem only, since this Lambda only
-    // does a PK+SK lookup on the statistics table (readTerminalError/getChunkMetadata), never
-    // queries its GSI or touches PersonCurrentState/PersonHistory
+    // Grant DynamoDB permissions if in DynamoDB mode - GetItem only (read-only Lambda), on BOTH
+    // the real and mock statistics tables, since this Lambda tries the mock table first for
+    // FLAGS/METADATA/TERMINAL_ERROR lookups before falling back to the real table (see
+    // MetadataFactoryForBootstrap.resolveMockAwareFlags())
     if (props.context.PREVIOUS_STORAGE_TYPE === 'dynamodb') {
       const statisticsTableName = STATISTICS_TABLE_NAME(props.context);
+      const mockStatisticsTableName = MOCK_STATISTICS_TABLE_NAME(props.context);
 
       this.function.addToRolePolicy(
         new PolicyStatement({
@@ -150,7 +154,10 @@ export class MergerSubscribingLambda extends Construct {
           actions: [
             'dynamodb:GetItem',
           ],
-          resources: [`arn:aws:dynamodb:${props.region}:*:table/${statisticsTableName}`],
+          resources: [
+            `arn:aws:dynamodb:${props.region}:*:table/${statisticsTableName}`,
+            `arn:aws:dynamodb:${props.region}:*:table/${mockStatisticsTableName}`,
+          ],
         })
       );
     }

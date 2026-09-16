@@ -267,6 +267,20 @@ describe('ProcessorForDynamoDb (Phase 2 - DynamoDB Mode)', () => {
       expect(storageConfig.personCurrentStateTableName).toBe('MyCurrentStateTable');
       expect(storageConfig.personHistoryTableName).toBe('MyHistoryTable');
     });
+
+    it('should pass integrationTimestamp through as the DynamoDB storage syncRunId', async () => {
+      const result = await buildChunkConfig({
+        bucketName: 'test-bucket',
+        s3Key: 'chunks/person-full/2026-09-15T03:06:06.027Z/chunk-0001.ndjson',
+        personCurrentStateTableName: 'PersonCurrentStateTable',
+        personHistoryTableName: 'PersonHistoryTable',
+        region: 'us-east-2',
+        integrationTimestamp: '2026-09-15T03:06:06.027Z'
+      });
+
+      const storageConfig = result.storage.config as any;
+      expect(storageConfig.syncRunId).toBe('2026-09-15T03:06:06.027Z');
+    });
   });
 
   describe('resolveStaticMapUsage', () => {

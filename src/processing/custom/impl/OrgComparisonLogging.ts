@@ -41,3 +41,4 @@ export class OrgComparisonLoggingPersonProcessor extends AbstractPersonRecordPro
     });
   }
 }
+

@@ -93,6 +93,12 @@ export class AppConstruct extends Construct {
       'SQS_QUEUE_URL',
       this.queue.mergerQueue.queueUrl
     );
+    // DynamoDB mode: the last processor to finish sends the merger-trigger message itself
+    // (no S3 metadata write to fire the MergerSubscriber Lambda), so it needs the merger queue's URL too.
+    this.ecs.taskDefinitions.processor.taskDefinition.defaultContainer!.addEnvironment(
+      'MERGER_QUEUE_URL',
+      this.queue.mergerQueue.queueUrl
+    );
 
     // ========================================
     // 5. Chunks Bucket

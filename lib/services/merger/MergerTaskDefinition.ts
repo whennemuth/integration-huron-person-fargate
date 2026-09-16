@@ -181,6 +181,7 @@ export class MergerTaskDefinition extends Construct {
     );
 
     // Grant DynamoDB permissions for writing error events and statistics
+    // BatchWriteItem is required because DynamoDBTable.putItem() routes through batchWrite() internally.
     this.taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
@@ -189,6 +190,7 @@ export class MergerTaskDefinition extends Construct {
           'dynamodb:UpdateItem',
           'dynamodb:Query',
           'dynamodb:GetItem',
+          'dynamodb:BatchWriteItem',
         ],
         resources: [
           `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.statisticsTable.tableName}`,
@@ -207,6 +209,7 @@ export class MergerTaskDefinition extends Construct {
           'dynamodb:UpdateItem',
           'dynamodb:Query',
           'dynamodb:GetItem',
+          'dynamodb:BatchWriteItem',
         ],
         resources: [
           `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}`,
@@ -235,7 +238,9 @@ export class MergerTaskDefinition extends Construct {
     }
 
     // Grant DynamoDB write permissions for PersonHistoryTable
-    // Used for writing DELETED event records during merge in DynamoDB mode
+    // Used for writing DELETED event records during merge in DynamoDB mode.
+    // BatchWriteItem is required because PersonHistoryTable.writeHistory() routes through
+    // DynamoDBTable.putItem() -> batchWrite() internally.
     if (dynamodb!.personHistoryTable) {
       this.taskDefinition.addToTaskRolePolicy(
         new PolicyStatement({
@@ -243,6 +248,7 @@ export class MergerTaskDefinition extends Construct {
           actions: [
             'dynamodb:PutItem',
             'dynamodb:UpdateItem',
+            'dynamodb:BatchWriteItem',
           ],
           resources: [
             `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personHistoryTable.tableName}`,
@@ -270,6 +276,8 @@ export class MergerTaskDefinition extends Construct {
     }
 
     // Grant DynamoDB write permissions for mockPersonHistoryTable (DELETED event records during mocked runs)
+    // BatchWriteItem is required because PersonHistoryTable.writeHistory() routes through
+    // DynamoDBTable.putItem() -> batchWrite() internally.
     if (dynamodb!.mockPersonHistoryTable) {
       this.taskDefinition.addToTaskRolePolicy(
         new PolicyStatement({
@@ -277,6 +285,7 @@ export class MergerTaskDefinition extends Construct {
           actions: [
             'dynamodb:PutItem',
             'dynamodb:UpdateItem',
+            'dynamodb:BatchWriteItem',
           ],
           resources: [
             `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonHistoryTable.tableName}`,
