@@ -31,6 +31,31 @@ export type TaskParameters = {
 };
 
 /**
+ * Given a list of chunk-NNNN.ndjson keys, return which ordinals are missing from the
+ * contiguous 0..max range implied by the highest ordinal present.
+ */
+export function findMissingChunkOrdinals(chunkKeys: string[]): number[] {
+  const present = new Set<number>();
+  for (const key of chunkKeys) {
+    const match = key.match(/chunk-(\d+)\.ndjson$/);
+    if (match) {
+      present.add(parseInt(match[1], 10));
+    }
+  }
+  if (present.size === 0) {
+    return [];
+  }
+  const maxOrdinal = Math.max(...present);
+  const missing: number[] = [];
+  for (let i = 0; i <= maxOrdinal; i++) {
+    if (!present.has(i)) {
+      missing.push(i);
+    }
+  }
+  return missing;
+}
+
+/**
  * Chunker Entry Point (Phase 1)
  * 
  * This module runs in a Fargate task caused by SQS messages created by ChunkerSubscriber Lambda.
@@ -642,8 +667,12 @@ export class ChunkFromAPI implements IChunkFromSource {
         console.log('\n✓ Chunking completed successfully');
         console.log(`Created ${aggregatedChunkCount} chunks with ${aggregatedTotalRecords} person records`);
         if (aggregatedChunkKeys && aggregatedChunkKeys.length > 0) {
-          console.log(`\nChunk files:`);
-          aggregatedChunkKeys.forEach(key => console.log(`  - s3://${chunksBucket}/${key}`));
+          const missingOrdinals = findMissingChunkOrdinals(aggregatedChunkKeys);
+          if (missingOrdinals.length === 0) {
+            console.log(`\nNo missing chunk files detected (contiguous 0..${aggregatedChunkKeys.length - 1}).`);
+          } else {
+            console.log(`\n⚠️  Missing chunk ordinal(s): ${missingOrdinals.join(', ')}`);
+          }
         }
 
         // Write metadata manifest (source, target, paths, timestamps, flags, aggregate data)
