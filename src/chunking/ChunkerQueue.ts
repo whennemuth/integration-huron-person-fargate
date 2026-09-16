@@ -254,15 +254,17 @@ export class ChunkerQueue {
    * @param params.chunkDirectory Directory to store chunk data for this message's chunking task
    * @param params.taskParameters The parameters for the chunking task to process, which will be passed through to the next message
    * @param params.dryRun If true, will not actually send the message but will log the parameters instead (default: false)
+   * @param params.finalOffsetProcessed If known, skip sending when the computed next offset would already exceed it
    * @returns true if message sent successfully, false if skipped
    */
   public sendNextChunkingMessage = async ( params: {
-    iterationLimit: number; offset: number, chunkDirectory: string, taskParameters: TaskParameters, dryRun?: boolean
+    iterationLimit: number; offset: number, chunkDirectory: string, taskParameters: TaskParameters, dryRun?: boolean,
+    finalOffsetProcessed?: number
   }): Promise<boolean> => {
 
     const { QueueUrl } = this;
 
-    const { iterationLimit, offset: currentOffset, chunkDirectory, taskParameters, dryRun } = params; 
+    const { iterationLimit, offset: currentOffset, chunkDirectory, taskParameters, dryRun, finalOffsetProcessed } = params; 
 
     const { 
       baseUrl, 
@@ -283,6 +285,14 @@ export class ChunkerQueue {
 
     try {
       const nextOffset = await this.getNextOffset(currentOffset, iterationLimit);
+
+      // Population end is already known to be at or before this point - no legitimate data awaits
+      // at nextOffset, so avoid spawning another doomed empty task.
+      if (finalOffsetProcessed !== undefined && nextOffset > finalOffsetProcessed) {
+        console.log(`ℹ️  nextOffset=${nextOffset} exceeds finalOffsetProcessed=${finalOffsetProcessed}. Not creating next message.`);
+        return false;
+      }
+
       if (dryRun) {
         console.log(`[DRY RUN] Would send next chunking message to SQS: offset=${nextOffset}, iterationLimit=${iterationLimit}`);
         return true;

@@ -55,6 +55,8 @@ export type ChunkMetadata = CoreMetadataFields & {
   chunkCount?: number;
   totalRecords?: number;
   chunkKeys?: string[];
+  /** Offset of the last real page fetched by the task that reached the end of records - used to distinguish legitimately-pending offsets (below) from genuinely-past-the-end ones (above) when other tasks check chunkingAlreadyFinished(). */
+  finalOffsetProcessed?: number;
 };
 
 /**
@@ -74,6 +76,7 @@ export type WriteMetadataParams = CoreMetadataFields & {
   chunkCount?: number;
   totalRecords?: number;
   chunkKeys?: string[];
+  finalOffsetProcessed?: number;
 };
 
 /**

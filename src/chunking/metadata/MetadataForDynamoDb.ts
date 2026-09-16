@@ -78,6 +78,7 @@ export class MetadataForDynamoDb implements IMetadataStorage {
       chunkCount,
       totalRecords,
       chunkKeys,
+      finalOffsetProcessed,
       dryRun = false,
       replace = false
     } = params;
@@ -115,6 +116,9 @@ export class MetadataForDynamoDb implements IMetadataStorage {
     if (chunkKeys !== undefined) {
       metadata.chunkKeys = chunkKeys;
     }
+    if (finalOffsetProcessed !== undefined) {
+      metadata.finalOffsetProcessed = finalOffsetProcessed;
+    }
 
     if (dryRun) {
       console.log(`[DRY RUN] Would write metadata to DynamoDB:`);
@@ -151,6 +155,7 @@ export class MetadataForDynamoDb implements IMetadataStorage {
       runFailed,
       runFailureMessage,
       runFailureTimestamp,
+      personRecordProcessorCustomizations,
       dryRun = false,
       replace = false
     } = params;
@@ -177,6 +182,9 @@ export class MetadataForDynamoDb implements IMetadataStorage {
     }
     if (runFailureTimestamp !== undefined) {
       flags.runFailureTimestamp = runFailureTimestamp;
+    }
+    if (personRecordProcessorCustomizations !== undefined) {
+      flags.personRecordProcessorCustomizations = personRecordProcessorCustomizations;
     }
 
     if (dryRun) {

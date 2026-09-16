@@ -64,6 +64,7 @@ export class MetadataForS3 implements IMetadataStorage {
       chunkCount,
       totalRecords,
       chunkKeys,
+      finalOffsetProcessed,
       dryRun = false,
       region,
       replace = false
@@ -104,6 +105,9 @@ export class MetadataForS3 implements IMetadataStorage {
     }
     if (chunkKeys !== undefined) {
       metadata.chunkKeys = chunkKeys;
+    }
+    if (finalOffsetProcessed !== undefined) {
+      metadata.finalOffsetProcessed = finalOffsetProcessed;
     }
 
     const metadataJson = JSON.stringify(metadata, null, 2);
@@ -163,6 +167,7 @@ export class MetadataForS3 implements IMetadataStorage {
       runFailed,
       runFailureMessage,
       runFailureTimestamp,
+      personRecordProcessorCustomizations,
       dryRun = false,
       region,
       replace = false
@@ -193,6 +198,9 @@ export class MetadataForS3 implements IMetadataStorage {
     }
     if (runFailureTimestamp !== undefined) {
       flags.runFailureTimestamp = runFailureTimestamp;
+    }
+    if (personRecordProcessorCustomizations !== undefined) {
+      flags.personRecordProcessorCustomizations = personRecordProcessorCustomizations;
     }
 
     const flagsJson = JSON.stringify(flags, null, 2);

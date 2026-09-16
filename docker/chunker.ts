@@ -84,8 +84,13 @@ const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 /**
  * Resolve MetadataFactory params from env vars - the DynamoDB table name is already baked
  * into the task definition at deploy time, so no IContext object is needed here.
- * Redirects to the isolated mock statistics table when useMockTarget is true, so mocked runs
- * never mix their flags/metadata records with production statistics.
+ * Redirects ALL statistics-table records (FLAGS/METADATA/TERMINAL_ERROR) to the isolated mock
+ * table when useMockTarget is true, so a mock run's entire trail lives in exactly one table -
+ * never split across mock and real. "Mock run" = useMockTarget true, which covers both a
+ * mock-target-only run (real source, mock target) and a source-simulator run (which always
+ * forces useMockTarget=true, per Runner.ts's safety enforcement) - both are treated the same
+ * way here. Processor/Merger bootstrap consumers, which don't yet know useMockTarget at the
+ * point they need to read this data, resolve it via MetadataFactoryForBootstrap.resolveMockAwareFlags().
  */
 const createMetadataManager = (config: Config, useMockTarget: boolean = false) => MetadataFactory.create({
   config,
@@ -114,32 +119,42 @@ export async function writeChunkMetadata(config: Config, params: WriteMetadataPa
  * to the asynchronous nature of SQS and scaling, we may have some tasks that were triggered by 
  * messages that were created before the service realized it had reached the end, and these tasks 
  * should just exit immediately without doing any work.
+ * 
+ * When metadata carries finalOffsetProcessed (the offset of the last real page fetched by whichever
+ * task discovered the end), a currentOffset is compared against it so tasks whose own offset window
+ * is still legitimately below that boundary are NOT aborted (they proceed and fill in what would
+ * otherwise be a silently-skipped gap) - only tasks strictly beyond it are considered finished.
+ * Falls back to the old blanket abort when finalOffsetProcessed or currentOffset is unavailable.
  * @param config Configuration to determine storage type
  * @param params 
- * @returns true if chunking has already finished (metadata file exists), false otherwise
+ * @param currentOffset This task's own starting offset (from ChunkFromAPI), if applicable
+ * @returns true if this task should abort, false otherwise
  */
 export async function chunkingAlreadyFinished(config: Config, params: { 
   bucketName: string, chunkDirectory: string, region: string | undefined, useMockTarget?: boolean
-}): Promise<boolean> {
+}, currentOffset?: number): Promise<boolean> {
   const { bucketName, chunkDirectory, region, useMockTarget = false } = params;
   const metadata = createMetadataManager(config, useMockTarget);
   const result = await metadata.read({ 
     bucketName, chunkDirectory, region 
   } satisfies ReadMetadataParams);
 
-  let retval = true; // Assume finished unless we can confirm otherwise by finding metadata
-  if(!result) {
-    retval = false;
+  if(!result || Object.keys(result).length === 0) {
+    return false;
   }
 
-  if (Object.keys(result).length === 0) {
-    retval = false;
+  console.log(`🔍 Existing metadata found for this chunk directory: ${JSON.stringify(result)}`);
+
+  const { finalOffsetProcessed } = result;
+  if(finalOffsetProcessed === undefined || currentOffset === undefined) {
+    return true;
   }
-  
-  if(retval) {
-    console.log(`🔍 Existing metadata found for this chunk directory: ${JSON.stringify(result)}`);
+
+  const stillLegitimate = currentOffset <= finalOffsetProcessed;
+  if(stillLegitimate) {
+    console.log(`ℹ️  currentOffset=${currentOffset} is at or below finalOffsetProcessed=${finalOffsetProcessed} - proceeding instead of aborting.`);
   }
-  return retval;
+  return !stillLegitimate;
 }
 
 /**
@@ -154,6 +169,20 @@ export async function chunkingTerminalErrorEncountered(config: Config, params: {
   const { bucketName, chunkDirectory, region, useMockTarget = false } = params;
   const metadata = createMetadataManager(config, useMockTarget);
   return metadata.terminalErrorExists({ bucketName, chunkDirectory, region });
+}
+
+/**
+ * Read the finalOffsetProcessed boundary (if recorded) so sendNextChunkingMessage can be skipped
+ * for offsets already known to be beyond the end - avoids spawning further doomed empty tasks
+ * once the true end of the population is known. Returns undefined if no boundary is recorded yet.
+ */
+export async function getFinalOffsetProcessed(config: Config, params: {
+  bucketName: string, chunkDirectory: string, region: string | undefined, useMockTarget?: boolean
+}): Promise<number | undefined> {
+  const { bucketName, chunkDirectory, region, useMockTarget = false } = params;
+  const metadata = createMetadataManager(config, useMockTarget);
+  const result = await metadata.read({ bucketName, chunkDirectory, region } satisfies ReadMetadataParams);
+  return result?.finalOffsetProcessed;
 }
 
 /**
@@ -448,13 +477,16 @@ export async function main() {
       return;
     }
 
-    // Completion short-circuit: once metadata exists for this chunk directory, this task is obsolete.
-    // In the simulator's stateful depletion model, allocation occurs at execution time from a shared
-    // supply, so remaining late-arriving tasks are expected to return empty payloads and can be skipped.
+    // Completion short-circuit: once metadata exists for this chunk directory, this task is obsolete
+    // UNLESS its own offset window is still below the recorded finalOffsetProcessed boundary (see
+    // chunkingAlreadyFinished doc comment). In the simulator's stateful depletion model, allocation
+    // occurs at execution time from a shared supply, so remaining late-arriving tasks are expected
+    // to return empty payloads and can be skipped.
+    const currentOffset = chunker instanceof ChunkFromAPI ? chunker.getIterationLimitAndOffset().offset : undefined;
     const alreadyFinished = await chunkingAlreadyFinished(config, {
       bucketName: chunksBucket, chunkDirectory: chunker?.getChunkDirectory(), region,
       useMockTarget: chunker?.getUseMockTarget?.() || false
-    });
+    }, currentOffset);
     if (alreadyFinished) {
       let messageDetails = '';
       if (chunker instanceof ChunkFromAPI) {
@@ -486,7 +518,11 @@ export async function main() {
       // from messages. Propagation of this FLAG data is not required for subsequent chunker 
       // tasks - it's only needed for the first task. It's done for consistency and 
       // self-describing messages, not functional necessity.
-      await chunker.sendNextChunkingMessage(chunkerQueue, dryRun.toLowerCase() === 'true');
+      const finalOffsetProcessed = await getFinalOffsetProcessed(config, {
+        bucketName: chunksBucket, chunkDirectory, region,
+        useMockTarget: chunker.getUseMockTarget?.() || false
+      });
+      await chunker.sendNextChunkingMessage(chunkerQueue, dryRun.toLowerCase() === 'true', finalOffsetProcessed);
     }
 
     // Check if shared delta storage file exists (S3 or DynamoDB) to determine if we have a baseline 
