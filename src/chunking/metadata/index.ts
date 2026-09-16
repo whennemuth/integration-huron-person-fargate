@@ -54,5 +54,9 @@ export { MetadataForDynamoDb } from './MetadataForDynamoDb';
 // Export factory
 export { MetadataFactory, MetadataFactoryForBootstrap } from './MetadataFactory';
 
+// Export broker (single IMetadataStorage instance + shared bucketName/chunkDirectory/region context)
+export { MetadataBroker } from './MetadataBroker';
+export type { MetadataBrokerParams } from './MetadataBroker';
+
 // Export chunk file manager
 export { ChunkFileManager } from './ChunkFileManager';

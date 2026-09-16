@@ -3,12 +3,12 @@ import { TestEnvironment } from 'integration-core';
 import { AxiosResponseStreamFilter, Config, ConfigManager, DataSourceConfig, error, ResponseProcessor } from "integration-huron-person";
 import { IContext } from "../../../context/IContext";
 import { SyncPopulation } from "../../../docker/chunkTypes";
-import { ChunkFromParams, IChunkFromSource, writeChunkMetadata } from "../../../docker/chunker";
+import { ChunkFromParams, IChunkFromSource } from "../../../docker/chunker";
 import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { getRetryStrategy } from '../../ApiErrorRetryStrategy';
 import { ChunkerQueue } from '../ChunkerQueue';
-import { MetadataFactory, WriteMetadataParams, ChunkFileManager } from "../metadata";
+import { MetadataBroker, WriteMetadataParams, ChunkFileManager } from "../metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig, ChunkOrdinalAllocator } from "./BigJsonFetch";
@@ -53,6 +53,18 @@ export function findMissingChunkOrdinals(chunkKeys: string[]): number[] {
     }
   }
   return missing;
+}
+
+/**
+ * Given this task's own final offset used and whatever finalOffsetProcessed is already recorded
+ * in metadata (if any), determine whether this task lost the race to establish the true end -
+ * i.e. another task already recorded an earlier boundary before this task's own result arrived.
+ */
+export function hasLostRaceForTrueEnd(ownFinalOffsetUsed: number | undefined, existingFinalOffsetProcessed: number | undefined): boolean {
+  if (ownFinalOffsetUsed === undefined || existingFinalOffsetProcessed === undefined) {
+    return false;
+  }
+  return existingFinalOffsetProcessed < ownFinalOffsetUsed;
 }
 
 /**
@@ -513,17 +525,14 @@ export class ChunkFromAPI implements IChunkFromSource {
       // Extract chunk base path (creates key like: chunks/person-full/2026-04-09T15:28:18.703Z)
       const chunkDirectory = this.getChunkDirectory();
 
-      // Create metadata manager for config.storage.type (S3 or DynamoDB) - routes ALL statistics-
+      // Create metadata broker for config.storage.type (S3 or DynamoDB) - routes ALL statistics-
       // table records (FLAGS/METADATA/TERMINAL_ERROR) to the isolated mock table when this is a
-      // mock run, mirroring chunker.ts's createMetadataManager(). "Mock run" = useMockTarget true,
+      // mock run, mirroring chunker.ts's MetadataBroker construction. "Mock run" = useMockTarget true,
       // covering both mock-target-only and source-simulator runs (which always force
       // useMockTarget=true) - either way, the whole run's trail stays in exactly one table.
-      const metadataManager = MetadataFactory.create({
-        config: this.config,
-        previousStorageType: process.env.PREVIOUS_STORAGE_TYPE,
-        statisticsTableName: this.getUseMockTarget()
-          ? process.env.DYNAMODB_MOCK_STATISTICS_TABLE_NAME
-          : process.env.DYNAMODB_STATISTICS_TABLE_NAME
+      const metadataBroker = new MetadataBroker({
+        config: this.config, bucketName: chunksBucket, chunkDirectory, region,
+        useMockTarget: this.getUseMockTarget()
       });
 
       console.log(`Chunks: s3://${chunksBucket}/${chunkDirectory}/`);
@@ -602,7 +611,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         const runFailureMessage = result.terminalErrorMessage || 'Unknown terminal chunking error';
 
         // Persist failure metadata for run diagnostics and explicit terminal-state visibility.
-        await writeChunkMetadata(this.config, {
+        await metadataBroker.write({
           storage: chunksStorage,
           bucketName: chunksBucket,
           chunkDirectory,
@@ -618,10 +627,10 @@ export class ChunkFromAPI implements IChunkFromSource {
           runFailureTimestamp,
           replace: true,
           region
-        } satisfies WriteMetadataParams, this.getUseMockTarget());
+        } satisfies WriteMetadataParams);
 
         // Keep flags aligned with metadata so merger gating has the same terminal signal.
-        await metadataManager.markRunFailed({
+        await metadataBroker.markRunFailed({
           bucketName: chunksBucket,
           chunkDirectory,
           region,
@@ -632,6 +641,17 @@ export class ChunkFromAPI implements IChunkFromSource {
       }
 
       if(result.reachedTheEndOfRecords) {
+        // Another task may have already established an earlier true end (finalOffsetProcessed).
+        // If so, this task's own small/empty response lost that race - it is not newsworthy and
+        // must not be treated as if it discovered the run's completion.
+        if (result.finalOffsetProcessed !== undefined) {
+          const existingFinalOffsetProcessed = await metadataBroker.getFinalOffsetProcessed();
+          if (hasLostRaceForTrueEnd(result.finalOffsetProcessed, existingFinalOffsetProcessed)) {
+            console.log(`\nℹ️  Lost race for true end - offset ${existingFinalOffsetProcessed} already established by another task (this task's own final offset used was ${result.finalOffsetProcessed}). Skipping aggregation/metadata write.`);
+            return;
+          }
+        }
+
         // Build aggregated metadata from run-level state
         // This ensures metadata reflects ALL chunks across all parallel tasks, not just this task's local slice
         let aggregatedChunkCount = result.chunkCount;
@@ -677,7 +697,7 @@ export class ChunkFromAPI implements IChunkFromSource {
 
         // Write metadata manifest (source, target, paths, timestamps, flags, aggregate data)
         // Merger will verify completion via contiguous marker ordinals AND matching chunkCount
-        await writeChunkMetadata(this.config, {
+        await metadataBroker.write({
           storage: chunksStorage,
           bucketName: chunksBucket,
           chunkDirectory,
@@ -693,7 +713,7 @@ export class ChunkFromAPI implements IChunkFromSource {
           chunkKeys: aggregatedChunkKeys,
           finalOffsetProcessed: result.finalOffsetProcessed,
           region
-        } satisfies WriteMetadataParams, this.getUseMockTarget());
+        } satisfies WriteMetadataParams);
 
         console.log(`\n✓ Chunking complete with aggregated metadata:`);
         console.log(`   Total chunks: ${aggregatedChunkCount}`);
