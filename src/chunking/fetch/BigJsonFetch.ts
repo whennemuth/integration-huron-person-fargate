@@ -80,6 +80,13 @@ export interface BigJsonFetchConfig {
 
   /** Optional retry strategy for source API calls (e.g., 429 handling). */
   retryStrategy?: SourceApiRetryStrategy;
+
+  /**
+   * Optional guard checked before every fetch iteration; return true if offset is already past
+   * a boundary another parallel task has established as the true end, so this iteration's data
+   * should be discarded as an API glitch instead of being written to a chunk file.
+   */
+  isOffsetPastKnownEnd?: (offset: number) => Promise<boolean>;
 }
 
 export type ChunkOrdinalAllocator = () => Promise<number>;
@@ -146,6 +153,7 @@ export class BigJsonFetch {
   private readonly dryRun: boolean;
   private readonly chunkOrdinalAllocator: ChunkOrdinalAllocator;
   private readonly retryStrategy?: SourceApiRetryStrategy;
+  private readonly isOffsetPastKnownEnd?: (offset: number) => Promise<boolean>;
 
   constructor(config: BigJsonFetchConfig) {
     let localNextOrdinal = config.offset || 0;
@@ -160,6 +168,7 @@ export class BigJsonFetch {
     this.iterationLimit = config.iterationLimit;
     this.dryRun = config.dryRun || false;
     this.retryStrategy = config.retryStrategy;
+    this.isOffsetPastKnownEnd = config.isOffsetPastKnownEnd;
     this.chunkOrdinalAllocator = config.chunkOrdinalAllocator || (async () => {
       const nextOrdinal = localNextOrdinal;
       localNextOrdinal++;
@@ -190,7 +199,7 @@ export class BigJsonFetch {
    * 6. Indicates if the end of records was reached
    * 
    * @returns ChunkResult with chunk keys, counts, and metadata
-   * @throws Error if API call fails or no person records are found
+   * @throws Error if API call fails or no person records are found 
    */
   public async fetchAndChunk(): Promise<ChunkResult> {
     console.log(`Starting fetch and chunk operation`);
@@ -226,7 +235,8 @@ export class BigJsonFetch {
       chunkDirPath: chunkDir, 
       offset: this.offset,
       iterationLimit: this.isNotBatchable(dataSource) ? -1 : this.iterationLimit,
-      onChunkWritten: (key: string) => chunkKeys.push(key) 
+      onChunkWritten: (key: string) => chunkKeys.push(key),
+      isOffsetPastKnownEnd: this.isOffsetPastKnownEnd
     };
     const batchProcessor = new class extends BuCdmPeopleDataSourceBatch {
       private currentBatchNumber = 0;
@@ -238,9 +248,10 @@ export class BigJsonFetch {
         offset?: number,
         iterationLimit?: number,
         onChunkWritten: (key: string) => void,
+        isOffsetPastKnownEnd?: (offset: number) => Promise<boolean>,
       }) {
-        const { dataSource, batchSize, offset = 0, iterationLimit = 0 } = params;
-        super({ dataSource, batchSize, offset, iterationLimit });
+        const { dataSource, batchSize, offset = 0, iterationLimit = 0, isOffsetPastKnownEnd } = params;
+        super({ dataSource, batchSize, offset, iterationLimit, isOffsetPastKnownEnd });
         this.currentBatchNumber = offset;
       }
 

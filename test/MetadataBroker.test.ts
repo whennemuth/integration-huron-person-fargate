@@ -59,3 +59,30 @@ describe('MetadataBroker.getFinalOffsetProcessed', () => {
     expect(await new MetadataBroker(params).getFinalOffsetProcessed()).toBe(543);
   });
 });
+
+describe('MetadataBroker.isOffsetPastKnownEnd', () => {
+  const config = {} as Config;
+  const params = { config, bucketName: 'bucket', chunkDirectory: 'chunks/person-full/2026-01-01T00:00:00.000Z', region: 'us-east-2' };
+
+  const mockRead = (result: any) => {
+    (MetadataFactory.create as jest.Mock).mockReturnValue({ read: jest.fn().mockResolvedValue(result) });
+  };
+
+  afterEach(() => jest.clearAllMocks());
+
+  it('returns false when no finalOffsetProcessed is recorded yet', async () => {
+    mockRead({});
+    expect(await new MetadataBroker(params).isOffsetPastKnownEnd(848)).toBe(false);
+  });
+
+  it('returns false when offset is at or below the recorded finalOffsetProcessed', async () => {
+    mockRead({ finalOffsetProcessed: 808 });
+    expect(await new MetadataBroker(params).isOffsetPastKnownEnd(808)).toBe(false);
+    expect(await new MetadataBroker(params).isOffsetPastKnownEnd(700)).toBe(false);
+  });
+
+  it('returns true when offset is strictly beyond the recorded finalOffsetProcessed', async () => {
+    mockRead({ finalOffsetProcessed: 808 });
+    expect(await new MetadataBroker(params).isOffsetPastKnownEnd(809)).toBe(true);
+  });
+});

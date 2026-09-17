@@ -581,7 +581,8 @@ export class ChunkFromAPI implements IChunkFromSource {
         iterationLimit, // indicates how many chunks to "chunk out" before stopping. Used in the context of chunking "in parallel".
         dryRun: dryRun.toLowerCase() === 'true',
         chunkOrdinalAllocator: this.chunkOrdinalAllocator,
-        retryStrategy: getRetryStrategy(process.env.RETRY_STRATEGY)
+        retryStrategy: getRetryStrategy(process.env.RETRY_STRATEGY),
+        isOffsetPastKnownEnd: (offset: number) => metadataBroker.isOffsetPastKnownEnd(offset)
       };
 
       // Run fetch and chunk operation

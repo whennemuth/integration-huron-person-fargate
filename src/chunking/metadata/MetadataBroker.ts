@@ -119,4 +119,14 @@ export class MetadataBroker {
     const result = await this.metadata.read({ bucketName, chunkDirectory, region } satisfies ReadMetadataParams);
     return result?.finalOffsetProcessed;
   }
+
+  /**
+   * Guard checked before each fetch iteration in ChunkFromAPI's batch loop: true if offset is
+   * already past a finalOffsetProcessed boundary established by another parallel task, meaning
+   * any data the API returns for it is untrustworthy and should be discarded as an API glitch.
+   */
+  public async isOffsetPastKnownEnd(offset: number): Promise<boolean> {
+    const finalOffsetProcessed = await this.getFinalOffsetProcessed();
+    return finalOffsetProcessed !== undefined && offset > finalOffsetProcessed;
+  }
 }
