@@ -298,6 +298,41 @@ export class StatisticsTable {
   }
 
   /**
+   * Attempt to claim the PROCESSOR_BOOST_CLAIM record for this sync run (ProcessorServiceBooster).
+   * A dedicated SK - deliberately separate from METADATA/FLAGS, which have write-once/overwrite
+   * semantics this claim (set, possibly released, and re-claimed within a single run) must not
+   * collide with. Read-then-write (not a hardened atomic CAS), matching this codebase's existing
+   * risk tolerance for similar cross-task coordination (e.g. finalOffsetProcessed).
+   *
+   * @param claimedByChunk Identifies which parallel chunker task/offset won the claim, so its log
+   * stream can be found later
+   * @returns true if this call won the claim, false if another task already holds it
+   */
+  public async claimProcessorBoost(syncRunId: string, claimedByChunk?: string): Promise<boolean> {
+    const existing = await this.table.getItem({ partitionKeyValue: syncRunId, sortKeyValue: 'PROCESSOR_BOOST_CLAIM' });
+    if (existing) {
+      return false;
+    }
+    await this.table.putItem({
+      [DYNAMODB_PARTITION_KEY]: syncRunId,
+      [DYNAMODB_SORT_KEY]: 'PROCESSOR_BOOST_CLAIM',
+      claimedAt: new Date().toISOString(),
+      ...(claimedByChunk !== undefined ? { claimedByChunk } : {})
+    });
+    return true;
+  }
+
+  /**
+   * Release a previously-won PROCESSOR_BOOST_CLAIM record, allowing another task to win it later.
+   */
+  public async releaseProcessorBoostClaim(syncRunId: string): Promise<void> {
+    await this.table.batchWrite({
+      items: [{ [DYNAMODB_PARTITION_KEY]: syncRunId, [DYNAMODB_SORT_KEY]: 'PROCESSOR_BOOST_CLAIM' }],
+      operation: 'delete'
+    });
+  }
+
+  /**
    * Get count of failed chunks for a sync run.
    * Counts CHUNK_STATUS records with status === 'FAILED'.
    * 

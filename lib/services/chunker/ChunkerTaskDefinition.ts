@@ -8,6 +8,7 @@ import { RetryStrategyConfig } from '../../../src/ApiErrorRetryStrategy';
 import { HuronPersonSecrets } from '../../Secrets';
 import { StorageParams } from '../../TaskDefinitions';
 import { SERVICE_LOGICAL_ID } from './ChunkerService';
+import { SERVICE_LOGICAL_ID as PROCESSOR_SERVICE_LOGICAL_ID } from '../processor/ProcessorService';
 
 export interface ChunkerTaskDefinitionProps {
   repository: IRepository;
@@ -29,6 +30,8 @@ export interface ChunkerTaskDefinitionProps {
   ecsChunkerServiceName: string;
   landscape: string;
   retries?: RetryStrategyConfig;
+  /** Whether to "hit the ground running" scale up the processor service early via ProcessorServiceBooster (default: true) */
+  boostProcessor?: boolean;
   dryRun?: boolean;
   tags?: { [key: string]: string };
 }
@@ -47,7 +50,7 @@ export class ChunkerTaskDefinition extends Construct {
       huronPersonSecrets: { secret, secretArn } = {}, logRetentionDays, 
       memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, itemsPerChunk, chunksBucketName, 
       inputBucketName, repository, imageTag, ecsClusterName, maxScalingCapacity, stackId, 
-      ecsChunkerServiceName, landscape, dryRun, tags, retries, 
+      ecsChunkerServiceName, landscape, dryRun, tags, retries, boostProcessor,
       storageParams: { previousStorageType, storageConfig: { sharedDeltaStorageDir, dynamodb } = {} }
     } = props;
 
@@ -61,6 +64,7 @@ export class ChunkerTaskDefinition extends Construct {
       REGION: region,
       ECS_CLUSTER_NAME: ecsClusterName,
       ECS_SERVICE_NAME: SERVICE_LOGICAL_ID,
+      PROCESSOR_ECS_SERVICE_NAME: PROCESSOR_SERVICE_LOGICAL_ID,
       MAX_SCALING_CAPACITY: maxScalingCapacity.toString(),
       SQS_QUEUE_URL: queueUrl,
       CHUNKS_BUCKET: chunksBucketName,
@@ -73,7 +77,8 @@ export class ChunkerTaskDefinition extends Construct {
       SECRET_ARN: secretArn!,
       IS_ECS_TASK: 'true',
       PAUSE_BEFORE_EARLY_EXIT: 'true', // Number of seconds to pause before early exit
-      DRY_RUN: dryRun ? 'true' : 'false'
+      DRY_RUN: dryRun ? 'true' : 'false',
+      BOOST_PROCESSOR: (boostProcessor ?? true) ? 'true' : 'false'
     };
 
     if (retries && (retries.retryStrategyOptions || retries.retryStrategyType)) {
@@ -226,13 +231,14 @@ export class ChunkerTaskDefinition extends Construct {
     // even though the secret is also injected as an environment variable.
     secret!.grantRead(this.taskDefinition.taskRole); // Grant read access to the secret for the task role (used by the application code at runtime)
 
-    // Grant SQS SendMessage permission for chunker queue
-    // This allows chunker tasks to send the next message for parallel chunking
+    // Grant SQS SendMessage/GetQueueAttributes permissions - the latter is used by
+    // ProcessorServiceBooster to read the processor queue's backlog depth
     this.taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
         actions: [
           'sqs:SendMessage',
+          'sqs:GetQueueAttributes',
         ],
         resources: [
           `arn:aws:sqs:${region}:${Stack.of(this).account}:*`,
@@ -251,6 +257,46 @@ export class ChunkerTaskDefinition extends Construct {
         resources: [
           `arn:aws:ecs:${region}:${Stack.of(this).account}:service/${ecsClusterName}/${ecsChunkerServiceName}`,
         ],
+      })
+    );
+
+    // Grant ECS DescribeServices/UpdateService permissions for the PROCESSOR service - used by
+    // ProcessorServiceBooster (via DesiredCount) to "hit the ground running" scale it up early
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'ecs:DescribeServices',
+          'ecs:UpdateService',
+        ],
+        resources: [
+          `arn:aws:ecs:${region}:${Stack.of(this).account}:service/${ecsClusterName}/${PROCESSOR_SERVICE_LOGICAL_ID}`,
+        ],
+      })
+    );
+
+    // Grant application-autoscaling lookup permission for the processor service's max capacity.
+    // DescribeScalableTargets does not support resource-level scoping.
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'application-autoscaling:DescribeScalableTargets',
+        ],
+        resources: ['*'],
+      })
+    );
+
+    // Grant lookup permissions for the processor's scale-in alarm (MetricsCatchupDelay, used by
+    // ProcessorServiceBooster before boosting) - neither action supports resource-level scoping.
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'application-autoscaling:DescribeScalingPolicies',
+          'cloudwatch:DescribeAlarms',
+        ],
+        resources: ['*'],
       })
     );
 

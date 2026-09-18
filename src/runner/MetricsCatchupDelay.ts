@@ -78,7 +78,11 @@ export class MetricsCatchupDelay {
     return undefined;
   }
 
-  public async startDelay(): Promise<void> {
+  /**
+   * @returns true if the alarm is no longer ALARM (safe to proceed with scaling), false if the
+   * full delay elapsed while still in ALARM state (caller should NOT proceed with scaling).
+   */
+  public async startDelay(): Promise<boolean> {
     const alarmPeriodSeconds = await this.getAlarmPeriodSeconds();
     const {
       // CloudWatch alarm evaluation and SDK-visible alarm state are not always synchronized
@@ -106,7 +110,7 @@ export class MetricsCatchupDelay {
       }
       else {
         console.log(`✓ Metrics catch-up delay completed after ${totalDelaySeconds - remaining} seconds (alarm state, ${alarmState}, is no longer ALARM).\n`);
-        return;
+        return true;
       }
       const sleepSeconds = Math.min(countdownStepSeconds, remaining);
       await this.sleep(sleepSeconds * 1000);
@@ -115,9 +119,10 @@ export class MetricsCatchupDelay {
 
     if( alarmState === 'ALARM') {
       console.warn(`⚠️ Metrics catch-up delay completed, but alarm state is still ALARM. Scaling may not go as expected.`);
-      return;
+      return false;
     }
     console.log(`✓ Metrics catch-up delay completed.\n`);
+    return true;
   }
 
   private sleep(ms: number): Promise<void> {

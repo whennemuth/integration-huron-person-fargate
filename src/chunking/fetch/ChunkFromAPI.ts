@@ -12,6 +12,7 @@ import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig, ChunkOrdinalAllocator } from "./BigJsonFetch";
 import { ChunkConfigOverride } from "./ChunkConfigOverride";
+import { ProcessorServiceBooster } from './ProcessorServiceBooster';
 import { SourceSimulatorFunctionURL } from './SourceSimulator';
 
 export type TaskParameters = {
@@ -587,7 +588,16 @@ export class ChunkFromAPI implements IChunkFromSource {
 
       // Run fetch and chunk operation
       const fetcher = new BigJsonFetch(fetchConfig);
-      const result = await fetcher.fetchAndChunk();
+      // Periodically check (independent of chunk-write cadence) whether the processor queue's
+      // backlog already warrants "hitting the ground running" instead of waiting for this task's
+      // own end-of-chunking check below - stopped as soon as this task's own fetch loop concludes.
+      const stopProcessorBoosterCheck = ProcessorServiceBooster.startPeriodicCheck(metadataBroker, 60, { claimedByChunk: String(offset) });
+      let result: Awaited<ReturnType<typeof fetcher.fetchAndChunk>>;
+      try {
+        result = await fetcher.fetchAndChunk();
+      } finally {
+        stopProcessorBoosterCheck();
+      }
 
       // Build source and target URLs for metadata
       const { baseUrl, fetchPath } = this.taskParameters;
@@ -648,8 +658,10 @@ export class ChunkFromAPI implements IChunkFromSource {
           const existingFinalOffsetProcessed = await metadataBroker.getFinalOffsetProcessed();
           if (hasLostRaceForTrueEnd(result.finalOffsetProcessed, existingFinalOffsetProcessed)) {
             console.log(`\nℹ️  Lost race for true end - offset ${existingFinalOffsetProcessed} already established by another task (this task's own final offset used was ${result.finalOffsetProcessed}). Skipping aggregation/metadata write.`);
-            return;
-          }
+            return;          } else {
+            // This task is the race winner (or no race existed) - final safety-net check in case
+            // the periodic check above never caught the backlog crossing its threshold.
+            await ProcessorServiceBooster.boostIfNeeded(metadataBroker, { claimedByChunk: String(offset) });          }
         }
 
         // Build aggregated metadata from run-level state

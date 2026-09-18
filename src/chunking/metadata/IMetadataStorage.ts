@@ -137,6 +137,20 @@ export type TerminalError = {
   errorTimestamp: string;
 };
 
+/**
+ * Parameters for claiming/releasing the processor-boost claim (ProcessorServiceBooster).
+ * Stored as its own dedicated record - deliberately NOT part of ChunkMetadata/Flags, since
+ * both of those have write-once/overwrite semantics on write() that this claim (set, possibly
+ * released, and re-claimed during a single run) must not collide with.
+ */
+export interface ClaimProcessorBoostParams {
+  bucketName?: string;
+  chunkDirectory: string;
+  region?: string;
+  /** Identifies which parallel chunker task/offset claimed it, so its log stream can be found later. */
+  claimedByChunk?: string;
+}
+
 
 /**
  * IMetadataStorage - Core metadata storage operations interface
@@ -234,4 +248,17 @@ export interface IMetadataStorage {
     chunkS3Key: string,
     region?: string
   ): Promise<Partial<ChunkMetadata>>;
+
+  /**
+   * Attempt to claim the exclusive right to perform the processor-boost check/delay/scale-up
+   * for this run. Returns true if this call won the claim (no prior claim existed), false if
+   * another task already holds it.
+   */
+  claimProcessorBoost(params: ClaimProcessorBoostParams): Promise<boolean>;
+
+  /**
+   * Release a previously-won processor-boost claim (e.g. after a failed/abandoned attempt),
+   * allowing another task to win it later.
+   */
+  releaseProcessorBoostClaim(params: ClaimProcessorBoostParams): Promise<void>;
 }

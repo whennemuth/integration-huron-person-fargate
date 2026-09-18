@@ -85,6 +85,12 @@ export class AppConstruct extends Construct {
       'SQS_QUEUE_URL',
       this.queue.chunkerQueue.queueUrl
     );
+    // ProcessorServiceBooster reads processor queue depth to decide whether to "hit the ground
+    // running" scale the processor service up early, from within the chunker task.
+    this.ecs.taskDefinitions.chunker.taskDefinition.defaultContainer!.addEnvironment(
+      'PROCESSOR_QUEUE_URL',
+      this.queue.processorQueue.queueUrl
+    );
     this.ecs.taskDefinitions.processor.taskDefinition.defaultContainer!.addEnvironment(
       'SQS_QUEUE_URL',
       this.queue.processorQueue.queueUrl

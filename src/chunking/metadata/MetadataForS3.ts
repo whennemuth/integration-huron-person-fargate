@@ -1,10 +1,11 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, PutObjectCommand, DeleteObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Config } from 'integration-huron-person';
 import { S3StorageAdapter } from '../../storage/S3StorageAdapter';
 import { objectExistsInS3 } from '../../Utils';
 import {
   IMetadataStorage,
   ChunkMetadata,
+  ClaimProcessorBoostParams,
   Flags,
   MarkRunFailedParams,
   ReadFlagsParams,
@@ -440,5 +441,46 @@ export class MetadataForS3 implements IMetadataStorage {
     const chunkDirectory = chunkS3Key.substring(0, chunkS3Key.lastIndexOf('/'));
     
     return this.read({ bucketName, chunkDirectory, region });
+  }
+
+  /**
+   * Attempt to claim the processor-boost marker file for this run.
+   */
+  public async claimProcessorBoost(params: ClaimProcessorBoostParams): Promise<boolean> {
+    const { bucketName, chunkDirectory, region, claimedByChunk } = params;
+    if (!bucketName) {
+      throw new Error('bucketName is required for S3 metadata operations');
+    }
+
+    const claimKey = this.metadataUtils.getProcessorBoostClaimKey(chunkDirectory);
+    const alreadyClaimed = await objectExistsInS3(bucketName, claimKey, region);
+    if (alreadyClaimed) {
+      return false;
+    }
+
+    const s3Client = new S3Client({ region });
+    await s3Client.send(new PutObjectCommand({
+      Bucket: bucketName,
+      Key: claimKey,
+      Body: JSON.stringify({ claimedAt: new Date().toISOString(), claimedByChunk }, null, 2),
+      ContentType: 'application/json'
+    }));
+    console.log(`✓ Processor boost claim acquired: s3://${bucketName}/${claimKey}`);
+    return true;
+  }
+
+  /**
+   * Release a previously-won processor-boost claim marker file for this run.
+   */
+  public async releaseProcessorBoostClaim(params: ClaimProcessorBoostParams): Promise<void> {
+    const { bucketName, chunkDirectory, region } = params;
+    if (!bucketName) {
+      throw new Error('bucketName is required for S3 metadata operations');
+    }
+
+    const claimKey = this.metadataUtils.getProcessorBoostClaimKey(chunkDirectory);
+    const s3Client = new S3Client({ region });
+    await s3Client.send(new DeleteObjectCommand({ Bucket: bucketName, Key: claimKey }));
+    console.log(`✓ Processor boost claim released: s3://${bucketName}/${claimKey}`);
   }
 }

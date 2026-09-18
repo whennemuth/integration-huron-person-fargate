@@ -1,5 +1,5 @@
 import { mockClient } from 'aws-sdk-client-mock';
-import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, QueryCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { StatisticsTable } from '../src/dynamodb/StatisticsTable';
 import { IContext } from '../context/IContext';
 import { StatisticsItem } from '../src/ApiErrorTracking';
@@ -275,6 +275,50 @@ describe('StatisticsTable', () => {
       const result = await statisticsTable.getUniqueIntegrationTimestamps();
 
       expect(result).toEqual([timestamp2, timestamp1, timestamp3]);
+    });
+  });
+
+  describe('claimProcessorBoost', () => {
+    it('returns true and writes a PROCESSOR_BOOST_CLAIM record when none exists', async () => {
+      dynamoMock.on(GetCommand).resolves({ Item: undefined });
+      dynamoMock.on(BatchWriteCommand).resolves({});
+
+      const won = await statisticsTable.claimProcessorBoost(integrationTimestamp, '840');
+
+      expect(won).toBe(true);
+      expect(dynamoMock.commandCalls(BatchWriteCommand)).toHaveLength(1);
+      const call = dynamoMock.commandCalls(BatchWriteCommand)[0];
+      const requestItems = Object.values(call.args[0].input.RequestItems!)[0] as any[];
+      expect(requestItems[0].PutRequest.Item).toMatchObject({
+        integrationTimestamp,
+        eventType: 'PROCESSOR_BOOST_CLAIM',
+        claimedByChunk: '840'
+      });
+    });
+
+    it('returns false and does not write when a claim already exists', async () => {
+      dynamoMock.on(GetCommand).resolves({ Item: { integrationTimestamp, eventType: 'PROCESSOR_BOOST_CLAIM', claimedAt: '2026-05-14T12:00:00.000Z' } });
+
+      const won = await statisticsTable.claimProcessorBoost(integrationTimestamp);
+
+      expect(won).toBe(false);
+      expect(dynamoMock.commandCalls(BatchWriteCommand)).toHaveLength(0);
+    });
+  });
+
+  describe('releaseProcessorBoostClaim', () => {
+    it('deletes the PROCESSOR_BOOST_CLAIM record', async () => {
+      dynamoMock.on(BatchWriteCommand).resolves({});
+
+      await statisticsTable.releaseProcessorBoostClaim(integrationTimestamp);
+
+      expect(dynamoMock.commandCalls(BatchWriteCommand)).toHaveLength(1);
+      const call = dynamoMock.commandCalls(BatchWriteCommand)[0];
+      const requestItems = Object.values(call.args[0].input.RequestItems!)[0] as any[];
+      expect(requestItems[0].DeleteRequest.Key).toEqual({
+        integrationTimestamp,
+        eventType: 'PROCESSOR_BOOST_CLAIM'
+      });
     });
   });
 });

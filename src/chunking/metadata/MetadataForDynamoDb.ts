@@ -3,6 +3,7 @@ import { StatisticsTable } from '../../dynamodb/StatisticsTable';
 import {
   IMetadataStorage,
   ChunkMetadata,
+  ClaimProcessorBoostParams,
   Flags,
   MarkRunFailedParams,
   ReadFlagsParams,
@@ -363,5 +364,23 @@ export class MetadataForDynamoDb implements IMetadataStorage {
     const chunkDirectory = chunkS3Key.substring(0, chunkS3Key.lastIndexOf('/'));
     
     return this.read({ chunkDirectory });
+  }
+
+  /**
+   * Attempt to claim the processor-boost record for this run.
+   */
+  public async claimProcessorBoost(params: ClaimProcessorBoostParams): Promise<boolean> {
+    const { chunkDirectory, claimedByChunk } = params;
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
+    return this.statisticsTable.claimProcessorBoost(syncRunId, claimedByChunk);
+  }
+
+  /**
+   * Release a previously-won processor-boost claim for this run.
+   */
+  public async releaseProcessorBoostClaim(params: ClaimProcessorBoostParams): Promise<void> {
+    const { chunkDirectory } = params;
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
+    await this.statisticsTable.releaseProcessorBoostClaim(syncRunId);
   }
 }

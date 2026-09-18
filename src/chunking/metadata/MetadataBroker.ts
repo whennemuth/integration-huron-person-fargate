@@ -129,4 +129,22 @@ export class MetadataBroker {
     const finalOffsetProcessed = await this.getFinalOffsetProcessed();
     return finalOffsetProcessed !== undefined && offset > finalOffsetProcessed;
   }
+
+  /**
+   * Attempt to claim exclusive right to perform the processor-boost check/delay/scale-up for
+   * this run (ProcessorServiceBooster). See ClaimProcessorBoostParams for why this is a
+   * dedicated record rather than a Flags/ChunkMetadata field.
+   */
+  public async claimProcessorBoost(claimedByChunk?: string): Promise<boolean> {
+    const { bucketName, chunkDirectory, region } = this;
+    return this.metadata.claimProcessorBoost({ bucketName, chunkDirectory, region, claimedByChunk });
+  }
+
+  /**
+   * Release a previously-won processor-boost claim, allowing another task to win it later.
+   */
+  public async releaseProcessorBoostClaim(): Promise<void> {
+    const { bucketName, chunkDirectory, region } = this;
+    await this.metadata.releaseProcessorBoostClaim({ bucketName, chunkDirectory, region });
+  }
 }

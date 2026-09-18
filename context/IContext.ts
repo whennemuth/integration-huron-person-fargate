@@ -46,6 +46,8 @@ export interface IContext {
       memoryReservationMiB: number;
       logRetentionDays: number;
       retries?: RetryStrategyConfig;
+      /** Whether ChunkFromAPI should "hit the ground running" scale up the processor service early via ProcessorServiceBooster (default: true) */
+      boostProcessor?: boolean;
     };
     /** Processor task definition configuration */
     processorTaskDefinition: {

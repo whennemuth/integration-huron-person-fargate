@@ -106,6 +106,7 @@ export class TaskDefinitions extends Construct {
       ecsChunkerServiceName: SERVICE_LOGICAL_ID,
       landscape: ctx.TAGS.Landscape.toLowerCase(),
       retries: ctx.ECS.chunkerTaskDefinition.retries,
+      boostProcessor: ctx.ECS.chunkerTaskDefinition.boostProcessor,
       storageParams,
       dryRun: ctx.DRY_RUN?.taskdef?.chunker,
       tags,

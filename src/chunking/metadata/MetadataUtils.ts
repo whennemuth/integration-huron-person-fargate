@@ -34,6 +34,7 @@
     getMetadataKey(chunkDirectory: string): string;
     getFlagsKey(chunkDirectory: string): string;
     getTerminalErrorKey(chunkDirectory: string): string;
+    getProcessorBoostClaimKey(chunkDirectory: string): string;
     extractSyncRunId(chunkDirectory: string): string;
   };
 
@@ -96,6 +97,17 @@
         throw new Error('chunkDirectory is required');
       }
       return `${chunkDirectory}/_terminal_error.json`;
+    }
+
+    /**
+     * Get processor-boost claim marker key from chunk directory (for S3)
+     */
+    public getProcessorBoostClaimKey(chunkDirectory?: string): string {
+      chunkDirectory = chunkDirectory ?? this.params.chunkDirectory;
+      if (!chunkDirectory) {
+        throw new Error('chunkDirectory is required');
+      }
+      return `${chunkDirectory}/_processor_boost_claim.json`;
     }
 
     /**
