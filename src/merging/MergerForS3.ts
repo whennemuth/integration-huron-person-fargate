@@ -12,12 +12,123 @@
 
 import { S3 } from '@aws-sdk/client-s3';
 import { FieldSet } from 'integration-core';
-import { HashMapMerger } from 'integration-huron-person';
+import { FieldDefinitions, HashMapMerger } from 'integration-huron-person';
 import { objectExistsInS3 } from '../Utils';
 import { MergeEngine } from './MergeEngine';
-import { AbstractMerger, MergeContext, MergeResult } from './AbstractMerger';
+import { AbstractMerger, MergeContext, MergeResult, TaskParameters } from './AbstractMerger';
+import { extractChunkDirectory } from '../chunking/filedrop/ChunkPathUtils';
+import { SyncPopulation } from '../../docker/chunkTypes';
+import { MetadataFactoryForBootstrap } from '../chunking/metadata';
+import { DeferredDeleteHandlerForS3, DeferredDeleteHandlerForS3Params } from './DeferredDeleteHandlerForS3';
+
+export type TaskParametersForS3 = TaskParameters & {
+  chunksBucket: string;
+  chunkDirectory: string | null;
+}
+
+export type MergeContextForS3 = MergeContext & {
+  bucketName: string;
+  chunkDir: string;
+  sharedDeltaStorageDir: string;
+  primaryKeyFieldNames: string[];
+  primaryKeyFieldSet: Set<string>;
+}
+
+export type MergeResultForS3 = MergeResult & {
+  chunkCount: number;
+  totalLines: number;
+  outputKey: string;
+  deletedChunks: string[];
+}
 
 export class MergerForS3 extends AbstractMerger {
+
+  /**
+   * Reads task parameters from SQS queue or environment variables.
+   * Priority: SQS message > Environment variables
+   * 
+   * COMMON LOGIC: Same for both S3 and DynamoDB modes
+   */
+  public async getTaskParameters(): Promise<TaskParametersForS3 | null> {
+    if (this.taskParameters) {
+      return this.taskParameters as TaskParametersForS3;
+    }
+
+    const { SQS_QUEUE_URL, CHUNKS_BUCKET, CHUNK_DIRECTORY, INPUT_KEY } = process.env;
+    let taskParams: TaskParametersForS3 | null = null;
+    
+    if(SQS_QUEUE_URL) {
+      const msgBody = await this.getMessageFromSQS();
+      if (msgBody) {
+        taskParams = {
+          chunksBucket: msgBody.chunksBucket,
+          chunkDirectory: msgBody.chunkDirectory || null,
+          createdAt: msgBody.createdAt, // Timestamp from chunker metadata
+        };
+      }
+    }
+    else {
+      // Mode 2: Local development - read from environment variables
+      if (CHUNKS_BUCKET && (CHUNK_DIRECTORY || INPUT_KEY)) {
+        console.log('Running in local context - reading task parameters from environment variables');
+        taskParams = {
+          chunksBucket: CHUNKS_BUCKET,
+          chunkDirectory: CHUNK_DIRECTORY || (INPUT_KEY ? extractChunkDirectory(INPUT_KEY) : null),
+        };
+      }
+    }
+      
+    if (taskParams && taskParams.chunkDirectory) {
+      this.taskParameters = taskParams;
+      return taskParams;
+    }
+
+    console.error('ERROR: No task parameters available (checked SQS queue and environment variables)');
+    return null;
+  }
+
+  public async getMergeContext(taskParams?: TaskParametersForS3): Promise<MergeContextForS3 | null> {
+    if (this.mergeContext) {
+      return this.mergeContext as MergeContextForS3;
+    }
+
+    if (!taskParams) {
+      taskParams = await this.getTaskParameters() as TaskParametersForS3;
+    }
+    const { chunksBucket: bucketName, chunkDirectory: chunkDir, createdAt } = taskParams;
+
+    // Read additional configuration from environment
+    const {
+      REGION: region,
+      // Shared output is always delta-storage (agnostic to person-full/person-delta sync type)
+      SHARED_DELTA_STORAGE_DIR = 'delta-storage',
+      DRY_RUN = 'false'
+    } = process.env;
+
+    // Parse chunking start time from task parameters (provided by MergerSubscriber lambda)
+    const chunkingStartTime = await this.getChunkingStartTime();
+    if (chunkingStartTime) {
+      console.log(`\nChunking started at: ${createdAt}`);
+    }
+
+    // Extract primary key field names
+    const primaryKeyFieldNames = FieldDefinitions.filter(fd => fd.isPrimaryKey).map(fd => fd.name);
+    const primaryKeyFieldSet = new Set(primaryKeyFieldNames);
+
+    const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';    
+    this.mergeContext = {
+      bucketName,
+      chunkDir,
+      region,
+      sharedDeltaStorageDir: SHARED_DELTA_STORAGE_DIR,
+      dryRun,
+      primaryKeyFieldNames,
+      primaryKeyFieldSet,
+    } as MergeContextForS3;
+
+    return this.mergeContext as MergeContextForS3;
+  }
+
   /**
    * S3-specific merge implementation.
    * 
@@ -30,21 +141,30 @@ export class MergerForS3 extends AbstractMerger {
    * @param context Merge context with bucket, directories, and configuration
    * @returns Merge result with statistics and output location
    */
-  protected async merge(context: MergeContext): Promise<MergeResult | null> {
-    const { bucketName, chunkDir, region, sharedDeltaStorageDir, primaryKeyFieldSet } = context;
+  protected async merge(taskParams?: TaskParametersForS3): Promise<MergeResultForS3 | null> {
+
+    const mergeContext = await this.getMergeContext(taskParams) as MergeContextForS3;
+    const {
+      chunkDir,
+      bucketName,
+      region,
+      sharedDeltaStorageDir,
+      primaryKeyFieldNames,
+      primaryKeyFieldSet,
+      dryRun
+    } = mergeContext;
+
+    // const { bucketName, chunkDir, region, sharedDeltaStorageDir, primaryKeyFieldSet } = context;
 
     // Convert chunk directory to delta directory
     // Example: "chunks/person-full/2026-03-03T19:58:41.277Z" -> "deltas/person-full/2026-03-03T19:58:41.277Z"
-    const deltaDir = chunkDir.replace(/^chunks\//, 'deltas/');
-    
-    // Shared output is always delta-storage (agnostic to person-full/person-delta sync type)
-    const sharedOutputPath = sharedDeltaStorageDir;
+    const deltaDir = `${chunkDir}`.replace(/^chunks\//, 'deltas/');
 
     console.log(`\nSource delta directory: ${deltaDir}`);
-    console.log(`Target output directory: ${sharedOutputPath}`);
+    console.log(`Target output directory: ${sharedDeltaStorageDir}`);
 
     // Create MergeEngine instance with both paths
-    const merger = new MergeEngine({ bucketName, deltaDir, sharedDeltaDir: sharedOutputPath, region });
+    const merger = new MergeEngine({ bucketName, deltaDir, sharedDeltaDir: sharedDeltaStorageDir, region });
     
     // Merge delta chunks from timestamped directory
     const result = await merger.merge();
@@ -139,11 +259,73 @@ export class MergerForS3 extends AbstractMerger {
     console.log(`  Shared output (merged): s3://${bucketName}/${merger.getSharedOutputKey()}`);
     console.log(`  Cleanup: ${result.deletedChunks.length} delta chunk files deleted`);
 
+    console.log(`\nMerge Summary:`);
+    console.log(`  Chunks consolidated: ${result.chunkCount}`);
+    console.log(`  Records in chunks: ${result.totalLines}`);
+    console.log(`  Primary key field(s): ${Array.from(primaryKeyFieldSet).join(', ')}`);
+
     return {
       chunkCount: result.chunkCount,
       totalLines: result.totalLines,
       outputKey: sourceKey,
       deletedChunks: result.deletedChunks,
     };
+  }
+
+  protected async runDeferredDeletes(result: MergeResultForS3): Promise<void> {
+    if(!result.outputKey) {
+      console.warn(`  No output key found in merge result. Skipping deferred deletes.`);
+      return;
+    }
+
+    const mergeContext = await this.getMergeContext() as MergeContextForS3;
+    const { bucketName, chunkDir, region, sharedDeltaStorageDir, primaryKeyFieldNames } = mergeContext;
+    const sourceKey = result.outputKey;
+    const targetKey = `${sharedDeltaStorageDir}/previous-input.ndjson`;
+
+    // First check if the population type for this sync is compatible with deletion processing.
+    // Tries the mock statistics table first (if configured), falling back to the real table, since
+    // flags.useMockTarget (what determines which table chunker used) can only be learned from the
+    // flags themselves. See MetadataFactoryForBootstrap.resolveMockAwareFlags().
+    const { flags } = await new MetadataFactoryForBootstrap().resolveMockAwareFlags({
+      bucketName, chunkDirectory: chunkDir, region
+    });
+    const { syncPopulation, useMockTarget } = flags;
+
+    if (syncPopulation === SyncPopulation.PersonDelta) {
+      console.log(`  Sync population type is PersonDelta - Deletion handling does NOT apply.`);
+      // NOTE: Even if this check were not being carried out, the ignoreRemovals flag would have
+      // already been set to true in the MergerSubscriber when the chunking job was kicked off 
+      // for a PersonDelta sync, which would have prevented any deletions from being included 
+      // in the merged output via use of the appropriate DeltaStrategy decorator 
+      // (ie: src\delta-strategy\IgnoreRemovalsDeltaStrategy.ts). So this is really just an 
+      // additional safeguard to avoid accidentally running deletion logic for an incompatible sync type.
+      return;
+    }
+
+    console.log(`\nStep 3.5: Processing deletions`);
+    try {
+      const deleteHandler = new DeferredDeleteHandlerForS3({
+        bucketName, 
+        primaryKeyFieldNames, 
+        baselineNdjsonPath: targetKey,
+        mergedNdjsonPath: sourceKey,
+        region,
+        useMockTarget,
+      } as DeferredDeleteHandlerForS3Params);
+
+      const deletionResult = await deleteHandler!.processDeletes();
+      console.log(`  ${deletionResult.message}`);
+      if (deletionResult.totalProcessed > 0) {
+        console.log(`  Deleted: ${deletionResult.deletedCount} of ${deletionResult.totalProcessed}`);
+        if (deletionResult.failedCount > 0) {
+          console.warn(`  Failed: ${deletionResult.failedCount} deletions failed`);
+        }
+      }
+    } catch (deleteError: any) {
+      console.error(`  Failed to process deletions: ${deleteError.message}`);
+      // Don't fail the entire merge if deletions fail - log and continue
+      console.warn(`  Continuing with merge despite deletion failure`);
+    }
   }
 }

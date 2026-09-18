@@ -22,50 +22,34 @@
 
 import { DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { Timer } from 'integration-core';
-import { FieldDefinitions } from 'integration-huron-person';
-import { extractChunkDirectory } from '../chunking/filedrop/ChunkPathUtils';
-import { DeferredDeleteHandler } from './DeferredDeleteHandler';
-import { MetadataFactoryForBootstrap } from '../chunking/metadata';
-import { SyncPopulation } from '../../docker/chunkTypes';
 import { TaskProtection } from '../TaskProtection';
+import { AbstractDeferredDeleteHandler } from './AbstractDeferredDeleteHandler';
 
-export interface TaskParameters {
-  chunksBucket: string;
-  chunkDirectory: string | null;
+export type TaskParameters = {
   createdAt?: string; // Timestamp from chunker metadata (when chunking started)
 }
 
-export interface MergeResult {
-  chunkCount: number;
-  totalLines: number;
-  outputKey: string;
-  deletedChunks: string[];
-}
+export type MergeResult = { }
 
-export interface MergeContext {
-  bucketName: string;
-  chunkDir: string;
+export type MergeContext = {
   region?: string;
-  sharedDeltaStorageDir: string;
   dryRun: boolean;
-  primaryKeyFieldNames: string[];
-  primaryKeyFieldSet: Set<string>;
 }
 
 /**
  * Abstract merger base class implementing Template Method pattern.
  */
 export abstract class AbstractMerger {
-  /**
-   * Reads task parameters from SQS queue or environment variables.
-   * Priority: SQS message > Environment variables
-   * 
-   * COMMON LOGIC: Same for both S3 and DynamoDB modes
-   */
-  protected async getTaskParameters(): Promise<TaskParameters | null> {
-    const { SQS_QUEUE_URL, CHUNKS_BUCKET, CHUNK_DIRECTORY, INPUT_KEY, REGION } = process.env;
+  protected taskParameters: TaskParameters | null = null;
+  protected mergeContext: MergeContext | null = null;
 
-    // Mode 1: ECS Fargate - read from SQS queue
+  /**
+   * Read a message from the SQS queue and delete it after retrieval.
+   * @returns The parsed message body if a message was retrieved, or null if no message was available or an error occurred.
+   */
+  protected async getMessageFromSQS(): Promise<any | null> {
+    const { SQS_QUEUE_URL, REGION } = process.env;
+
     if (SQS_QUEUE_URL) {
       console.log('Running in ECS context - reading task parameters from SQS queue');
       const sqsClient = new SQSClient({ region: REGION });
@@ -110,101 +94,25 @@ export abstract class AbstractMerger {
             ? console.log('✓ Message deleted from queue successfully')
             : console.warn('✗ Failed to delete message from queue:', output);
         }
-
         console.log('Task parameters from SQS:', JSON.stringify(body));
-        return {
-          chunksBucket: body.chunksBucket,
-          chunkDirectory: body.chunkDirectory || null,
-          createdAt: body.createdAt, // Timestamp from chunker metadata
-        };
+        return body;
       } catch (error) {
         console.error('Error reading from SQS queue:', error);
         return null;
-      }
+      }  
     }
-
-    // Mode 2: Local development - read from environment variables
-    if (CHUNKS_BUCKET && (CHUNK_DIRECTORY || INPUT_KEY)) {
-      console.log('Running in local context - reading task parameters from environment variables');
-      return {
-        chunksBucket: CHUNKS_BUCKET,
-        chunkDirectory: CHUNK_DIRECTORY || (INPUT_KEY ? extractChunkDirectory(INPUT_KEY) : null),
-      };
-    }
-
-    return null;
+    return null;   
   }
 
   /**
-   * Processes deferred deletions using DeferredDeleteHandler.
+   * Reads task parameters from SQS queue or environment variables.
+   * Priority: SQS message > Environment variables
    * 
    * COMMON LOGIC: Same for both S3 and DynamoDB modes
-   * 
-   * Compares current sync state against previous state to identify records
-   * removed from source and soft-deletes them from target API.
-   * 
-   * @param params Context for deletion processing
-   */
-  protected async processDeferredDeletes(params: {
-    bucketName: string;
-    chunkDir: string;
-    sourceKey: string;
-    targetKey: string;
-    primaryKeyFieldNames: string[];
-    region?: string;
-  }): Promise<void> {
-    const { bucketName, chunkDir, sourceKey, targetKey, primaryKeyFieldNames, region } = params;
+   */  
+  public abstract getTaskParameters(): Promise<TaskParameters | null>;
 
-    if (!DeferredDeleteHandler.isConfiguredForDeletes()) {
-      console.log(`\nStep 3.5: Deletion handling disabled (skipping)`);
-      return;
-    }
-
-    // First check if the population type for this sync is compatible with deletion processing.
-    // Tries the mock statistics table first (if configured), falling back to the real table, since
-    // flags.useMockTarget (what determines which table chunker used) can only be learned from the
-    // flags themselves. See MetadataFactoryForBootstrap.resolveMockAwareFlags().
-    const { flags } = await new MetadataFactoryForBootstrap().resolveMockAwareFlags({
-      bucketName, chunkDirectory: chunkDir, region
-    });
-    const { syncPopulation, useMockTarget } = flags;
-
-    if (syncPopulation === SyncPopulation.PersonDelta) {
-      console.log(`  Sync population type is PersonDelta - Deletion handling does NOT apply.`);
-      // NOTE: Even if this check were not being carried out, the ignoreRemovals flag would have
-      // already been set to true in the MergerSubscriber when the chunking job was kicked off 
-      // for a PersonDelta sync, which would have prevented any deletions from being included 
-      // in the merged output via use of the appropriate DeltaStrategy decorator 
-      // (ie: src\delta-strategy\IgnoreRemovalsDeltaStrategy.ts). So this is really just an 
-      // additional safeguard to avoid accidentally running deletion logic for an incompatible sync type.
-      return;
-    }
-
-    console.log(`\nStep 3.5: Processing deletions`);
-    try {
-      const deleteHandler = await DeferredDeleteHandler.getInstance({
-        region,
-        bucketName,
-        sourceKey,
-        targetKey,
-        primaryKeyFieldNames,
-        useMockTarget,
-      });
-
-      const deletionResult = await deleteHandler!.processDeletes();
-      console.log(`  ${deletionResult.message}`);
-      if (deletionResult.totalProcessed > 0) {
-        console.log(`  Deleted: ${deletionResult.deletedCount} of ${deletionResult.totalProcessed}`);
-        if (deletionResult.failedCount > 0) {
-          console.warn(`  Failed: ${deletionResult.failedCount} deletions failed`);
-        }
-      }
-    } catch (deleteError: any) {
-      console.error(`  Failed to process deletions: ${deleteError.message}`);
-      // Don't fail the entire merge if deletions fail - log and continue
-      console.warn(`  Continuing with merge despite deletion failure`);
-    }
-  }
+  public abstract getMergeContext(): Promise<MergeContext | null>;
 
   /**
    * Mode-specific merge implementation.
@@ -217,7 +125,22 @@ export abstract class AbstractMerger {
    * @param context Merge context with common parameters
    * @returns Merge result with statistics
    */
-  protected abstract merge(context: MergeContext): Promise<MergeResult | null>;
+  protected abstract merge(taskParams?: TaskParameters): Promise<MergeResult | null>;
+
+  /**
+   * Processes deferred deletions using an instance of AbstractDeferredDeleteHandler.
+   * Compares current sync state against previous state to identify records
+   * removed from source and soft-deletes them from target API.
+   * 
+   * @param params Context for deletion processing
+   */
+  protected abstract runDeferredDeletes(mergeResult: MergeResult): Promise<void>; 
+
+  public getChunkingStartTime = async (): Promise<Date | null> => {
+    const taskParams = await this.getTaskParameters();
+    const { createdAt } = taskParams as TaskParameters;
+    return createdAt ? new Date(createdAt) : null;
+  }
 
   /**
    * Template method orchestrating the entire merge process.
@@ -231,7 +154,7 @@ export abstract class AbstractMerger {
    * 4. Process deferred deletions (common)
    * 5. Log summary and cleanup (common)
    */
-  public async main(): Promise<void> {
+  public async main(taskParams?: TaskParameters): Promise<void> {
     const timer = new Timer();
     timer.start();
     let exitCode = 0;
@@ -242,71 +165,28 @@ export abstract class AbstractMerger {
       await new TaskProtection(60).enable();
 
       // Step 1: Get task parameters
-      const taskParams = await this.getTaskParameters();
+      if(!taskParams) {
+        taskParams = await this.getTaskParameters() || undefined;
+      }
 
-      if (!taskParams || !taskParams.chunkDirectory) {
-        console.error('ERROR: No task parameters available (checked SQS queue and environment variables)');
+      if (!taskParams) {
         exitCode = 1;
         return;
       }
 
-      const { chunksBucket: bucketName, chunkDirectory: chunkDir, createdAt } = taskParams;
-
-      // Read additional configuration from environment
-      const {
-        REGION: region,
-        SHARED_DELTA_STORAGE_DIR = 'delta-storage',
-        DRY_RUN = 'false'
-      } = process.env;
-
-      // Parse chunking start time from task parameters (provided by MergerSubscriber lambda)
-      chunkingStartTime = createdAt ? new Date(createdAt) : null;
-      if (chunkingStartTime) {
-        console.log(`\nChunking started at: ${createdAt}`);
-      }
-      const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
-
-      // Extract primary key field names
-      const primaryKeyFieldNames = FieldDefinitions.filter(fd => fd.isPrimaryKey).map(fd => fd.name);
-      const primaryKeyFieldSet = new Set(primaryKeyFieldNames);
-
-      // Step 2: Prepare merge context
-      const context: MergeContext = {
-        bucketName,
-        chunkDir,
-        region,
-        sharedDeltaStorageDir: SHARED_DELTA_STORAGE_DIR,
-        dryRun,
-        primaryKeyFieldNames,
-        primaryKeyFieldSet,
-      };
-
-      // Step 3: Call mode-specific merge implementation
-      const result = await this.merge(context);
-
-      // Step 4: Process deferred deletions (if merge produced output)
-      if (result && result.outputKey) {
-        const deltaDir = chunkDir.replace(/^chunks\//, 'deltas/');
-        const sourceKey = result.outputKey;
-        const targetKey = `${SHARED_DELTA_STORAGE_DIR}/previous-input.ndjson`;
-
-        await this.processDeferredDeletes({
-          bucketName,
-          chunkDir,
-          sourceKey,
-          targetKey,
-          primaryKeyFieldNames,
-          region,
-        });
+      // Step 2: Call mode-specific merge implementation
+      const result = await this.merge(taskParams);
+      
+      // Step 3: Check if deletion handling is configured
+      if (!AbstractDeferredDeleteHandler.isConfiguredForDeletes()) {
+        console.log(`\nStep 3.5: Deletion handling disabled (skipping)`);
+        return;
       }
 
-      // Step 5: Log summary
       if (result) {
-        console.log(`\nMerge Summary:`);
-        console.log(`  Chunks consolidated: ${result.chunkCount}`);
-        console.log(`  Records in chunks: ${result.totalLines}`);
-        console.log(`  Primary key field(s): ${Array.from(primaryKeyFieldSet).join(', ')}`);
-      }
+        // Step 4: Process deferred deletions (if merge produced output)
+        await this.runDeferredDeletes(result);
+      }        
 
       exitCode = 0;
 
@@ -321,6 +201,7 @@ export abstract class AbstractMerger {
         timer.logElapsed('\n✓ Merge phase duration');
 
         // Calculate and log full sync duration from chunking start to merge end
+        const chunkingStartTime = await this.getChunkingStartTime();
         if (chunkingStartTime) {
           const fullDurationMs = Date.now() - chunkingStartTime.getTime();
           const fullDuration = timer.getDuration(fullDurationMs);

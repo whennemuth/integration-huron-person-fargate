@@ -208,6 +208,16 @@ export class PersonCurrentStateTable {
   }
 
   /**
+   * Full table scan - every person currently tracked, regardless of which sync run last
+   * touched them. Used by the merger for deletion detection (the "baseline" side of the diff):
+   * a person's row persists here forever once created, so this represents everyone ever seen,
+   * each with whatever hash/syncRunId they had as of their own last actual change.
+   */
+  public async getAllPersons(): Promise<PersonCurrentStateRecord[]> {
+    return await this.table.scanAll() as PersonCurrentStateRecord[];
+  }
+
+  /**
    * Truncate the table (delete all records).
    * WARNING: This is destructive and irreversible.
    * Only use for testing or cleanup.

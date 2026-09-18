@@ -11,6 +11,7 @@ import {
 
 export type AbstractDynamoDbTable = {
   truncateTable: (chunkSize?: number) => Promise<void>;
+  scanAll: () => Promise<any[]>;
   deleteByPartitionKey: (
     { partitionKeyValue, chunkSize }: 
     { partitionKeyValue: string, chunkSize?: number }) => Promise<number>;
@@ -139,6 +140,35 @@ export class DynamoDBTable implements AbstractDynamoDbTable {
     } while (lastEvaluatedKey);
     
     console.log(`Truncation complete. Deleted ${itemsDeleted} total items.`);
+  }
+
+  /**
+   * Non-destructive full table scan. Handles pagination and returns every item.
+   * 
+   * Use sparingly - a full scan reads the entire table regardless of size. Intended for
+   * once-per-run operations (e.g. merger-phase deletion detection), not per-chunk/per-record use.
+   * 
+   * @returns All items currently in the table
+   */
+  public scanAll = async (): Promise<any[]> => {
+    const { client, params: { tableName } } = this;
+    const items: any[] = [];
+    let lastEvaluatedKey = undefined;
+
+    do {
+      const scanParams: ScanCommandInput = {
+        TableName: tableName,
+        ExclusiveStartKey: lastEvaluatedKey
+      };
+
+      const scanResult = await client.send(new ScanCommand(scanParams));
+      if (scanResult.Items) {
+        items.push(...scanResult.Items);
+      }
+      lastEvaluatedKey = scanResult.LastEvaluatedKey;
+    } while (lastEvaluatedKey);
+
+    return items;
   }
 
   /**
