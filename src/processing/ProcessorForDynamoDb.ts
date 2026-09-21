@@ -62,20 +62,31 @@ import {
   TargetApiErrorEventProcessor
 } from 'integration-huron-person';
 import type { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
+import { SyncPopulation } from '../../docker/chunkTypes';
 import { getRetryStrategy } from '../ApiErrorRetryStrategy';
-import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../ApiErrorTracking';
 import { NextChunk, QueueReader } from '../Queue';
 import { TaskProtection } from '../TaskProtection';
 import { getLocalConfig } from '../Utils';
-import { ChunkFileManager, Flags } from '../chunking/metadata';
+import { ChunkFileManager } from '../chunking/metadata';
 import { MetadataFactoryForBootstrap } from '../chunking/metadata/MetadataFactory';
 import { StandardMetadataUtils } from '../chunking/metadata/MetadataUtils';
-import { PersonCacheLookup } from '../person-cache/PersonCacheLookup';
-import { SyncPopulation } from '../../docker/chunkTypes';
 import { StatisticsTable } from '../dynamodb/StatisticsTable';
-import { personRecordProcessorFactory } from './custom/PersonRecordProcessorFactory';
+import { PersonCacheLookup } from '../person-cache/PersonCacheLookup';
+import {
+  buildErrorTracker,
+  computeExitCode,
+  logIntegrationResult,
+  resolveCommonFlags,
+  resolveCustomPersonProcessor,
+  resolveNextChunk,
+  resolveStaticMapUsage,
+  resolveTableName,
+  writeTrackerStatistics
+} from './ProcessorCommon';
 
 const metadataUtils = new StandardMetadataUtils({});
+
+export { resolveStaticMapUsage, resolveTableName };
 
 /**
  * Triggers the merger Fargate task by sending a message to SQS.
@@ -122,8 +133,6 @@ async function triggerMerger(
     return false;
   }
 }
-
-const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
 /**
  * Create config with S3 data source and DynamoDB delta storage
@@ -186,37 +195,19 @@ export const buildChunkConfig = async (params: {
   } as Config;
 };
 
-/**
- * Mock target mode never calls the real org/state/country APIs, regardless of the deploy-time STATIC_MAP_USAGE env var
- */
-export function resolveStaticMapUsage(staticMapUsage: StaticMapUsage | undefined, useMockTarget: boolean | undefined): StaticMapUsage | undefined {
-  if (useMockTarget) {
-    return { orgMap: false, stateMap: false, countryMap: false };
-  }
-  return staticMapUsage;
-}
-
-/**
- * Redirect to the isolated mock-mode table name when flags.useMockTarget is true, so mocked runs
- * never mix bulk data (person hash/history state, statistics/error events) with production tables.
- */
-export function resolveTableName(realName: string | undefined, mockName: string | undefined, useMockTarget: boolean | undefined): string | undefined {
-  return useMockTarget ? mockName : realName;
-}
-
 export async function main(queueReader: QueueReader, personRecordProcessor?: PersonRecordProcessor) {
   const { 
     REGION: region, 
     CHUNKS_BUCKET: chunksBucket,
     CHUNK_KEY: chunkKey,
     SQS_QUEUE_URL: queueUrl,
-    HURON_PERSON_CONFIG_JSON,
     STATIC_MAP_USAGE,
     DRY_RUN,
     BULK_RESET,
     DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbStatisticsTableName,
     RETRY_STRATEGY,
-    MERGER_QUEUE_URL: mergerQueueUrl
+    MERGER_QUEUE_URL: mergerQueueUrl,
+    HURON_PERSON_CONFIG_JSON,
   } = process.env;
   
   const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
@@ -231,6 +222,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
   console.log(`=== ${dryRun ? 'DRY RUN: ' : ''}Phase 2: Processor - DynamoDB Strategy ===\n`);
   console.log(`Chunks bucket: ${chunksBucket || 'from SQS messages'}`);
   console.log(`Chunk key: ${chunkKey || 'from SQS messages'}`);
+  console.log(`Huron person config json: ${HURON_PERSON_CONFIG_JSON?.substring(0, 10)}...`);
   console.log(`SQS queue URL: ${queueUrl || 'not set'}`);
   console.log(`Static map usage: ${JSON.stringify(staticMapUsage ?? {})}`);
   console.log(`DynamoDB statistics table: ${dynamoDbStatisticsTableName || 'not configured'}`);
@@ -249,44 +241,31 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
 
   try {
     // Read chunk information from queue or environment
-    let nextChunk: NextChunk | undefined;
-    if (chunksBucket && chunkKey) {
-      nextChunk = { bucketName: chunksBucket, s3Key: chunkKey };
-    } else if (queueUrl) {
-      console.log('Reading chunk information from SQS queue...');
-      nextChunk = await queueReader.receiveMessage() as NextChunk;
-      if (isEcsTask() && !nextChunk) {
-        console.log('Empty queue - service will scale down. Exiting task.');
-        process.exit(0);
-      }
-    } else {
-      console.error('ERROR: Either CHUNKS_BUCKET and CHUNK_KEY or SQS_QUEUE_URL must be provided');
-      process.exit(1);
-    }
-
+    const nextChunk = await resolveNextChunk({ queueReader, chunksBucket, chunkKey, queueUrl });
     ({ bucketName, s3Key } = nextChunk || {});
+
+    // Validate required information
     ChunkFileManager.validateChunk(nextChunk);
-    chunkDirectory = s3Key!.substring(0, s3Key!.lastIndexOf('/'));
 
     // Read flags - tries the mock statistics table first (if configured), falling back to the
     // real table, since flags.useMockTarget (what determines which table chunker used) can only
     // be learned from the flags themselves. See MetadataFactoryForBootstrap.resolveMockAwareFlags().
+    chunkDirectory = s3Key!.substring(0, s3Key!.lastIndexOf('/'));
     const { flags, statisticsTableName: resolvedStatisticsTableName } = await new MetadataFactoryForBootstrap()
       .resolveMockAwareFlags({ bucketName, chunkDirectory, region });
-    const bulkReset = flags.bulkReset ?? (`${BULK_RESET}`.trim().toLowerCase() === 'true');
-    const trustPreviousStorage = flags.trustPreviousStorage ?? true;
-    const syncPopulation = flags.syncPopulation ?? SyncPopulation.PersonFull;
+
+    const { bulkReset, trustPreviousStorage, syncPopulation } = resolveCommonFlags(flags, BULK_RESET);
 
     staticMapUsage = resolveStaticMapUsage(staticMapUsage, flags.useMockTarget);
     if (flags.useMockTarget) {
       console.log(`Static map usage overridden for mock target mode: ${JSON.stringify(staticMapUsage)}`);
     }
 
-    console.log(`Bulk Reset: ${bulkReset}${flags.bulkReset !== undefined ? ' (from flags)' : ' (from environment)'}`);
-    console.log(`Trust Previous Storage: ${trustPreviousStorage}${flags.trustPreviousStorage !== undefined ? ' (from flags)' : ' (defaulted)'}`);
-    console.log(`Sync Population: ${syncPopulation}${flags.syncPopulation !== undefined ? ' (from flags)' : ' (defaulted)'}`);
 
+    // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
     chunkId = metadataUtils.extractChunkId(s3Key!);
+
+    // Extract integration timestamp from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "2026-03-03T19:58:41.277Z")
     integrationTimestamp = metadataUtils.extractIntegrationTimestamp(s3Key!) || new Date().toISOString();
 
     console.log(`Processing chunk: s3://${bucketName}/${s3Key}`);
@@ -295,6 +274,12 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     }
     console.log(`Integration timestamp: ${integrationTimestamp}`);
     console.log(`Region: ${region || 'default (us-east-1)'}\n`);
+
+    // Initialize a retry strategy based on environment variable configuration
+    const retryStrategy = getRetryStrategy(RETRY_STRATEGY);
+    if (retryStrategy) {
+      console.log(`Retry strategy initialized: ${RETRY_STRATEGY}`);
+    }
 
     // Get DynamoDB table names from environment variables (required)
     // Redirected to isolated mock tables when flags.useMockTarget is true, so DeltaStrategyForDynamoDB
@@ -318,29 +303,12 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     console.log(`PersonCurrentState table: ${currentStateTableName}`);
     console.log(`PersonHistory table: ${historyTableName}\n`);
 
-    // Initialize retry strategy
-    const retryStrategy = getRetryStrategy(RETRY_STRATEGY);
-    if (retryStrategy) {
-      console.log(`Retry strategy initialized: ${RETRY_STRATEGY}`);
-    }
-
     // Initialize error tracker
     // Uses the already-resolved statistics table (mock or real, whichever holds this run's FLAGS -
     // see MetadataFactoryForBootstrap.resolveMockAwareFlags()), so STATISTICS/ERROR/CHUNK_STATUS/
     // METADATA records for a mock run never mix with production data, and never split across tables.
     errorTrackingStatisticsTableName = resolvedStatisticsTableName;
-    if (errorTrackingStatisticsTableName) {
-      errorTracker = new TrackingTargetApiErrorProcessor({
-        tableName: errorTrackingStatisticsTableName,
-        integrationTimestamp,
-        region,
-        logToConsole: true
-      });
-      console.log(`Error tracker initialized with table: ${errorTrackingStatisticsTableName}`);
-    } else {
-      console.warn('WARNING: DYNAMODB_STATISTICS_TABLE_NAME not configured - error tracking disabled');
-      errorTracker = new LoggingTargetApiErrorProcessor();
-    }
+    errorTracker = buildErrorTracker({ tableName: errorTrackingStatisticsTableName, integrationTimestamp, region });
 
     // Build config with DynamoDB delta storage
     const config = await buildChunkConfig({
@@ -361,8 +329,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     // Optional custom per-person async hook (e.g. outlier logging). Uses the explicitly injected
     // processor if provided (see docker/processor.ts); otherwise resolves it from this run's
     // Flags (flags.personRecordProcessorCustomizations) - no-op if neither is present.
-    const customPersonProcessor = personRecordProcessor
-      ?? (await personRecordProcessorFactory(flags.personRecordProcessorCustomizations))?.processRecord;
+    const customPersonProcessor = await resolveCustomPersonProcessor(personRecordProcessor, flags.personRecordProcessorCustomizations);
 
     // Create and run integration
     const integration = new HuronPersonIntegration({ 
@@ -390,23 +357,9 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     const result = await integration.run(`Processing chunk: s3://${bucketName}/${s3Key}`, chunkId);
 
     processedRecordCount = result.totalProcessed;
-    
-    console.log(`\n✓ Chunk integration completed with results:`);
-    console.log(`  - Total Processed: ${result.totalProcessed}`);
-    console.log(`  - ✓ Successful: ${result.successCount}`);
-    console.log(`  - ✗ Failed: ${result.failureCount}`);
-    console.log(`  - ⊘ Skipped: ${result.skippedCount}`);
-    console.log(`  - + Added: ${result.addedCount}`);
-    console.log(`  - ~ Updated: ${result.updatedCount}`);
-    console.log(`  - - Removed: ${result.removedCount}`);
-    console.log(`  - ⧗ Duration: ${humanReadableFromMilliseconds(result.duration ?? 0)}`);
-    
-    // Verify the math: successful operations should equal delta operations (failures and skips don't produce deltas)
-    const deltaSum = result.addedCount + result.updatedCount + result.removedCount;
-    if (result.successCount !== deltaSum) {
-      console.warn(`  ⚠️  Math mismatch: Successful(${result.successCount}) should equal Added(${result.addedCount}) + Updated(${result.updatedCount}) + Removed(${result.removedCount}) = ${deltaSum}`);
-    }
-    
+
+    logIntegrationResult(result);
+
     console.log('\n✓ Chunk processing completed successfully');
     console.log('✓ DynamoDB tables updated (no marker files needed)');
 
@@ -422,27 +375,8 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
 
     // Write statistics to DynamoDB
     try {
-      if (errorTracker instanceof TrackingTargetApiErrorProcessor) {
-        const endTimestamp = new Date().toISOString();
-        // Extract chunk ID from S3 key (format: "chunk-0009")
-        const chunkIdFromDesc = chunkId ? `chunk-${chunkId}` : undefined;
-        
-        await errorTracker.writeStatistics({
-          startTimestamp,
-          endTimestamp,
-          chunkCount: 1, // This processor handles 1 chunk per run
-          chunkSize: processedRecordCount,
-          totalRecords: processedRecordCount,
-          sourceDescription: `chunk-${chunkId || 'unknown'}`,
-          chunkId: chunkIdFromDesc // Pass chunk ID to prevent overwrites
-        });
-
-        // Log statistics summary
-        const stats = errorTracker.getStatisticsSummary();
-        console.log('\n=== Processing Statistics ===');
-        console.log(`Total errors: ${stats.totalErrors}`);
-        console.log(`Throttle events: ${stats.throttleCount}`);
-        console.log(`Errors by status:`, stats.errorsByStatus);
+      if (errorTracker) {
+        await writeTrackerStatistics({ errorTracker, startTimestamp, chunkId, processedRecordCount });
       }
       
       timer.stop();
@@ -525,8 +459,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
   
   // Exit after finally block completes
   // Exit code 0 for success, 1 if there was an error
-  const exitCode = (errorTracker instanceof TrackingTargetApiErrorProcessor && errorTracker.getStatisticsSummary().totalErrors > 0) ? 1 : 0;
-  process.exit(exitCode);
+  process.exit(computeExitCode(errorTracker));
 }
 
 // Entry point
@@ -544,6 +477,7 @@ if (require.main === module) {
     'DYNAMODB_MOCK_PERSON_CURRENT_STATE_TABLE_NAME',
     'DYNAMODB_MOCK_PERSON_HISTORY_TABLE_NAME',
     'DYNAMODB_MOCK_STATISTICS_TABLE_NAME',
+    'HURON_PERSON_CONFIG_JSON',
     'STATIC_MAP_USAGE',
     'DRY_RUN',
     'BULK_RESET',

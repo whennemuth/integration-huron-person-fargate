@@ -39,7 +39,7 @@
  */
 
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { FieldSet, humanReadableFromMilliseconds, TestEnvironment, Timer } from 'integration-core';
+import { FieldSet, TestEnvironment, Timer } from 'integration-core';
 import {
   BasicCache,
   Config,
@@ -50,22 +50,31 @@ import {
   TargetApiErrorEventProcessor
 } from 'integration-huron-person';
 import type { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
+import { SyncPopulation } from '../../docker/chunkTypes';
 import { getRetryStrategy } from '../ApiErrorRetryStrategy';
-import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../ApiErrorTracking';
 import { NextChunk, QueueReader } from '../Queue';
 import { TaskProtection } from '../TaskProtection';
 import { getLocalConfig } from '../Utils';
-import { ChunkFileManager, Flags } from '../chunking/metadata';
+import { ChunkFileManager } from '../chunking/metadata';
 import { MetadataFactoryForBootstrap } from '../chunking/metadata/MetadataFactory';
 import { StandardMetadataUtils } from '../chunking/metadata/MetadataUtils';
 import { PersonCacheLookup } from '../person-cache/PersonCacheLookup';
-import { SyncPopulation } from '../../docker/chunkTypes';
-import { personRecordProcessorFactory } from './custom/PersonRecordProcessorFactory';
+import {
+  buildErrorTracker,
+  computeExitCode,
+  logIntegrationResult,
+  resolveCommonFlags,
+  resolveCustomPersonProcessor,
+  resolveNextChunk,
+  resolveStaticMapUsage,
+  resolveTableName,
+  writeTrackerStatistics
+} from './ProcessorCommon';
 
 const metadataStorage = new MetadataFactoryForBootstrap().createMetadataForBootstrap();
 const metadataUtils = new StandardMetadataUtils({});
 
-const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
+export { resolveStaticMapUsage, resolveTableName };
 
 /**
  * Create a config with S3 data source for the chunk
@@ -219,24 +228,6 @@ async function createProcessingCompleteMarker(
   }
 }
 
-/**
- * Mock target mode never calls the real org/state/country APIs, regardless of the deploy-time STATIC_MAP_USAGE env var
- */
-export function resolveStaticMapUsage(staticMapUsage: StaticMapUsage | undefined, useMockTarget: boolean | undefined): StaticMapUsage | undefined {
-  if (useMockTarget) {
-    return { orgMap: false, stateMap: false, countryMap: false };
-  }
-  return staticMapUsage;
-}
-
-/**
- * Redirect to the isolated mock-mode table name when flags.useMockTarget is true, so mocked runs
- * never mix bulk data (statistics/error events) with production tables.
- */
-export function resolveTableName(realName: string | undefined, mockName: string | undefined, useMockTarget: boolean | undefined): string | undefined {
-  return useMockTarget ? mockName : realName;
-}
-
 export async function main(queueReader: QueueReader, personRecordProcessor?: PersonRecordProcessor) {
   // Check for expected environment variables
   const { 
@@ -282,45 +273,16 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
 
   try {
     // Read chunk information from queue or environment
-    let nextChunk: NextChunk | undefined;
-    if(chunksBucket && chunkKey) {
-      nextChunk = {bucketName: chunksBucket, s3Key: chunkKey};
-    } 
-    else if(queueUrl) {
-      console.log('Reading chunk information from SQS queue...');
-      nextChunk = await queueReader.receiveMessage() as NextChunk;
-      if(isEcsTask() && !nextChunk) {
-        console.log('Empty queue - this probably means that the desired count for the ' +
-          'service has not scaled down yet to zero after processing the last message and deleting ' +
-          'it from the queue. An empty queue will eventually cause the service to scale down to ' +
-          'zero, but in the meantime we should just exit the task.');
-        console.log('✗ Task cancelled.');
-        process.exit(0);
-      }
-    } 
-    else {
-      console.error('ERROR: Either CHUNKS_BUCKET and CHUNK_KEY environment variables or SQS_QUEUE_URL must be provided');
-      process.exit(1);
-    }
+    const nextChunk = await resolveNextChunk({ queueReader, chunksBucket, chunkKey, queueUrl });
     ({ bucketName, s3Key } = nextChunk || {});
 
     // Validate required information
     ChunkFileManager.validateChunk(nextChunk);
 
     // Read flags file to get per-sync configuration (bulkReset, syncPopulation, trustPreviousStorage)
-    const flags = await metadataStorage.readFlagsFromChunkKey(bucketName, s3Key, region);
-    
-    // Use bulkReset from flags if available, otherwise fall back to environment variable
-    const bulkReset = flags.bulkReset ?? (`${BULK_RESET}`.trim().toLowerCase() === 'true');
-    console.log(`Bulk Reset: ${bulkReset}${flags.bulkReset !== undefined ? ' (from flags file)' : ' (from environment)'}`);
+    const flags = await metadataStorage.readFlagsFromChunkKey(bucketName, s3Key!, region);
 
-    // Get trustPreviousStorage from flags if available, otherwise default to true (trust by default)
-    const trustPreviousStorage = flags.trustPreviousStorage ?? true;
-    console.log(`Trust Previous Storage: ${trustPreviousStorage}${flags.trustPreviousStorage !== undefined ? ' (from flags file)' : ' (defaulted)'}`);
-
-    // Get syncPopulation from flags if available, otherwise default to PersonFull
-    const syncPopulation = flags.syncPopulation ?? SyncPopulation.PersonFull;
-    console.log(`Sync Population: ${syncPopulation}${flags.syncPopulation !== undefined ? ' (from flags file)' : ' (defaulted)'}`);
+    const { bulkReset, trustPreviousStorage, syncPopulation } = resolveCommonFlags(flags, BULK_RESET);
 
     staticMapUsage = resolveStaticMapUsage(staticMapUsage, flags.useMockTarget);
     if (flags.useMockTarget) {
@@ -350,18 +312,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     // Redirected to the isolated mock statistics table when flags.useMockTarget is true, so bulk
     // STATISTICS/ERROR records never mix with production data.
     const errorTrackingStatisticsTableName = resolveTableName(dynamoDbStatisticsTableName, dynamoDbMockStatisticsTableName, flags.useMockTarget);
-    if (errorTrackingStatisticsTableName) {
-      errorTracker = new TrackingTargetApiErrorProcessor({
-        tableName: errorTrackingStatisticsTableName,
-        integrationTimestamp,
-        region,
-        logToConsole: true
-      });
-      console.log(`Error tracker initialized with table: ${errorTrackingStatisticsTableName}`);
-    } else {
-      console.warn('WARNING: DYNAMODB_STATISTICS_TABLE_NAME not configured - error tracking disabled');
-      errorTracker = new LoggingTargetApiErrorProcessor();
-    }
+    errorTracker = buildErrorTracker({ tableName: errorTrackingStatisticsTableName, integrationTimestamp, region });
 
     // Build config with S3 data source pointing to this chunk
     const config = await buildChunkConfig({
@@ -401,8 +352,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     // Optional custom per-person async hook (e.g. outlier logging). Uses the explicitly injected
     // processor if provided (see docker/processor.ts); otherwise resolves it from this run's
     // Flags (flags.personRecordProcessorCustomizations) - no-op if neither is present.
-    const customPersonProcessor = personRecordProcessor
-      ?? (await personRecordProcessorFactory(flags.personRecordProcessorCustomizations))?.processRecord;
+    const customPersonProcessor = await resolveCustomPersonProcessor(personRecordProcessor, flags.personRecordProcessorCustomizations);
 
     // Create and run integration using HuronPersonIntegration
     const integration = new HuronPersonIntegration({ 
@@ -446,22 +396,8 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
 
     // Extract actual record count from integration result
     processedRecordCount = result.totalProcessed;
-    
-    console.log(`\n✓ Chunk integration completed with results:`);
-    console.log(`  - Total Processed: ${result.totalProcessed}`);
-    console.log(`  - ✓ Successful: ${result.successCount}`);
-    console.log(`  - ✗ Failed: ${result.failureCount}`);
-    console.log(`  - ⊘ Skipped: ${result.skippedCount}`);
-    console.log(`  - + Added: ${result.addedCount}`);
-    console.log(`  - ~ Updated: ${result.updatedCount}`);
-    console.log(`  - - Removed: ${result.removedCount}`);
-    console.log(`  - ⧗ Duration: ${humanReadableFromMilliseconds(result.duration ?? 0)}`);
-    
-    // Verify the math: successful operations should equal delta operations (failures and skips don't produce deltas)
-    const deltaSum = result.addedCount + result.updatedCount + result.removedCount;
-    if (result.successCount !== deltaSum) {
-      console.warn(`  ⚠️  Math mismatch: Successful(${result.successCount}) should equal Added(${result.addedCount}) + Updated(${result.updatedCount}) + Removed(${result.removedCount}) = ${deltaSum}`);
-    }
+
+    logIntegrationResult(result);
 
     console.log('\n✓ Chunk processing completed successfully');
 
@@ -497,27 +433,8 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
 
     // Write statistics to DynamoDB
     try {
-      if (errorTracker instanceof TrackingTargetApiErrorProcessor) {
-        const endTimestamp = new Date().toISOString();
-        // Extract chunk ID from sourceDescription (format: "chunk-0009")
-        const chunkIdFromDesc = chunkId ? `chunk-${chunkId}` : undefined;
-        
-        await errorTracker.writeStatistics({
-          startTimestamp,
-          endTimestamp,
-          chunkCount: 1, // This processor handles 1 chunk per run
-          chunkSize: processedRecordCount,
-          totalRecords: processedRecordCount,
-          sourceDescription: `chunk-${chunkId || 'unknown'}`,
-          chunkId: chunkIdFromDesc // Pass chunk ID to prevent overwrites
-        });
-
-        // Log statistics summary
-        const stats = errorTracker.getStatisticsSummary();
-        console.log('\n=== Processing Statistics ===');
-        console.log(`Total errors: ${stats.totalErrors}`);
-        console.log(`Throttle events: ${stats.throttleCount}`);
-        console.log(`Errors by status:`, stats.errorsByStatus);
+      if (errorTracker) {
+        await writeTrackerStatistics({ errorTracker, startTimestamp, chunkId, processedRecordCount });
       }
       timer.stop();
       timer.logElapsed('Total processing time');
@@ -533,8 +450,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
   
   // Exit after finally block completes
   // Exit code 0 for success, 1 if there was an error (errorTracker will have non-zero totalErrors)
-  const exitCode = (errorTracker instanceof TrackingTargetApiErrorProcessor && errorTracker.getStatisticsSummary().totalErrors > 0) ? 1 : 0;
-  process.exit(exitCode);
+  process.exit(computeExitCode(errorTracker));
 }
 
 // Run if executed directly
