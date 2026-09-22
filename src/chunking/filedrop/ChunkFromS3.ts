@@ -8,6 +8,7 @@ import { MetadataBroker, WriteMetadataParams } from "../metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { BigJsonFile, BigJsonFileConfig } from "./BigJsonFile";
 import { extractChunkDirectory } from './ChunkPathUtils';
+import { ProcessorServiceBooster } from '../fetch/ProcessorServiceBooster';
 
 export type TaskParameters = {
   inputBucket: string,
@@ -215,16 +216,27 @@ export class ChunkFromS3 implements IChunkFromSource {
 
       // Run chunking operation
       const chunker = new BigJsonFile(config);
-      const result = await chunker.breakup(inputKey);
+
+      // Constructed before breakup() so the processor can be "hit the ground running" boosted
+      // while this task is still writing chunks (it's a single, non-parallel task - no claim race).
+      const integrationConfig = await getConfig();
+      const metadataBroker = new MetadataBroker({
+        config: integrationConfig, bucketName: chunksBucket, chunkDirectory, region
+      });
+      const stopProcessorBoosterCheck = ProcessorServiceBooster.startPeriodicCheck(metadataBroker, 60, { claimedByChunk: inputKey });
+      let result: Awaited<ReturnType<typeof chunker.breakup>>;
+      try {
+        result = await chunker.breakup(inputKey);
+      } finally {
+        stopProcessorBoosterCheck();
+      }
+      // Final safety-net check in case the periodic check above never caught the backlog crossing its threshold.
+      await ProcessorServiceBooster.boostIfNeeded(metadataBroker, { claimedByChunk: inputKey });
 
       // Build source URL
       const sourceUrl = `s3://${inputBucket}/${inputKey}`;
 
       // Write metadata and log results (no target for S3 source)
-      const integrationConfig = await getConfig();
-      const metadataBroker = new MetadataBroker({
-        config: integrationConfig, bucketName: chunksBucket, chunkDirectory, region
-      });
       await metadataBroker.write({
         storage: chunksStorage,
         bucketName: chunksBucket,

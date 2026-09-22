@@ -658,7 +658,8 @@ export class ChunkFromAPI implements IChunkFromSource {
           const existingFinalOffsetProcessed = await metadataBroker.getFinalOffsetProcessed();
           if (hasLostRaceForTrueEnd(result.finalOffsetProcessed, existingFinalOffsetProcessed)) {
             console.log(`\nℹ️  Lost race for true end - offset ${existingFinalOffsetProcessed} already established by another task (this task's own final offset used was ${result.finalOffsetProcessed}). Skipping aggregation/metadata write.`);
-            return;          } else {
+            return;          
+          } else {
             // This task is the race winner (or no race existed) - final safety-net check in case
             // the periodic check above never caught the backlog crossing its threshold.
             await ProcessorServiceBooster.boostIfNeeded(metadataBroker, { claimedByChunk: String(offset) });          }
