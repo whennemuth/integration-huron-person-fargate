@@ -417,7 +417,10 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
             const completedCount = await statisticsTable.getCompletedChunkCount(integrationTimestamp);
             const metadata = await statisticsTable.readMetadata(integrationTimestamp);
             
-            if (metadata?.chunkCount && completedCount === metadata.chunkCount) {
+            // >= rather than === : metadata isn't written until the ~80s post-chunking aggregation
+            // completes, by which point completedCount may have already reached or passed the
+            // true total, so an exact match could be missed entirely.
+            if (metadata?.chunkCount && completedCount >= metadata.chunkCount) {
               // Step 3: We're the last processor - trigger merger!
               console.log(`✅ Last processor (chunk-${chunkId}): All ${metadata.chunkCount} chunks complete, triggering merger`);
               
