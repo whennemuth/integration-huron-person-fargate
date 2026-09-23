@@ -50,7 +50,6 @@ export class MetadataBroker {
 
   public async write(params: WriteMetadataParams): Promise<void> {
     await this.metadata.write(params);
-    console.log('\n✓ Metadata written');
   }
 
   public async writeFlags(params: WriteFlagsParams): Promise<void> {
