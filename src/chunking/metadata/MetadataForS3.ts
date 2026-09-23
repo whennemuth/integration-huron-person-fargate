@@ -243,8 +243,6 @@ export class MetadataForS3 implements IMetadataStorage {
     const s3Client = new S3Client({ region });
 
     try {
-      console.log(`Reading metadata from: s3://${bucketName}/${metadataKey}`);
-      
       const response = await s3Client.send(
         new GetObjectCommand({
           Bucket: bucketName,
@@ -254,7 +252,6 @@ export class MetadataForS3 implements IMetadataStorage {
 
       const body = await response.Body?.transformToString();
       if (!body) {
-        console.log(`No metadata file found at s3://${bucketName}/${metadataKey}`);
         return {};
       }
 
@@ -267,7 +264,6 @@ export class MetadataForS3 implements IMetadataStorage {
       return metadata;
     } catch (error: any) {
       if (error.name === 'NoSuchKey') {
-        console.log(`No metadata file found at s3://${bucketName}/${metadataKey}`);
         return {};
       }
       console.warn(`Warning: Could not read metadata file: ${error.message}`);

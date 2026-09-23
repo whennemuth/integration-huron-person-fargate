@@ -216,12 +216,9 @@ export class MetadataForDynamoDb implements IMetadataStorage {
     const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
 
     try {
-      console.log(`Reading metadata from DynamoDB: syncRunId=${syncRunId}`);
-      
       const metadata = await this.statisticsTable.readMetadata(syncRunId);
       
       if (!metadata) {
-        console.log(`No metadata found for syncRunId ${syncRunId}`);
         return {};
       }
 
