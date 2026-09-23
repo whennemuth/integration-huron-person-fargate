@@ -6,6 +6,7 @@ import { objectExistsInS3 } from '../../Utils';
 import {
   IMetadataStorage,
   ChunkMetadata,
+  ClaimFinalOffsetProcessedParams,
   ClaimProcessorBoostParams,
   Flags,
   MarkRunFailedParams,
@@ -471,5 +472,20 @@ export class MetadataForS3 implements IMetadataStorage {
     const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
     const statisticsTable = StatisticsTable.fromTableName(this.statisticsTableName, region);
     await statisticsTable.releaseProcessorBoostClaim(syncRunId);
+  }
+
+  /**
+   * Attempt to claim the finalOffsetProcessed boundary for this run. Delegates to the shared
+   * DynamoDB statistics table (see the statisticsTableName field's doc comment) even in S3 mode,
+   * since that's the only channel offering an atomic first-writer-wins guarantee.
+   */
+  public async claimFinalOffsetProcessed(params: ClaimFinalOffsetProcessedParams): Promise<boolean> {
+    const { chunkDirectory, region, finalOffsetProcessed, claimedByChunk } = params;
+    if (!this.statisticsTableName) {
+      throw new Error('statisticsTableName is required for finalOffsetProcessed claims');
+    }
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
+    const statisticsTable = StatisticsTable.fromTableName(this.statisticsTableName, region);
+    return statisticsTable.claimFinalOffsetProcessed(syncRunId, finalOffsetProcessed, claimedByChunk);
   }
 }

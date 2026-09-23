@@ -1,4 +1,4 @@
-import { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand, HeadObjectCommandInput, HeadObjectCommandOutput } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, HeadObjectCommandInput, HeadObjectCommandOutput } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 import { IStorageAdapter } from './IStorageAdapter';
 import { objectExistsInS3 } from '../Utils';
@@ -69,6 +69,17 @@ export class S3StorageAdapter implements IStorageAdapter {
       Key: key,
       Body: content,
       ContentType: contentType
+    }));
+  }
+
+  /**
+   * Delete an S3 object.
+   */
+  async deleteFile(key: string): Promise<void> {
+    console.log(`Deleting file at s3://${this.bucketName}/${key}`);
+    await this.s3.send(new DeleteObjectCommand({
+      Bucket: this.bucketName,
+      Key: key
     }));
   }
 }

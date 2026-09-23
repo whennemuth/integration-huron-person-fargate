@@ -26,4 +26,12 @@ export interface IStorageAdapter {
    * @throws Error if write fails
    */
   writeFile(key: string, content: string | Buffer, contentType?: string): Promise<void>;
+
+  /**
+   * Delete a file from storage.
+   * 
+   * @param key - The storage key/path of the file to delete
+   * @returns Promise that resolves when deletion is complete
+   */
+  deleteFile(key: string): Promise<void>;
 }

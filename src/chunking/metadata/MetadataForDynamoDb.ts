@@ -3,6 +3,7 @@ import { StatisticsTable } from '../../dynamodb/StatisticsTable';
 import {
   IMetadataStorage,
   ChunkMetadata,
+  ClaimFinalOffsetProcessedParams,
   ClaimProcessorBoostParams,
   Flags,
   MarkRunFailedParams,
@@ -379,5 +380,14 @@ export class MetadataForDynamoDb implements IMetadataStorage {
     const { chunkDirectory } = params;
     const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
     await this.statisticsTable.releaseProcessorBoostClaim(syncRunId);
+  }
+
+  /**
+   * Attempt to claim the finalOffsetProcessed boundary for this run.
+   */
+  public async claimFinalOffsetProcessed(params: ClaimFinalOffsetProcessedParams): Promise<boolean> {
+    const { chunkDirectory, finalOffsetProcessed, claimedByChunk } = params;
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
+    return this.statisticsTable.claimFinalOffsetProcessed(syncRunId, finalOffsetProcessed, claimedByChunk);
   }
 }

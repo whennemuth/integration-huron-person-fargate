@@ -344,4 +344,39 @@ describe('StatisticsTable', () => {
       });
     });
   });
+
+  describe('claimFinalOffsetProcessed', () => {
+    it('returns true and sets finalOffsetProcessed on the METADATA record when no boundary exists', async () => {
+      dynamoMock.on(UpdateCommand).resolves({});
+
+      const won = await statisticsTable.claimFinalOffsetProcessed(integrationTimestamp, 828, '818');
+
+      expect(won).toBe(true);
+      expect(dynamoMock.commandCalls(UpdateCommand)).toHaveLength(2); // finalOffsetProcessed + claimedByChunk
+      const firstCall = dynamoMock.commandCalls(UpdateCommand)[0];
+      expect(firstCall.args[0].input.Key).toEqual({
+        integrationTimestamp,
+        eventType: 'METADATA'
+      });
+      expect(firstCall.args[0].input.ExpressionAttributeValues).toMatchObject({ ':value': 828 });
+    });
+
+    it('returns false and does not set claimedByChunk when a boundary already exists', async () => {
+      dynamoMock.on(UpdateCommand).rejects({ name: 'ConditionalCheckFailedException' });
+
+      const won = await statisticsTable.claimFinalOffsetProcessed(integrationTimestamp, 848, '840');
+
+      expect(won).toBe(false);
+      expect(dynamoMock.commandCalls(UpdateCommand)).toHaveLength(1);
+    });
+
+    it('does not attempt a claimedByChunk write when claimedByChunk is not provided', async () => {
+      dynamoMock.on(UpdateCommand).resolves({});
+
+      const won = await statisticsTable.claimFinalOffsetProcessed(integrationTimestamp, 828);
+
+      expect(won).toBe(true);
+      expect(dynamoMock.commandCalls(UpdateCommand)).toHaveLength(1);
+    });
+  });
 });

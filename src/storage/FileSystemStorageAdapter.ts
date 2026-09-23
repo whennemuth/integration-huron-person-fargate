@@ -7,6 +7,7 @@ import { IStorageAdapter } from './IStorageAdapter';
 const mkdir = promisify(fs.mkdir);
 const writeFile = promisify(fs.writeFile);
 const access = promisify(fs.access);
+const unlink = promisify(fs.unlink);
 
 /**
  * Configuration for filesystem storage adapter
@@ -86,6 +87,22 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
       await writeFile(filePath, content, 'utf8');
     } catch (error: any) {
       throw new Error(`Failed to write file ${filePath}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Delete a local file.
+   * 
+   * @param key - Relative path to the file to delete
+   */
+  async deleteFile(key: string): Promise<void> {
+    const filePath = this.resolveFilePath(key);
+    try {
+      await unlink(filePath);
+    } catch (error: any) {
+      if (error.code !== 'ENOENT') {
+        throw new Error(`Failed to delete file ${filePath}: ${error.message}`);
+      }
     }
   }
 

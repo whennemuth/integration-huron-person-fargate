@@ -151,6 +151,20 @@ export interface ClaimProcessorBoostParams {
   claimedByChunk?: string;
 }
 
+/**
+ * Parameters for claiming the finalOffsetProcessed boundary - the first parallel chunker task
+ * to detect "reached the end of records" wins the right to be the one true end. Uses the same
+ * OCCFlag first-writer-wins mechanism as ClaimProcessorBoostParams (see StatisticsTable.claimFinalOffsetProcessed).
+ */
+export interface ClaimFinalOffsetProcessedParams {
+  bucketName?: string;
+  chunkDirectory: string;
+  region?: string;
+  finalOffsetProcessed: number;
+  /** Identifies which parallel chunker task/offset won the claim, so its log stream can be found later. */
+  claimedByChunk?: string;
+}
+
 
 /**
  * IMetadataStorage - Core metadata storage operations interface
@@ -261,4 +275,11 @@ export interface IMetadataStorage {
    * allowing another task to win it later.
    */
   releaseProcessorBoostClaim(params: ClaimProcessorBoostParams): Promise<void>;
+
+  /**
+   * Attempt to claim the finalOffsetProcessed boundary for this run - the first parallel chunker
+   * task to detect "reached the end of records" wins. Returns true if this call won the claim
+   * (no boundary was recorded yet), false if another task already established one.
+   */
+  claimFinalOffsetProcessed(params: ClaimFinalOffsetProcessedParams): Promise<boolean>;
 }
