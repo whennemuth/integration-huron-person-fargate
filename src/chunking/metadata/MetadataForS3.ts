@@ -1,6 +1,7 @@
 import { GetObjectCommand, PutObjectCommand, DeleteObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Config } from 'integration-huron-person';
 import { S3StorageAdapter } from '../../storage/S3StorageAdapter';
+import { StatisticsTable } from '../../dynamodb/StatisticsTable';
 import { objectExistsInS3 } from '../../Utils';
 import {
   IMetadataStorage,
@@ -39,10 +40,16 @@ export class MetadataForS3 implements IMetadataStorage {
   protected config: Config;
   private storage?: S3StorageAdapter;
   private metadataUtils: StandardMetadataUtils;
+  // The processor-boost claim (see claimProcessorBoost below) is routed through the DynamoDB
+  // statistics table rather than S3 files - that table already exists in both storage modes (for
+  // error tracking), so this reuses the same race-free OCCFlag-backed mechanism as DynamoDB mode
+  // instead of maintaining a separate, non-atomic S3 implementation.
+  private statisticsTableName?: string;
 
-  constructor(params: { config: Config; storage?: S3StorageAdapter }) {
+  constructor(params: { config: Config; storage?: S3StorageAdapter; statisticsTableName?: string }) {
     this.config = params.config;
     this.storage = params.storage;
+    this.statisticsTableName = params.statisticsTableName;
     this.metadataUtils = new StandardMetadataUtils({});
   }
 
@@ -440,43 +447,29 @@ export class MetadataForS3 implements IMetadataStorage {
   }
 
   /**
-   * Attempt to claim the processor-boost marker file for this run.
+   * Attempt to claim the processor-boost claim for this run. Delegates to the shared DynamoDB
+   * statistics table (see the statisticsTableName field's doc comment) rather than an S3 file.
    */
   public async claimProcessorBoost(params: ClaimProcessorBoostParams): Promise<boolean> {
-    const { bucketName, chunkDirectory, region, claimedByChunk } = params;
-    if (!bucketName) {
-      throw new Error('bucketName is required for S3 metadata operations');
+    const { chunkDirectory, region, claimedByChunk } = params;
+    if (!this.statisticsTableName) {
+      throw new Error('statisticsTableName is required for processor boost claims');
     }
-
-    const claimKey = this.metadataUtils.getProcessorBoostClaimKey(chunkDirectory);
-    const alreadyClaimed = await objectExistsInS3(bucketName, claimKey, region);
-    if (alreadyClaimed) {
-      return false;
-    }
-
-    const s3Client = new S3Client({ region });
-    await s3Client.send(new PutObjectCommand({
-      Bucket: bucketName,
-      Key: claimKey,
-      Body: JSON.stringify({ claimedAt: new Date().toISOString(), claimedByChunk }, null, 2),
-      ContentType: 'application/json'
-    }));
-    console.log(`✓ Processor boost claim acquired: s3://${bucketName}/${claimKey}`);
-    return true;
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
+    const statisticsTable = StatisticsTable.fromTableName(this.statisticsTableName, region);
+    return statisticsTable.claimProcessorBoost(syncRunId, claimedByChunk);
   }
 
   /**
-   * Release a previously-won processor-boost claim marker file for this run.
+   * Release a previously-won processor-boost claim for this run.
    */
   public async releaseProcessorBoostClaim(params: ClaimProcessorBoostParams): Promise<void> {
-    const { bucketName, chunkDirectory, region } = params;
-    if (!bucketName) {
-      throw new Error('bucketName is required for S3 metadata operations');
+    const { chunkDirectory, region } = params;
+    if (!this.statisticsTableName) {
+      throw new Error('statisticsTableName is required for processor boost claims');
     }
-
-    const claimKey = this.metadataUtils.getProcessorBoostClaimKey(chunkDirectory);
-    const s3Client = new S3Client({ region });
-    await s3Client.send(new DeleteObjectCommand({ Bucket: bucketName, Key: claimKey }));
-    console.log(`✓ Processor boost claim released: s3://${bucketName}/${claimKey}`);
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
+    const statisticsTable = StatisticsTable.fromTableName(this.statisticsTableName, region);
+    await statisticsTable.releaseProcessorBoostClaim(syncRunId);
   }
 }

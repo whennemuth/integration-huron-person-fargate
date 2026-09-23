@@ -2,6 +2,7 @@ import { TestEnvironment } from 'integration-core';
 import { IContext } from '../../context/IContext';
 import { StatisticsItem } from '../ApiErrorTracking';
 import { AbstractDynamoDbTable, DynamoDBTable } from './DynamoDBTable';
+import { OCCFlag } from './OCCFlag';
 
 export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-statistics-${context.TAGS.Landscape.toLowerCase()}`;
 // Isolated statistics table for mocked (source simulator + mock target) runs, so bulk STATISTICS/ERROR/CHUNK_STATUS records never mix with production data
@@ -13,16 +14,27 @@ export const DYNAMODB_GSI_INDEX_NAME = 'errorType-timestamp-index';
 
 export class StatisticsTable {
   private table: AbstractDynamoDbTable;
+  private tableName: string;
+  private region: string;
 
-  constructor(private context: IContext, table?: AbstractDynamoDbTable) {
+  // An abandoned claim (winning task killed before its finally-block release could run - e.g.
+  // docker/chunker.ts's unconditional process.exit()) would otherwise block boosting for the
+  // rest of this sync run; comfortably longer than MetricsCatchupDelay's own ~6 minute max wait.
+  private static readonly PROCESSOR_BOOST_CLAIM_STALE_AFTER_MS = 10 * 60 * 1000;
+
+  constructor(private context: IContext, table?: AbstractDynamoDbTable, tableNameOverride?: string, regionOverride?: string) {
     if (table) {
       this.table = table;
+      this.tableName = tableNameOverride!;
+      this.region = regionOverride || process.env.REGION || 'us-east-1';
     } else {
       const region = context.REGION;
       const tableName = DYNAMODB_TABLE_NAME(context);
       const partitionKey = DYNAMODB_PARTITION_KEY;
       const sortKey = DYNAMODB_SORT_KEY;
       this.table = new DynamoDBTable({ region, tableName, partitionKey, sortKey });
+      this.tableName = tableName;
+      this.region = region;
     }
   }
 
@@ -31,11 +43,12 @@ export class StatisticsTable {
    * paths (chunker/processor/merger Docker entry points) where a full IContext isn't available.
    */
   public static fromTableName(tableName: string, region?: string): StatisticsTable {
+    const resolvedRegion = region || process.env.REGION || 'us-east-1';
     const table = new DynamoDBTable({
-      region: region || process.env.REGION || 'us-east-1',
+      region: resolvedRegion,
       tableName, partitionKey: DYNAMODB_PARTITION_KEY, sortKey: DYNAMODB_SORT_KEY
     });
-    return new StatisticsTable({} as IContext, table);
+    return new StatisticsTable({} as IContext, table, tableName, resolvedRegion);
   }
 
   public truncate = async (chunkSize?: number): Promise<void> => {
@@ -299,27 +312,56 @@ export class StatisticsTable {
 
   /**
    * Attempt to claim the PROCESSOR_BOOST_CLAIM record for this sync run (ProcessorServiceBooster).
-   * A dedicated SK - deliberately separate from METADATA/FLAGS, which have write-once/overwrite
-   * semantics this claim (set, possibly released, and re-claimed within a single run) must not
-   * collide with. Read-then-write (not a hardened atomic CAS), matching this codebase's existing
-   * risk tolerance for similar cross-task coordination (e.g. finalOffsetProcessed).
+   * Uses OCCFlag (optimistic concurrency control) so exactly one concurrent caller wins - see
+   * OCCFlag's doc comment for why this is not the same thing as atomicity. If the existing claim
+   * is older than PROCESSOR_BOOST_CLAIM_STALE_AFTER_MS, its winner likely crashed/was killed
+   * before releasing it, so it's cleared and retried rather than permanently blocking boosting.
    *
    * @param claimedByChunk Identifies which parallel chunker task/offset won the claim, so its log
    * stream can be found later
    * @returns true if this call won the claim, false if another task already holds it
    */
   public async claimProcessorBoost(syncRunId: string, claimedByChunk?: string): Promise<boolean> {
-    const existing = await this.table.getItem({ partitionKeyValue: syncRunId, sortKeyValue: 'PROCESSOR_BOOST_CLAIM' });
-    if (existing) {
-      return false;
-    }
-    await this.table.putItem({
-      [DYNAMODB_PARTITION_KEY]: syncRunId,
-      [DYNAMODB_SORT_KEY]: 'PROCESSOR_BOOST_CLAIM',
-      claimedAt: new Date().toISOString(),
-      ...(claimedByChunk !== undefined ? { claimedByChunk } : {})
+    const { tableName, region } = this;
+    const claimFlag = new OCCFlag({
+      tableName, region,
+      partitionKeyName: DYNAMODB_PARTITION_KEY, partitionKeyValue: syncRunId,
+      sortKeyName: DYNAMODB_SORT_KEY, sortKeyValue: 'PROCESSOR_BOOST_CLAIM',
+      attributeName: 'claimedAt'
     });
-    return true;
+
+    const attempt = async (claimedAt: string): Promise<boolean> => {
+      let won = false;
+      await claimFlag.update(claimedAt,
+        async () => { won = true; },
+        async () => { won = false; }
+      );
+      return won;
+    };
+
+    const claimedAt = new Date().toISOString();
+    let won = await attempt(claimedAt);
+
+    if (!won) {
+      const existingClaimedAt = await claimFlag.getValue();
+      const ageMs = existingClaimedAt ? Date.now() - new Date(existingClaimedAt).getTime() : 0;
+      if (ageMs > StatisticsTable.PROCESSOR_BOOST_CLAIM_STALE_AFTER_MS) {
+        console.warn(`⚠️  Existing processor boost claim is stale (${Math.round(ageMs / 1000)}s old) - clearing and retrying.`);
+        await claimFlag.unset();
+        won = await attempt(claimedAt);
+      }
+    }
+
+    if (won && claimedByChunk !== undefined) {
+      await this.table.putItem({
+        [DYNAMODB_PARTITION_KEY]: syncRunId,
+        [DYNAMODB_SORT_KEY]: 'PROCESSOR_BOOST_CLAIM',
+        claimedAt,
+        claimedByChunk
+      });
+    }
+
+    return won;
   }
 
   /**

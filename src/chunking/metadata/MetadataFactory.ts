@@ -69,7 +69,7 @@ export class MetadataFactory {
       case 's3':
       case 'file':
       case 'database': // Fallback to S3 for database mode
-        return new MetadataForS3({ config, storage });
+        return new MetadataForS3({ config, storage, statisticsTableName });
       
       case 'dynamodb':
         if (!statisticsTableName) {
@@ -149,7 +149,7 @@ export class MetadataFactoryForBootstrap {
         throw new Error('DynamoDB storage type detected but required tables not found. Ensure DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME and DYNAMODB_PERSON_HISTORY_TABLE_NAME are set.');
       case 's3':
         console.log('Using S3 metadata storage (S3 mode detected)');
-        return new MetadataForS3({ config: {} as Config });
+        return new MetadataForS3({ config: {} as Config, statisticsTableName: DYNAMODB_STATISTICS_TABLE_NAME });
       case 'database':
         throw new Error('Database storage type is not yet supported for bootstrap metadata.');
       case 'file':

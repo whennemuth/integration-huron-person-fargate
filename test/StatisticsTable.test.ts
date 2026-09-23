@@ -1,5 +1,5 @@
 import { mockClient } from 'aws-sdk-client-mock';
-import { DynamoDBDocumentClient, GetCommand, QueryCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, QueryCommand, BatchWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { StatisticsTable } from '../src/dynamodb/StatisticsTable';
 import { IContext } from '../context/IContext';
 import { StatisticsItem } from '../src/ApiErrorTracking';
@@ -280,15 +280,21 @@ describe('StatisticsTable', () => {
 
   describe('claimProcessorBoost', () => {
     it('returns true and writes a PROCESSOR_BOOST_CLAIM record when none exists', async () => {
-      dynamoMock.on(GetCommand).resolves({ Item: undefined });
+      dynamoMock.on(UpdateCommand).resolves({});
       dynamoMock.on(BatchWriteCommand).resolves({});
 
       const won = await statisticsTable.claimProcessorBoost(integrationTimestamp, '840');
 
       expect(won).toBe(true);
+      expect(dynamoMock.commandCalls(UpdateCommand)).toHaveLength(1);
+      const updateCall = dynamoMock.commandCalls(UpdateCommand)[0];
+      expect(updateCall.args[0].input.Key).toEqual({
+        integrationTimestamp,
+        eventType: 'PROCESSOR_BOOST_CLAIM'
+      });
       expect(dynamoMock.commandCalls(BatchWriteCommand)).toHaveLength(1);
-      const call = dynamoMock.commandCalls(BatchWriteCommand)[0];
-      const requestItems = Object.values(call.args[0].input.RequestItems!)[0] as any[];
+      const batchCall = dynamoMock.commandCalls(BatchWriteCommand)[0];
+      const requestItems = Object.values(batchCall.args[0].input.RequestItems!)[0] as any[];
       expect(requestItems[0].PutRequest.Item).toMatchObject({
         integrationTimestamp,
         eventType: 'PROCESSOR_BOOST_CLAIM',
@@ -296,13 +302,30 @@ describe('StatisticsTable', () => {
       });
     });
 
-    it('returns false and does not write when a claim already exists', async () => {
-      dynamoMock.on(GetCommand).resolves({ Item: { integrationTimestamp, eventType: 'PROCESSOR_BOOST_CLAIM', claimedAt: '2026-05-14T12:00:00.000Z' } });
+    it('returns false and does not write when a recent claim already exists', async () => {
+      const recentClaimedAt = new Date().toISOString();
+      dynamoMock.on(UpdateCommand).rejects({ name: 'ConditionalCheckFailedException' });
+      dynamoMock.on(GetCommand).resolves({ Item: { integrationTimestamp, eventType: 'PROCESSOR_BOOST_CLAIM', claimedAt: recentClaimedAt } });
 
       const won = await statisticsTable.claimProcessorBoost(integrationTimestamp);
 
       expect(won).toBe(false);
       expect(dynamoMock.commandCalls(BatchWriteCommand)).toHaveLength(0);
+    });
+
+    it('clears and retries when the existing claim is stale', async () => {
+      const staleClaimedAt = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+      dynamoMock.on(UpdateCommand)
+        .rejectsOnce({ name: 'ConditionalCheckFailedException' }) // initial attempt loses
+        .resolvesOnce({}) // unset() clears the stale attribute
+        .resolves({}); // retry succeeds
+      dynamoMock.on(GetCommand).resolves({ Item: { integrationTimestamp, eventType: 'PROCESSOR_BOOST_CLAIM', claimedAt: staleClaimedAt } });
+      dynamoMock.on(BatchWriteCommand).resolves({});
+
+      const won = await statisticsTable.claimProcessorBoost(integrationTimestamp, '840');
+
+      expect(won).toBe(true);
+      expect(dynamoMock.commandCalls(UpdateCommand)).toHaveLength(3);
     });
   });
 

@@ -139,6 +139,7 @@ export class ProcessorServiceBooster {
       } finally {
         if (!boosted) {
           await metadataBroker.releaseProcessorBoostClaim();
+          console.log('  ✓ Processor boost claim released - available for another task to retry.');
         }
       }
     } catch (error: any) {
