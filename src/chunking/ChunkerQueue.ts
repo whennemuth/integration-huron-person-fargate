@@ -254,17 +254,19 @@ export class ChunkerQueue {
    * @param params.chunkDirectory Directory to store chunk data for this message's chunking task
    * @param params.taskParameters The parameters for the chunking task to process, which will be passed through to the next message
    * @param params.dryRun If true, will not actually send the message but will log the parameters instead (default: false)
-   * @param params.finalOffsetProcessed If known, skip sending when the computed next offset would already exceed it
+   * @param params.partialOrEmptyChunkEncountered If true, some parallel chunker task (not necessarily
+   * this one) has already encountered a partial-or-empty batch - the source queue only depletes,
+   * so no legitimate data is expected to remain for a newly-chained task either.
    * @returns true if message sent successfully, false if skipped
    */
   public sendNextChunkingMessage = async ( params: {
     iterationLimit: number; offset: number, chunkDirectory: string, taskParameters: TaskParameters, dryRun?: boolean,
-    finalOffsetProcessed?: number
+    partialOrEmptyChunkEncountered?: boolean
   }): Promise<boolean> => {
 
     const { QueueUrl } = this;
 
-    const { iterationLimit, offset: currentOffset, chunkDirectory, taskParameters, dryRun, finalOffsetProcessed } = params; 
+    const { iterationLimit, offset: currentOffset, chunkDirectory, taskParameters, dryRun, partialOrEmptyChunkEncountered } = params; 
 
     const { 
       baseUrl, 
@@ -283,15 +285,15 @@ export class ChunkerQueue {
       return false;
     }
 
+    // Some parallel task has already encountered a partial-or-empty batch - the source queue only
+    // depletes, so no legitimate data is expected to remain for a newly-chained task either.
+    if (partialOrEmptyChunkEncountered) {
+      console.log('ℹ️  A partial-or-empty batch has already been encountered by some task in this run. Not creating next message.');
+      return false;
+    }
+
     try {
       const nextOffset = await this.getNextOffset(currentOffset, iterationLimit);
-
-      // Population end is already known to be at or before this point - no legitimate data awaits
-      // at nextOffset, so avoid spawning another doomed empty task.
-      if (finalOffsetProcessed !== undefined && nextOffset > finalOffsetProcessed) {
-        console.log(`ℹ️  nextOffset=${nextOffset} exceeds finalOffsetProcessed=${finalOffsetProcessed}. Not creating next message.`);
-        return false;
-      }
 
       if (dryRun) {
         console.log(`[DRY RUN] Would send next chunking message to SQS: offset=${nextOffset}, iterationLimit=${iterationLimit}`);

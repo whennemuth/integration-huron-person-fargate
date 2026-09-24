@@ -27,13 +27,13 @@ import { TestEnvironment } from "integration-core";
  *   partitionKeyName: 'integrationTimestamp',
  *   partitionKeyValue: syncRunId,
  *   sortKeyName: 'eventType',
- *   sortKeyValue: 'METADATA',
- *   attributeName: 'finalOffsetProcessed'
+ *   sortKeyValue: 'MERGER_TRIGGER_CLAIM',
+ *   attributeName: 'claimedAt'
  * });
  *
- * await claim.update(offset,
- *   async () => { // won the claim },
- *   async () => { // lost the claim - another task already set it }
+ * await claim.update(new Date().toISOString(),
+ *   async () => { // won the claim - trigger the merger },
+ *   async () => { // lost the claim - another task already triggered it }
  * );
  * ```
  */

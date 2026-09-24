@@ -107,9 +107,6 @@ export interface ChunkResult {
   /** Indicates this task's own trailing batch was smaller than the requested recordCount - not necessarily the end of the overall sync operation, since other parallel tasks may still be mid-fetch or yet to run. */
   partialChunkEncountered: boolean;
 
-  /** Offset of the last page actually requested from the API; set only when partialChunkEncountered is true. */
-  finalOffsetProcessed?: number;
-
   /** Indicates a terminal fetch/chunking error occurred (for run-level fast fail signaling). */
   terminalErrorEncountered: boolean;
 
@@ -313,8 +310,6 @@ export class BigJsonFetch {
       partialChunkEncountered = true; // Treat as a partial (empty) batch to stop further processing
     }
 
-    const finalOffsetProcessed = partialChunkEncountered ? batchProcessor.getLastOffsetUsed() : undefined;
-
     timer.stop();
     timer.logElapsed(`Completed fetch and chunk into ${chunkKeys.length} chunks with ${totalRecords} records`);
     
@@ -323,7 +318,6 @@ export class BigJsonFetch {
       totalRecords,
       chunkCount: chunkKeys.length,
       partialChunkEncountered,
-      finalOffsetProcessed,
       terminalErrorEncountered,
       terminalErrorMessage
     };

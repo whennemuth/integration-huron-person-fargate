@@ -73,7 +73,6 @@ export class MetadataForS3 implements IMetadataStorage {
       chunkCount,
       totalRecords,
       chunkKeys,
-      finalOffsetProcessed,
       dryRun = false,
       region,
       replace = false
@@ -114,9 +113,6 @@ export class MetadataForS3 implements IMetadataStorage {
     }
     if (chunkKeys !== undefined) {
       metadata.chunkKeys = chunkKeys;
-    }
-    if (finalOffsetProcessed !== undefined) {
-      metadata.finalOffsetProcessed = finalOffsetProcessed;
     }
 
     const metadataJson = JSON.stringify(metadata, null, 2);

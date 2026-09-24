@@ -62,6 +62,19 @@ export class MetadataBroker {
   }
 
   /**
+   * True once any parallel chunker task has encountered a partial-or-empty batch. The source
+   * queue only depletes over a run's life (never refills), so this is a reliable "nothing
+   * meaningful left" signal regardless of which task set it - shared by isAlreadyFinished()
+   * (should a late-arriving task abort) and chain-stop decisions (should the next task be
+   * chained at all).
+   */
+  public async hasAnyTaskEncounteredPartial(): Promise<boolean> {
+    const { bucketName, chunkDirectory, region } = this;
+    const result = await this.metadata.read({ bucketName, chunkDirectory, region } satisfies ReadMetadataParams);
+    return result?.partialOrEmptyChunkEncountered === true;
+  }
+
+  /**
    * Bail out if this is an extraneous task whose SQS message was created before any parallel
    * task had yet encountered a partial batch. The source queue only depletes over a run's life
    * (never refills), so once partialOrEmptyChunkEncountered is true, the queue can only be as
@@ -70,9 +83,7 @@ export class MetadataBroker {
    * @returns true if this task should abort, false otherwise
    */
   public async isAlreadyFinished(): Promise<boolean> {
-    const { bucketName, chunkDirectory, region } = this;
-    const result = await this.metadata.read({ bucketName, chunkDirectory, region } satisfies ReadMetadataParams);
-    return result?.partialOrEmptyChunkEncountered === true;
+    return this.hasAnyTaskEncounteredPartial();
   }
 
   /**
@@ -82,27 +93,6 @@ export class MetadataBroker {
   public async isTerminalErrorEncountered(): Promise<boolean> {
     const { bucketName, chunkDirectory, region } = this;
     return this.metadata.terminalErrorExists({ bucketName, chunkDirectory, region });
-  }
-
-  /**
-   * Read the finalOffsetProcessed boundary (if recorded) so callers can tell whether another
-   * task already established the true end of the population before their own result arrived.
-   * Returns undefined if no boundary is recorded yet.
-   */
-  public async getFinalOffsetProcessed(): Promise<number | undefined> {
-    const { bucketName, chunkDirectory, region } = this;
-    const result = await this.metadata.read({ bucketName, chunkDirectory, region } satisfies ReadMetadataParams);
-    return result?.finalOffsetProcessed;
-  }
-
-  /**
-   * Guard checked before each fetch iteration in ChunkFromAPI's batch loop: true if offset is
-   * already past a finalOffsetProcessed boundary established by another parallel task, meaning
-   * any data the API returns for it is untrustworthy and should be discarded as an API glitch.
-   */
-  public async isOffsetPastKnownEnd(offset: number): Promise<boolean> {
-    const finalOffsetProcessed = await this.getFinalOffsetProcessed();
-    return finalOffsetProcessed !== undefined && offset > finalOffsetProcessed;
   }
 
   /**

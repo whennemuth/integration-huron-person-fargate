@@ -80,7 +80,6 @@ export class MetadataForDynamoDb implements IMetadataStorage {
       chunkCount,
       totalRecords,
       chunkKeys,
-      finalOffsetProcessed,
       dryRun = false,
       replace = false
     } = params;
@@ -117,9 +116,6 @@ export class MetadataForDynamoDb implements IMetadataStorage {
     }
     if (chunkKeys !== undefined) {
       metadata.chunkKeys = chunkKeys;
-    }
-    if (finalOffsetProcessed !== undefined) {
-      metadata.finalOffsetProcessed = finalOffsetProcessed;
     }
 
     if (dryRun) {

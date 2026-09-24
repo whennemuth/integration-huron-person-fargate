@@ -55,9 +55,7 @@ export type ChunkMetadata = CoreMetadataFields & {
   chunkCount?: number;
   totalRecords?: number;
   chunkKeys?: string[];
-  /** Offset of the last real page fetched by a task, for debugging/audit only - no longer a functional "boundary" (multiple tasks can each legitimately record their own, unrelated offset). Still read by the not-yet-retired ChunkerQueue chain-stop/isOffsetPastKnownEnd logic; superseded by partialOrEmptyChunkEncountered for completion signaling. */
-  finalOffsetProcessed?: number;
-  /** True once any parallel chunker task has encountered a partial-or-empty (smaller-than-requested, including zero) batch - the source queue only depletes, never refills, so this is a reliable "nothing meaningful left" signal for later/other tasks, regardless of which task set it. The sole completion signal (isAlreadyFinished(), merger-trigger gate, chain-stop) - deliberately not derived from finalOffsetProcessed's presence, since that field's name/semantics still carry the retired "boundary offset" meaning. */
+  /** True once any parallel chunker task has encountered a partial-or-empty (smaller-than-requested, including zero) batch - the source queue only depletes, never refills, so this is a reliable "nothing meaningful left" signal for later/other tasks, regardless of which task set it. The sole completion signal (isAlreadyFinished(), merger-trigger gate, chain-stop). */
   partialOrEmptyChunkEncountered?: boolean;
 };
 
@@ -78,7 +76,6 @@ export type WriteMetadataParams = CoreMetadataFields & {
   chunkCount?: number;
   totalRecords?: number;
   chunkKeys?: string[];
-  finalOffsetProcessed?: number;
 };
 
 /**

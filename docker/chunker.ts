@@ -358,8 +358,8 @@ export async function main() {
       // from messages. Propagation of this FLAG data is not required for subsequent chunker 
       // tasks - it's only needed for the first task. It's done for consistency and 
       // self-describing messages, not functional necessity.
-      const finalOffsetProcessed = await metadataBroker.getFinalOffsetProcessed();
-      await chunker.sendNextChunkingMessage(chunkerQueue, dryRun.toLowerCase() === 'true', finalOffsetProcessed);
+      const partialOrEmptyChunkEncountered = await metadataBroker.hasAnyTaskEncounteredPartial();
+      await chunker.sendNextChunkingMessage(chunkerQueue, dryRun.toLowerCase() === 'true', partialOrEmptyChunkEncountered);
     }
 
     // Check if shared delta storage file exists (S3 or DynamoDB) to determine if we have a baseline 

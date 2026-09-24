@@ -156,33 +156,31 @@ DynamoDB's conditional write ensures:
 
 ### Use Cases
 
-1. **True-end-of-data claims** (e.g. `finalOffsetProcessed` in parallel chunking)
-   - Multiple parallel tasks may each independently detect "reached the end"
-   - Only the first to claim is treated as authoritative; later claims are flagged as suspect
-
-2. **Merger Trigger Guard**
-   - Last processor claims the trigger; others see it already claimed and skip
+1. **Merger Trigger Guard** (current production use: `StatisticsTable.claimMergerTrigger()`,
+   guarding the `MERGER_TRIGGER_CLAIM` record's `claimedAt` attribute)
+   - Multiple processor tasks may each independently observe the completion condition
+   - Only the first to claim triggers the merger; others see it already claimed and skip
    - Prevents duplicate merger execution
 
-3. **Leader Election**
+2. **Leader Election**
    - Multiple processes compete for leadership
    - First to claim becomes leader; others become followers via `onClaimFailure`
 
-4. **One-Time Initialization / Idempotent Operations**
+3. **One-Time Initialization / Idempotent Operations**
    - Ensure expensive setup runs exactly once
    - Guard against retry storms
 
 ### Usage: Any Existing Table, No Dedicated Schema
 
 OCCFlag targets a caller-supplied partition key (and optional sort key) plus attribute name on
-whatever table is passed in - e.g. a run's METADATA record in an existing statistics table, guarding
-its `finalOffsetProcessed` attribute:
+whatever table is passed in - e.g. a run's dedicated `MERGER_TRIGGER_CLAIM` record in the
+statistics table, guarding its `claimedAt` attribute:
 
 ```json
 {
   "integrationTimestamp": "2026-08-28T12:00:00.000Z",
-  "eventType": "METADATA",
-  "finalOffsetProcessed": 690
+  "eventType": "MERGER_TRIGGER_CLAIM",
+  "claimedAt": "2026-08-28T12:34:56.789Z"
 }
 ```
 
@@ -197,16 +195,16 @@ const claim = new OCCFlag({
   partitionKeyName: 'integrationTimestamp',
   partitionKeyValue: syncRunId,
   sortKeyName: 'eventType',
-  sortKeyValue: 'METADATA',
-  attributeName: 'finalOffsetProcessed'
+  sortKeyValue: 'MERGER_TRIGGER_CLAIM',
+  attributeName: 'claimedAt'
 });
 
-await claim.update(offset,
+await claim.update(new Date().toISOString(),
   async () => {
-    console.log('Won the claim - proceed with aggregation');
+    console.log('Won the claim - proceed with triggering the merger');
   },
   async () => {
-    console.log('Lost the claim - another task already established the true end');
+    console.log('Lost the claim - another processor already triggered the merger');
   }
 );
 ```
@@ -217,25 +215,25 @@ await claim.update(offset,
 # Attempt to claim (set) the guarded attribute
 TASK=update TABLE_NAME=my-stack-statistics-preview REGION=us-east-2 \
   PARTITION_KEY_NAME=integrationTimestamp PARTITION_KEY_VALUE=2026-08-28T12:00:00.000Z \
-  SORT_KEY_NAME=eventType SORT_KEY_VALUE=METADATA ATTRIBUTE_NAME=finalOffsetProcessed VALUE=690 \
+  SORT_KEY_NAME=eventType SORT_KEY_VALUE=MERGER_TRIGGER_CLAIM ATTRIBUTE_NAME=claimedAt VALUE=2026-08-28T12:34:56.789Z \
   npx ts-node src/dynamodb/OCCFlag.ts
 
 # Remove the guarded attribute (allows it to be claimed again)
 TASK=unset TABLE_NAME=my-stack-statistics-preview REGION=us-east-2 \
   PARTITION_KEY_NAME=integrationTimestamp PARTITION_KEY_VALUE=2026-08-28T12:00:00.000Z \
-  SORT_KEY_NAME=eventType SORT_KEY_VALUE=METADATA ATTRIBUTE_NAME=finalOffsetProcessed \
+  SORT_KEY_NAME=eventType SORT_KEY_VALUE=MERGER_TRIGGER_CLAIM ATTRIBUTE_NAME=claimedAt \
   npx ts-node src/dynamodb/OCCFlag.ts
 
 # Get current value
 TASK=get-value TABLE_NAME=my-stack-statistics-preview REGION=us-east-2 \
   PARTITION_KEY_NAME=integrationTimestamp PARTITION_KEY_VALUE=2026-08-28T12:00:00.000Z \
-  SORT_KEY_NAME=eventType SORT_KEY_VALUE=METADATA ATTRIBUTE_NAME=finalOffsetProcessed \
+  SORT_KEY_NAME=eventType SORT_KEY_VALUE=MERGER_TRIGGER_CLAIM ATTRIBUTE_NAME=claimedAt \
   npx ts-node src/dynamodb/OCCFlag.ts
 
 # Test race condition with 5 concurrent clients
 TASK=test-race TABLE_NAME=my-stack-statistics-preview REGION=us-east-2 \
   PARTITION_KEY_NAME=integrationTimestamp PARTITION_KEY_VALUE=2026-08-28T12:00:00.000Z \
-  SORT_KEY_NAME=eventType SORT_KEY_VALUE=METADATA ATTRIBUTE_NAME=finalOffsetProcessed \
+  SORT_KEY_NAME=eventType SORT_KEY_VALUE=MERGER_TRIGGER_CLAIM ATTRIBUTE_NAME=claimedAt \
   npx ts-node src/dynamodb/OCCFlag.ts
 ```
 

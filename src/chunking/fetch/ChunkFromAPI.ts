@@ -435,16 +435,17 @@ export class ChunkFromAPI implements IChunkFromSource {
    * This is called BEFORE starting the current chunking task to enable true parallelism.
    * @param chunkerQueue The ChunkerQueue instance used to send the next message
    * @param dryRun If true, will not actually send the message but will log the parameters instead (default: false)
-   * @param finalOffsetProcessed If known, skip sending when the computed next offset would already exceed it
+   * @param partialOrEmptyChunkEncountered If true, some parallel chunker task has already
+   * encountered a partial-or-empty batch, so no legitimate data is expected to remain
    * @returns true if message sent successfully, false if skipped
    */
-  public sendNextChunkingMessage = async (chunkerQueue: ChunkerQueue, dryRun: boolean = false, finalOffsetProcessed?: number): Promise<boolean> => {
+  public sendNextChunkingMessage = async (chunkerQueue: ChunkerQueue, dryRun: boolean = false, partialOrEmptyChunkEncountered?: boolean): Promise<boolean> => {
     const { getIterationLimitAndOffset, getChunkDirectory, taskParameters } = this;
     const { iterationLimit, offset } = getIterationLimitAndOffset();
     const chunkDirectory = getChunkDirectory();
     
     return chunkerQueue.sendNextChunkingMessage({ 
-      iterationLimit, offset, chunkDirectory, taskParameters, dryRun, finalOffsetProcessed 
+      iterationLimit, offset, chunkDirectory, taskParameters, dryRun, partialOrEmptyChunkEncountered 
     });
   }
 
@@ -570,8 +571,10 @@ export class ChunkFromAPI implements IChunkFromSource {
         iterationLimit, // indicates how many chunks to "chunk out" before stopping. Used in the context of chunking "in parallel".
         dryRun: dryRun.toLowerCase() === 'true',
         chunkOrdinalAllocator: this.chunkOrdinalAllocator,
-        retryStrategy: getRetryStrategy(process.env.RETRY_STRATEGY),
-        isOffsetPastKnownEnd: (offset: number) => metadataBroker.isOffsetPastKnownEnd(offset)
+        retryStrategy: getRetryStrategy(process.env.RETRY_STRATEGY)
+        // isOffsetPastKnownEnd intentionally omitted: each task's own fetch loop has a sufficient,
+        // purely local stopping condition (its own partial/empty batch or exhausted iterationLimit) -
+        // a cross-task signal here would risk discarding another task's still-legitimate data.
       };
 
       // Run fetch and chunk operation
