@@ -322,13 +322,11 @@ export async function main() {
       return;
     }
 
-    // Completion short-circuit: once metadata exists for this chunk directory, this task is obsolete
-    // UNLESS its own offset window is still below the recorded finalOffsetProcessed boundary (see
-    // MetadataBroker.isAlreadyFinished doc comment). In the simulator's stateful depletion model,
-    // allocation occurs at execution time from a shared supply, so remaining late-arriving tasks are
-    // expected to return empty payloads and can be skipped.
-    const currentOffset = chunker instanceof ChunkFromAPI ? chunker.getIterationLimitAndOffset().offset : undefined;
-    const alreadyFinished = await metadataBroker.isAlreadyFinished(currentOffset);
+    // Completion short-circuit: once any parallel task has encountered a partial batch, the
+    // source queue can only be as drained or more drained by now, so a late-arriving task (based
+    // on an SQS message created before that happened) can be safely abandoned - see
+    // MetadataBroker.isAlreadyFinished doc comment.
+    const alreadyFinished = await metadataBroker.isAlreadyFinished();
     if (alreadyFinished) {
       let messageDetails = '';
       if (chunker instanceof ChunkFromAPI) {

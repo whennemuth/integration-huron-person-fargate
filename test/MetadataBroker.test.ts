@@ -21,25 +21,14 @@ describe('MetadataBroker.isAlreadyFinished', () => {
     expect(await new MetadataBroker(params).isAlreadyFinished()).toBe(false);
   });
 
-  it('returns true (legacy blanket abort) when metadata exists without finalOffsetProcessed', async () => {
+  it('returns false when metadata exists but partialOrEmptyChunkEncountered is not set', async () => {
     mockRead({ chunkCount: 5 });
-    expect(await new MetadataBroker(params).isAlreadyFinished(100)).toBe(true);
+    expect(await new MetadataBroker(params).isAlreadyFinished()).toBe(false);
   });
 
-  it('returns true (legacy blanket abort) when metadata exists but currentOffset is not supplied', async () => {
-    mockRead({ chunkCount: 5, finalOffsetProcessed: 543 });
+  it('returns true once partialOrEmptyChunkEncountered is true, regardless of any other fields', async () => {
+    mockRead({ chunkCount: 5, partialOrEmptyChunkEncountered: true });
     expect(await new MetadataBroker(params).isAlreadyFinished()).toBe(true);
-  });
-
-  it('returns false (proceed) when currentOffset is at or below finalOffsetProcessed', async () => {
-    mockRead({ finalOffsetProcessed: 543 });
-    expect(await new MetadataBroker(params).isAlreadyFinished(430)).toBe(false);
-    expect(await new MetadataBroker(params).isAlreadyFinished(543)).toBe(false);
-  });
-
-  it('returns true (abort) when currentOffset is strictly beyond finalOffsetProcessed', async () => {
-    mockRead({ finalOffsetProcessed: 543 });
-    expect(await new MetadataBroker(params).isAlreadyFinished(544)).toBe(true);
   });
 });
 
