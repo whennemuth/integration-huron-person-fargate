@@ -1,4 +1,6 @@
 import { TestEnvironment } from 'integration-core';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, UpdateCommand, UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
 import { IContext } from '../../context/IContext';
 import { StatisticsItem } from '../ApiErrorTracking';
 import { AbstractDynamoDbTable, DynamoDBTable } from './DynamoDBTable';
@@ -251,6 +253,102 @@ export class StatisticsTable {
       [DYNAMODB_SORT_KEY]: 'METADATA',
       ...merged
     });
+  }
+
+  /**
+   * Atomically add this task's own chunkCount/totalRecords contribution to the run's METADATA
+   * record - every parallel chunker task calls this once (partial or full-iterationLimit),
+   * replacing the old single-writer S3 rescan. One-time descriptive fields (source, chunkDirectory,
+   * etc.) are set via if_not_exists() so whichever task arrives first populates them, and every
+   * later call's SET is a harmless no-op re-assertion of the same value - combined, in the same
+   * UpdateItem call, with an ADD that atomically accumulates the numeric totals and returns the
+   * new running values (mirroring AbstractAtomicCounter.increment()'s pattern).
+   *
+   * @returns the new, post-add chunkCount/totalRecords - not necessarily the run's true final
+   * total (other tasks may still be contributing), just this call's up-to-date view.
+   */
+  public async addToMetadataTotals(syncRunId: string, params: {
+    source: string;
+    target?: string;
+    chunkDirectory: string;
+    itemsPerChunk: number;
+    bulkReset: boolean;
+    trustPreviousStorage: boolean;
+    syncPopulation: string;
+    deltaStoragePath: string;
+    chunkCountDelta: number;
+    totalRecordsDelta: number;
+    /** SET only when true - a full/non-partial task's call omits this, never explicitly clearing it back to false. */
+    partialOrEmptyChunkEncountered?: boolean;
+  }): Promise<{ chunkCount: number; totalRecords: number }> {
+    const {
+      source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage,
+      syncPopulation, deltaStoragePath, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
+    } = params;
+    const { tableName, region } = this;
+
+    const setClauses = [
+      '#source = if_not_exists(#source, :source)',
+      '#chunkDirectory = if_not_exists(#chunkDirectory, :chunkDirectory)',
+      '#itemsPerChunk = if_not_exists(#itemsPerChunk, :itemsPerChunk)',
+      '#bulkReset = if_not_exists(#bulkReset, :bulkReset)',
+      '#trustPreviousStorage = if_not_exists(#trustPreviousStorage, :trustPreviousStorage)',
+      '#syncPopulation = if_not_exists(#syncPopulation, :syncPopulation)',
+      '#deltaStoragePath = if_not_exists(#deltaStoragePath, :deltaStoragePath)',
+      '#createdAt = if_not_exists(#createdAt, :createdAt)'
+    ];
+    const names: Record<string, string> = {
+      '#source': 'source',
+      '#chunkDirectory': 'chunkDirectory',
+      '#itemsPerChunk': 'itemsPerChunk',
+      '#bulkReset': 'bulkReset',
+      '#trustPreviousStorage': 'trustPreviousStorage',
+      '#syncPopulation': 'syncPopulation',
+      '#deltaStoragePath': 'deltaStoragePath',
+      '#createdAt': 'createdAt',
+      '#chunkCount': 'chunkCount',
+      '#totalRecords': 'totalRecords'
+    };
+    const values: Record<string, any> = {
+      ':source': source,
+      ':chunkDirectory': chunkDirectory,
+      ':itemsPerChunk': itemsPerChunk,
+      ':bulkReset': bulkReset,
+      ':trustPreviousStorage': trustPreviousStorage,
+      ':syncPopulation': syncPopulation,
+      ':deltaStoragePath': deltaStoragePath,
+      ':createdAt': new Date().toISOString(),
+      ':chunkCountDelta': chunkCountDelta,
+      ':totalRecordsDelta': totalRecordsDelta
+    };
+
+    if (target !== undefined) {
+      setClauses.push('#target = if_not_exists(#target, :target)');
+      names['#target'] = 'target';
+      values[':target'] = target;
+    }
+
+    if (partialOrEmptyChunkEncountered) {
+      setClauses.push('#partialOrEmptyChunkEncountered = :true');
+      names['#partialOrEmptyChunkEncountered'] = 'partialOrEmptyChunkEncountered';
+      values[':true'] = true;
+    }
+
+    const client = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
+    const input = {
+      TableName: tableName,
+      Key: { [DYNAMODB_PARTITION_KEY]: syncRunId, [DYNAMODB_SORT_KEY]: 'METADATA' },
+      UpdateExpression: `SET ${setClauses.join(', ')} ADD #chunkCount :chunkCountDelta, #totalRecords :totalRecordsDelta`,
+      ExpressionAttributeNames: names,
+      ExpressionAttributeValues: values,
+      ReturnValues: 'UPDATED_NEW'
+    } satisfies UpdateCommandInput;
+
+    const result = await client.send(new UpdateCommand(input));
+    return {
+      chunkCount: result.Attributes?.chunkCount ?? 0,
+      totalRecords: result.Attributes?.totalRecords ?? 0
+    };
   }
 
   /**

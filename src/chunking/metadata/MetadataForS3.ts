@@ -5,6 +5,7 @@ import { StatisticsTable } from '../../dynamodb/StatisticsTable';
 import { objectExistsInS3 } from '../../Utils';
 import {
   IMetadataStorage,
+  AccumulateMetadataTotalsParams,
   ChunkMetadata,
   ClaimProcessorBoostParams,
   Flags,
@@ -471,5 +472,28 @@ export class MetadataForS3 implements IMetadataStorage {
     const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
     const statisticsTable = StatisticsTable.fromTableName(this.statisticsTableName, region);
     await statisticsTable.releaseProcessorBoostClaim(syncRunId);
+  }
+
+  /**
+   * Atomically add this task's own chunkCount/totalRecords contribution to the run's METADATA
+   * record. Delegates to the shared DynamoDB statistics table (see the statisticsTableName
+   * field's doc comment) even in S3 mode, since that's the only channel offering an atomic
+   * accumulate-and-return operation.
+   */
+  public async accumulateMetadataTotals(params: AccumulateMetadataTotalsParams): Promise<{ chunkCount: number; totalRecords: number }> {
+    const {
+      chunkDirectory, region, source, target, itemsPerChunk, bulkReset, trustPreviousStorage,
+      syncPopulation, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
+    } = params;
+    if (!this.statisticsTableName) {
+      throw new Error('statisticsTableName is required for metadata totals accumulation');
+    }
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
+    const deltaStoragePath = this.metadataUtils.deriveDeltaStoragePath(chunkDirectory);
+    const statisticsTable = StatisticsTable.fromTableName(this.statisticsTableName, region);
+    return statisticsTable.addToMetadataTotals(syncRunId, {
+      source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage,
+      syncPopulation, deltaStoragePath, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
+    });
   }
 }

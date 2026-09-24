@@ -2,6 +2,7 @@ import { Config } from 'integration-huron-person';
 import { StatisticsTable } from '../../dynamodb/StatisticsTable';
 import {
   IMetadataStorage,
+  AccumulateMetadataTotalsParams,
   ChunkMetadata,
   ClaimProcessorBoostParams,
   Flags,
@@ -379,5 +380,21 @@ export class MetadataForDynamoDb implements IMetadataStorage {
     const { chunkDirectory } = params;
     const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
     await this.statisticsTable.releaseProcessorBoostClaim(syncRunId);
+  }
+
+  /**
+   * Atomically add this task's own chunkCount/totalRecords contribution to the run's METADATA record.
+   */
+  public async accumulateMetadataTotals(params: AccumulateMetadataTotalsParams): Promise<{ chunkCount: number; totalRecords: number }> {
+    const {
+      chunkDirectory, source, target, itemsPerChunk, bulkReset, trustPreviousStorage,
+      syncPopulation, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
+    } = params;
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
+    const deltaStoragePath = this.metadataUtils.deriveDeltaStoragePath(chunkDirectory);
+    return this.statisticsTable.addToMetadataTotals(syncRunId, {
+      source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage,
+      syncPopulation, deltaStoragePath, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
+    });
   }
 }

@@ -344,4 +344,72 @@ describe('StatisticsTable', () => {
       });
     });
   });
+
+  describe('addToMetadataTotals', () => {
+    const baseParams = {
+      source: 'https://api.example.com/people',
+      chunkDirectory: 'chunks/person-full/2026-05-14T12:00:00.000Z',
+      itemsPerChunk: 200,
+      bulkReset: false,
+      trustPreviousStorage: true,
+      syncPopulation: 'person-full',
+      deltaStoragePath: 'deltas/person-full/2026-05-14T12:00:00.000Z',
+      chunkCountDelta: 3,
+      totalRecordsDelta: 600
+    };
+
+    it('sends an UpdateCommand with SET if_not_exists + ADD and returns the new totals', async () => {
+      dynamoMock.on(UpdateCommand).resolves({ Attributes: { chunkCount: 9, totalRecords: 1800 } });
+
+      const result = await statisticsTable.addToMetadataTotals(integrationTimestamp, baseParams);
+
+      expect(result).toEqual({ chunkCount: 9, totalRecords: 1800 });
+      expect(dynamoMock.commandCalls(UpdateCommand)).toHaveLength(1);
+      const call = dynamoMock.commandCalls(UpdateCommand)[0];
+      expect(call.args[0].input.Key).toEqual({ integrationTimestamp, eventType: 'METADATA' });
+      expect(call.args[0].input.UpdateExpression).toContain('if_not_exists(#source, :source)');
+      expect(call.args[0].input.UpdateExpression).toContain('ADD #chunkCount :chunkCountDelta, #totalRecords :totalRecordsDelta');
+      expect(call.args[0].input.ExpressionAttributeValues).toMatchObject({
+        ':chunkCountDelta': 3,
+        ':totalRecordsDelta': 600
+      });
+    });
+
+    it('includes target in the SET clause only when provided', async () => {
+      dynamoMock.on(UpdateCommand).resolves({ Attributes: { chunkCount: 3, totalRecords: 600 } });
+
+      await statisticsTable.addToMetadataTotals(integrationTimestamp, { ...baseParams, target: 'https://target.example.com/persons' });
+
+      const call = dynamoMock.commandCalls(UpdateCommand)[0];
+      expect(call.args[0].input.UpdateExpression).toContain('if_not_exists(#target, :target)');
+      expect(call.args[0].input.ExpressionAttributeValues).toMatchObject({ ':target': 'https://target.example.com/persons' });
+    });
+
+    it('omits the partialOrEmptyChunkEncountered SET clause when not provided', async () => {
+      dynamoMock.on(UpdateCommand).resolves({ Attributes: { chunkCount: 3, totalRecords: 600 } });
+
+      await statisticsTable.addToMetadataTotals(integrationTimestamp, baseParams);
+
+      const call = dynamoMock.commandCalls(UpdateCommand)[0];
+      expect(call.args[0].input.UpdateExpression).not.toContain('partialOrEmptyChunkEncountered');
+    });
+
+    it('includes the partialOrEmptyChunkEncountered SET clause only when true', async () => {
+      dynamoMock.on(UpdateCommand).resolves({ Attributes: { chunkCount: 3, totalRecords: 600 } });
+
+      await statisticsTable.addToMetadataTotals(integrationTimestamp, { ...baseParams, partialOrEmptyChunkEncountered: true });
+
+      const call = dynamoMock.commandCalls(UpdateCommand)[0];
+      expect(call.args[0].input.UpdateExpression).toContain('#partialOrEmptyChunkEncountered = :true');
+      expect(call.args[0].input.ExpressionAttributeValues).toMatchObject({ ':true': true });
+    });
+
+    it('defaults to zero totals if Attributes is missing from the response', async () => {
+      dynamoMock.on(UpdateCommand).resolves({});
+
+      const result = await statisticsTable.addToMetadataTotals(integrationTimestamp, baseParams);
+
+      expect(result).toEqual({ chunkCount: 0, totalRecords: 0 });
+    });
+  });
 });

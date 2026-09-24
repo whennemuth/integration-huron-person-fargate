@@ -1,4 +1,5 @@
 import { Config } from 'integration-huron-person';
+import { SyncPopulation } from '../../../docker/chunkTypes';
 import { IMetadataStorage, MarkRunFailedParams, ReadMetadataParams, WriteFlagsParams, WriteMetadataParams } from './IMetadataStorage';
 import { MetadataFactory } from './MetadataFactory';
 
@@ -120,5 +121,24 @@ export class MetadataBroker {
   public async releaseProcessorBoostClaim(): Promise<void> {
     const { bucketName, chunkDirectory, region } = this;
     await this.metadata.releaseProcessorBoostClaim({ bucketName, chunkDirectory, region });
+  }
+
+  /**
+   * Atomically add this task's own chunkCount/totalRecords contribution to the run's METADATA
+   * record - every parallel chunker task calls this once (partial or full-iterationLimit).
+   */
+  public async accumulateMetadataTotals(params: {
+    source: string;
+    target?: string;
+    itemsPerChunk: number;
+    bulkReset: boolean;
+    trustPreviousStorage: boolean;
+    syncPopulation: SyncPopulation;
+    chunkCountDelta: number;
+    totalRecordsDelta: number;
+    partialOrEmptyChunkEncountered?: boolean;
+  }): Promise<{ chunkCount: number; totalRecords: number }> {
+    const { bucketName, chunkDirectory, region } = this;
+    return this.metadata.accumulateMetadataTotals({ bucketName, chunkDirectory, region, ...params });
   }
 }

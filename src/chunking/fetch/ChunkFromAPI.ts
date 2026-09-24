@@ -7,7 +7,7 @@ import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { getRetryStrategy } from '../../ApiErrorRetryStrategy';
 import { ChunkerQueue } from '../ChunkerQueue';
-import { MetadataBroker, WriteMetadataParams, ChunkFileManager } from "../metadata";
+import { MetadataBroker, WriteMetadataParams } from "../metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig, ChunkOrdinalAllocator } from "./BigJsonFetch";
@@ -53,18 +53,6 @@ export function findMissingChunkOrdinals(chunkKeys: string[]): number[] {
     }
   }
   return missing;
-}
-
-/**
- * Given this task's own final offset used and whatever finalOffsetProcessed is already recorded
- * in metadata (if any), determine whether this task lost the race to establish the true end -
- * i.e. another task already recorded an earlier boundary before this task's own result arrived.
- */
-export function hasLostRaceForTrueEnd(ownFinalOffsetUsed: number | undefined, existingFinalOffsetProcessed: number | undefined): boolean {
-  if (ownFinalOffsetUsed === undefined || existingFinalOffsetProcessed === undefined) {
-    return false;
-  }
-  return existingFinalOffsetProcessed < ownFinalOffsetUsed;
 }
 
 /**
@@ -650,88 +638,30 @@ export class ChunkFromAPI implements IChunkFromSource {
         throw new Error(`Terminal chunking failure (retry exhausted): ${runFailureMessage}`);
       }
 
-      if(result.partialChunkEncountered) {
-        // Another task may have already established an earlier true end (finalOffsetProcessed).
-        // If so, this task's own small/empty response lost that race - it is not newsworthy and
-        // must not be treated as if it discovered the run's completion.
-        if (result.finalOffsetProcessed !== undefined) {
-          const existingFinalOffsetProcessed = await metadataBroker.getFinalOffsetProcessed();
-          if (hasLostRaceForTrueEnd(result.finalOffsetProcessed, existingFinalOffsetProcessed)) {
-            console.log(`\nℹ️  Lost race for true end - offset ${existingFinalOffsetProcessed} already established by another task (this task's own final offset used was ${result.finalOffsetProcessed}). Skipping aggregation/metadata write.`);
-            return;          
-          } else {
-            // This task is the race winner (or no race existed) - final safety-net check in case
-            // the periodic check above never caught the backlog crossing its threshold.
-            await ProcessorServiceBooster.boostIfNeeded(metadataBroker, { claimedByChunk: String(offset) });          }
-        }
+      // Every task contributes its own totals - partial or full-iterationLimit - since there is
+      // no longer a single "final" task whose S3 rescan would otherwise catch everyone else's
+      // chunks. The running total returned here reflects only what's been contributed so far,
+      // not necessarily the run's true final total (other tasks may still be contributing).
+      const { chunkCount: runningChunkCount, totalRecords: runningTotalRecords } = await metadataBroker.accumulateMetadataTotals({
+        source: sourceUrl,
+        target: targetUrl,
+        itemsPerChunk,
+        bulkReset,
+        trustPreviousStorage,
+        syncPopulation: this.taskParameters.populationType as SyncPopulation,
+        chunkCountDelta: result.chunkCount,
+        totalRecordsDelta: result.totalRecords,
+        partialOrEmptyChunkEncountered: result.partialChunkEncountered
+      });
 
-        // Build aggregated metadata from run-level state
-        // This ensures metadata reflects ALL chunks across all parallel tasks, not just this task's local slice
-        let aggregatedChunkCount = result.chunkCount;
-        let aggregatedTotalRecords = result.totalRecords;
-        let aggregatedChunkKeys = result.chunkKeys;
+      console.log('\n✓ Chunking completed successfully');
+      console.log(`This task: ${result.chunkCount} chunks, ${result.totalRecords} records`);
+      console.log(`Running total for this run so far: ${runningChunkCount} chunks, ${runningTotalRecords} records`);
 
-        try {
-          const chunkManager = new ChunkFileManager();
-          const { chunkCount, totalRecords, chunkKeys } = await chunkManager.buildAggregatedMetadata(
-            chunksBucket,
-            chunkDirectory,
-            region
-          );
-          aggregatedChunkCount = chunkCount;
-          aggregatedTotalRecords = totalRecords;
-          aggregatedChunkKeys = chunkKeys;
-
-          // Log comparison: show local result vs aggregated state
-          if (result.chunkCount !== aggregatedChunkCount || result.totalRecords !== aggregatedTotalRecords) {
-            console.log(`📊 Parallel chunking detected:`);
-            console.log(`   Local result: chunkCount=${result.chunkCount}, totalRecords=${result.totalRecords}, chunkKeys=${result.chunkKeys.length}`);
-            console.log(`   Aggregated: chunkCount=${aggregatedChunkCount}, totalRecords=${aggregatedTotalRecords}, chunkKeys=${aggregatedChunkKeys.length}`);
-          }
-        } catch (aggError: any) {
-          console.error(`⚠️  Failed to build aggregated metadata: ${aggError.message}`);
-          console.log(`Falling back to local result stats: chunkCount=${result.chunkCount}, totalRecords=${result.totalRecords}`);
-          // Continue with local stats if aggregation fails; don't fail the entire chunking job
-        }
-
-        // Log aggregate statistics (informational only)
-        // NOTE: These values are not persisted to metadata. Merger completion is determined 
-        // by contiguous marker ordinals (0..N), not by metadata.chunkCount.
-        console.log('\n✓ Chunking completed successfully');
-        console.log(`Created ${aggregatedChunkCount} chunks with ${aggregatedTotalRecords} person records`);
-        if (aggregatedChunkKeys && aggregatedChunkKeys.length > 0) {
-          const missingOrdinals = findMissingChunkOrdinals(aggregatedChunkKeys);
-          if (missingOrdinals.length === 0) {
-            console.log(`\nNo missing chunk files detected (contiguous 0..${aggregatedChunkKeys.length - 1}).`);
-          } else {
-            console.log(`\n⚠️  Missing chunk ordinal(s): ${missingOrdinals.join(', ')}`);
-          }
-        }
-
-        // Write metadata manifest (source, target, paths, timestamps, flags, aggregate data)
-        // Merger will verify completion via contiguous marker ordinals AND matching chunkCount
-        await metadataBroker.write({
-          storage: chunksStorage,
-          bucketName: chunksBucket,
-          chunkDirectory,
-          itemsPerChunk,
-          source: sourceUrl,
-          target: targetUrl,
-          dryRun: fetchConfig.dryRun || false,
-          bulkReset,
-          trustPreviousStorage,
-          syncPopulation: this.taskParameters.populationType as SyncPopulation,
-          chunkCount: aggregatedChunkCount,
-          totalRecords: aggregatedTotalRecords,
-          chunkKeys: aggregatedChunkKeys,
-          finalOffsetProcessed: result.finalOffsetProcessed,
-          region
-        } satisfies WriteMetadataParams);
-
-        console.log(`\n✓ Chunking complete with aggregated metadata:`);
-        console.log(`   Total chunks: ${aggregatedChunkCount}`);
-        console.log(`   Total records: ${aggregatedTotalRecords}`);
-        console.log(`\n📝 Note: Merger will verify completion via contiguous marker ordinals (0..${aggregatedChunkCount - 1}) AND chunkCount=${aggregatedChunkCount}`);
+      if (result.partialChunkEncountered) {
+        // Final safety-net check in case the periodic check above never caught the backlog
+        // crossing its threshold - only relevant once at least one task has seen a partial.
+        await ProcessorServiceBooster.boostIfNeeded(metadataBroker, { claimedByChunk: String(offset) });
       }
       
     } catch (e: any) {

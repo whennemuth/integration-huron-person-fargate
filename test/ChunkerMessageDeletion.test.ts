@@ -130,8 +130,7 @@ describe('Chunker Main - Message Deletion', () => {
       readFlags: jest.fn().mockResolvedValue({}),
       markRunFailed: jest.fn().mockResolvedValue(undefined),
       readTerminalError: jest.fn().mockResolvedValue(null),
-      terminalErrorExists: jest.fn().mockResolvedValue(false),
-      buildAggregatedMetadata: jest.fn().mockResolvedValue({ chunkCount: 0, totalRecords: 0, chunkKeys: [] })
+      terminalErrorExists: jest.fn().mockResolvedValue(false)
     };
     jest.spyOn(MetadataFactory, 'create').mockReturnValue(mockMetadataManager);
 

@@ -153,6 +153,28 @@ export interface ClaimProcessorBoostParams {
   claimedByChunk?: string;
 }
 
+/**
+ * Parameters for atomically adding this task's own chunkCount/totalRecords contribution to the
+ * run's METADATA record. Every parallel chunker task calls this once (partial or full), replacing
+ * the old single-writer S3 rescan - see StatisticsTable.addToMetadataTotals for the DynamoDB
+ * implementation details.
+ */
+export interface AccumulateMetadataTotalsParams {
+  bucketName?: string;
+  chunkDirectory: string;
+  region?: string;
+  source: string;
+  target?: string;
+  itemsPerChunk: number;
+  bulkReset: boolean;
+  trustPreviousStorage: boolean;
+  syncPopulation: SyncPopulation;
+  chunkCountDelta: number;
+  totalRecordsDelta: number;
+  /** SET only when true (never explicitly cleared back to false) - see partialOrEmptyChunkEncountered on ChunkMetadata. */
+  partialOrEmptyChunkEncountered?: boolean;
+}
+
 
 /**
  * IMetadataStorage - Core metadata storage operations interface
@@ -263,4 +285,10 @@ export interface IMetadataStorage {
    * allowing another task to win it later.
    */
   releaseProcessorBoostClaim(params: ClaimProcessorBoostParams): Promise<void>;
+
+  /**
+   * Atomically add this task's own chunkCount/totalRecords contribution to the run's METADATA
+   * record, creating it (with one-time descriptive fields) on first contribution.
+   */
+  accumulateMetadataTotals(params: AccumulateMetadataTotalsParams): Promise<{ chunkCount: number; totalRecords: number }>;
 }

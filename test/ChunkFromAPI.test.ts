@@ -11,7 +11,7 @@
 
 import { Message } from '@aws-sdk/client-sqs';
 import { Config, DataSourceConfig } from 'integration-huron-person';
-import { ChunkFromAPI, findMissingChunkOrdinals, hasLostRaceForTrueEnd } from '../src/chunking/fetch/ChunkFromAPI';
+import { ChunkFromAPI, findMissingChunkOrdinals } from '../src/chunking/fetch/ChunkFromAPI';
 import { SyncPopulation } from '../docker/chunkTypes';
 
 // Mock dependencies
@@ -536,24 +536,5 @@ describe('findMissingChunkOrdinals', () => {
   it('ignores keys that do not match the chunk-NNNN.ndjson pattern', () => {
     const keys = ['dir/chunk-0000.ndjson', 'dir/_metadata.json', 'dir/chunk-0001.ndjson'];
     expect(findMissingChunkOrdinals(keys)).toEqual([]);
-  });
-});
-
-describe('hasLostRaceForTrueEnd', () => {
-  it('returns false when no prior finalOffsetProcessed is recorded', () => {
-    expect(hasLostRaceForTrueEnd(848, undefined)).toBe(false);
-  });
-
-  it('returns false when this task\'s own finalOffsetProcessed is unknown', () => {
-    expect(hasLostRaceForTrueEnd(undefined, 808)).toBe(false);
-  });
-
-  it('returns true when another task already recorded an earlier true end', () => {
-    expect(hasLostRaceForTrueEnd(848, 808)).toBe(true);
-  });
-
-  it('returns false when this task\'s own offset is the earliest (or ties)', () => {
-    expect(hasLostRaceForTrueEnd(808, 808)).toBe(false);
-    expect(hasLostRaceForTrueEnd(808, 848)).toBe(false);
   });
 });
