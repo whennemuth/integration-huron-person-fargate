@@ -51,7 +51,7 @@ sequenceDiagram
     
     C1->>S: 3. write() METADATA<br/>(after chunking completes)
     Note over S: METADATA includes:<br/>itemsPerChunk, source,<br/>target, timestamps
-    
+
     M->>S: readFlags(chunkDirectory)
     S-->>M: Returns FLAGS
     M->>S: read(chunkDirectory)
@@ -70,6 +70,14 @@ sequenceDiagram
     
     Note over P: Processors DON'T check<br/>terminal error markers.<br/>Continue processing<br/>existing chunks.
 ```
+
+> **Note (API-based chunking only):** step 3 above (`write()` called once, after chunking
+> completes) reflects `ChunkFromS3.ts`'s flow, which has no parallel-task completion problem to
+> begin with (a single deterministic source file). `ChunkFromAPI.ts` (multiple parallel,
+> offset-based tasks pulling from a shared, depleting source queue) instead has **every** task
+> call `accumulateMetadataTotals()` once it finishes - see that method below - atomically adding
+> its own `chunkCount`/`totalRecords` to the same METADATA record via a DynamoDB `ADD`, rather than
+> one task performing a single terminal `write()`.
 
 **Key Observations:**
 
@@ -182,8 +190,11 @@ AbstractMetadata (abstract base)
 - `readFromChunkKey(bucketName: string, chunkS3Key: string, region?: string): Promise<ChunkMetadata>` - Read metadata from chunk S3 key
 - `listChunkFiles(bucketName: string, chunkDirectory: string, region?: string): Promise<string[]>` - List all chunk files in directory
 - `computeTotalRecords(bucketName: string, chunkKeys: string[], region?: string): Promise<number>` - Count total records across chunks
-- `buildAggregatedMetadata(bucketName: string, chunkDirectory: string, region?: string): Promise<{chunkCount, totalRecords, chunkKeys}>` - Build aggregated metadata from chunks
+- `buildAggregatedMetadata(bucketName: string, chunkDirectory: string, region?: string): Promise<{chunkCount, totalRecords, chunkKeys}>` - Build aggregated metadata from chunks (standalone diagnostic utility only as of the API-based accumulation change below - no longer called from `ChunkFromAPI.ts`'s normal completion path)
 - `validateMetadata(metadata: ChunkMetadata): boolean` - Validate metadata structure
+
+**Newer addition (not part of the original 14 above)**:
+- `accumulateMetadataTotals(params: AccumulateMetadataTotalsParams): Promise<{chunkCount, totalRecords}>` - Atomically add one task's own `chunkCount`/`totalRecords` contribution to the run's METADATA record (DynamoDB `SET if_not_exists(...)` + `ADD`, single `UpdateItem` call). Used by `ChunkFromAPI.ts`: every parallel, offset-based task calls this once when it finishes, replacing the single-writer `write()` + `buildAggregatedMetadata()` rescan that only worked when one task's partial batch could be trusted as "the" true end of the population - which the source API's actual queue-depletion behavior doesn't guarantee. `ChunkFromS3.ts` is unaffected (still uses `write()`, see note on the sequence diagram above).
 
 ## MetadataForS3 (File-Based Implementation)
 
