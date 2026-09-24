@@ -375,49 +375,6 @@ export class StatisticsTable {
   }
 
   /**
-   * Attempt to claim the finalOffsetProcessed boundary for this sync run - the first parallel
-   * chunker task to detect "reached the end of records" wins the right to be the one true end.
-   * Uses OCCFlag against the SAME METADATA record read/written elsewhere (readMetadata/writeMetadata),
-   * guarding only the finalOffsetProcessed attribute - so a win here is immediately visible to any
-   * other in-flight task's read (no need to wait for the full aggregated write, which follows much
-   * later). No staleness/TTL recovery here (unlike claimProcessorBoost): once a boundary is
-   * legitimately won, it must never be reclaimed by a different offset for the life of the run.
-   *
-   * @param claimedByChunk Identifies which parallel chunker task/offset won the claim, so its log
-   * stream can be found later
-   * @returns true if this call won the claim, false if another task already established the boundary
-   */
-  public async claimFinalOffsetProcessed(syncRunId: string, finalOffsetProcessed: number, claimedByChunk?: string): Promise<boolean> {
-    const { tableName, region } = this;
-    const claimFlag = new OCCFlag({
-      tableName, region,
-      partitionKeyName: DYNAMODB_PARTITION_KEY, partitionKeyValue: syncRunId,
-      sortKeyName: DYNAMODB_SORT_KEY, sortKeyValue: 'METADATA',
-      attributeName: 'finalOffsetProcessed'
-    });
-
-    let won = false;
-    await claimFlag.update(finalOffsetProcessed,
-      async () => { won = true; },
-      async () => { won = false; }
-    );
-
-    if (won && claimedByChunk !== undefined) {
-      // A second, independently-guarded attribute on the same item - SET-only, so it can never
-      // clobber whatever else may already be on the METADATA record (unlike a putItem replace).
-      const claimedByFlag = new OCCFlag({
-        tableName, region,
-        partitionKeyName: DYNAMODB_PARTITION_KEY, partitionKeyValue: syncRunId,
-        sortKeyName: DYNAMODB_SORT_KEY, sortKeyValue: 'METADATA',
-        attributeName: 'finalOffsetProcessedClaimedByChunk'
-      });
-      await claimedByFlag.update(claimedByChunk, async () => {}, async () => {});
-    }
-
-    return won;
-  }
-
-  /**
    * Get count of failed chunks for a sync run.
    * Counts CHUNK_STATUS records with status === 'FAILED'.
    * 

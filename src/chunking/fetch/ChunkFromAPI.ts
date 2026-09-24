@@ -56,6 +56,18 @@ export function findMissingChunkOrdinals(chunkKeys: string[]): number[] {
 }
 
 /**
+ * Given this task's own final offset used and whatever finalOffsetProcessed is already recorded
+ * in metadata (if any), determine whether this task lost the race to establish the true end -
+ * i.e. another task already recorded an earlier boundary before this task's own result arrived.
+ */
+export function hasLostRaceForTrueEnd(ownFinalOffsetUsed: number | undefined, existingFinalOffsetProcessed: number | undefined): boolean {
+  if (ownFinalOffsetUsed === undefined || existingFinalOffsetProcessed === undefined) {
+    return false;
+  }
+  return existingFinalOffsetProcessed < ownFinalOffsetUsed;
+}
+
+/**
  * Chunker Entry Point (Phase 1)
  * 
  * This module runs in a Fargate task caused by SQS messages created by ChunkerSubscriber Lambda.
@@ -639,25 +651,18 @@ export class ChunkFromAPI implements IChunkFromSource {
       }
 
       if(result.reachedTheEndOfRecords) {
-        // Multiple parallel tasks can each independently and legitimately detect "reached the
-        // end". Only the first to claim finalOffsetProcessed is the true end - claim atomically
-        // (OCCFlag, first-writer-wins) BEFORE the expensive aggregation scan below, so a losing
-        // task fails fast instead of wasting ~80s. A losing task's own trailing batch is a
-        // stale/duplicate API response (not a competing valid answer) and must not be trusted.
+        // Another task may have already established an earlier true end (finalOffsetProcessed).
+        // If so, this task's own small/empty response lost that race - it is not newsworthy and
+        // must not be treated as if it discovered the run's completion.
         if (result.finalOffsetProcessed !== undefined) {
-          const won = await metadataBroker.claimFinalOffsetProcessed(result.finalOffsetProcessed, String(offset));
-          if (!won) {
-            console.log(`\nℹ️  Lost race for true end - another task already established finalOffsetProcessed first (this task's own final offset used was ${result.finalOffsetProcessed}). Discarding this task's spurious chunk file and skipping aggregation/metadata write.`);
-            const spuriousChunkKey = result.chunkKeys[result.chunkKeys.length - 1];
-            if (spuriousChunkKey) {
-              await chunksStorage.deleteFile(spuriousChunkKey);
-              console.log(`  🗑️  Deleted spurious chunk file: ${spuriousChunkKey}`);
-            }
-            return;
-          }
-          // This task won the race to establish the true end - final safety-net check in case
-          // the periodic check above never caught the backlog crossing its threshold.
-          await ProcessorServiceBooster.boostIfNeeded(metadataBroker, { claimedByChunk: String(offset) });
+          const existingFinalOffsetProcessed = await metadataBroker.getFinalOffsetProcessed();
+          if (hasLostRaceForTrueEnd(result.finalOffsetProcessed, existingFinalOffsetProcessed)) {
+            console.log(`\nℹ️  Lost race for true end - offset ${existingFinalOffsetProcessed} already established by another task (this task's own final offset used was ${result.finalOffsetProcessed}). Skipping aggregation/metadata write.`);
+            return;          
+          } else {
+            // This task is the race winner (or no race existed) - final safety-net check in case
+            // the periodic check above never caught the backlog crossing its threshold.
+            await ProcessorServiceBooster.boostIfNeeded(metadataBroker, { claimedByChunk: String(offset) });          }
         }
 
         // Build aggregated metadata from run-level state
@@ -705,8 +710,6 @@ export class ChunkFromAPI implements IChunkFromSource {
 
         // Write metadata manifest (source, target, paths, timestamps, flags, aggregate data)
         // Merger will verify completion via contiguous marker ordinals AND matching chunkCount
-        // replace:true - the finalOffsetProcessed claim above already wrote a partial METADATA
-        // record for this run, so the default "skip if already exists" guard must be bypassed.
         await metadataBroker.write({
           storage: chunksStorage,
           bucketName: chunksBucket,
@@ -722,7 +725,6 @@ export class ChunkFromAPI implements IChunkFromSource {
           totalRecords: aggregatedTotalRecords,
           chunkKeys: aggregatedChunkKeys,
           finalOffsetProcessed: result.finalOffsetProcessed,
-          replace: true,
           region
         } satisfies WriteMetadataParams);
 

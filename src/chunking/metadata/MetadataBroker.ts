@@ -146,14 +146,4 @@ export class MetadataBroker {
     const { bucketName, chunkDirectory, region } = this;
     await this.metadata.releaseProcessorBoostClaim({ bucketName, chunkDirectory, region });
   }
-
-  /**
-   * Attempt to claim the finalOffsetProcessed boundary for this run - the first parallel chunker
-   * task to detect "reached the end of records" wins. Called before the expensive
-   * buildAggregatedMetadata() S3 scan so a losing task fails fast instead of wasting ~80s.
-   */
-  public async claimFinalOffsetProcessed(finalOffsetProcessed: number, claimedByChunk?: string): Promise<boolean> {
-    const { bucketName, chunkDirectory, region } = this;
-    return this.metadata.claimFinalOffsetProcessed({ bucketName, chunkDirectory, region, finalOffsetProcessed, claimedByChunk });
-  }
 }
