@@ -650,7 +650,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         throw new Error(`Terminal chunking failure (retry exhausted): ${runFailureMessage}`);
       }
 
-      if(result.reachedTheEndOfRecords) {
+      if(result.partialChunkEncountered) {
         // Another task may have already established an earlier true end (finalOffsetProcessed).
         // If so, this task's own small/empty response lost that race - it is not newsworthy and
         // must not be treated as if it discovered the run's completion.

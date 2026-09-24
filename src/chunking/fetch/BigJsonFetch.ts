@@ -104,10 +104,10 @@ export interface ChunkResult {
   /** Number of chunk files created */
   chunkCount: number;
 
-  /** Indicates if this chunk reached the end of records (indicates this is the final chunk of the overall sync operation) */
-  reachedTheEndOfRecords: boolean;
+  /** Indicates this task's own trailing batch was smaller than the requested recordCount - not necessarily the end of the overall sync operation, since other parallel tasks may still be mid-fetch or yet to run. */
+  partialChunkEncountered: boolean;
 
-  /** Offset of the last page actually requested from the API; set only when reachedTheEndOfRecords is true. */
+  /** Offset of the last page actually requested from the API; set only when partialChunkEncountered is true. */
   finalOffsetProcessed?: number;
 
   /** Indicates a terminal fetch/chunking error occurred (for run-level fast fail signaling). */
@@ -196,7 +196,7 @@ export class BigJsonFetch {
    * 3. Batch processor calls API with recordCount and offset parameters
    * 4. For each batch, extracts person records and writes chunk file
    * 5. Returns metadata about created chunks
-   * 6. Indicates if the end of records was reached
+   * 6. Indicates if this task's own trailing batch was a partial (smaller than requested)
    * 
    * @returns ChunkResult with chunk keys, counts, and metadata
    * @throws Error if API call fails or no person records are found 
@@ -290,19 +290,19 @@ export class BigJsonFetch {
     }(batchProcessorParams);
 
     // Process all batches
-    let reachedTheEndOfRecords = false;
+    let partialChunkEncountered = false;
     let terminalErrorEncountered = false;
     let terminalErrorMessage: string | undefined;
     try {
       await batchProcessor.processBatch();
-      reachedTheEndOfRecords = batchProcessor.reachedTheEndOfRecords();
+      partialChunkEncountered = batchProcessor.reachedTheEndOfRecords();
     } catch (error: any) {
       terminalErrorEncountered = true;
       terminalErrorMessage = error?.message || 'Unknown terminal chunking error';
       console.error(`Failed to fetch and chunk from API: ${terminalErrorMessage}`);
       console.error('Stopping overall chunking here due to error');
-      // Equivalent terminal signal to reachedTheEndOfRecords for run-level fast-fail orchestration.
-      reachedTheEndOfRecords = true;
+      // Equivalent terminal signal to partialChunkEncountered for run-level fast-fail orchestration.
+      partialChunkEncountered = true;
     }
 
     const totalRecords = batchProcessor.recordsProcessed();
@@ -310,10 +310,10 @@ export class BigJsonFetch {
     if (totalRecords === 0) {
       console.warn('No person records found from API calls');
       console.error('Stopping overall chunking here due to this unexpected condition');
-      reachedTheEndOfRecords = true; // Treat as end of records to prevent further processing
+      partialChunkEncountered = true; // Treat as a partial (empty) batch to stop further processing
     }
 
-    const finalOffsetProcessed = reachedTheEndOfRecords ? batchProcessor.getLastOffsetUsed() : undefined;
+    const finalOffsetProcessed = partialChunkEncountered ? batchProcessor.getLastOffsetUsed() : undefined;
 
     timer.stop();
     timer.logElapsed(`Completed fetch and chunk into ${chunkKeys.length} chunks with ${totalRecords} records`);
@@ -322,7 +322,7 @@ export class BigJsonFetch {
       chunkKeys,
       totalRecords,
       chunkCount: chunkKeys.length,
-      reachedTheEndOfRecords,
+      partialChunkEncountered,
       finalOffsetProcessed,
       terminalErrorEncountered,
       terminalErrorMessage
