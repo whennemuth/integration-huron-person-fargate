@@ -420,25 +420,37 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
             // >= rather than === : metadata isn't written until the ~80s post-chunking aggregation
             // completes, by which point completedCount may have already reached or passed the
             // true total, so an exact match could be missed entirely.
-            if (metadata?.chunkCount && completedCount >= metadata.chunkCount) {
-              // Step 3: We're the last processor - trigger merger!
-              console.log(`✅ Last processor (chunk-${chunkId}): All ${metadata.chunkCount} chunks complete, triggering merger`);
-              
-              const triggered = await triggerMerger(
-                chunkDirectory!,
-                metadata.createdAt || integrationTimestamp,
-                mergerQueueUrl!,
-                bucketName!,
-                region
-              );
+            //
+            // partialOrEmptyChunkEncountered is also required: chunkCount is now a running total
+            // accumulated by every parallel chunker task (see accumulateMetadataTotals()), so it
+            // can still be growing when this check runs. Its absence means no chunker task has
+            // yet encountered a partial/empty batch, so the total is definitely not final.
+            if (metadata?.chunkCount && metadata?.partialOrEmptyChunkEncountered && completedCount >= metadata.chunkCount) {
+              // Step 3: Completion condition met by our own accounting - but several processors
+              // can independently reach this same conclusion, so only the one that wins this
+              // claim actually triggers the merger (exactly once).
+              const wonMergerTriggerClaim = await statisticsTable.claimMergerTrigger(integrationTimestamp, chunkId);
+              if (!wonMergerTriggerClaim) {
+                console.log(`⏳ Processor (chunk-${chunkId}): completion condition met, but another processor already claimed the merger trigger.`);
+              } else {
+                console.log(`✅ Last processor (chunk-${chunkId}): All ${metadata.chunkCount} chunks complete, triggering merger`);
 
-              if (triggered) {
-                // Step 4: Mark merger as triggered for audit trail
-                await statisticsTable.updateMetadata(integrationTimestamp, {
-                  mergerTriggered: true,
-                  mergerTriggeredAt: new Date().toISOString(),
-                  mergerTriggeredBy: chunkId
-                });
+                const triggered = await triggerMerger(
+                  chunkDirectory!,
+                  metadata.createdAt || integrationTimestamp,
+                  mergerQueueUrl!,
+                  bucketName!,
+                  region
+                );
+
+                if (triggered) {
+                  // Step 4: Mark merger as triggered for audit trail
+                  await statisticsTable.updateMetadata(integrationTimestamp, {
+                    mergerTriggered: true,
+                    mergerTriggeredAt: new Date().toISOString(),
+                    mergerTriggeredBy: chunkId
+                  });
+                }
               }
             } else {
               console.log(`⏳ Processor (chunk-${chunkId}): ${completedCount} of ${metadata?.chunkCount || '?'} chunks complete, waiting...`);

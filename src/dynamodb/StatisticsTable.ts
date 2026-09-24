@@ -473,6 +473,46 @@ export class StatisticsTable {
   }
 
   /**
+   * Attempt to claim the exclusive right to trigger the merger for this sync run. Uses OCCFlag
+   * (first-writer-wins) so exactly one processor task ever sends the merger-trigger SQS message,
+   * regardless of how many processor tasks independently observe the completion condition as
+   * true. Unlike claimProcessorBoost, there is no staleness/retry recovery here - once the merger
+   * has been triggered, it must never be triggered again, so an unclaimed-looking record should
+   * never be treated as abandoned and cleared.
+   *
+   * @param claimedByChunk Identifies which processor task/chunk won the claim, so its log stream
+   * can be found later
+   * @returns true if this call won the claim, false if another processor already triggered
+   */
+  public async claimMergerTrigger(syncRunId: string, claimedByChunk?: string): Promise<boolean> {
+    const { tableName, region } = this;
+    const claimFlag = new OCCFlag({
+      tableName, region,
+      partitionKeyName: DYNAMODB_PARTITION_KEY, partitionKeyValue: syncRunId,
+      sortKeyName: DYNAMODB_SORT_KEY, sortKeyValue: 'MERGER_TRIGGER_CLAIM',
+      attributeName: 'claimedAt'
+    });
+
+    let won = false;
+    const claimedAt = new Date().toISOString();
+    await claimFlag.update(claimedAt,
+      async () => { won = true; },
+      async () => { won = false; }
+    );
+
+    if (won && claimedByChunk !== undefined) {
+      await this.table.putItem({
+        [DYNAMODB_PARTITION_KEY]: syncRunId,
+        [DYNAMODB_SORT_KEY]: 'MERGER_TRIGGER_CLAIM',
+        claimedAt,
+        claimedByChunk
+      });
+    }
+
+    return won;
+  }
+
+  /**
    * Get count of failed chunks for a sync run.
    * Counts CHUNK_STATUS records with status === 'FAILED'.
    * 
