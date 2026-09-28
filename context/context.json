@@ -35,7 +35,8 @@
       "logRetentionDays": 90,
       "retries": {
         "retryStrategyType": "THROTTLING_ONLY"
-      }
+      },
+      "boostProcessor": true
     },
     "mergerTaskDefinition": {
       "cpu": 1024,
