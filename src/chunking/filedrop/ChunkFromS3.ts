@@ -228,7 +228,7 @@ export class ChunkFromS3 implements IChunkFromSource {
       try {
         result = await chunker.breakup(inputKey);
       } finally {
-        stopProcessorBoosterCheck();
+        await stopProcessorBoosterCheck();
       }
       // Final safety-net check in case the periodic check above never caught the backlog crossing its threshold.
       await ProcessorServiceBooster.boostIfNeeded(metadataBroker, { claimedByChunk: inputKey });

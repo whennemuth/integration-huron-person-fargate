@@ -191,9 +191,80 @@ describe('ProcessorServiceBooster.startPeriodicCheck', () => {
     await jest.advanceTimersByTimeAsync(30_000);
     expect(getCurrent).toHaveBeenCalledTimes(1);
 
-    stop();
+    await stop();
     await jest.advanceTimersByTimeAsync(60_000);
     expect(getCurrent).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts an in-flight catch-up delay and releases the claim before stop() resolves', async () => {
+    const setTo = jest.fn();
+    (DesiredCount as jest.Mock).mockImplementation(() => ({
+      getCurrent,
+      getMax: jest.fn().mockResolvedValue(5),
+      setTo,
+    }));
+    let signalDelayStarted!: () => void;
+    const delayStarted = new Promise<void>(resolve => { signalDelayStarted = resolve; });
+    const startDelay = jest.fn((signal?: AbortSignal) => {
+      signalDelayStarted();
+      // Simulates a scale-in alarm that stays in ALARM: only resolves once aborted.
+      return new Promise<boolean>(resolve => signal?.addEventListener('abort', () => resolve(false)));
+    });
+    (MetricsCatchupDelay as jest.Mock).mockImplementation(() => ({ startDelay }));
+
+    const stop = ProcessorServiceBooster.startPeriodicCheck(metadataBroker as any, 30, baseParams);
+    await jest.advanceTimersByTimeAsync(30_000);
+    await delayStarted;
+    expect(metadataBroker.claimProcessorBoost).toHaveBeenCalledTimes(1);
+    expect(metadataBroker.releaseProcessorBoostClaim).not.toHaveBeenCalled();
+
+    await stop();
+
+    expect(startDelay.mock.calls[0][0]?.aborted).toBe(true);
+    expect(setTo).not.toHaveBeenCalled();
+    expect(metadataBroker.releaseProcessorBoostClaim).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries the release at stop() when the in-flight check\'s own release failed', async () => {
+    (MetricsCatchupDelay as jest.Mock).mockImplementation(() => ({ startDelay: jest.fn().mockResolvedValue(false) }));
+    metadataBroker.releaseProcessorBoostClaim
+      .mockRejectedValueOnce(new Error('DynamoDB throttled'))
+      .mockResolvedValue(undefined);
+
+    const stop = ProcessorServiceBooster.startPeriodicCheck(metadataBroker as any, 30, baseParams);
+    await jest.advanceTimersByTimeAsync(30_000);
+    await stop();
+
+    expect(metadataBroker.releaseProcessorBoostClaim).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not release at stop() when another task holds the claim', async () => {
+    metadataBroker.claimProcessorBoost.mockResolvedValue(false);
+
+    const stop = ProcessorServiceBooster.startPeriodicCheck(metadataBroker as any, 30, baseParams);
+    await jest.advanceTimersByTimeAsync(30_000);
+    await stop();
+
+    expect(metadataBroker.claimProcessorBoost).toHaveBeenCalledTimes(1);
+    expect(metadataBroker.releaseProcessorBoostClaim).not.toHaveBeenCalled();
+  });
+
+  it('does not release at stop() after a successful boost', async () => {
+    const stop = ProcessorServiceBooster.startPeriodicCheck(metadataBroker as any, 30, baseParams);
+    await jest.advanceTimersByTimeAsync(30_000);
+    await stop();
+
+    expect(metadataBroker.claimProcessorBoost).toHaveBeenCalledTimes(1);
+    expect(metadataBroker.releaseProcessorBoostClaim).not.toHaveBeenCalled();
+  });
+
+  it('does not take a claim once aborted', async () => {
+    const booster = new ProcessorServiceBooster(metadataBroker as any, baseParams);
+    booster.abort();
+
+    await booster.checkAndBoostIfNeeded();
+
+    expect(metadataBroker.claimProcessorBoost).not.toHaveBeenCalled();
   });
 });
 
@@ -231,13 +302,13 @@ describe('ProcessorServiceBooster BOOST_PROCESSOR feature flag', () => {
     expect(metadataBroker.claimProcessorBoost).not.toHaveBeenCalled();
   });
 
-  it('does not start an interval when BOOST_PROCESSOR=false', () => {
+  it('does not start an interval when BOOST_PROCESSOR=false', async () => {
     process.env.BOOST_PROCESSOR = 'false';
 
     const stop = ProcessorServiceBooster.startPeriodicCheck(metadataBroker as any, 30, baseParams);
 
     expect(DesiredCount).not.toHaveBeenCalled();
-    expect(() => stop()).not.toThrow();
+    await expect(stop()).resolves.toBeUndefined();
   });
 
   it('still works when BOOST_PROCESSOR is unset (defaults to enabled)', async () => {

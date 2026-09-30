@@ -29,10 +29,14 @@ export type ProcessorServiceBoosterParams = {
  * its OWN remembered desiredCount, not by re-querying ECS - so boosting while the processor's
  * scale-in alarm is still stuck in a stale ALARM state (e.g. right after a cold start from an
  * empty queue) risks the very next alarm evaluation reverting the boost. MetricsCatchupDelay
- * guards against that. If the claiming task fails to complete (error, or the delay gives up while
- * still ALARM), the claim is released so another task can retry later.
+ * guards against that. If the claiming task fails to complete (error, the delay gives up while
+ * still ALARM, or the delay is aborted because the caller's own work finished first), the claim
+ * is released so another task can retry later.
  */
 export class ProcessorServiceBooster {
+  private readonly abortController = new AbortController();
+  /** True between winning a claim and either releasing it or boosting (a successful boost keeps its claim). */
+  private claimNeedsRelease = false;
   private readonly desiredCount?: DesiredCount;
   private readonly queueUrl?: string;
   private readonly region?: string;
@@ -71,6 +75,30 @@ export class ProcessorServiceBooster {
   /** Feature flag, defaults to enabled unless explicitly set to 'false' (e.g. BOOST_PROCESSOR=false). */
   private static isEnabled = (): boolean => process.env.BOOST_PROCESSOR?.toLowerCase() !== 'false';
 
+  /** Cut short any in-progress catch-up delay so its claim is released instead of orphaned. */
+  public abort = (): void => this.abortController.abort();
+
+  private releaseClaim = async (): Promise<void> => {
+    await this.metadataBroker.releaseProcessorBoostClaim();
+    this.claimNeedsRelease = false;
+    console.log('  ✓ Processor boost claim released - available for another task to retry.');
+  }
+
+  /**
+   * Stop-time safety net: release this booster's claim if it still holds one (e.g. the in-flight
+   * check's own release failed). Never touches a claim held by another task.
+   */
+  public releaseClaimIfHeld = async (): Promise<void> => {
+    if (!this.claimNeedsRelease) {
+      return;
+    }
+    try {
+      await this.releaseClaim();
+    } catch (error: any) {
+      console.warn(`⚠️  Failed to release processor boost claim at shutdown (it will expire as stale): ${error.message}`);
+    }
+  }
+
   private getApproximateMessageCount = async (): Promise<number | undefined> => {
     const { queueUrl, region } = this;
     if (!queueUrl) {
@@ -94,6 +122,7 @@ export class ProcessorServiceBooster {
    */
   public checkAndBoostIfNeeded = async (): Promise<void> => {
     const { desiredCount, getApproximateMessageCount, metadataBroker, clusterName, serviceName, region, claimedByChunk } = this;
+    const { signal } = this.abortController;
     if (!desiredCount) {
       return;
     }
@@ -117,29 +146,38 @@ export class ProcessorServiceBooster {
         return; // Backlog not yet large enough to justify jumping straight to max
       }
 
+      if (signal.aborted) {
+        return; // Caller is shutting down - don't take a claim we can't see through
+      }
+
       const claimed = await metadataBroker.claimProcessorBoost(claimedByChunk);
       if (!claimed) {
         console.log('  Processor boost already claimed by another task - skipping.');
         return;
       }
+      this.claimNeedsRelease = true;
 
       let boosted = false;
       try {
         console.log(`\n🚀 Processor queue backlog (${messageCount}) exceeds 2x max capacity (${max}) `
           + `while desiredCount (${current}) is below max - claim won, waiting for scale-in alarm to catch up...`);
 
-        const alarmCleared = await new MetricsCatchupDelay({ clusterName, serviceName, region }).startDelay();
+        const alarmCleared = await new MetricsCatchupDelay({ clusterName, serviceName, region }).startDelay(signal);
         if (!alarmCleared) {
-          console.warn('  Scale-in alarm still ALARM after catch-up delay - not safe to boost yet; releasing claim for a later attempt.');
+          if (signal.aborted) {
+            console.warn('  Chunking finished before scale-in alarm cleared - abandoning boost; releasing claim for another task to retry.');
+          } else {
+            console.warn('  Scale-in alarm still ALARM after catch-up delay - not safe to boost yet; releasing claim for a later attempt.');
+          }
           return;
         }
 
         await desiredCount.setTo(max);
         boosted = true;
+        this.claimNeedsRelease = false;
       } finally {
         if (!boosted) {
-          await metadataBroker.releaseProcessorBoostClaim();
-          console.log('  ✓ Processor boost claim released - available for another task to retry.');
+          await this.releaseClaim();
         }
       }
     } catch (error: any) {
@@ -150,21 +188,32 @@ export class ProcessorServiceBooster {
   /**
    * Run checkAndBoostIfNeeded() on a fixed wall-clock interval, decoupled from chunk-write
    * cadence, for as long as chunking is actively fetching/writing. Returns a stop function that
-   * MUST be called (e.g. in a finally block) once the caller's own chunking work concludes, so
-   * the interval doesn't keep the process alive indefinitely.
+   * MUST be awaited (e.g. in a finally block) once the caller's own chunking work concludes: it
+   * stops the interval, aborts any in-flight catch-up delay, and resolves only once that check
+   * has released its claim - so a subsequent process.exit() can't orphan the claim.
    */
-  public static startPeriodicCheck = (metadataBroker: MetadataBroker, intervalSeconds: number = 60, params?: ProcessorServiceBoosterParams): (() => void) => {
+  public static startPeriodicCheck = (metadataBroker: MetadataBroker, intervalSeconds: number = 60, params?: ProcessorServiceBoosterParams): (() => Promise<void>) => {
     if (!ProcessorServiceBooster.isEnabled()) {
       console.log('ProcessorServiceBooster disabled via BOOST_PROCESSOR=false - periodic check not started.');
-      return () => {};
+      return async () => {};
     }
 
     const booster = new ProcessorServiceBooster(metadataBroker, params);
+    const inFlight = new Set<Promise<void>>();
     const intervalId = setInterval(() => {
-      booster.checkAndBoostIfNeeded();
+      const check: Promise<void> = booster.checkAndBoostIfNeeded().finally(() => inFlight.delete(check));
+      inFlight.add(check);
     }, intervalSeconds * 1000);
 
-    return () => clearInterval(intervalId);
+    return async () => {
+      console.log(`Stopping processor booster periodic check (${inFlight.size} check(s) in flight) - `
+        + 'aborting any catch-up delay and releasing this task\'s boost claim if it holds one...');
+      clearInterval(intervalId);
+      booster.abort();
+      await Promise.all(inFlight);
+      await booster.releaseClaimIfHeld();
+      console.log('Processor booster periodic check stopped.');
+    };
   }
 
   /** One-shot check - convenience for a single call site (e.g. the race-winner's own final check). */

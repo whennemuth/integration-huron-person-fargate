@@ -587,7 +587,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       try {
         result = await fetcher.fetchAndChunk();
       } finally {
-        stopProcessorBoosterCheck();
+        await stopProcessorBoosterCheck();
       }
 
       // Build source and target URLs for metadata
