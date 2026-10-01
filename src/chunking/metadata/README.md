@@ -83,10 +83,10 @@ sequenceDiagram
 
 1. **FLAGS are written FIRST** (before any chunks) to prevent processor race conditions
 2. **Subsequent chunker tasks** check for terminal errors before starting work
-3. **Processor tasks** read FLAGS but NOT terminal error markers - they process whatever chunks exist
+3. **Processor tasks** read FLAGS but NOT terminal error markers while processing - they process whatever chunks exist. (The DynamoDB-mode "last processor" DOES check TERMINAL_ERROR before triggering the merger - see below.)
 4. **METADATA is written LAST** (after chunking completes successfully)
 5. **Merger tasks** read both FLAGS and METADATA for orchestration context
-6. **Failure markers** (TERMINAL_ERROR + FLAGS update) stop subsequent chunkers but not processors
+6. **Failure markers** (TERMINAL_ERROR + FLAGS update) stop subsequent chunkers and block the merger's deactivations, but not chunk processing
 
 ## Failure Handling Mechanism
 
@@ -119,19 +119,26 @@ When a chunking task encounters a catastrophic failure (network timeout, S3 writ
 - This prevents wasted processing on an already-failed run
 
 **Processor Tasks (Phase 2):**
-- **Do NOT check** `runFailed` or terminal error markers
+- **Do NOT check** `runFailed` or terminal error markers while processing a chunk
 - Continue processing whatever chunks were created before failure
 - This is intentional: partial chunks may still be valuable for diagnostics
+- **Exception (DynamoDB mode)**: the processor that finds all chunks complete checks the
+  TERMINAL_ERROR record (`StatisticsTable.readTerminalError()`) before claiming the merger
+  trigger, and does NOT trigger the merger for a failed run
 
 **Merger Tasks (Phase 3):**
-- May check terminal error marker before merging (optional)
+- S3 mode: `MergerSubscriber` blocks the merger entirely if a terminal error marker exists
+- Both modes: `MergerForS3`/`MergerForDynamoDB.runDeferredDeletes()` check
+  `terminalErrorExists()` and skip deletion handling (deactivations) for a failed run - a
+  failed run's population is incomplete, so "missing" people must never be deactivated
 - Incomplete runs naturally don't trigger merger due to missing chunk markers
 
 ### When Are Failure Markers Written?
 
 1. **Unhandled exception in chunker.ts**: Catch block writes terminal error (line 490)
 2. **API retry exhaustion in ChunkFromAPI.ts**: After terminal error encountered (lines 569-577)
-3. **S3 write failures**: Caught by chunker error handling
+3. **Glitched-source safety cutoff** (`MAX_TOTAL_RECORDS`): surfaces through the same ChunkFromAPI.ts terminal-error path
+4. **S3 write failures**: Caught by chunker error handling
 
 ### Implementation Detail: FLAGS as Failure Record
 
@@ -400,9 +407,10 @@ This is handled by `AbstractMetadata.extractSyncRunId(chunkDirectory)`.
 - Uses `StatisticsTable` utility class (wraps DynamoDB Document Client)
 - `write()`: Calls `StatisticsTable.writeEventRecord({ eventType: 'METADATA', ... })`
 - `writeFlags()`: Calls `StatisticsTable.writeEventRecord({ eventType: 'FLAGS', ... })`
-- `markRunFailed()`: Calls `StatisticsTable.writeEventRecord({ eventType: 'TERMINAL_ERROR', ... })`
+- `markRunFailed()`: Calls `StatisticsTable.writeTerminalError()` (SK="TERMINAL_ERROR")
 - `read()`: Queries StatisticsTable with PK=syncRunId, SK="METADATA"
 - `readFlags()`: Queries StatisticsTable with PK=syncRunId, SK="FLAGS"
+- `readTerminalError()` / `terminalErrorExists()`: Call `StatisticsTable.readTerminalError()` (PK=syncRunId, SK="TERMINAL_ERROR"). These previously read the METADATA record and so never detected a failed run in DynamoDB mode.
 
 ### Not Applicable Methods
 

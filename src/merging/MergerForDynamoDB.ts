@@ -150,10 +150,15 @@ export class MergerForDynamoDB extends AbstractMerger {
     // Tries the mock statistics table first (if configured), falling back to the real table, since
     // flags.useMockTarget (what determines which tables processors used) can only be learned from
     // the flags themselves. See MetadataFactoryForBootstrap.resolveMockAwareFlags().
-    const { flags } = await new MetadataFactoryForBootstrap().resolveMockAwareFlags({
+    const { metadata, flags } = await new MetadataFactoryForBootstrap().resolveMockAwareFlags({
       bucketName, chunkDirectory: chunkDir, region
     });
     const { syncPopulation, useMockTarget } = flags;
+
+    if (await metadata.terminalErrorExists({ bucketName, chunkDirectory: chunkDir, region })) {
+      console.error(`  ⛔ Run is marked failed (TERMINAL_ERROR) - deletion handling skipped.`);
+      return;
+    }
 
     if (syncPopulation === SyncPopulation.PersonDelta) {
       console.log(`  Sync population type is PersonDelta - Deletion handling does NOT apply.`);

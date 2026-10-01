@@ -25,6 +25,8 @@ describe('MetadataForDynamoDb', () => {
       readFlags: jest.fn(),
       writeMetadata: jest.fn().mockResolvedValue(undefined),
       readMetadata: jest.fn(),
+      writeTerminalError: jest.fn().mockResolvedValue(undefined),
+      readTerminalError: jest.fn(),
     } as any;
 
     // Mock the StatisticsTable.fromTableName() static factory
@@ -240,7 +242,7 @@ describe('MetadataForDynamoDb', () => {
   });
 
   describe('markRunFailed', () => {
-    it('should write terminal error record', async () => {
+    it('should write terminal error record (not the METADATA record)', async () => {
       const params = {
         chunkDirectory,
         errorMessage: 'Network timeout',
@@ -248,15 +250,15 @@ describe('MetadataForDynamoDb', () => {
 
       await metadata.markRunFailed(params);
 
-      expect(mockStatisticsTable.writeMetadata).toHaveBeenCalledWith(
+      expect(mockStatisticsTable.writeTerminalError).toHaveBeenCalledWith(
         syncRunId,
         expect.objectContaining({
-          eventType: 'TERMINAL_ERROR',
           errorMessage: 'Network timeout',
           chunkDirectory,
           stage: 'chunking',
         })
       );
+      expect(mockStatisticsTable.writeMetadata).not.toHaveBeenCalled();
     });
 
     it('should include errorTimestamp', async () => {
@@ -267,28 +269,36 @@ describe('MetadataForDynamoDb', () => {
 
       await metadata.markRunFailed(params);
 
-      const call = mockStatisticsTable.writeMetadata.mock.calls[0][1];
+      const call = mockStatisticsTable.writeTerminalError.mock.calls[0][1];
       expect(call).toHaveProperty('errorTimestamp');
     });
   });
 
   describe('terminalErrorExists', () => {
     it('should return true when terminal error exists', async () => {
-      mockStatisticsTable.readMetadata.mockResolvedValue({
-        eventType: 'TERMINAL_ERROR',
+      mockStatisticsTable.readTerminalError.mockResolvedValue({
         errorMessage: 'Test error',
       });
 
       const result = await metadata.terminalErrorExists({ chunkDirectory });
 
       expect(result).toBe(true);
-      expect(mockStatisticsTable.readMetadata).toHaveBeenCalledWith(
+      expect(mockStatisticsTable.readTerminalError).toHaveBeenCalledWith(
         syncRunId
       );
     });
 
     it('should return false when terminal error does not exist', async () => {
-      mockStatisticsTable.readMetadata.mockResolvedValue(undefined);
+      mockStatisticsTable.readTerminalError.mockResolvedValue(undefined);
+
+      const result = await metadata.terminalErrorExists({ chunkDirectory });
+
+      expect(result).toBe(false);
+    });
+
+    it('should not treat the METADATA record as a terminal error', async () => {
+      mockStatisticsTable.readMetadata.mockResolvedValue({ chunkCount: 5, runFailed: true });
+      mockStatisticsTable.readTerminalError.mockResolvedValue(undefined);
 
       const result = await metadata.terminalErrorExists({ chunkDirectory });
 
@@ -339,14 +349,13 @@ describe('MetadataForDynamoDb', () => {
   describe('readTerminalError', () => {
     it('should read terminal error details', async () => {
       const mockError = {
-        eventType: 'TERMINAL_ERROR',
         errorTimestamp: '2026-05-26T15:30:00.000Z',
         errorMessage: 'Network failure',
         stage: 'chunking',
         chunkDirectory,
       };
 
-      mockStatisticsTable.readMetadata.mockResolvedValue(mockError);
+      mockStatisticsTable.readTerminalError.mockResolvedValue(mockError);
 
       const result = await metadata.readTerminalError({ chunkDirectory });
 
@@ -358,7 +367,7 @@ describe('MetadataForDynamoDb', () => {
     });
 
     it('should return undefined when no terminal error exists', async () => {
-      mockStatisticsTable.readMetadata.mockResolvedValue(undefined);
+      mockStatisticsTable.readTerminalError.mockResolvedValue(undefined);
 
       const result = await metadata.readTerminalError({ chunkDirectory });
 

@@ -274,11 +274,7 @@ export class MetadataForDynamoDb implements IMetadataStorage {
       errorTimestamp: new Date().toISOString()
     };
 
-    // Write terminal error as a separate record
-    await this.statisticsTable.writeMetadata(syncRunId, {
-      eventType: 'TERMINAL_ERROR',
-      ...marker
-    });
+    await this.statisticsTable.writeTerminalError(syncRunId, marker);
 
     console.error(`⛔ Terminal error marker written to DynamoDB: syncRunId=${syncRunId}`);
   }
@@ -314,14 +310,8 @@ export class MetadataForDynamoDb implements IMetadataStorage {
     const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
 
     try {
-      // Query for TERMINAL_ERROR record
-      const metadata = await this.statisticsTable.readMetadata(syncRunId);
-      
-      if (metadata && metadata.eventType === 'TERMINAL_ERROR') {
-        return metadata as TerminalError;
-      }
-      
-      return undefined;
+      const marker = await this.statisticsTable.readTerminalError(syncRunId);
+      return marker ? marker as TerminalError : undefined;
     } catch (error: any) {
       console.warn(`Warning: Could not read terminal error: ${error.message}`);
       return undefined;

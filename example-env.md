@@ -100,6 +100,8 @@ CHUNK_FROM_API_PERSON_ID_FIELD=personid
 CHUNK_FROM_API_CHUNKS_BUCKET=huron-person-chunks-dev
 CHUNK_FROM_API_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
 CHUNK_FROM_API_REGION=us-east-2
+CHUNK_FROM_API_STOP_AT_FIRST_PARTIAL=false
+CHUNK_FROM_API_MAX_TOTAL_RECORDS=500000
 
 # ------- Harness Groups for src\chunking\fetch\QueueSeeder.ts ------- #
 QUEUE_SEEDER_BASE_URL=https://prod-buprod-fm.snaplogic.io
@@ -158,6 +160,8 @@ DOCKER_CHUNKER_MAX_SCALING_CAPACITY=1
 DOCKER_CHUNKER_ECS_CLUSTER_NAME=huron-person-fargate-cluster-dev
 DOCKER_CHUNKER_CACHE_ENABLED=true
 DOCKER_CHUNKER_CACHE_PATH=.
+DOCKER_CHUNKER_STOP_AT_FIRST_PARTIAL=false
+DOCKER_CHUNKER_MAX_TOTAL_RECORDS=500000
 
 # ------- Harness Groups for docker/processor.ts ------- #
 DOCKER_PROCESSOR_REGION=us-east-2
@@ -240,6 +244,8 @@ BIG_JSON_FETCH_CHUNKS_BUCKET=huron-person-chunks-dev
 BIG_JSON_FETCH_REGION=us-east-2
 BIG_JSON_FETCH_CACHE_ENABLED=true
 BIG_JSON_FETCH_CACHE_PATH=.
+BIG_JSON_FETCH_STOP_AT_FIRST_PARTIAL=false
+BIG_JSON_FETCH_MAX_TOTAL_RECORDS=500000
 
 # ------- Harness Groups for src\chunking\filedrop\BigJsonFile.ts ------- #
 BIG_JSON_FILE_MODE=filesystem

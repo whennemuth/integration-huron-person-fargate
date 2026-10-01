@@ -426,11 +426,15 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
             // can still be growing when this check runs. Its absence means no chunker task has
             // yet encountered a partial/empty batch, so the total is definitely not final.
             if (metadata?.chunkCount && metadata?.partialOrEmptyChunkEncountered && completedCount >= metadata.chunkCount) {
-              // Step 3: Completion condition met by our own accounting - but several processors
-              // can independently reach this same conclusion, so only the one that wins this
-              // claim actually triggers the merger (exactly once).
-              const wonMergerTriggerClaim = await statisticsTable.claimMergerTrigger(integrationTimestamp, chunkId);
-              if (!wonMergerTriggerClaim) {
+              const terminalError = await statisticsTable.readTerminalError(integrationTimestamp);
+              // A failed run must never reach the merger (and its deactivations).
+              const wonMergerTriggerClaim = !terminalError && await statisticsTable.claimMergerTrigger(integrationTimestamp, chunkId);
+              if (terminalError) {
+                console.error(`⛔ Processor (chunk-${chunkId}): completion condition met, but the run is marked failed (${terminalError.errorMessage || 'unknown error'}) - merger NOT triggered.`);
+              } else if (!wonMergerTriggerClaim) {
+                // Step 3: Completion condition met by our own accounting - but several processors
+                // can independently reach this same conclusion, so only the one that wins this
+                // claim actually triggers the merger (exactly once).
                 console.log(`⏳ Processor (chunk-${chunkId}): completion condition met, but another processor already claimed the merger trigger.`);
               } else {
                 console.log(`✅ Last processor (chunk-${chunkId}): All ${metadata.chunkCount} chunks complete, triggering merger`);

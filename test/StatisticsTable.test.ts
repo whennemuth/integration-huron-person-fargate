@@ -456,4 +456,39 @@ describe('StatisticsTable', () => {
       expect(result).toEqual({ chunkCount: 0, totalRecords: 0 });
     });
   });
+
+  describe('TERMINAL_ERROR record', () => {
+    it('writes the marker under the TERMINAL_ERROR sort key, not METADATA', async () => {
+      dynamoMock.on(BatchWriteCommand).resolves({});
+
+      await statisticsTable.writeTerminalError(integrationTimestamp, {
+        eventType: 'METADATA', errorMessage: 'boom', stage: 'chunking'
+      });
+
+      const requestItems = dynamoMock.commandCalls(BatchWriteCommand)[0].args[0].input.RequestItems!;
+      const item = Object.values(requestItems)[0][0].PutRequest!.Item;
+      expect(item).toEqual(expect.objectContaining({
+        integrationTimestamp, eventType: 'TERMINAL_ERROR', errorMessage: 'boom', stage: 'chunking'
+      }));
+    });
+
+    it('reads the marker from the TERMINAL_ERROR sort key', async () => {
+      dynamoMock.on(GetCommand).resolves({
+        Item: { integrationTimestamp, eventType: 'TERMINAL_ERROR', errorMessage: 'boom' }
+      });
+
+      const result = await statisticsTable.readTerminalError(integrationTimestamp);
+
+      expect(result).toEqual({ errorMessage: 'boom' });
+      expect(dynamoMock.commandCalls(GetCommand)[0].args[0].input.Key).toEqual({
+        integrationTimestamp, eventType: 'TERMINAL_ERROR'
+      });
+    });
+
+    it('returns undefined when the run was not marked failed', async () => {
+      dynamoMock.on(GetCommand).resolves({ Item: undefined });
+
+      expect(await statisticsTable.readTerminalError(integrationTimestamp)).toBeUndefined();
+    });
+  });
 });

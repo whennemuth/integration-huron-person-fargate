@@ -24,6 +24,8 @@
       "memoryReservationMiB": 2048,
       "logRetentionDays": 90,
       "boostProcessor": true,
+      "stopAtFirstPartial": false,
+      "maxTotalRecords": 500000,
       "retries": {
         "retryStrategyType": "AGGRESSIVE"
       }

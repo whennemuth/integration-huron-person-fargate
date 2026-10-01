@@ -31,3 +31,24 @@ describe('MetadataBroker.isAlreadyFinished', () => {
     expect(await new MetadataBroker(params).isAlreadyFinished()).toBe(true);
   });
 });
+
+describe('MetadataBroker.getRunningTotalRecords', () => {
+  const config = {} as Config;
+  const params = { config, bucketName: 'bucket', chunkDirectory: 'chunks/person-full/2026-01-01T00:00:00.000Z', region: 'us-east-2' };
+
+  const mockRead = (result: any) => {
+    (MetadataFactory.create as jest.Mock).mockReturnValue({ read: jest.fn().mockResolvedValue(result) });
+  };
+
+  afterEach(() => jest.clearAllMocks());
+
+  it('returns 0 when no metadata exists yet', async () => {
+    mockRead(undefined);
+    expect(await new MetadataBroker(params).getRunningTotalRecords()).toBe(0);
+  });
+
+  it('returns the accumulated totalRecords', async () => {
+    mockRead({ totalRecords: 1234 });
+    expect(await new MetadataBroker(params).getRunningTotalRecords()).toBe(1234);
+  });
+});

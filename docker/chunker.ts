@@ -505,6 +505,8 @@ if (require.main === module) {
     'PROCESSOR_ECS_SERVICE_NAME',
     'PROCESSOR_QUEUE_URL',
     'BOOST_PROCESSOR',
+    'STOP_AT_FIRST_PARTIAL',
+    'MAX_TOTAL_RECORDS',
     'CACHE_ENABLED',
     'CACHE_PATH',
     'RETRY_STRATEGY',

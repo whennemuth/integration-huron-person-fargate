@@ -148,6 +148,17 @@ When dry run is enabled:
 
 **Important**: Dry run mode affects all parallel processing chunks, so the entire batch runs in test mode.
 
+### Source End-of-Records Detection
+
+Configured in `context/context.json` under `ECS.chunkerTaskDefinition` and passed to the chunker task as environment variables:
+
+| Context field | Task env var | Default | Purpose |
+|---|---|---|---|
+| `stopAtFirstPartial` | `STOP_AT_FIRST_PARTIAL` | `false` | If `true`, the first source batch smaller than the requested `recordCount` (a "partial") ends chunking. If `false`, only an empty batch does, because the source API can return partials before it runs out of records. |
+| `maxTotalRecords` | `MAX_TOTAL_RECORDS` | `500000` | Safety cutoff. If a run's total source records would exceed this, the source is assumed to be glitched (never returning an empty batch), and chunking stops as a failed run. A value `<= 0` disables the cutoff. |
+
+For local harness runs, use the prefixed equivalents (e.g. `DOCKER_CHUNKER_STOP_AT_FIRST_PARTIAL`, `CHUNK_FROM_API_MAX_TOTAL_RECORDS`); see `example-env.md`.
+
 ## Test Harnesses
 
 Test harnesses are executable modules that verify individual components using environment-based configuration via the `TestEnvironment` utility from `integration-core`. Each harness loads its own prefixed environment variables and validates component behavior in isolation.

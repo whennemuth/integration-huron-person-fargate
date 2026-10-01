@@ -7,6 +7,9 @@ export enum SyncPopulation {
   PersonDelta = 'person-delta'
 }
 
+/** Default run-wide source record count above which the source is presumed glitched (~145,000 is the known real population). */
+export const DEFAULT_MAX_TOTAL_RECORDS = 500_000;
+
 /**
  * Shared by both ChunkFromAPI.ts and ChunkFromS3.ts (docker/chunker.ts's two chunking
  * sources) - kept out of docker/chunker.ts itself since that module imports both of those

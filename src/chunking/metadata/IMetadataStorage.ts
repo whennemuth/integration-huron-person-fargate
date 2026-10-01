@@ -55,7 +55,7 @@ export type ChunkMetadata = CoreMetadataFields & {
   chunkCount?: number;
   totalRecords?: number;
   chunkKeys?: string[];
-  /** True once any parallel chunker task has encountered a partial-or-empty (smaller-than-requested, including zero) batch - the source queue only depletes, never refills, so this is a reliable "nothing meaningful left" signal for later/other tasks, regardless of which task set it. The sole completion signal (isAlreadyFinished(), merger-trigger gate, chain-stop). */
+  /** True once any parallel chunker task has detected the end of the source records - an empty batch, or (only if STOP_AT_FIRST_PARTIAL=true) a smaller-than-requested batch (the name predates that distinction). The source queue only depletes, never refills, so this is a reliable "nothing meaningful left" signal for later/other tasks, regardless of which task set it. The sole completion signal (isAlreadyFinished(), merger-trigger gate, chain-stop). */
   partialOrEmptyChunkEncountered?: boolean;
 };
 

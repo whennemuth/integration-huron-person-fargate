@@ -9,6 +9,7 @@ import { HuronPersonSecrets } from '../../Secrets';
 import { StorageParams } from '../../TaskDefinitions';
 import { SERVICE_LOGICAL_ID } from './ChunkerService';
 import { SERVICE_LOGICAL_ID as PROCESSOR_SERVICE_LOGICAL_ID } from '../processor/ProcessorService';
+import { DEFAULT_MAX_TOTAL_RECORDS } from '../../../docker/chunkTypes';
 
 export interface ChunkerTaskDefinitionProps {
   repository: IRepository;
@@ -32,6 +33,10 @@ export interface ChunkerTaskDefinitionProps {
   retries?: RetryStrategyConfig;
   /** Whether to "hit the ground running" scale up the processor service early via ProcessorServiceBooster (default: true) */
   boostProcessor?: boolean;
+  /** If true, the first partial source batch ends chunking; if false, only an empty batch does (default: false) */
+  stopAtFirstPartial?: boolean;
+  /** Run-wide source record safety cutoff; <= 0 disables (default: DEFAULT_MAX_TOTAL_RECORDS) */
+  maxTotalRecords?: number;
   dryRun?: boolean;
   tags?: { [key: string]: string };
 }
@@ -50,7 +55,7 @@ export class ChunkerTaskDefinition extends Construct {
       huronPersonSecrets: { secret, secretArn } = {}, logRetentionDays, 
       memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, itemsPerChunk, chunksBucketName, 
       inputBucketName, repository, imageTag, ecsClusterName, maxScalingCapacity, stackId, 
-      ecsChunkerServiceName, landscape, dryRun, tags, retries, boostProcessor,
+      ecsChunkerServiceName, landscape, dryRun, tags, retries, boostProcessor, stopAtFirstPartial, maxTotalRecords,
       storageParams: { previousStorageType, storageConfig: { sharedDeltaStorageDir, dynamodb } = {} }
     } = props;
 
@@ -78,7 +83,9 @@ export class ChunkerTaskDefinition extends Construct {
       IS_ECS_TASK: 'true',
       PAUSE_BEFORE_EARLY_EXIT: 'true', // Number of seconds to pause before early exit
       DRY_RUN: dryRun ? 'true' : 'false',
-      BOOST_PROCESSOR: (boostProcessor ?? true) ? 'true' : 'false'
+      BOOST_PROCESSOR: (boostProcessor ?? true) ? 'true' : 'false',
+      STOP_AT_FIRST_PARTIAL: (stopAtFirstPartial ?? false) ? 'true' : 'false',
+      MAX_TOTAL_RECORDS: `${maxTotalRecords ?? DEFAULT_MAX_TOTAL_RECORDS}`
     };
 
     if (retries && (retries.retryStrategyOptions || retries.retryStrategyType)) {

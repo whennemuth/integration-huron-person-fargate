@@ -86,6 +86,13 @@ export class MetadataBroker {
     return this.hasAnyTaskEncounteredPartial();
   }
 
+  /** Run-wide totalRecords accumulated so far by completed chunker tasks (0 if none yet). */
+  public async getRunningTotalRecords(): Promise<number> {
+    const { bucketName, chunkDirectory, region } = this;
+    const result = await this.metadata.read({ bucketName, chunkDirectory, region } satisfies ReadMetadataParams);
+    return result?.totalRecords ?? 0;
+  }
+
   /**
    * Bail out early if a terminal chunking error marker exists for this run.
    * The marker itself provides at-a-glance failure visibility.

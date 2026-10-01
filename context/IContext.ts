@@ -48,6 +48,10 @@ export interface IContext {
       retries?: RetryStrategyConfig;
       /** Whether ChunkFromAPI should "hit the ground running" scale up the processor service early via ProcessorServiceBooster (default: true) */
       boostProcessor?: boolean;
+      /** If true, the first non-empty source batch smaller than recordCount (a "partial") ends chunking; if false, only an empty batch does, since the source API can return spurious partials mid-population (default: false) */
+      stopAtFirstPartial?: boolean;
+      /** Safety cutoff: if a run's total source records would exceed this, the source is presumed glitched (never returning an empty batch) and chunking terminates as a failed run; <= 0 disables (default: 500000) */
+      maxTotalRecords?: number;
     };
     /** Processor task definition configuration */
     processorTaskDefinition: {

@@ -223,6 +223,32 @@ export class StatisticsTable {
   }
 
   /**
+   * Write the TERMINAL_ERROR record (PK=syncRunId, SK="TERMINAL_ERROR") marking the run as failed.
+   */
+  public async writeTerminalError(syncRunId: string, marker: Record<string, any>): Promise<void> {
+    await this.table.putItem({
+      ...marker,
+      [DYNAMODB_PARTITION_KEY]: syncRunId,
+      [DYNAMODB_SORT_KEY]: 'TERMINAL_ERROR'
+    });
+  }
+
+  /**
+   * Read the TERMINAL_ERROR record for a sync run.
+   * 
+   * @returns the marker fields if the run was marked failed, undefined otherwise
+   */
+  public async readTerminalError(syncRunId: string): Promise<Record<string, any> | undefined> {
+    const item = await this.table.getItem({ 
+      partitionKeyValue: syncRunId, sortKeyValue: 'TERMINAL_ERROR' 
+    });
+    if (!item) return undefined;
+
+    const { [DYNAMODB_PARTITION_KEY]: _, [DYNAMODB_SORT_KEY]: __, ...marker } = item;
+    return marker;
+  }
+
+  /**
    * Update METADATA record with additional fields.
    * Merges new fields into existing METADATA record without overwriting other fields.
    * 

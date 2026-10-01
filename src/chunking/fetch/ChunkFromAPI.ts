@@ -2,7 +2,7 @@ import { Message } from '@aws-sdk/client-sqs/dist-types/models/models_0';
 import { TestEnvironment } from 'integration-core';
 import { AxiosResponseStreamFilter, Config, ConfigManager, DataSourceConfig, error, ResponseProcessor } from "integration-huron-person";
 import { IContext } from "../../../context/IContext";
-import { SyncPopulation, ChunkFromParams, IChunkFromSource } from "../../../docker/chunkTypes";
+import { SyncPopulation, ChunkFromParams, IChunkFromSource, DEFAULT_MAX_TOTAL_RECORDS } from "../../../docker/chunkTypes";
 import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { getRetryStrategy } from '../../ApiErrorRetryStrategy';
@@ -558,6 +558,11 @@ export class ChunkFromAPI implements IChunkFromSource {
       }
 
       // Configure fetcher
+      const maxTotalRecordsEnv = parseInt(process.env.MAX_TOTAL_RECORDS ?? '', 10);
+      const maxTotalRecords = Number.isNaN(maxTotalRecordsEnv) ? DEFAULT_MAX_TOTAL_RECORDS : maxTotalRecordsEnv;
+      const runTotalRecordsAtStart = await metadataBroker.getRunningTotalRecords();
+      console.log(`Max total records (safety cutoff): ${maxTotalRecords > 0 ? maxTotalRecords : 'disabled'}; run total so far: ${runTotalRecordsAtStart}`);
+
       const fetchConfig: BigJsonFetchConfig = {
         itemsPerChunk,
         config: this.config, // Will have already had its endpointConfig.baseUrl and fetchPath properties overridden by values obtained from the SQS message parameters if they were provided. 
@@ -571,9 +576,12 @@ export class ChunkFromAPI implements IChunkFromSource {
         iterationLimit, // indicates how many chunks to "chunk out" before stopping. Used in the context of chunking "in parallel".
         dryRun: dryRun.toLowerCase() === 'true',
         chunkOrdinalAllocator: this.chunkOrdinalAllocator,
-        retryStrategy: getRetryStrategy(process.env.RETRY_STRATEGY)
+        retryStrategy: getRetryStrategy(process.env.RETRY_STRATEGY),
+        stopAtFirstPartial: process.env.STOP_AT_FIRST_PARTIAL?.toLowerCase().trim() === 'true',
+        maxTotalRecords,
+        runTotalRecordsAtStart
         // isOffsetPastKnownEnd intentionally omitted: each task's own fetch loop has a sufficient,
-        // purely local stopping condition (its own partial/empty batch or exhausted iterationLimit) -
+        // purely local stopping condition (its own end-of-records batch or exhausted iterationLimit) -
         // a cross-task signal here would risk discarding another task's still-legitimate data.
       };
 
@@ -638,7 +646,7 @@ export class ChunkFromAPI implements IChunkFromSource {
           errorMessage: runFailureMessage
         });
 
-        throw new Error(`Terminal chunking failure (retry exhausted): ${runFailureMessage}`);
+        throw new Error(`Terminal chunking failure: ${runFailureMessage}`);
       }
 
       // Every task contributes its own totals - partial or full-iterationLimit - since there is
@@ -654,14 +662,14 @@ export class ChunkFromAPI implements IChunkFromSource {
         syncPopulation: this.taskParameters.populationType as SyncPopulation,
         chunkCountDelta: result.chunkCount,
         totalRecordsDelta: result.totalRecords,
-        partialOrEmptyChunkEncountered: result.partialChunkEncountered
+        partialOrEmptyChunkEncountered: result.endOfRecordsDetected
       });
 
       console.log('\n✓ Chunking completed successfully');
       console.log(`This task: ${result.chunkCount} chunks, ${result.totalRecords} records`);
       console.log(`Running total for this run so far: ${runningChunkCount} chunks, ${runningTotalRecords} records`);
 
-      if (result.partialChunkEncountered) {
+      if (result.endOfRecordsDetected) {
         // Final safety-net check in case the periodic check above never caught the backlog
         // crossing its threshold - only relevant once at least one task has seen a partial.
         await ProcessorServiceBooster.boostIfNeeded(metadataBroker, { claimedByChunk: String(offset) });
@@ -696,6 +704,8 @@ if(require.main === module) {
   const sourceSimulatorStr = testEnvironment.getVar('SOURCE_SIMULATOR') || 'false';
   const sourceSimulator = `${sourceSimulatorStr}`.toLowerCase().trim() === 'true';
   const landscape = testEnvironment.getVar('LANDSCAPE');
+  testEnvironment.getVar('STOP_AT_FIRST_PARTIAL');
+  testEnvironment.getVar('MAX_TOTAL_RECORDS');
 
   // Validate bucket name required for output is provided.
   if (!chunksBucket) {

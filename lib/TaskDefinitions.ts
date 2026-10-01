@@ -107,6 +107,8 @@ export class TaskDefinitions extends Construct {
       landscape: ctx.TAGS.Landscape.toLowerCase(),
       retries: ctx.ECS.chunkerTaskDefinition.retries,
       boostProcessor: ctx.ECS.chunkerTaskDefinition.boostProcessor,
+      stopAtFirstPartial: ctx.ECS.chunkerTaskDefinition.stopAtFirstPartial,
+      maxTotalRecords: ctx.ECS.chunkerTaskDefinition.maxTotalRecords,
       storageParams,
       dryRun: ctx.DRY_RUN?.taskdef?.chunker,
       tags,
