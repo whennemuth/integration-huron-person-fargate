@@ -59,7 +59,7 @@ Tracks integration run statistics, error events, and sync run metadata.
 
 ### Table Schema
 - **PK**: `integrationTimestamp` (ISO timestamp)
-- **SK**: `eventType` (STATISTICS | STATISTICS-chunk-XXXX | ERROR | FLAGS | METADATA | CHUNK_STATUS_nnnn)
+- **SK**: `eventType` (STATISTICS | STATISTICS-chunk-XXXX | ERROR | FLAGS | METADATA | TERMINAL_ERROR | CHUNK_STATUS_nnnn | PROCESSOR_BOOST_CLAIM | MERGER_TRIGGER_CLAIM)
 - **GSI**: `errorType-timestamp-index` (for querying errors)
 
 ### Record Types
@@ -97,6 +97,31 @@ Tracks integration run statistics, error events, and sync run metadata.
 - Written by: Processor tasks
 - Read by: Merger for resumption logic
 
+**7. TERMINAL_ERROR**
+- SK: "TERMINAL_ERROR"
+- Contains: timestamp, errorMessage, errorStack, phase, chunkDirectory
+- Written by: Any phase that hits a pipeline-halting failure (`writeTerminalError()`)
+- Read by: Processor (before triggering the merger) and Merger (`readTerminalError()`)
+
+**8. PROCESSOR_BOOST_CLAIM**
+- SK: "PROCESSOR_BOOST_CLAIM"
+- Contains: claimedAt, claimedByChunk (optional - identifies the winning chunker task/offset)
+- Written by: Chunker tasks via `claimProcessorBoost()` (ProcessorServiceBooster) - an `OCCFlag`
+  guarding `claimedAt` ensures exactly one concurrent chunker task wins the right to run the
+  processor scaling check. Used in both S3 and DynamoDB storage modes.
+- Released by: `releaseProcessorBoostClaim()` (deletes the record) once the winner is done
+- Staleness: a claim older than 10 minutes (`PROCESSOR_BOOST_CLAIM_STALE_AFTER_MS`) is treated as
+  abandoned (winner killed before releasing it), cleared, and retried
+
+**9. MERGER_TRIGGER_CLAIM**
+- SK: "MERGER_TRIGGER_CLAIM"
+- Contains: claimedAt, claimedByChunk (optional - identifies the winning processor task/chunk)
+- Written by: Processor tasks via `claimMergerTrigger()` once the completion condition is met and
+  no TERMINAL_ERROR exists - an `OCCFlag` (first-writer-wins) ensures exactly one processor ever
+  sends the merger-trigger SQS message
+- Never released or treated as stale: once the merger has been triggered it must never be
+  triggered again (see `docs/CONCURRENCY_CONTROL.md`)
+
 ### Usage
 ```typescript
 const statsTable = new StatisticsTable(context);
@@ -133,6 +158,16 @@ await statsTable.writeChunkStatus('2026-03-03T19:58:41.277Z', 'chunk-0009', {
 
 // Get completed chunk count (for resumption)
 const completedCount = await statsTable.getCompletedChunkCount('2026-03-03T19:58:41.277Z');
+
+// Claim the processor boost (chunker tasks) - true only for the single winner
+if (await statsTable.claimProcessorBoost('2026-03-03T19:58:41.277Z', '1000')) {
+  try { /* run scaling check */ } finally {
+    await statsTable.releaseProcessorBoostClaim('2026-03-03T19:58:41.277Z');
+  }
+}
+
+// Claim the merger trigger (processor tasks) - true only for the single winner, never released
+const shouldTriggerMerger = await statsTable.claimMergerTrigger('2026-03-03T19:58:41.277Z', '0009');
 ```
 
 ### Harness Execution
@@ -313,7 +348,7 @@ All three table classes provide deletion methods for removing records associated
 
 ### StatisticsTable.deleteByPartitionKey()
 
-Deletes all records (STATISTICS, FLAGS, METADATA, CHUNK_STATUS, ERROR records) for a specific integration run:
+Deletes all records (STATISTICS, FLAGS, METADATA, TERMINAL_ERROR, CHUNK_STATUS, ERROR, PROCESSOR_BOOST_CLAIM, MERGER_TRIGGER_CLAIM records) for a specific integration run:
 
 ```typescript
 const statsTable = new StatisticsTable(context);

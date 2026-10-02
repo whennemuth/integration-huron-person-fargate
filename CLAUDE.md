@@ -232,7 +232,11 @@ The pipeline supports two storage modes for delta state and metadata, controlled
 
 3. **StatisticsTable** - Metadata, flags, and error events
    - PK: `integrationTimestamp` (syncRunId), SK: `eventType`
-   - Event types: `METADATA`, `FLAGS`, `TERMINAL_ERROR`, `STATISTICS`, `ERROR:*`
+   - Event types: `METADATA`, `FLAGS`, `TERMINAL_ERROR`, `STATISTICS`, `STATISTICS-chunk-*`, `ERROR:*`,
+     `CHUNK_STATUS_*`, `PROCESSOR_BOOST_CLAIM`, `MERGER_TRIGGER_CLAIM`
+   - `PROCESSOR_BOOST_CLAIM` / `MERGER_TRIGGER_CLAIM` are `OCCFlag`-guarded claim records ensuring exactly
+     one chunker task runs the processor scaling check, and exactly one processor task triggers the merger
+     (see `docs/CONCURRENCY_CONTROL.md`); the boost claim is written in S3 storage mode too
    - Replaces `_metadata.json` and `_flags.json` files from S3 mode
 
 **What remains in S3** (even in DynamoDB mode):
@@ -306,7 +310,8 @@ time.
 tries the mock statistics table first (if DynamoDB mode and a mock table is configured); if no
 FLAGS record is found there, falls back to the real table. Returns `{ metadata, flags,
 statisticsTableName }` so callers reuse the resolved table for everything else tied to that
-`syncRunId` (METADATA, TERMINAL_ERROR, CHUNK_STATUS, STATISTICS, ERROR) without re-resolving.
+`syncRunId` (METADATA, TERMINAL_ERROR, CHUNK_STATUS, STATISTICS, ERROR, MERGER_TRIGGER_CLAIM) without
+re-resolving.
 
 **Where it's used**:
 - `ProcessorForDynamoDb.ts`: replaces a module-level, real-table-only bootstrap with a

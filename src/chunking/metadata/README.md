@@ -332,6 +332,28 @@ Attributes: {
 }
 ```
 
+**Processor Boost Claim Record** (eventType = "PROCESSOR_BOOST_CLAIM"):
+```
+PK: "2024-01-15T10:30:00.000Z"
+SK: "PROCESSOR_BOOST_CLAIM"
+Attributes: {
+  claimedAt: "2024-01-15T10:31:00.000Z",  // OCCFlag-guarded - first writer wins
+  claimedByChunk: "1000"                  // Optional - chunker offset (or input S3 key for file-drop)
+}
+```
+Written by the one chunker task that wins `claimProcessorBoost()` (ProcessorServiceBooster); deleted by `releaseProcessorBoostClaim()`. Claims older than 10 minutes are treated as abandoned and cleared. In S3 mode, `MetadataForS3` writes this same record to the statistics table.
+
+**Merger Trigger Claim Record** (eventType = "MERGER_TRIGGER_CLAIM"):
+```
+PK: "2024-01-15T10:30:00.000Z"
+SK: "MERGER_TRIGGER_CLAIM"
+Attributes: {
+  claimedAt: "2024-01-15T10:45:00.000Z",  // OCCFlag-guarded - first writer wins
+  claimedByChunk: "0042"                  // Optional - which processor task won
+}
+```
+Written directly via `StatisticsTable.claimMergerTrigger()` (not through the metadata classes) by the one processor task (`ProcessorForDynamoDb`) that wins the right to send the merger-trigger SQS message. Never released - the merger must be triggered at most once per run.
+
 **Non-Terminal Error Records** (eventType = "ERROR:{category}"):
 
 Individual record failures are logged to StatisticsTable but do NOT halt the integration:
@@ -411,6 +433,7 @@ This is handled by `AbstractMetadata.extractSyncRunId(chunkDirectory)`.
 - `read()`: Queries StatisticsTable with PK=syncRunId, SK="METADATA"
 - `readFlags()`: Queries StatisticsTable with PK=syncRunId, SK="FLAGS"
 - `readTerminalError()` / `terminalErrorExists()`: Call `StatisticsTable.readTerminalError()` (PK=syncRunId, SK="TERMINAL_ERROR"). These previously read the METADATA record and so never detected a failed run in DynamoDB mode.
+- `claimProcessorBoost()`: Calls `StatisticsTable.claimProcessorBoost()` (PK=syncRunId, SK="PROCESSOR_BOOST_CLAIM"). `MetadataForS3` delegates to the same StatisticsTable method, so this record exists in both storage modes.
 
 ### Not Applicable Methods
 

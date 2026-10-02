@@ -124,6 +124,21 @@ export class DynamoDbTables extends Construct {
    *    - Stores individual error events during processing
    *    - Multiple records per integration run (one per error)
    *    - SK includes timestamp for uniqueness and chronological sorting
+   *
+   * 3. Run control records (1 record each per integration run):
+   *    - SK = "FLAGS": Sync configuration flags (written first by the chunker)
+   *    - SK = "METADATA": Run manifest (written after chunking completes)
+   *    - SK = "TERMINAL_ERROR": Pipeline-halting failure marker
+   *
+   * 4. Chunk status records (SK = "CHUNK_STATUS_0009", 1 record per chunk):
+   *    - Processor progress used for "last processor triggers merger" completion detection
+   *
+   * 5. Claim records (OCCFlag-guarded, first-writer-wins on the `claimedAt` attribute):
+   *    - SK = "PROCESSOR_BOOST_CLAIM": Exactly one chunker task wins the right to run the
+   *      processor scaling check (ProcessorServiceBooster); released when done, and cleared
+   *      if stale
+   *    - SK = "MERGER_TRIGGER_CLAIM": Exactly one processor task wins the right to send the
+   *      merger-trigger SQS message; never released
    * 
    * Access Patterns:
    * 1. Get all data for a specific run: Query by PK = integrationTimestamp

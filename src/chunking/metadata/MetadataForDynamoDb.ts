@@ -23,11 +23,12 @@ import { StandardMetadataUtils, validateMetadata } from './MetadataUtils';
  * - eventType="METADATA": Run manifest and configuration
  * - eventType="FLAGS": Sync configuration flags
  * - eventType="TERMINAL_ERROR": Terminal error marker
+ * - eventType="PROCESSOR_BOOST_CLAIM": Processor-boost claim (see claimProcessorBoost)
  * 
  * ## Record Structure
  * All records use:
  * - PK: syncRunId (ISO timestamp extracted from chunkDirectory)
- * - SK: eventType ("METADATA" | "FLAGS" | "TERMINAL_ERROR")
+ * - SK: eventType ("METADATA" | "FLAGS" | "TERMINAL_ERROR" | "PROCESSOR_BOOST_CLAIM")
  * - Additional fields: Varies by eventType
  * 
  * ## Design Notes

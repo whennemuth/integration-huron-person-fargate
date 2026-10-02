@@ -552,7 +552,8 @@ export class StatisticsTable {
 
   /**
    * Delete all records for a specific integration run.
-   * Removes all records (STATISTICS, FLAGS, METADATA, CHUNK_STATUS, ERROR records)
+   * Removes all records (STATISTICS, FLAGS, METADATA, TERMINAL_ERROR, CHUNK_STATUS, ERROR,
+   * PROCESSOR_BOOST_CLAIM, MERGER_TRIGGER_CLAIM records)
    * associated with the given syncRunId.
    * 
    * This is useful for:

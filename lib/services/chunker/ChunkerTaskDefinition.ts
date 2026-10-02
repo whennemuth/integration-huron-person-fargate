@@ -395,7 +395,8 @@ export class ChunkerTaskDefinition extends Construct {
 
     // Grant DynamoDB read/write permissions for the isolated mock statistics table
     // Used when the run is mock (flags.useMockTarget=true) so its entire statistics-table trail
-    // (FLAGS/METADATA/TERMINAL_ERROR/STATISTICS/ERROR/CHUNK_STATUS) stays in this table only
+    // (FLAGS/METADATA/TERMINAL_ERROR/STATISTICS/ERROR/CHUNK_STATUS/PROCESSOR_BOOST_CLAIM/
+    // MERGER_TRIGGER_CLAIM) stays in this table only
     if (dynamodb!.mockStatisticsTable) {
       this.taskDefinition.addToTaskRolePolicy(
         new PolicyStatement({

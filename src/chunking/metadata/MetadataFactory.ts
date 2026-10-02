@@ -41,7 +41,8 @@ import { MetadataForDynamoDb } from './MetadataForDynamoDb';
  * - Requires an explicit statisticsTableName (no IContext dependency - table names are
  *   baked into task definitions as env vars at deploy time)
  * - Does NOT support file system operations (chunk files still in S3)
- * - Record structure: PK=syncRunId, SK=eventType ("METADATA" | "FLAGS" | "TERMINAL_ERROR")
+ * - Record structure: PK=syncRunId, SK=eventType ("METADATA" | "FLAGS" | "TERMINAL_ERROR" |
+ *   "PROCESSOR_BOOST_CLAIM")
  */
 export class MetadataFactory {
   /**
