@@ -218,8 +218,10 @@ export class MergerTaskDefinition extends Construct {
       })
     );
 
-    // Grant DynamoDB query permissions for PersonCurrentStateTable
-    // Used for deletion detection (finding persons in storage but not in source) in DynamoDB mode
+    // Grant DynamoDB read/write permissions for PersonCurrentStateTable
+    // Used for deletion detection (finding persons in storage but not in source) in DynamoDB mode,
+    // and for marking soft-deleted persons so later runs don't select them again
+    // (PersonCurrentStateTable.markDeleted() routes through DynamoDBTable.batchWrite()).
     if (dynamodb!.personCurrentStateTable) {
       this.taskDefinition.addToTaskRolePolicy(
         new PolicyStatement({
@@ -228,6 +230,8 @@ export class MergerTaskDefinition extends Construct {
             'dynamodb:Query',
             'dynamodb:GetItem',
             'dynamodb:Scan', // Needed for full table scan to detect deletions
+            'dynamodb:PutItem',
+            'dynamodb:BatchWriteItem',
           ],
           resources: [
             `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personCurrentStateTable.tableName}`,
@@ -257,7 +261,8 @@ export class MergerTaskDefinition extends Construct {
       );
     }
 
-    // Grant DynamoDB query permissions for mockPersonCurrentStateTable (deletion detection during mocked runs)
+    // Grant DynamoDB read/write permissions for mockPersonCurrentStateTable (deletion detection and
+    // soft-deleted marking during mocked runs)
     if (dynamodb!.mockPersonCurrentStateTable) {
       this.taskDefinition.addToTaskRolePolicy(
         new PolicyStatement({
@@ -266,6 +271,8 @@ export class MergerTaskDefinition extends Construct {
             'dynamodb:Query',
             'dynamodb:GetItem',
             'dynamodb:Scan',
+            'dynamodb:PutItem',
+            'dynamodb:BatchWriteItem',
           ],
           resources: [
             `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonCurrentStateTable.tableName}`,

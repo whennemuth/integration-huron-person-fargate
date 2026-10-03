@@ -1,6 +1,7 @@
 import { FieldSet } from "integration-core";
 import { AbstractDeferredDeleteHandler, DeferredDeleteHandlerCoreParams } from "./AbstractDeferredDeleteHandler";
 import { ChunkPopulationReader } from "./ChunkPopulationReader";
+import { isDeletedHash } from "./DeletedHashMarker";
 import { PersonCurrentStateTable } from "../dynamodb/PersonCurrentStateTable";
 import { PersonHistoryTable, PersonHistoryRecord } from "../dynamodb/PersonHistoryTable";
 
@@ -36,7 +37,14 @@ export class DeferredDeleteHandlerForDynamoDB extends AbstractDeferredDeleteHand
     const stateTable = PersonCurrentStateTable.fromTableName(personCurrentStateTableName, region);
     const persons = await stateTable.getAllPersons();
 
-    return persons.map(({ personId, hash }) => (
+    // Persons already soft-deleted by a previous run are not deletion candidates again.
+    const notYetDeleted = persons.filter(({ hash }) => !isDeletedHash(hash));
+    const alreadyDeletedCount = persons.length - notYetDeleted.length;
+    if (alreadyDeletedCount > 0) {
+      console.log(`  Excluded ${alreadyDeletedCount} already soft-deleted record(s) from baseline population`);
+    }
+
+    return notYetDeleted.map(({ personId, hash }) => (
       { fieldValues: [{ sourceIdentifier: personId }], hash } satisfies FieldSet
     ));
   }
@@ -66,15 +74,18 @@ export class DeferredDeleteHandlerForDynamoDB extends AbstractDeferredDeleteHand
   }
 
   /**
-   * Complete PersonHistoryTable's documented NEW/UPDATED/DELETED audit vocabulary - a removal
-   * that succeeds against the target is otherwise the one changeType with no history trail.
+   * Mark the soft-deleted persons in PersonCurrentStateTable so later runs don't select them for
+   * deletion again (see DeletedHashMarker.ts), and complete PersonHistoryTable's documented
+   * NEW/UPDATED/DELETED audit vocabulary - a removal that succeeds against the target is otherwise
+   * the one changeType with no history trail.
    */
   protected onSoftDeleteSuccess = async (successfulRecords: FieldSet[]): Promise<void> => {
     if (successfulRecords.length === 0) {
       return;
     }
 
-    const { personHistoryTableName, syncRunId, region } = this.params as DeferredDeleteHandlerForDynamoDBParams;
+    const { personCurrentStateTableName, personHistoryTableName, syncRunId, region } = this.params as DeferredDeleteHandlerForDynamoDBParams;
+    const stateTable = PersonCurrentStateTable.fromTableName(personCurrentStateTableName, region);
     const historyTable = PersonHistoryTable.fromTableName(personHistoryTableName, region);
 
     const records: PersonHistoryRecord[] = [];
@@ -90,6 +101,9 @@ export class DeferredDeleteHandlerForDynamoDB extends AbstractDeferredDeleteHand
     if (records.length === 0) {
       return;
     }
+
+    console.log(`Marking ${records.length} record(s) as soft-deleted in PersonCurrentStateTable`);
+    await stateTable.markDeleted(records.map(({ personId, hash }) => ({ personId, hash })), syncRunId);
 
     console.log(`Writing ${records.length} DELETED history entrie(s) to PersonHistoryTable`);
     await historyTable.batchWriteHistory(records);

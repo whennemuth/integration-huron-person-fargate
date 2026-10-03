@@ -115,10 +115,11 @@ export abstract class AbstractDeferredDeleteHandler {
    * Perform soft deletes (PATCH with active=false) for records removed from source.
    */
   private handleSoftDeletes = async (): Promise<DeferredDeleteResult> => {
-    const { getRemovedRecords } = this;
     try {
-      // Find records in baseline but NOT in consolidated (true removals)
-      const removedRecords = await getRemovedRecords();
+      // Find records in baseline but NOT in consolidated (true removals).
+      // Called through this (not destructured): subclasses may implement getRemovedRecords as a
+      // prototype method (e.g. DeferredDeleteHandlerForS3), which would otherwise lose its binding.
+      const removedRecords = await this.getRemovedRecords();
       
       if (removedRecords.length === 0) {
         console.log('\nNo records to soft-delete (no removals detected)');
@@ -157,16 +158,12 @@ export abstract class AbstractDeferredDeleteHandler {
 
       console.log(`✓ Soft-delete completed: ${successCount} successes, ${failureCount} failures`);
 
-      const { primaryKeyFieldNames } = this.params;
-      const successKeys = new Set(
-        (batchResult.successes || [])
-          .map(s => this.extractPrimaryKeyValue({ fieldValues: s.primaryKey } as FieldSet, primaryKeyFieldNames))
-          .filter((k): k is string => !!k)
+      const successTokens = new Set(
+        (batchResult.successes || []).flatMap(s => this.extractIdentifierTokens(s.primaryKey || []))
       );
-      const successfulRecords = removedRecords.filter(r => {
-        const key = this.extractPrimaryKeyValue(r, primaryKeyFieldNames);
-        return key !== null && successKeys.has(key);
-      });
+      const successfulRecords = removedRecords.filter(r =>
+        this.extractIdentifierTokens(r.fieldValues).some(token => successTokens.has(token))
+      );
       await this.onSoftDeleteSuccess(successfulRecords);
 
       return {
@@ -339,6 +336,33 @@ export abstract class AbstractDeferredDeleteHandler {
     }
     
     return values.join('|'); // Composite key
+  }
+
+  /**
+   * Extract the person identifier values from a list of fields as comparable tokens.
+   *
+   * Used to correlate push results with removed records, which can't be done by primary key
+   * field name: removed records carry sourceIdentifier (plus hrn once enriched), while push
+   * results carry whatever identifier the target returns - MockPersonDataTarget returns
+   * [{ personId }] and HuronPersonDataTarget returns [{ hrn }]. sourceIdentifier, personId and id
+   * all hold the BUID, so they share a token namespace.
+   *
+   * Example: [{ sourceIdentifier: 'U12345678' }, { hrn: 'hrn:hrs:persons:abc' }]
+   *   returns ['buid:U12345678', 'hrn:hrn:hrs:persons:abc']
+   */
+  protected extractIdentifierTokens = (fields: Record<string, any>[]): string[] => {
+    const tokens: string[] = [];
+    for (const field of fields) {
+      for (const name of ['sourceIdentifier', 'personId', 'id']) {
+        if (typeof field[name] === 'string' && field[name]) {
+          tokens.push(`buid:${field[name]}`);
+        }
+      }
+      if (typeof field.hrn === 'string' && field.hrn) {
+        tokens.push(`hrn:${field.hrn}`);
+      }
+    }
+    return tokens;
   }
 
   /**

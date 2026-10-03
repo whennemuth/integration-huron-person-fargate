@@ -1,4 +1,5 @@
 import { IContext } from '../../context/IContext';
+import { toDeletedHash } from '../merging/DeletedHashMarker';
 import { DynamoDBTable } from './DynamoDBTable';
 
 /**
@@ -13,7 +14,10 @@ import { DynamoDBTable } from './DynamoDBTable';
  * - personId: string (PK) - Unique identifier (e.g., "U12345678")
  * - hash: string - Current computed hash from person data
  * - syncRunId: string - ISO timestamp of last sync that modified this person
- * 
+ * - deletedAt: string (optional) - ISO timestamp of the merger's soft-delete of this person. Set
+ *   together with a DELETED:-prefixed hash (see merging/DeletedHashMarker.ts); both are cleared
+ *   when a processor next writes the record for a person who has reappeared in the source.
+ *
  * Access Patterns:
  * 1. Batch fetch by personId: Used by processors to get previous hashes for delta computation
  * 2. Query by syncRunId via GSI: Used by merger for deletion detection
@@ -62,6 +66,7 @@ export interface PersonCurrentStateRecord {
   personId: string;
   hash: string;
   syncRunId: string;
+  deletedAt?: string;
 }
 
 /**
@@ -173,6 +178,24 @@ export class PersonCurrentStateTable {
    */
   public async batchWritePersonState(records: PersonCurrentStateRecord[]): Promise<void> {
     await this.table.batchWrite({ items: records, operation: 'put' });
+  }
+
+  /**
+   * Record that the given persons were soft-deleted in the target during a sync run, by
+   * overwriting each record with a DELETED:-prefixed hash, the deleting run's syncRunId and a
+   * deletedAt timestamp. The marked hash keeps deferred delete handling from selecting these
+   * persons again, and forces their reactivation if they reappear in the source.
+   * See merging/DeletedHashMarker.ts for the rationale.
+   *
+   * @param records - personId and baseline (pre-deletion) hash of each soft-deleted person
+   * @param syncRunId - ISO timestamp identifying the sync run that performed the deletions
+   */
+  public async markDeleted(records: { personId: string; hash: string }[], syncRunId: string): Promise<void> {
+    const deletedAt = new Date().toISOString();
+    const items: PersonCurrentStateRecord[] = records.map(({ personId, hash }) => (
+      { personId, hash: toDeletedHash(hash), syncRunId, deletedAt }
+    ));
+    await this.batchWritePersonState(items);
   }
 
   /**
@@ -342,9 +365,13 @@ export class PersonCurrentStateTable {
     // Get the previous entry (chronologically before target)
     const previousEntry = history[targetIndex - 1];
     
-    // If previous entry is a DELETED record, there's no valid previous state
+    // If previous entry is a DELETED record, restore the soft-deleted marker, so the person is
+    // neither deleted again nor left deactivated should they reappear in the source.
     if (previousEntry.changeType === 'DELETED') {
-      return undefined;
+      return {
+        hash: toDeletedHash(previousEntry.hash),
+        syncRunId: previousEntry.syncRunId
+      };
     }
     
     // Return the previous state

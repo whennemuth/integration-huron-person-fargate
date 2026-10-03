@@ -188,6 +188,14 @@ dedicated `StatisticsTable.writeTerminalError()`/`readTerminalError()`.
 - S3 mode: File consolidation + deletion handling
 - DynamoDB mode: Deletion handling only (no file consolidation needed)
 
+**Soft-deleted persons are marked in the baseline** (`src/merging/DeletedHashMarker.ts`): both
+baselines (PersonCurrentStateTable, `previous-input.ndjson`) retain every person ever seen, so a
+person absent from the source would otherwise be selected for deletion on every full sync. After a
+successful soft-delete, `onSoftDeleteSuccess` rewrites that person's baseline hash with a
+`DELETED:` prefix (DynamoDB mode also sets `deletedAt`). Deletion detection skips marked entries,
+and a marked hash never matches a fresh source hash, so a person who reappears is classified
+UPDATED and reactivated (via `__active`); the processor's write then clears the marker.
+
 **Harness Prefixes**:
 - DEFERRED_DELETE_HANDLER_*, STATISTICS_TABLE_*
 - DOCKER_MERGER_*
@@ -274,7 +282,7 @@ The pipeline supports two storage modes for delta state and metadata, controlled
    - Factory injects appropriate PersonTarget based on `useMockTarget` flag
    - Design: Dependency injection enables testing without environment coupling
    - `MockPersonDataTarget.getPersonByBuid()` (integration-huron-person): single-person existence check used by `UpsertDeltaStrategy` when `flags.useMockTarget` is true, so the create-vs-update lookup never hits the real Huron API in mock mode
-   - DELETE against the mock target is a soft-delete (`deactivated`/`deactivatedAt` attributes), matching Huron's soft-delete-only requirement - records are never removed from MockTargetPersonTable, only marked inactive
+   - DELETE against the mock target is a soft-delete (`deactivated`/`deactivatedAt` attributes, plus `data.__active=false`), matching Huron's soft-delete-only requirement - records are never removed from MockTargetPersonTable, only marked inactive
    - `StaticMapUsage` is forced to `{orgMap:false, stateMap:false, countryMap:false}` at runtime (via `resolveStaticMapUsage()` in ProcessorForS3.ts/ProcessorForDynamoDb.ts) whenever `flags.useMockTarget` is true, overriding whatever `STATIC_MAP_USAGE` was baked into the task at deploy time
 
 3. **Metadata** (src/chunking/metadata/)

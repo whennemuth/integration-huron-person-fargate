@@ -3,6 +3,7 @@ import { FieldSet, TestEnvironment } from "integration-core";
 import readline from "readline";
 import { Readable } from "stream";
 import { AbstractDeferredDeleteHandler, DeferredDeleteHandlerCoreParams } from "./AbstractDeferredDeleteHandler";
+import { isDeletedHash, toDeletedHash } from "./DeletedHashMarker";
 import { BasicCache, Config, FieldDefinitions } from 'integration-huron-person';
 
 export type DeferredDeleteHandlerForS3Params = DeferredDeleteHandlerCoreParams & {
@@ -83,8 +84,15 @@ export class DeferredDeleteHandlerForS3 extends AbstractDeferredDeleteHandler {
 
     // Step 2: Read baseline file (previous run state)
     console.log(`Reading baseline file: s3://${bucketName}/${baselineNdjsonPath}`);
-    const baseline = await readNdjsonFile(baselineNdjsonPath);
-    console.log(`  Parsed ${baseline.length} records from baseline file`);
+    const fullBaseline = await readNdjsonFile(baselineNdjsonPath);
+    console.log(`  Parsed ${fullBaseline.length} records from baseline file`);
+
+    // Persons already soft-deleted by a previous run are not deletion candidates again.
+    const baseline = fullBaseline.filter(fs => !isDeletedHash(fs.hash));
+    const alreadyDeletedCount = fullBaseline.length - baseline.length;
+    if (alreadyDeletedCount > 0) {
+      console.log(`  Excluded ${alreadyDeletedCount} already soft-deleted record(s) from baseline`);
+    }
 
     // Step 3: Find records in baseline but NOT in consolidated (true removals)
     const removedRecords = findRemovedRecords(baseline, consolidated);
@@ -96,7 +104,47 @@ export class DeferredDeleteHandlerForS3 extends AbstractDeferredDeleteHandler {
 
     return enrichedRecords;
   }
-  
+
+  /**
+   * Mark the soft-deleted persons in the baseline file so later runs don't select them for
+   * deletion again (see DeletedHashMarker.ts). The baseline is rewritten in place: the merge step
+   * has already written this run's merged result to it, and HashMapMerger retains baseline-only
+   * records (including these) indefinitely.
+   */
+  protected onSoftDeleteSuccess = async (successfulRecords: FieldSet[]): Promise<void> => {
+    if (successfulRecords.length === 0) {
+      return;
+    }
+
+    const { readNdjsonFile, extractPrimaryKeyValue, s3 } = this;
+    const { bucketName, baselineNdjsonPath, primaryKeyFieldNames } = this.params as DeferredDeleteHandlerForS3Params;
+
+    const deletedKeys = new Set(
+      successfulRecords
+        .map(r => extractPrimaryKeyValue(r, primaryKeyFieldNames))
+        .filter((k): k is string => !!k)
+    );
+
+    const baseline = await readNdjsonFile(baselineNdjsonPath);
+    let markedCount = 0;
+    const marked = baseline.map(fs => {
+      const key = extractPrimaryKeyValue(fs, primaryKeyFieldNames);
+      if (!fs.hash || !key || !deletedKeys.has(key)) {
+        return fs;
+      }
+      markedCount++;
+      return { ...fs, hash: toDeletedHash(fs.hash) };
+    });
+
+    console.log(`Marking ${markedCount} record(s) as soft-deleted in baseline file: s3://${bucketName}/${baselineNdjsonPath}`);
+    await s3.putObject({
+      Bucket: bucketName,
+      Key: baselineNdjsonPath,
+      Body: marked.map(fs => JSON.stringify(fs)).join('\n') + '\n',
+      ContentType: 'application/x-ndjson'
+    });
+  }
+
 }
 
 
