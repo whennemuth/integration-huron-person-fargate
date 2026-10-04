@@ -1,7 +1,8 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { 
-  BatchWriteCommand, 
-  DynamoDBDocumentClient, 
+  BatchWriteCommand,
+  BatchWriteCommandOutput,
+  DynamoDBDocumentClient,
   GetCommand, 
   QueryCommand, 
   QueryCommandOutput, 
@@ -127,10 +128,8 @@ export class DynamoDBTable implements AbstractDynamoDbTable {
             }
           }));
           
-          await client.send(new BatchWriteCommand({
-            RequestItems: { [tableName]: deleteRequests }
-          }));
-          
+          await this.sendBatchWithRetry(deleteRequests);
+
           itemsDeleted += batch.length;
           console.log(`Deleted ${itemsDeleted} items so far...`);
         }
@@ -219,14 +218,12 @@ export class DynamoDBTable implements AbstractDynamoDbTable {
         }
       }));
       
-      await client.send(new BatchWriteCommand({
-        RequestItems: { [tableName]: deleteRequests }
-      }));
-      
+      await this.sendBatchWithRetry(deleteRequests);
+
       itemsDeleted += batch.length;
       console.log(`Deleted ${itemsDeleted} items so far...`);
     }
-    
+
     console.log(`Deletion complete. Deleted ${itemsDeleted} total items.`);
     return itemsDeleted;
   }
@@ -392,26 +389,52 @@ export class DynamoDBTable implements AbstractDynamoDbTable {
   /**
    * Batch write items to the table.
    * Handles batching automatically (max 25 items per request).
-   * 
+   *
    * @param items - Array of items to write
    * @param operation - 'put' or 'delete' (default: 'put')
    */
   public async batchWrite(parms: { items: any[], operation?: 'put' | 'delete' } ): Promise<void> {
-    const { client, params: { tableName } } = this;
     const batchSize = 25; // DynamoDB limit
 
     const { items, operation = 'put' } = parms;
     for (let i = 0; i < items.length; i += batchSize) {
       const batch = items.slice(i, i + batchSize);
-      const requests = batch.map(item => 
+      const requests = batch.map(item =>
         operation === 'put'
           ? { PutRequest: { Item: item } }
           : { DeleteRequest: { Key: item } }
       );
 
-      await client.send(new BatchWriteCommand({
-        RequestItems: { [tableName]: requests }
+      await this.sendBatchWithRetry(requests);
+    }
+  }
+
+  /**
+   * Send one BatchWriteItem request (at most 25 put/delete requests).
+   * BatchWriteItem does not throw when throttled - it returns the requests it skipped as
+   * UnprocessedItems - so those are retried with exponential backoff, and an error is thrown if
+   * any remain after the final attempt, rather than letting writes be silently dropped.
+   *
+   * @param requests - PutRequest/DeleteRequest objects for this table
+   */
+  private async sendBatchWithRetry(requests: any[]): Promise<void> {
+    const { client, params: { tableName } } = this;
+    const maxAttempts = 5;
+    let pending: any[] | undefined = requests;
+
+    for (let attempt = 1; pending && pending.length > 0; attempt++) {
+      if (attempt > maxAttempts) {
+        throw new Error(`Failed to write to ${tableName}: ${pending.length} request(s) still unprocessed after ${maxAttempts} attempts`);
+      }
+      if (attempt > 1) {
+        await new Promise(resolve => setTimeout(resolve, 100 * 2 ** (attempt - 2)));
+      }
+
+      const response: BatchWriteCommandOutput = await client.send(new BatchWriteCommand({
+        RequestItems: { [tableName]: pending }
       }));
+
+      pending = response.UnprocessedItems?.[tableName];
     }
   }
 

@@ -55,9 +55,13 @@ export class IntegrationRunPruner {
    * 
    * This order ensures that:
    * - Statistics/metadata are cleaned first (no dependencies)
-   * - History is available when restoring PersonCurrentState
-   * - Current state is restored to maintain data integrity
-   * 
+   * - Current state is restored to maintain data integrity, from each person's latest history
+   *   entry before this run (which doesn't require this run's own entries to still exist)
+   *
+   * Only a run that is still the latest to have touched each of its persons can be pruned: if a
+   * later run changed one of them, removing this run's history entry would leave that person's
+   * later entry following an older one, possibly with the same hash. Such a prune is refused.
+   *
    * @returns Summary of deletion counts for each table
    */
   public prune = async (): Promise<{
@@ -72,6 +76,17 @@ export class IntegrationRunPruner {
     const statisticsTable = new StatisticsTable(this.context);
     const historyTable = new PersonHistoryTable(this.context);
     const currentStateTable = new PersonCurrentStateTable(this.context);
+
+    // Refuse to prune a run that later runs have built on (see method comment)
+    const runEntries = await historyTable.getChangesInSyncRun(this.isoTimestamp);
+    const states = await currentStateTable.batchGetPersonState(Array.from(new Set(runEntries.map(e => e.personId))));
+    const superseded = Array.from(states.values()).filter(s => s.syncRunId > this.isoTimestamp);
+    if (superseded.length > 0) {
+      throw new Error(
+        `Cannot prune integration run ${this.isoTimestamp}: ${superseded.length} of its person(s) were changed by ` +
+        `a later run (e.g. ${superseded[0].personId} in ${superseded[0].syncRunId}). Prune the later run(s) first.`
+      );
+    }
 
     // Step 1: Delete from StatisticsTable
     console.log('Step 1: Deleting from StatisticsTable...');

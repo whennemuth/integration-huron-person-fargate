@@ -1,5 +1,5 @@
 import { mockClient } from 'aws-sdk-client-mock';
-import { DynamoDBDocumentClient, GetCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchWriteCommand, DynamoDBDocumentClient, GetCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { PersonCurrentStateTable } from '../src/dynamodb/PersonCurrentStateTable';
 
 const dynamoMock = mockClient(DynamoDBDocumentClient);
@@ -23,6 +23,7 @@ describe('PersonCurrentStateTable', () => {
 
     it('truncates only the specified table', async () => {
       dynamoMock.on(ScanCommand).resolves({ Items: [{ personId: 'U0000001' }] });
+      dynamoMock.on(BatchWriteCommand).resolves({});
 
       const table = PersonCurrentStateTable.fromTableName('my-mock-person-current-state-table', 'us-east-2');
       await table.truncate();

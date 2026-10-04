@@ -1,3 +1,4 @@
+import type { BatchGetCommandOutput } from '@aws-sdk/lib-dynamodb';
 import { IContext } from '../../context/IContext';
 import { toDeletedHash } from '../merging/DeletedHashMarker';
 import { DynamoDBTable } from './DynamoDBTable';
@@ -145,22 +146,36 @@ export class PersonCurrentStateTable {
     // DynamoDB BatchGetItem limit is 100 keys per request
     const batchSize = 100;
     
+    const maxAttempts = 5;
+
     for (let i = 0; i < personIds.length; i += batchSize) {
       const batch = personIds.slice(i, i + batchSize);
-      const keys = batch.map(personId => ({ [DYNAMODB_PARTITION_KEY]: personId }));
-      
-      const command = new BatchGetCommand({
-        RequestItems: {
-          [this.tableName]: { Keys: keys }
+      let keys: any[] | undefined = batch.map(personId => ({ [DYNAMODB_PARTITION_KEY]: personId }));
+
+      // Retry unprocessed keys (e.g. from throttling), so no stored person is silently missed
+      for (let attempt = 1; keys && keys.length > 0; attempt++) {
+        if (attempt > maxAttempts) {
+          throw new Error(`Failed to read ${this.tableName}: ${keys.length} key(s) still unprocessed after ${maxAttempts} attempts`);
         }
-      });
-      
-      const result = await client.send(command);
-      const items = result.Responses?.[this.tableName] || [];
-      
-      items.forEach((item: any) => {
-        stateMap.set(item.personId, item as PersonCurrentStateRecord);
-      });
+        if (attempt > 1) {
+          await new Promise(resolve => setTimeout(resolve, 100 * 2 ** (attempt - 2)));
+        }
+
+        const command = new BatchGetCommand({
+          RequestItems: {
+            [this.tableName]: { Keys: keys }
+          }
+        });
+
+        const result: BatchGetCommandOutput = await client.send(command);
+        const items = result.Responses?.[this.tableName] || [];
+
+        items.forEach((item: any) => {
+          stateMap.set(item.personId, item as PersonCurrentStateRecord);
+        });
+
+        keys = result.UnprocessedKeys?.[this.tableName]?.Keys;
+      }
     }
     
     return stateMap;
@@ -354,16 +369,18 @@ export class PersonCurrentStateTable {
       return undefined; // No history at all
     }
     
-    // Find the target syncRunId
-    const targetIndex = history.findIndex(h => h.syncRunId === targetSyncRunId);
-    
-    if (targetIndex <= 0) {
-      // Target not found, or it's the first entry (no previous state)
+    // Get the latest entry chronologically before the target (syncRunIds are ISO timestamps, so
+    // they order lexically). This must not depend on the target run's own entry being present:
+    // IntegrationRun deletes the target run's PersonHistory entries before restoring
+    // PersonCurrentState, and the processors write no entry at all for an UNCHANGED person.
+    const earlierEntries = history.filter(h => h.syncRunId < targetSyncRunId);
+
+    if (earlierEntries.length === 0) {
+      // No entry before the target (no previous state)
       return undefined;
     }
-    
-    // Get the previous entry (chronologically before target)
-    const previousEntry = history[targetIndex - 1];
+
+    const previousEntry = earlierEntries.reduce((latest, h) => h.syncRunId > latest.syncRunId ? h : latest);
     
     // If previous entry is a DELETED record, restore the soft-deleted marker, so the person is
     // neither deleted again nor left deactivated should they reappear in the source.
