@@ -78,7 +78,13 @@ export class MetricsCatchupDelay {
     return undefined;
   }
 
-  public async startDelay(): Promise<void> {
+  /**
+   * @param signal Optional abort signal - when aborted, the delay ends promptly and returns false.
+   * @returns true if the alarm is no longer ALARM (safe to proceed with scaling), false if the
+   * full delay elapsed while still in ALARM state, or the delay was aborted (caller should NOT
+   * proceed with scaling).
+   */
+  public async startDelay(signal?: AbortSignal): Promise<boolean> {
     const alarmPeriodSeconds = await this.getAlarmPeriodSeconds();
     const {
       // CloudWatch alarm evaluation and SDK-visible alarm state are not always synchronized
@@ -100,28 +106,50 @@ export class MetricsCatchupDelay {
     let alarmState: string | undefined;
     
     while (remaining > 0) {
+      if (signal?.aborted) {
+        console.warn(`⚠️ Metrics catch-up delay aborted after ${totalDelaySeconds - remaining} seconds, before alarm state reached OK.`);
+        return false;
+      }
       alarmState = await this.getAlarmState();
       if (alarmState !== 'OK') {
         console.log(`Alarm state: ${alarmState ? alarmState : 'undefined'} (needs to be OK). ${remaining} of ${totalDelaySeconds} seconds remain to try again, retrying in ${countdownStepSeconds} seconds...`);
       }
       else {
         console.log(`✓ Metrics catch-up delay completed after ${totalDelaySeconds - remaining} seconds (alarm state, ${alarmState}, is no longer ALARM).\n`);
-        return;
+        return true;
       }
       const sleepSeconds = Math.min(countdownStepSeconds, remaining);
-      await this.sleep(sleepSeconds * 1000);
+      await this.sleep(sleepSeconds * 1000, signal);
       remaining -= sleepSeconds;
     }
 
+    if (signal?.aborted) {
+      console.warn(`⚠️ Metrics catch-up delay aborted before alarm state reached OK.`);
+      return false;
+    }
     if( alarmState === 'ALARM') {
       console.warn(`⚠️ Metrics catch-up delay completed, but alarm state is still ALARM. Scaling may not go as expected.`);
-      return;
+      return false;
     }
     console.log(`✓ Metrics catch-up delay completed.\n`);
+    return true;
   }
 
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  private sleep(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      if (signal?.aborted) {
+        return resolve();
+      }
+      const onAbort = () => {
+        clearTimeout(timeoutId);
+        resolve();
+      };
+      const timeoutId = setTimeout(() => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve();
+      }, ms);
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
   }
 }
 

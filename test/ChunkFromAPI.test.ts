@@ -11,7 +11,7 @@
 
 import { Message } from '@aws-sdk/client-sqs';
 import { Config, DataSourceConfig } from 'integration-huron-person';
-import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
+import { ChunkFromAPI, findMissingChunkOrdinals } from '../src/chunking/fetch/ChunkFromAPI';
 import { SyncPopulation } from '../docker/chunkTypes';
 
 // Mock dependencies
@@ -515,5 +515,26 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
+  });
+});
+
+describe('findMissingChunkOrdinals', () => {
+  it('returns an empty array when ordinals are contiguous starting at 0', () => {
+    const keys = ['dir/chunk-0000.ndjson', 'dir/chunk-0001.ndjson', 'dir/chunk-0002.ndjson'];
+    expect(findMissingChunkOrdinals(keys)).toEqual([]);
+  });
+
+  it('reports missing ordinals within the observed range', () => {
+    const keys = ['dir/chunk-0000.ndjson', 'dir/chunk-0002.ndjson', 'dir/chunk-0004.ndjson'];
+    expect(findMissingChunkOrdinals(keys)).toEqual([1, 3]);
+  });
+
+  it('returns an empty array for an empty input', () => {
+    expect(findMissingChunkOrdinals([])).toEqual([]);
+  });
+
+  it('ignores keys that do not match the chunk-NNNN.ndjson pattern', () => {
+    const keys = ['dir/chunk-0000.ndjson', 'dir/_metadata.json', 'dir/chunk-0001.ndjson'];
+    expect(findMissingChunkOrdinals(keys)).toEqual([]);
   });
 });

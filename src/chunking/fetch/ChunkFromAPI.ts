@@ -2,17 +2,17 @@ import { Message } from '@aws-sdk/client-sqs/dist-types/models/models_0';
 import { TestEnvironment } from 'integration-core';
 import { AxiosResponseStreamFilter, Config, ConfigManager, DataSourceConfig, error, ResponseProcessor } from "integration-huron-person";
 import { IContext } from "../../../context/IContext";
-import { SyncPopulation } from "../../../docker/chunkTypes";
-import { ChunkFromParams, IChunkFromSource, writeChunkMetadata } from "../../../docker/chunker";
+import { SyncPopulation, ChunkFromParams, IChunkFromSource, DEFAULT_MAX_TOTAL_RECORDS } from "../../../docker/chunkTypes";
 import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { getRetryStrategy } from '../../ApiErrorRetryStrategy';
 import { ChunkerQueue } from '../ChunkerQueue';
-import { MetadataManager, WriteMetadataParams } from "../Metadata";
+import { MetadataBroker, WriteMetadataParams } from "../metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig, ChunkOrdinalAllocator } from "./BigJsonFetch";
 import { ChunkConfigOverride } from "./ChunkConfigOverride";
+import { ProcessorServiceBooster } from './ProcessorServiceBooster';
 import { SourceSimulatorFunctionURL } from './SourceSimulator';
 
 export type TaskParameters = {
@@ -24,7 +24,36 @@ export type TaskParameters = {
   offset?: number;
   iterationLimit?: number;
   chunkDirectory?: string;
+  useMockTarget?: boolean;
+  mockTargetValidateOnly?: boolean;
+  /** Comma-delimited list of personRecordProcessor Customization enum keys to activate for this run */
+  personRecordProcessorCustomizations?: string;
 };
+
+/**
+ * Given a list of chunk-NNNN.ndjson keys, return which ordinals are missing from the
+ * contiguous 0..max range implied by the highest ordinal present.
+ */
+export function findMissingChunkOrdinals(chunkKeys: string[]): number[] {
+  const present = new Set<number>();
+  for (const key of chunkKeys) {
+    const match = key.match(/chunk-(\d+)\.ndjson$/);
+    if (match) {
+      present.add(parseInt(match[1], 10));
+    }
+  }
+  if (present.size === 0) {
+    return [];
+  }
+  const maxOrdinal = Math.max(...present);
+  const missing: number[] = [];
+  for (let i = 0; i <= maxOrdinal; i++) {
+    if (!present.has(i)) {
+      missing.push(i);
+    }
+  }
+  return missing;
+}
 
 /**
  * Chunker Entry Point (Phase 1)
@@ -211,6 +240,9 @@ export class ChunkFromAPI implements IChunkFromSource {
     const chunkDirectory = messageBody.chunkDirectory;
     const bulkReset = messageBody.bulkReset;
     const trustPreviousStorage = messageBody.trustPreviousStorage;
+    const useMockTarget = messageBody.useMockTarget;
+    const mockTargetValidateOnly = messageBody.mockTargetValidateOnly;
+    const personRecordProcessorCustomizations = messageBody.personRecordProcessorCustomizations;
 
     this.taskParameters = { 
       baseUrl, 
@@ -222,7 +254,10 @@ export class ChunkFromAPI implements IChunkFromSource {
       bulkReset: typeof bulkReset === 'boolean' ? bulkReset : bulkReset === 'true',
       trustPreviousStorage: typeof trustPreviousStorage === 'boolean'
         ? trustPreviousStorage
-        : trustPreviousStorage === 'true'
+        : trustPreviousStorage === 'true',
+      useMockTarget: typeof useMockTarget === 'boolean' ? useMockTarget : useMockTarget === 'true',
+      mockTargetValidateOnly: typeof mockTargetValidateOnly === 'boolean' ? mockTargetValidateOnly : mockTargetValidateOnly === 'true',
+      personRecordProcessorCustomizations
     };
 
     if (this.taskParameters.chunkDirectory) {
@@ -372,20 +407,45 @@ export class ChunkFromAPI implements IChunkFromSource {
   }
 
   /**
+   * Get the useMockTarget flag from task parameters.
+   * Returns true if mock target mode should be enabled, false otherwise.
+   */
+  public getUseMockTarget = (): boolean => {
+    return this.taskParameters?.useMockTarget || false;
+  }
+
+  /**
+   * Get the mockTargetValidateOnly flag from task parameters.
+   * Returns true if validation-only mode should be used with mock target, false otherwise.
+   */
+  public getMockTargetValidateOnly = (): boolean => {
+    return this.taskParameters?.mockTargetValidateOnly || false;
+  }
+
+  /**
+   * Get the comma-delimited personRecordProcessorCustomizations string from task parameters, if any.
+   */
+  public getPersonRecordProcessorCustomizations = (): string | undefined => {
+    return this.taskParameters?.personRecordProcessorCustomizations;
+  }
+
+  /**
    * Create and send the next SQS message for parallel chunking.
    * Calculates the next offset (currentOffset + iterationLimit) and sends a message to the chunker queue.
    * This is called BEFORE starting the current chunking task to enable true parallelism.
    * @param chunkerQueue The ChunkerQueue instance used to send the next message
    * @param dryRun If true, will not actually send the message but will log the parameters instead (default: false)
+   * @param partialOrEmptyChunkEncountered If true, some parallel chunker task has already
+   * encountered a partial-or-empty batch, so no legitimate data is expected to remain
    * @returns true if message sent successfully, false if skipped
    */
-  public sendNextChunkingMessage = async (chunkerQueue: ChunkerQueue, dryRun: boolean = false): Promise<boolean> => {
+  public sendNextChunkingMessage = async (chunkerQueue: ChunkerQueue, dryRun: boolean = false, partialOrEmptyChunkEncountered?: boolean): Promise<boolean> => {
     const { getIterationLimitAndOffset, getChunkDirectory, taskParameters } = this;
     const { iterationLimit, offset } = getIterationLimitAndOffset();
     const chunkDirectory = getChunkDirectory();
     
     return chunkerQueue.sendNextChunkingMessage({ 
-      iterationLimit, offset, chunkDirectory, taskParameters, dryRun 
+      iterationLimit, offset, chunkDirectory, taskParameters, dryRun, partialOrEmptyChunkEncountered 
     });
   }
 
@@ -454,6 +514,16 @@ export class ChunkFromAPI implements IChunkFromSource {
       // Extract chunk base path (creates key like: chunks/person-full/2026-04-09T15:28:18.703Z)
       const chunkDirectory = this.getChunkDirectory();
 
+      // Create metadata broker for config.storage.type (S3 or DynamoDB) - routes ALL statistics-
+      // table records (FLAGS/METADATA/TERMINAL_ERROR) to the isolated mock table when this is a
+      // mock run, mirroring chunker.ts's MetadataBroker construction. "Mock run" = useMockTarget true,
+      // covering both mock-target-only and source-simulator runs (which always force
+      // useMockTarget=true) - either way, the whole run's trail stays in exactly one table.
+      const metadataBroker = new MetadataBroker({
+        config: this.config, bucketName: chunksBucket, chunkDirectory, region,
+        useMockTarget: this.getUseMockTarget()
+      });
+
       console.log(`Chunks: s3://${chunksBucket}/${chunkDirectory}/`);
       console.log(`Region: ${region || 'default'}`);
       console.log(`Items per chunk: ${itemsPerChunk}`);
@@ -488,6 +558,11 @@ export class ChunkFromAPI implements IChunkFromSource {
       }
 
       // Configure fetcher
+      const maxTotalRecordsEnv = parseInt(process.env.MAX_TOTAL_RECORDS ?? '', 10);
+      const maxTotalRecords = Number.isNaN(maxTotalRecordsEnv) ? DEFAULT_MAX_TOTAL_RECORDS : maxTotalRecordsEnv;
+      const runTotalRecordsAtStart = await metadataBroker.getRunningTotalRecords();
+      console.log(`Max total records (safety cutoff): ${maxTotalRecords > 0 ? maxTotalRecords : 'disabled'}; run total so far: ${runTotalRecordsAtStart}`);
+
       const fetchConfig: BigJsonFetchConfig = {
         itemsPerChunk,
         config: this.config, // Will have already had its endpointConfig.baseUrl and fetchPath properties overridden by values obtained from the SQS message parameters if they were provided. 
@@ -501,12 +576,27 @@ export class ChunkFromAPI implements IChunkFromSource {
         iterationLimit, // indicates how many chunks to "chunk out" before stopping. Used in the context of chunking "in parallel".
         dryRun: dryRun.toLowerCase() === 'true',
         chunkOrdinalAllocator: this.chunkOrdinalAllocator,
-        retryStrategy: getRetryStrategy(process.env.RETRY_STRATEGY)
+        retryStrategy: getRetryStrategy(process.env.RETRY_STRATEGY),
+        stopAtFirstPartial: process.env.STOP_AT_FIRST_PARTIAL?.toLowerCase().trim() === 'true',
+        maxTotalRecords,
+        runTotalRecordsAtStart
+        // isOffsetPastKnownEnd intentionally omitted: each task's own fetch loop has a sufficient,
+        // purely local stopping condition (its own end-of-records batch or exhausted iterationLimit) -
+        // a cross-task signal here would risk discarding another task's still-legitimate data.
       };
 
       // Run fetch and chunk operation
       const fetcher = new BigJsonFetch(fetchConfig);
-      const result = await fetcher.fetchAndChunk();
+      // Periodically check (independent of chunk-write cadence) whether the processor queue's
+      // backlog already warrants "hitting the ground running" instead of waiting for this task's
+      // own end-of-chunking check below - stopped as soon as this task's own fetch loop concludes.
+      const stopProcessorBoosterCheck = ProcessorServiceBooster.startPeriodicCheck(metadataBroker, 60, { claimedByChunk: String(offset) });
+      let result: Awaited<ReturnType<typeof fetcher.fetchAndChunk>>;
+      try {
+        result = await fetcher.fetchAndChunk();
+      } finally {
+        await stopProcessorBoosterCheck();
+      }
 
       // Build source and target URLs for metadata
       const { baseUrl, fetchPath } = this.taskParameters;
@@ -530,7 +620,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         const runFailureMessage = result.terminalErrorMessage || 'Unknown terminal chunking error';
 
         // Persist failure metadata for run diagnostics and explicit terminal-state visibility.
-        await writeChunkMetadata({
+        await metadataBroker.write({
           storage: chunksStorage,
           bucketName: chunksBucket,
           chunkDirectory,
@@ -549,75 +639,40 @@ export class ChunkFromAPI implements IChunkFromSource {
         } satisfies WriteMetadataParams);
 
         // Keep flags aligned with metadata so merger gating has the same terminal signal.
-        await MetadataManager.markRunFailed({
+        await metadataBroker.markRunFailed({
           bucketName: chunksBucket,
           chunkDirectory,
           region,
           errorMessage: runFailureMessage
         });
 
-        throw new Error(`Terminal chunking failure (retry exhausted): ${runFailureMessage}`);
+        throw new Error(`Terminal chunking failure: ${runFailureMessage}`);
       }
 
-      if(result.reachedTheEndOfRecords) {
-        // Build aggregated metadata from run-level S3 state
-        // This ensures metadata reflects ALL chunks across all parallel tasks, not just this task's local slice
-        let aggregatedChunkCount = result.chunkCount;
-        let aggregatedTotalRecords = result.totalRecords;
-        let aggregatedChunkKeys = result.chunkKeys;
+      // Every task contributes its own totals - partial or full-iterationLimit - since there is
+      // no longer a single "final" task whose S3 rescan would otherwise catch everyone else's
+      // chunks. The running total returned here reflects only what's been contributed so far,
+      // not necessarily the run's true final total (other tasks may still be contributing).
+      const { chunkCount: runningChunkCount, totalRecords: runningTotalRecords } = await metadataBroker.accumulateMetadataTotals({
+        source: sourceUrl,
+        target: targetUrl,
+        itemsPerChunk,
+        bulkReset,
+        trustPreviousStorage,
+        syncPopulation: this.taskParameters.populationType as SyncPopulation,
+        chunkCountDelta: result.chunkCount,
+        totalRecordsDelta: result.totalRecords,
+        partialOrEmptyChunkEncountered: result.endOfRecordsDetected
+      });
 
-        try {
-          const { chunkCount, totalRecords, chunkKeys } = await MetadataManager.buildAggregatedMetadata(
-            chunksBucket,
-            chunkDirectory,
-            region
-          );
-          aggregatedChunkCount = chunkCount;
-          aggregatedTotalRecords = totalRecords;
-          aggregatedChunkKeys = chunkKeys;
+      console.log('\n✓ Chunking completed successfully');
+      console.log(`This task: ${result.chunkCount} chunks, ${result.totalRecords} records`);
+      console.log(`Running total for this run so far: ${runningChunkCount} chunks, ${runningTotalRecords} records`);
 
-          // Log comparison: show local result vs aggregated state
-          if (result.chunkCount !== aggregatedChunkCount || result.totalRecords !== aggregatedTotalRecords) {
-            console.log(`📊 Parallel chunking detected:`);
-            console.log(`   Local result: chunkCount=${result.chunkCount}, totalRecords=${result.totalRecords}, chunkKeys=${result.chunkKeys.length}`);
-            console.log(`   Aggregated: chunkCount=${aggregatedChunkCount}, totalRecords=${aggregatedTotalRecords}, chunkKeys=${aggregatedChunkKeys.length}`);
-          }
-        } catch (aggError: any) {
-          console.error(`⚠️  Failed to build aggregated metadata: ${aggError.message}`);
-          console.log(`Falling back to local result stats: chunkCount=${result.chunkCount}, totalRecords=${result.totalRecords}`);
-          // Continue with local stats if aggregation fails; don't fail the entire chunking job
-        }
-
-        // Log aggregate statistics (informational only)
-        // NOTE: These values are not persisted to metadata. Merger completion is determined 
-        // by contiguous marker ordinals (0..N), not by metadata.chunkCount.
-        console.log('\n✓ Chunking completed successfully');
-        console.log(`Created ${aggregatedChunkCount} chunks with ${aggregatedTotalRecords} person records`);
-        if (aggregatedChunkKeys && aggregatedChunkKeys.length > 0) {
-          console.log(`\nChunk files:`);
-          aggregatedChunkKeys.forEach(key => console.log(`  - s3://${chunksBucket}/${key}`));
-        }
-
-        // Write metadata manifest (source, target, paths, timestamps, flags)
-        // Merger will verify completion via contiguous marker ordinals, not metadata fields
-        await writeChunkMetadata({
-          storage: chunksStorage,
-          bucketName: chunksBucket,
-          chunkDirectory,
-          itemsPerChunk,
-          source: sourceUrl,
-          target: targetUrl,
-          dryRun: fetchConfig.dryRun || false,
-          bulkReset,
-          trustPreviousStorage,
-          syncPopulation: this.taskParameters.populationType as SyncPopulation,
-          region
-        } satisfies WriteMetadataParams);
-
-        console.log(`\n✓ Chunking complete with aggregated metadata:`);
-        console.log(`   Total chunks: ${aggregatedChunkCount}`);
-        console.log(`   Total records: ${aggregatedTotalRecords}`);
-        console.log(`\n📝 Note: Merger will verify completion via contiguous marker ordinals (0..${aggregatedChunkCount - 1}), not metadata.chunkCount`);
+      if (result.endOfRecordsDetected) {
+        // Final safety-net check in case the periodic check above never caught the backlog
+        // crossing its threshold - only relevant once at least one task has seen a partial.
+        await ProcessorServiceBooster.boostIfNeeded(metadataBroker, { claimedByChunk: String(offset) });
       }
       
     } catch (e: any) {
@@ -649,6 +704,8 @@ if(require.main === module) {
   const sourceSimulatorStr = testEnvironment.getVar('SOURCE_SIMULATOR') || 'false';
   const sourceSimulator = `${sourceSimulatorStr}`.toLowerCase().trim() === 'true';
   const landscape = testEnvironment.getVar('LANDSCAPE');
+  testEnvironment.getVar('STOP_AT_FIRST_PARTIAL');
+  testEnvironment.getVar('MAX_TOTAL_RECORDS');
 
   // Validate bucket name required for output is provided.
   if (!chunksBucket) {

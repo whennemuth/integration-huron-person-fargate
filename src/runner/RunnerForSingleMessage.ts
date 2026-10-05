@@ -1,10 +1,8 @@
 import { Config, DataSourceConfig } from 'integration-huron-person';
-import { AbstractAtomicCounter } from '../AtomicCounter';
-import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from '../chunking/ChunkerQueue';
 import { ApiChunkerEvent } from '../chunking/ChunkerSubscriber';
 import { handleApiEvent } from '../chunking/fetch/ChunkerApiSubscriber';
 import { ChunkingServiceRunner } from './AbstractRunner';
-import { Endpoint, NormalizedPopulationType } from './RunnerTypes';
+import { Endpoint, NormalizedPopulationType, TargetConfig } from './RunnerTypes';
 
 /**
  * Runner for single message execution mode.
@@ -44,44 +42,44 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
     return { baseUrl: baseUrl!, fetchPath: fetchPath! };
   }
 
+  public async resolveDataTarget(config: Config): Promise<TargetConfig> {
+    // Standard runners use real Huron API target (unless overridden by decorator)
+    const { dataTarget } = config;
+    return {
+      useMockTarget: this.env.mockTarget || false,
+      mockTargetValidateOnly: this.env.mockTargetValidateOnly,
+      endpoint: {
+        baseUrl: dataTarget?.endpointConfig?.baseUrl || '',
+        fetchPath: dataTarget?.personsPath || ''
+      }
+    };
+  }
+
   public async execute(
-    endpoint: Endpoint, 
-    config: any, 
+    sourceEndpoint: Endpoint,
+    targetConfig: TargetConfig,
+    config: Config,
     populationType: NormalizedPopulationType
   ): Promise<void> {
-    const { bulkReset, trustPreviousStorage, iterationLimit, stackId, region, landscape, queueUrl } = this.env;
+    const { bulkReset, trustPreviousStorage, iterationLimit, queueUrl, personRecordProcessorCustomizations } = this.env;
     const apiChunkerEvent: ApiChunkerEvent = {
-      baseUrl: endpoint.baseUrl,
-      fetchPath: endpoint.fetchPath,
+      baseUrl: sourceEndpoint.baseUrl,
+      fetchPath: sourceEndpoint.fetchPath,
       populationType,
       bulkReset,
       trustPreviousStorage,
       iterationLimit: iterationLimit ? iterationLimit : 0,
       offset: 0,
+      useMockTarget: targetConfig.useMockTarget,
+      mockTargetValidateOnly: targetConfig.mockTargetValidateOnly,
+      personRecordProcessorCustomizations,
       processingMetadata: {
         processedAt: new Date().toISOString(),
         processorVersion: '1.0.0'
       }
     };
 
-    // Reset counters to ensure clean offsets and chunk ordinals for the new run.
-    if( stackId && region && landscape) {
-      console.log(`\n📝 Resetting atomic counter for chunker queue: ${CHUNKER_COUNTER_NAME}\n`);
-      const offsetCounter = new class extends AbstractAtomicCounter {
-        getCounterName(): string {
-          return CHUNKER_COUNTER_NAME;
-        }
-      }({ stackId, region, landscape });
-      await offsetCounter.reset();
-
-      console.log(`\n📝 Resetting atomic counter for chunk ordinals: ${CHUNK_ORDINAL_COUNTER_NAME}\n`);
-      const chunkOrdinalCounter = new class extends AbstractAtomicCounter {
-        getCounterName(): string {
-          return CHUNK_ORDINAL_COUNTER_NAME;
-        }
-      }({ stackId, region, landscape });
-      await chunkOrdinalCounter.reset();
-    }
+    // Note: Atomic counter reset now handled automatically by base class start() method
 
     console.log(`\n📨 Sending single initial message to trigger chunking process...\n`);
     await handleApiEvent(apiChunkerEvent, queueUrl!);

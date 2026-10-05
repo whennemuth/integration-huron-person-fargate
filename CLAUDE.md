@@ -25,6 +25,76 @@ Canonical settings entry:
 
 Core-only and core+person+fargate workspace examples are documented in this repository's `README.md`.
 
+## Workspace-Scoped Memory Files
+
+The `.copilot/memories/` directory (visible in the workspace as "workspace-memories") stores workspace-scoped Copilot memory files that apply to all projects.
+
+**Purpose**: Stores coding preferences, task verification protocols, and workflow requirements that should be consistently applied across all integration projects (core, huron-person, fargate, dashboard, file-drop, etc.).
+
+**Key file**: `task-verification-protocol.md` - Defines requirements for build verification, test execution, and completion reporting on all code implementation tasks.
+
+**Discovery**: VS Code Copilot automatically loads memory files from `.copilot/memories/` when the directory is included as a workspace folder.
+
+## Implementation Verification Protocol
+
+**CRITICAL**: When implementing code that depends on unfamiliar abstractions, control flow directives, or domain-specific patterns, you MUST verify their actual behavior before proceeding.
+
+### High-Risk Abstractions Requiring Verification
+
+- **Control flow directives**: `__arrayFieldOperations`, `__metadata`, behavioral flags
+- **Update semantics**: append vs replace, merge vs overwrite patterns
+- **Authentication patterns**: JWT token management, credential resolution
+- **Pipeline coordination**: Phase transitions, queue message handling
+- **Docker entrypoint patterns**: Environment loading, error propagation
+- **CDK infrastructure patterns**: Stack dependencies, resource references
+
+### Mandatory Verification Steps
+
+Before implementing code that uses an unfamiliar abstraction:
+
+1. **Search for definition**: Use `grep_search` to find where it's defined
+2. **Find consumers**: Search for where it's processed/interpreted
+3. **Read usage examples**: Look at tests and similar patterns
+4. **State your understanding**: Explicitly describe what you think it does
+5. **Think through interactions**: Consider edge cases and combinations
+6. **Only then implement**: Proceed with verified understanding
+
+### When You're Uncertain
+
+If you cannot fully verify an abstraction's behavior:
+
+- **State explicitly what you don't know**
+- **Ask whether to search for implementation first**
+- **Do NOT proceed on "educated guesses"**
+
+### Real Example: config.preLoadedMaps Dead Code
+
+A runner decorator (`MockTargetRunnerDecorator`) mutated `config.preLoadedMaps = {orgMap:false, ...}` believing this would prevent organization/state/country lookups from calling the real Huron API in mock target mode:
+- **Assumption**: Setting this field on the Runner's `Config` object would reach the running processor task
+- **Reality**: `config.preLoadedMaps` is only ever read by CDK at deploy time (`ProcessorTaskDefinition.ts`) to bake `STATIC_MAP_USAGE` into the ECS task's environment variables - from an entirely different `Config` object loaded from disk, not the one the Runner mutated at invocation time
+- **Result**: The override compiled and ran with zero errors, logged nothing wrong, and had absolutely no effect - mock-mode runs could still trigger real organization API calls
+
+This was fixed by forcing `StaticMapUsage` at the point it's actually consumed - inside the processor, immediately after `flags.useMockTarget` is read from chunk metadata (the same channel already used to select the mock data target) - rather than trying to inject it upstream through a Config object that never reaches the running task. The lesson: a runtime override that "looks right" and produces no errors can still be a no-op if it mutates the wrong instance of a config object that exists in two different lifecycles (deploy-time vs invocation-time).
+
+### Source Simulator
+
+The source simulator (`src/chunking/fetch/SourceSimulator.ts`) is a Lambda Function URL that provides mock API responses for full 3-phase integration testing without the real API's 30-minute cooldown constraint.
+
+**Endpoints** (path-based routing):
+- `/` (default): mock person data, using a stateful depletion model (see repo memory `source-simulator-semantics.md` for allocator semantics)
+- `/terms`: mock current-terms data (6 static terms: 2 current, 2 past, 2 future) - required because `DataMapperOrg.isCurrentSemester()` needs terms data to filter student semesters, and running with `RUNNER_CHUNKING_ONLY=false` exercises this path
+- Optional `nonCurrentTermRate` query parameter (0.0-1.0, default 0.0): probability that a simulated student is assigned a non-current term, for testing semester-filtering logic
+
+**Safety enforcement - source simulation entails target simulation**: `RUNNER_SOURCE_SIMULATOR=true` automatically forces `useMockTarget=true` (in `Runner.ts` and, redundantly, in `MockTargetRunnerDecorator`) whenever the processor phase is enabled (`RUNNER_CHUNKING_ONLY=false`). There is no supported way to run simulated source data against the real Huron target API - this is enforced in code, not just documented as a convention.
+
+### User Override
+
+You can skip verification by saying:
+- "Skip verification and proceed"
+- "Use inference for this"
+
+**See Also**: `verify-abstractions-before-implementation` skill in workspace skills repository
+
 ## Architecture: Three-Phase Pipeline
 
 ### Phase 1: Chunking
@@ -43,6 +113,52 @@ Core-only and core+person+fargate workspace examples are documented in this repo
 - CHUNK_FROM_API_*, CHUNK_FROM_S3_*, CHUNKER_SERVICE_*
 - See `.env` and `example-env.md` for grouped configuration
 
+**End-of-records detection (`stopAtFirstPartial`)**: The source API can return a "partial"
+batch (0 < length < `recordCount`) mid-population (a source-side bug), so by default only an
+**empty** batch marks the end. `IContext` `ECS.chunkerTaskDefinition.stopAtFirstPartial`
+(optional, default `false`) -> `ChunkerTaskDefinition` env `STOP_AT_FIRST_PARTIAL` ->
+`ChunkFromAPI.runChunking()` -> `BigJsonFetchConfig.stopAtFirstPartial` ->
+`BuCdmPeopleDataSourceBatch` (integration-huron-person). `true` restores the legacy
+stop-at-first-partial behavior. Consequences:
+- `ChunkResult.endOfRecordsDetected` (renamed from `partialChunkEncountered`) / metadata
+  `partialOrEmptyChunkEncountered` (persisted, so NOT renamed) mean "end of source records
+  detected" (empty batch, or partial only if `stopAtFirstPartial`). All consumers (chain-stop,
+  `isAlreadyFinished()`, merger-trigger gate, `ProcessorServiceBooster` final check) need exactly
+  that signal, so they are unchanged.
+- Counts are never inferred from `recordCount`: `totalRecords` = sum of actual response lengths,
+  `chunkCount` = chunk files actually written.
+- A task whose `iterationLimit` is met on a partial batch does NOT signal the end; the next
+  chained task then gets an empty first batch, which `BigJsonFetch` treats as a normal end
+  (warn, not error).
+- With `iterationLimit=0` (e.g. `maxScalingCapacity=1`), the default mode relies on the source
+  eventually returning an empty batch (true of the depleting real API and SourceSimulator).
+  The safety cutoff below bounds the damage if it never does.
+
+**Glitched-source safety cutoff (`maxTotalRecords`)**: If the source never returns an empty
+batch, chunking would never end - an endless fetch loop when `iterationLimit=0`, or endless
+chunker message/task chaining when `iterationLimit>0`. `IContext`
+`ECS.chunkerTaskDefinition.maxTotalRecords` (optional, default `DEFAULT_MAX_TOTAL_RECORDS` =
+500,000 in `docker/chunkTypes.ts`; the real population is ~145,000; `<= 0` disables) ->
+env `MAX_TOTAL_RECORDS` -> `ChunkFromAPI.runChunking()` (also reads the run's accumulated
+`totalRecords` via `MetadataBroker.getRunningTotalRecords()`) -> `BigJsonFetchConfig.maxTotalRecords`
+/ `runTotalRecordsAtStart` -> `BigJsonFetch.enforceMaxTotalRecords()`, checked before the first
+fetch (fail fast) and on every batch before it is written. Exceeding it throws, surfacing through
+the existing terminal-error path (`runFailed` metadata + `markRunFailed`), so later chained tasks
+bail on `isTerminalErrorEncountered()` and the S3-mode merger is blocked. Precision caveat:
+`totalRecords` only includes tasks that have finished, so the cutoff can be overshot by up to
+the in-flight records of concurrently running tasks.
+
+**Failed runs never reach deactivations**: A run is "failed" when its TERMINAL_ERROR record exists
+(DynamoDB: PK=syncRunId, SK=`TERMINAL_ERROR` in the resolved mock-or-real statistics table;
+S3: `_terminal_error.json`). Gates: `MergerSubscriber` (S3 mode, blocks merger),
+`ProcessorForDynamoDb`'s last-processor check (does not trigger the merger), and
+`MergerForS3`/`MergerForDynamoDB.runDeferredDeletes()` (skip deletion handling, both modes).
+Note: until this was fixed, `MetadataForDynamoDb.readTerminalError()` read the METADATA record
+(and `StatisticsTable.readMetadata()` strips `eventType`), so `terminalErrorExists()` was always
+`false` in DynamoDB mode - chunker fast-fail on a failed run silently never happened there. Unit
+tests mocked `readMetadata` to return `eventType: 'TERMINAL_ERROR'`, hiding it. It now uses
+dedicated `StatisticsTable.writeTerminalError()`/`readTerminalError()`.
+
 ### Phase 2: Processing
 **Purpose**: Apply data mapping and validation transformations in parallel ECS Fargate tasks
 
@@ -59,11 +175,208 @@ Core-only and core+person+fargate workspace examples are documented in this repo
 **Components**:
 - DeferredDeleteHandler (soft delete coordination)
 - StatisticsTable (merge metrics)
-- Docker entrypoint: `docker/merger.ts`
+- Implementation classes: `src/merging/AbstractMerger.ts` (base class), `src/merging/MergerForS3.ts`, `src/merging/MergerForDynamoDB.ts`
+- Docker entrypoint: `docker/merger.ts` (router)
+
+**Architecture**: Template Method pattern with abstract base class
+- `AbstractMerger` (src/merging/): Base class with shared logic (getTaskParameters, processDeferredDeletes, main template method)
+- `MergerForS3` (src/merging/): S3-specific implementation (file consolidation, baseline merging)
+- `MergerForDynamoDB` (src/merging/): DynamoDB-specific implementation (minimal/no-op merge, state already in tables)
+- `merger.ts` (docker/): Router that detects storage mode and delegates to appropriate implementation
+
+**Critical Design Note**: BOTH storage modes require the merger service
+- S3 mode: File consolidation + deletion handling
+- DynamoDB mode: Deletion handling only (no file consolidation needed)
+
+**Soft-deleted persons are marked in the baseline** (`src/merging/DeletedHashMarker.ts`): both
+baselines (PersonCurrentStateTable, `previous-input.ndjson`) retain every person ever seen, so a
+person absent from the source would otherwise be selected for deletion on every full sync. After a
+successful soft-delete, `onSoftDeleteSuccess` rewrites that person's baseline hash with a
+`DELETED:` prefix (DynamoDB mode also sets `deletedAt`). Deletion detection skips marked entries,
+and a marked hash never matches a fresh source hash, so a person who reappears is classified
+UPDATED and reactivated (via `__active`); the processor's write then clears the marker.
 
 **Harness Prefixes**:
 - DEFERRED_DELETE_HANDLER_*, STATISTICS_TABLE_*
 - DOCKER_MERGER_*
+
+## Storage Modes: DynamoDB vs S3
+
+The pipeline supports two storage modes for delta state and metadata, controlled by `config.storage.type`:
+- `'s3'` | `'file'` | `'database'` → **S3 Mode** (traditional file-based storage)
+- `'dynamodb'` → **DynamoDB Mode** (database-backed state tracking)
+
+**IMPORTANT**: S3 chunk NDJSON files (`chunk-0000.ndjson`, `chunk-0001.ndjson`, etc.) remain in S3 regardless of storage mode. Only state/metadata files migrate to DynamoDB.
+
+### S3 Mode (Default)
+
+**What's stored in S3**:
+1. **Chunk files**: `s3://bucket/chunks/{population}/{timestamp}/chunk-XXXX.ndjson`
+2. **Metadata file**: `s3://bucket/chunks/{population}/{timestamp}/_metadata.json`
+3. **Flags file**: `s3://bucket/chunks/{population}/{timestamp}/_flags.json`
+4. **Terminal error marker**: `s3://bucket/chunks/{population}/{timestamp}/_terminal_error.json`
+5. **Delta storage**: `s3://bucket/delta-storage/{population}/previous-input.ndjson`
+6. **Hash storage**: `s3://bucket/delta-storage/{population}/hashes.ndjson`
+
+**Characteristics**:
+- Simple file-based architecture
+- Easy to inspect with AWS Console or CLI
+- Lower cost for infrequent access patterns
+- Sequential file I/O (streaming, line-by-line reading)
+
+### DynamoDB Mode (Parallel Implementation)
+
+**What's stored in DynamoDB**:
+1. **PersonCurrentStateTable** - Current person sync state
+   - PK: `personId` (BUID)
+   - Attributes: `hash`, `sourceIdentifier`, `lastSyncTime`, `syncRunId`
+   - GSI: `syncRunId-personId` (for querying all persons in a sync run)
+   
+2. **PersonHistoryTable** - Historical change audit trail
+   - PK: `personId`, SK: `syncRunId` (composite key for versioning)
+   - Attributes: `changeType` (CREATED | UPDATED | DELETED), `hash`, `timestamp`
+   - GSI1: `syncRunId-changeType` (query all changes in a run by type)
+   - GSI2: `changeType-syncRunId` (query changes across runs by type)
+
+3. **StatisticsTable** - Metadata, flags, and error events
+   - PK: `integrationTimestamp` (syncRunId), SK: `eventType`
+   - Event types: `METADATA`, `FLAGS`, `TERMINAL_ERROR`, `STATISTICS`, `STATISTICS-chunk-*`, `ERROR:*`,
+     `CHUNK_STATUS_*`, `PROCESSOR_BOOST_CLAIM`, `MERGER_TRIGGER_CLAIM`
+   - `PROCESSOR_BOOST_CLAIM` / `MERGER_TRIGGER_CLAIM` are `OCCFlag`-guarded claim records ensuring exactly
+     one chunker task runs the processor scaling check, and exactly one processor task triggers the merger
+     (see `docs/CONCURRENCY_CONTROL.md`); the boost claim is written in S3 storage mode too
+   - Replaces `_metadata.json` and `_flags.json` files from S3 mode
+
+**What remains in S3** (even in DynamoDB mode):
+- Chunk NDJSON files (parallel processing dependency)
+- Person cache file (10K-100K BUIDs, better in S3 than DynamoDB item batches)
+
+**Characteristics**:
+- Atomic updates with conditional expressions
+- Point-in-time recovery and backups
+- Query-based access patterns (GSI flexibility)
+- Better for high-frequency state lookups
+- Supports resumption after failures (via PersonCurrentStateTable)
+
+### Migration Path (Parallel Implementation)
+
+**DynamoDB mode does NOT remove S3 features**. Both modes coexist:
+
+**Template Pattern Abstractions**:
+1. **HashStorage** (integration-huron-person/src/delta-storage/)
+   - `AbstractHashStorage` base class
+   - `HashStorageResetForS3` (S3 implementation)
+   - `HashStorageResetForDynamoDb` (DynamoDB implementation)
+   - `HashStorageResetFactory` switches on `config.storage.type`
+
+2. **PersonCache** (src/person-cache/)
+   - `AbstractPersonCache` base class
+   - `PersonCacheForS3` (direct S3 implementation)
+   - `PersonCacheForDynamoDb` (facade delegating to S3 - optimal for bulk data)
+   - `PersonCacheFactory` switches on `config.storage.type`
+   
+   **Mock Target Support** (Strategy Pattern):
+   - `AbstractPersonTarget` interface: Abstracts person data source
+   - `PersonTargetReal`: Fetches from real Huron API via ListPeople
+   - `PersonTargetMocked`: Scans MockTargetPersonTable (DynamoDB) for test data
+   - Factory injects appropriate PersonTarget based on `useMockTarget` flag
+   - Design: Dependency injection enables testing without environment coupling
+   - `MockPersonDataTarget.getPersonByBuid()` (integration-huron-person): single-person existence check used by `UpsertDeltaStrategy` when `flags.useMockTarget` is true, so the create-vs-update lookup never hits the real Huron API in mock mode
+   - DELETE against the mock target is a soft-delete (`deactivated`/`deactivatedAt` attributes, plus `data.__active=false`), matching Huron's soft-delete-only requirement - records are never removed from MockTargetPersonTable, only marked inactive
+   - `StaticMapUsage` is forced to `{orgMap:false, stateMap:false, countryMap:false}` at runtime (via `resolveStaticMapUsage()` in ProcessorForS3.ts/ProcessorForDynamoDb.ts) whenever `flags.useMockTarget` is true, overriding whatever `STATIC_MAP_USAGE` was baked into the task at deploy time
+
+3. **Metadata** (src/chunking/metadata/)
+   - `AbstractMetadata` with 19 methods (5 static, 14 abstract)
+   - `MetadataForS3` (file-based implementation)
+   - `MetadataForDynamoDb` (StatisticsTable with `eventType` field)
+   - `MetadataFactory` switches on `config.storage.type`
+
+### Mock-Run Statistics Isolation (DynamoDB Mode)
+
+**"Mock run" definition**: `flags.useMockTarget === true`. This single flag covers BOTH a
+mock-target-only run (real source API, mock target - a "hybrid") AND a source-simulator run
+(which always forces `useMockTarget=true`, per `Runner.ts`'s safety enforcement). Routing logic
+never needs to separately check `sourceSimulator` - checking `useMockTarget` alone is sufficient
+and already covers both cases identically.
+
+**What gets isolated**: ALL StatisticsTable record types for a mock run - `FLAGS`, `METADATA`,
+`TERMINAL_ERROR`, `STATISTICS`, `ERROR:*`, and `CHUNK_STATUS_*` - go to the isolated
+`DYNAMODB_MOCK_STATISTICS_TABLE_NAME` table instead of the real one. This guarantees a single
+sync run's statistics-table trail never spans both tables. (An earlier iteration of this design
+kept FLAGS/METADATA/TERMINAL_ERROR on the real table unconditionally, treating them as
+"control-plane" records exempt from isolation - that was corrected, since it caused a mock run's
+own bootstrap Flags lookup to silently miss and default `useMockTarget` back to `false`.)
+
+**The bootstrap circularity problem**: Processor and Merger need to read the FLAGS record to
+learn `flags.useMockTarget` - but that same flag determines which of the two tables FLAGS was
+written to. Neither the Processor's SQS message (a native S3 `ObjectCreated` event, forwarded
+verbatim by `ProcessorSubscriber.ts` - bucket/key only, no custom fields) nor the chunk file's S3
+object metadata carries `useMockTarget`, so there's no way to know which table to check ahead of
+time.
+
+**Solution**: `MetadataFactoryForBootstrap.resolveMockAwareFlags()` (src/chunking/metadata/MetadataFactory.ts)
+tries the mock statistics table first (if DynamoDB mode and a mock table is configured); if no
+FLAGS record is found there, falls back to the real table. Returns `{ metadata, flags,
+statisticsTableName }` so callers reuse the resolved table for everything else tied to that
+`syncRunId` (METADATA, TERMINAL_ERROR, CHUNK_STATUS, STATISTICS, ERROR, MERGER_TRIGGER_CLAIM) without
+re-resolving.
+
+**Where it's used**:
+- `ProcessorForDynamoDb.ts`: replaces a module-level, real-table-only bootstrap with a
+  per-invocation resolved call; the same resolved table also drives the error tracker AND the
+  "last processor triggers merger" completion-detection logic (`CHUNK_STATUS`/`METADATA`/
+  `mergerTriggered`), which previously hardcoded the real table.
+- `AbstractMerger.ts`'s `processDeferredDeletes()`: same pattern, for reading `syncPopulation`/
+  `useMockTarget` before deciding on deletion handling.
+- `MergerSubscriber.ts` (S3-triggered Lambda) + `MergerSubscribingLambda.ts` (CDK construct):
+  same pattern for `readTerminalError`/`read` (metadata) checks; the Lambda's IAM role and env
+  vars now include both `DYNAMODB_STATISTICS_TABLE_NAME` and `DYNAMODB_MOCK_STATISTICS_TABLE_NAME`.
+
+**Where it's NOT needed**:
+- `docker/chunker.ts` / `ChunkFromAPI.ts`: no circularity - `useMockTarget` is already known
+  directly from task parameters (the chunker's own SQS message, which unlike the processor's DOES
+  carry `useMockTarget` as a custom field) before any statistics-table read/write happens.
+- `ProcessorForS3.ts`: `docker/processor.ts` only routes to it when `PREVIOUS_STORAGE_TYPE=s3`,
+  in which case FLAGS/METADATA live in a single S3 file location (no mock/real table split at
+  all), so there's nothing to resolve. Its error tracker's mock/real table selection (via
+  `resolveTableName()`) already runs *after* flags are available from that single S3 read, with
+  no circularity.
+
+**Switching Between Modes**:
+```typescript
+// In Secrets Manager or context.json:
+{
+  "storage": {
+    "type": "s3"        // Traditional file-based mode
+    // OR
+    "type": "dynamodb"  // DynamoDB state tracking mode (default)
+  }
+}
+```
+
+**IAM Permissions** (automatically configured in task definitions):
+- S3 mode: S3 bucket read/write only
+- DynamoDB mode: S3 bucket + DynamoDB table read/write (conditionally granted)
+
+**CDK Infrastructure** (`lib/DynamoDB.ts`):
+- Tables created when `context.PREVIOUS_STORAGE_TYPE === 'dynamodb'` or when `context.PREVIOUS_STORAGE_TYPE` is undefined (defaults to 'dynamodb')
+- Task definitions check `dynamoDbTables.personCurrentStateTable` before granting permissions
+- Zero infrastructure impact when using S3 mode
+
+### When to Use Each Mode
+
+**Use S3 Mode when**:
+- Simple deployment with minimal infrastructure
+- Infrequent sync operations (daily/weekly)
+- File-based introspection preferred (AWS Console browsing)
+- Lower cost priority for small-scale operations
+
+**Use DynamoDB Mode when**:
+- Frequent sync operations requiring fast state lookups
+- Audit trail and history tracking critical
+- Resumption and retry logic needed (pipeline interruptions)
+- Query-based analytics desired (change type filtering, time-series analysis)
+- Point-in-time recovery and backups required
 
 ## TestEnvironment Pattern Implementation
 
@@ -143,12 +456,29 @@ CHUNK_FROM_API_BASE_URL=...
 **Harness Execution**: Run with npx to validate chunking before ECS deployment
 
 ### processor.ts
-**Purpose**: Container entry point for parallel processing tasks
+**Purpose**: Router entry point for parallel processing tasks
+
+**Architecture**: Switchboard pattern - detects storage mode and delegates to appropriate processor
+- ProcessorForS3 (src/processing/): S3-based processing with mini-deltas and marker files
+- ProcessorForDynamoDB (src/processing/): DynamoDB-based processing with direct table writes
+- processor.ts (docker/): Router that detects storage mode and delegates
+
+**Mode Detection**: Checks for DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME or DYNAMODB_PERSON_HISTORY_TABLE_NAME
 
 **Harness Prefix**: DOCKER_PROCESSOR
 
 ### merger.ts
-**Purpose**: Container entry point for result consolidation
+**Purpose**: Router entry point for result consolidation
+
+**Architecture**: Template Method pattern with mode-specific implementations
+- AbstractMerger (src/merging/): Base class with shared logic (getTaskParameters, processDeferredDeletes, main)
+- MergerForS3 (src/merging/): S3-specific file consolidation and baseline merging
+- MergerForDynamoDB (src/merging/): Minimal/no-op merge (state already in DynamoDB tables)
+- merger.ts (docker/): Router that detects storage mode and delegates
+
+**Critical**: Both modes require merger service for DeferredDeleteHandler
+
+**Mode Detection**: Checks for DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME or DYNAMODB_PERSON_HISTORY_TABLE_NAME
 
 **Harness Prefix**: DOCKER_MERGER
 
@@ -189,6 +519,103 @@ Defines infrastructure parameters (VPC, subnet, image URIs, etc.) per deployment
 **Pattern**: `lib/Stack.ts` orchestrates Lambda, ECS, S3, SQS resources
 
 **Harness Testing**: Use Runner harness (`src/Runner.ts`) to validate chunking orchestration before deployment
+
+## personRecordProcessor Customization Framework
+
+**Location**: `src/processing/custom/` (concrete implementations live under `impl/`)
+
+Wires `integration-huron-person`'s `personRecordProcessor` hook (see that repo's
+`CLAUDE.md`/`src/data-mapper/CLAUDE.md`) into the processor tasks, letting custom per-person
+async logic (e.g. outlier logging/analysis) run during a live sync without touching
+`HuronPersonIntegration` itself. See `src/processing/custom/README.md` for the framework's
+design (dependency injection, multi-customization composition) and how to add a new
+implementation.
+
+**Files**: `AbstractCustomPersonProcessor.ts` (base class + `Customization` enum),
+`CustomizationParser.ts` (parses the comma-delimited config string - see below),
+`PersonRecordProcessorComposite.ts` (combines multiple active customizations),
+`PersonRecordProcessorFactory.ts` (registry/switchboard), `impl/OrgComparisonLogging.ts`
+(first concrete customization: for students - mapped `title === 'Student'`, set in
+`integration-huron-person`'s `src/data-mapper/DataMapperTitle.ts` from the *same*
+`orgAssignments.personType` that drove the `organization`/`secondaryUnit` assignment, a more
+accurate signal than an independent raw `studentInfo` check - whose primary/secondary org HRNs
+differ, logs `{ personid, primaryOrg, secondaryOrg }`).
+
+**Specifying customizations - key name or numeric value, either works**: `Customization` is a
+plain (numeric) TS enum with no explicit initializers, so config always identifies a
+customization by its enum **key name** (e.g. `'ORG_COMPARISON_LOGGING'`) - the underlying number
+is an implementation detail. `CustomizationParser.ts`'s `parseCustomizations()` additionally
+accepts the raw numeric value as a string (e.g. `'0'`) as an equivalent alternative, since some
+callers may find a stable numeric value more convenient to configure than a name. A token is
+tried as a number first (matched via the enum's reverse mapping) only if it looks like an
+integer; otherwise it's looked up by key name. Mixing both forms for the same customization in
+one comma-delimited list (e.g. `'ORG_COMPARISON_LOGGING,0'`) de-duplicates to a single instance
+rather than double-counting it. See `test/CustomizationParser.test.ts` for the full set of
+parsing permutations this covers.
+
+**Shared log table**: `src/dynamodb/PersonRecordProcessorLogTable.ts` + CDK table in
+`lib/DynamoDB.ts` (`personRecordProcessorLogTable`, single table, no mock-mode variant unlike
+most other tables here). Schema: PK=`customization` (groups entries by which customization wrote
+them), SK=`sortKey` (`${isoTimestamp}#${personid}`, chronologically browsable and collision-free
+per person), plus a generic `data` JSON attribute whose shape is defined entirely by the writing
+customization. This design lets any number of future customizations share one table with zero
+CDK/schema changes - only `AbstractCustomPersonProcessor`, `Customization`, and
+`PersonRecordProcessorFactory` need updating to add one. The log table name IS still baked into
+the task definition as `PERSON_RECORD_PROCESSOR_LOG_TABLE_NAME` (it's an infrastructure resource
+name, not a per-run behavioral toggle, so CDK-time baking is appropriate here - unlike *which*
+customization runs, see below).
+
+**Selecting which customization(s) run - Flags, not task-definition env vars**: Which
+customization is active is deliberately **not** an `IContext`/task-definition environment
+variable (that would require a full stack redeploy to change). Instead it follows the same
+runtime-configuration precedent as `flags.useMockTarget`: a `personRecordProcessorCustomizations`
+field (comma-delimited `Customization` keys) flows through
+`src/chunking/metadata/IMetadataStorage.ts`'s `Flags` type, which is written to S3/DynamoDB
+*before* chunking starts and read back by each processor task - so it can be changed per-run
+without redeploying anything. The full pipeline:
+1. **Manual invocation** (`src/runner/Runner.ts`, "FOR MANUAL INVOCATION ONLY"): reads the
+   `PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS` env var via `RunnerTypes.ts`'s `extractEnvironment()`
+   into `RunnerEnv.personRecordProcessorCustomizations`.
+2. Each runner (`RunnerForSingleMessage.ts`, `RunnerForSinglePerson.ts`, and
+   `RunnerForQueueSeeding.ts` via `QueueSeeder.ts`) copies that value into the `ApiChunkerEvent`
+   it sends (`ChunkerSubscriber.ts`'s `ApiChunkerEvent.personRecordProcessorCustomizations`).
+3. **Scheduled production invocation** (`lib/services/chunker/ChunkerService.ts`'s
+   `createApiChunkingSchedule()`): the EventBridge schedule's static `ScheduleTargetInput` also
+   includes a `personRecordProcessorCustomizations` field (currently left `undefined` as a
+   placeholder pending a decision on how to source a real value for scheduled runs - see the
+   `// TODO LATER` comment there) - the consuming side described below already handles it
+   whenever a value is present.
+4. `ChunkerApiSubscriber.ts`'s `handleApiEvent()` extracts it from the incoming event and forwards
+   it into the `TaskParameters` SQS message it sends to the chunker queue.
+5. `ChunkFromAPI.ts` parses it off the queue message into `TaskParameters.personRecordProcessorCustomizations`
+   and exposes it via `getPersonRecordProcessorCustomizations()`; `ChunkerQueue.ts`'s
+   `sendNextChunkingMessage()` re-forwards it into subsequent messages for parallel chunking.
+6. `docker/chunker.ts` reads that getter and includes it when calling `metadataManager.writeFlags(...)`
+   - so it's persisted to the run's Flags record before any processor task starts.
+7. `ProcessorForS3.ts`/`ProcessorForDynamoDb.ts` read it back via
+   `flags.personRecordProcessorCustomizations` (from the same `readFlagsFromChunkKey()` call
+   already used for `flags.useMockTarget` etc.) and pass it to `personRecordProcessorFactory()`.
+
+**Wiring/DI**: `docker/processor.ts` (the S3-vs-DynamoDB router) accepts an optional
+`personRecordProcessor: PersonRecordProcessor` parameter and threads it through to whichever of
+`ProcessorForS3.ts`/`ProcessorForDynamoDb.ts`'s `main()` it routes to - both of which now also
+accept that same optional parameter. If provided (e.g. by a test, or a future caller that already
+knows which processor to use), it's used as-is; otherwise each `main()` falls back to resolving
+it from its own chunk's Flags via `personRecordProcessorFactory()`. This exists so the
+factory-invocation logic isn't duplicated across processor variants (DRY), while still allowing
+Flags-based resolution to work correctly - the router itself can't resolve from Flags because
+those are chunk-specific and not known until deep inside each `main()`.
+
+**Adding a new customization**:
+1. Add a value to the `Customization` enum in `AbstractCustomPersonProcessor.ts`.
+2. Create a new file under `impl/` extending `AbstractPersonRecordProcessor`, setting
+   `customization` and implementing `processRecord`; call
+   `this.logEntry(this.customization, personid, data)` to persist findings.
+3. Register it in the `switch` in `PersonRecordProcessorFactory.ts`.
+4. Set `PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS` (env var read by `Runner.ts`, or the
+   `personRecordProcessorCustomizations` Flags field directly) to the enum *key* to activate it -
+   comma-delimit multiple keys to run several customizations at once (combined automatically via
+   `PersonRecordProcessorComposite`).
 
 ## Patterns to Follow
 

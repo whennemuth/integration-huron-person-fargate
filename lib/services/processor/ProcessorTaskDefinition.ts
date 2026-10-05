@@ -5,8 +5,9 @@ import { Effect, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { IContext } from '../../../context/IContext';
+import { Config } from 'integration-huron-person';
 import { HuronPersonSecrets } from '../../Secrets';
-import { DynamoDbTables } from '../../DynamoDB';
+import { StorageParams } from '../../TaskDefinitions';
 
 export interface ProcessorTaskDefinitionProps {
   repository: IRepository;
@@ -17,9 +18,9 @@ export interface ProcessorTaskDefinitionProps {
   logRetentionDays: number;
   chunksBucketName: string;
   queueUrl: string;
-  dynamoDbTables: DynamoDbTables
+  storageParams: StorageParams;
   context: IContext;
-  sharedDeltaStorageDir: string;
+  config: Config;
   region: string;
   landscape: string;
   huronPersonSecrets: HuronPersonSecrets;
@@ -39,8 +40,10 @@ export class ProcessorTaskDefinition extends Construct {
 
     const { 
       huronPersonSecrets: { secret, secretArn , secretName } = {}, logRetentionDays, 
-      memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, dynamoDbTables, chunksBucketName, 
-      context, repository, imageTag, landscape, dryRun, tags 
+      memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl,  chunksBucketName, 
+      context, repository, imageTag, landscape, dryRun, tags,
+      storageParams: { previousStorageType, storageConfig: { sharedDeltaStorageDir, dynamodb } = {} },
+      config: { preLoadedMaps: { orgMap=false, stateMap=false, countryMap=false } = {} },
     } = props;
 
     // Create CloudWatch log group
@@ -66,18 +69,59 @@ export class ProcessorTaskDefinition extends Construct {
     const environment: { [key: string]: string } = {
       REGION: region,
       SQS_QUEUE_URL: queueUrl,
-      DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbTables.statisticsTable.tableName,
+      PREVIOUS_STORAGE_TYPE: previousStorageType!,
+      DYNAMODB_STATISTICS_TABLE_NAME: dynamodb!.statisticsTable.tableName,
       // CHUNKS_BUCKET and CHUNK_KEY are set from SQS messages at runtime (not env vars)
-      STATIC_MAP_USAGE: '{ "orgMap": true, "stateMap": true, "countryMap": true }', // Used by processor to determine which static maps to load in data mapper
+      STATIC_MAP_USAGE: `{ "orgMap": ${orgMap}, "stateMap": ${stateMap}, "countryMap": ${countryMap} }`, // Used by processor to determine which static maps to load in data mapper
+      DYNAMODB_MOCK_STATISTICS_TABLE_NAME: dynamodb!.mockStatisticsTable.tableName, // Isolated statistics table for mocked runs (flags.useMockTarget)
+      PERSON_RECORD_PROCESSOR_LOG_TABLE_NAME: dynamodb!.personRecordProcessorLogTable.tableName, // Shared log table for personRecordProcessor customizations
       SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
       IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
-      SHARED_DELTA_STORAGE_DIR: props.sharedDeltaStorageDir,
       DRY_RUN: dryRun ? 'true' : 'false',
       DESCRIPTION1: `Container run by lambda function responding to S3 events when a new "chunk" 
         file comprising person data is deposited into ${chunksBucketName}.`,
       DESCRIPTION2: 
         `It processes the chunk by syncing all person records in it to the Huron API.`
     };
+
+    switch(previousStorageType) {
+      case 's3':
+        if(sharedDeltaStorageDir) {
+          environment.SHARED_DELTA_STORAGE_DIR = sharedDeltaStorageDir;
+        }
+        break;
+      case 'dynamodb':
+        // Add DynamoDB-specific table names when using DynamoDB mode
+        // These tables only exist in DynamoDB mode and are used to distinguish between S3 and DynamoDB storage modes
+        const { 
+          personCurrentStateTable: { tableName: personCurrentStateTableName } = {}, 
+          personHistoryTable: { tableName: personHistoryTableName } = {},
+          mockTargetPersonTable: { tableName: mockTargetPersonTableName } = {},
+          mockPersonCurrentStateTable: { tableName: mockPersonCurrentStateTableName } = {},
+          mockPersonHistoryTable: { tableName: mockPersonHistoryTableName } = {},
+        } = dynamodb || {};
+        if (personCurrentStateTableName) {
+          environment.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME = personCurrentStateTableName;
+        }
+        if (personHistoryTableName) {
+          environment.DYNAMODB_PERSON_HISTORY_TABLE_NAME = personHistoryTableName;
+        }
+        if (mockTargetPersonTableName) {
+          environment.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = mockTargetPersonTableName;
+        }
+        if (mockPersonCurrentStateTableName) {
+          environment.DYNAMODB_MOCK_PERSON_CURRENT_STATE_TABLE_NAME = mockPersonCurrentStateTableName;
+        }
+        if (mockPersonHistoryTableName) {
+          environment.DYNAMODB_MOCK_PERSON_HISTORY_TABLE_NAME = mockPersonHistoryTableName;
+        }
+        break;
+      case 'database':
+        // Not supported yet.
+        break;
+      default:
+        throw new Error(`Unsupported storage type: ${previousStorageType}`);
+    }
 
     // Check if the context includes retry strategy configuration and add it to environment variables if present.
     const { retries } = context.ECS.processorTaskDefinition;
@@ -147,7 +191,8 @@ export class ProcessorTaskDefinition extends Construct {
       })
     );
 
-    // Grant SQS permissions for reading and deleting messages
+    // Grant SQS permissions for reading and deleting messages, and sending the merger-trigger
+    // message (DynamoDB mode: last processor notifies the merger queue directly).
     this.taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
@@ -155,6 +200,7 @@ export class ProcessorTaskDefinition extends Construct {
           'sqs:ReceiveMessage',
           'sqs:DeleteMessage',
           'sqs:GetQueueAttributes',
+          'sqs:SendMessage',
         ],
         resources: [
           `arn:aws:sqs:${region}:${Stack.of(this).account}:*`,
@@ -163,6 +209,7 @@ export class ProcessorTaskDefinition extends Construct {
     );
 
     // Grant DynamoDB permissions for writing error events and statistics
+    // BatchWriteItem is required because DynamoDBTable.putItem() routes through batchWrite() internally.
     this.taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
@@ -171,10 +218,11 @@ export class ProcessorTaskDefinition extends Construct {
           'dynamodb:UpdateItem',
           'dynamodb:Query',
           'dynamodb:GetItem',
+          'dynamodb:BatchWriteItem',
         ],
         resources: [
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.statisticsTable.tableName}`,
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.statisticsTable.tableName}/index/*`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.statisticsTable.tableName}`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.statisticsTable.tableName}/index/*`,
         ],
       })
     );
@@ -190,11 +238,147 @@ export class ProcessorTaskDefinition extends Construct {
           'dynamodb:GetItem',
         ],
         resources: [
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.atomicCounterTable.tableName}`,
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.atomicCounterTable.tableName}/index/*`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.atomicCounterTable.tableName}`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.atomicCounterTable.tableName}/index/*`,
         ],
       })
     );
+
+    // Grant DynamoDB read permissions for PersonCurrentStateTable
+    // Used for reading current person sync state during processing in DynamoDB mode.
+    // BatchGetItem/BatchWriteItem are required because PersonCurrentStateTable.batchGetPersonState()/
+    // batchWritePersonState() issue BatchGet/BatchWrite commands, not plain GetItem/PutItem.
+    if (dynamodb!.personCurrentStateTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:GetItem',
+            'dynamodb:Query',
+            'dynamodb:BatchGetItem',
+            'dynamodb:BatchWriteItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personCurrentStateTable.tableName}`,
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personCurrentStateTable.tableName}/index/*`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB write permissions for PersonHistoryTable
+    // Used for writing person change history records during processing in DynamoDB mode.
+    // BatchWriteItem is required because PersonHistoryTable.writeHistory() routes through
+    // DynamoDBTable.putItem() -> batchWrite() internally.
+    if (dynamodb!.personHistoryTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+            'dynamodb:BatchWriteItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personHistoryTable.tableName}`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB write permissions for the shared personRecordProcessor log table
+    // Used by AbstractPersonRecordProcessor.logEntry() when a customization is configured.
+    // BatchWriteItem is required because PersonRecordProcessorLogTable.putEntry() routes through
+    // DynamoDBTable.putItem() -> batchWrite() internally.
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'dynamodb:PutItem',
+          'dynamodb:BatchWriteItem',
+        ],
+        resources: [
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personRecordProcessorLogTable.tableName}`,
+        ],
+      })
+    );
+
+    // Grant DynamoDB read/write permissions for mockTargetPersonTable
+    // Used when flags.useMockTarget is true to simulate target system without calling real API
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'dynamodb:GetItem',
+          'dynamodb:PutItem',
+          'dynamodb:UpdateItem',
+          'dynamodb:DeleteItem',
+          'dynamodb:Query',
+          'dynamodb:Scan',
+          'dynamodb:BatchGetItem',
+        ],
+        resources: [
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockTargetPersonTable.tableName}`,
+        ],
+      })
+    );
+
+    // Grant DynamoDB read/write permissions for mockStatisticsTable
+    // Used when flags.useMockTarget is true so bulk STATISTICS/ERROR/CHUNK_STATUS records never mix with production data
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'dynamodb:PutItem',
+          'dynamodb:UpdateItem',
+          'dynamodb:Query',
+          'dynamodb:GetItem',
+          'dynamodb:BatchWriteItem',
+        ],
+        resources: [
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}/index/*`,
+        ],
+      })
+    );
+
+    // Grant DynamoDB read/write permissions for mockPersonCurrentStateTable and mockPersonHistoryTable
+    // Used when flags.useMockTarget is true so DeltaStrategyForDynamoDB never mixes mocked hash/history state with production data
+    if (dynamodb!.mockPersonCurrentStateTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:GetItem',
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+            'dynamodb:Query',
+            'dynamodb:BatchGetItem',
+            'dynamodb:BatchWriteItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonCurrentStateTable.tableName}`,
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonCurrentStateTable.tableName}/index/*`,
+          ],
+        })
+      );
+    }
+
+    if (dynamodb!.mockPersonHistoryTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+            'dynamodb:BatchWriteItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonHistoryTable.tableName}`,
+          ],
+        })
+      );
+    }
 
     // Grant ECS task protection permissions
     // This allows the running task to enable/disable scale-in protection via ECS agent endpoint

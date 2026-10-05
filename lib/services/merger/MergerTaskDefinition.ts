@@ -6,7 +6,7 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { TargetPersonDeleteType } from 'integration-huron-person/dist/types/src/config/Config';
 import { HuronPersonSecrets } from '../../Secrets';
-import { DynamoDbTables } from '../../DynamoDB';
+import { StorageParams } from '../../TaskDefinitions';
 
 
 export interface MergerTaskDefinitionProps {
@@ -18,9 +18,8 @@ export interface MergerTaskDefinitionProps {
   logRetentionDays: number;
   inputBucketName: string;
   chunksBucketName: string;
-  sharedDeltaStorageDir: string;
+  storageParams: StorageParams;
   personDeleteType: TargetPersonDeleteType;
-  dynamoDbTables: DynamoDbTables;
   huronPersonSecrets: HuronPersonSecrets;
   region: string;
   landscape: string;
@@ -39,9 +38,10 @@ export class MergerTaskDefinition extends Construct {
     super(scope, id);
 
     const { 
-      cpu, memoryLimitMiB, memoryReservationMiB, region, inputBucketName, sharedDeltaStorageDir, personDeleteType, 
+      cpu, memoryLimitMiB, memoryReservationMiB, region, inputBucketName,  personDeleteType, 
       repository, imageTag, landscape, dryRun, tags, logRetentionDays, chunksBucketName,
-      dynamoDbTables, huronPersonSecrets: { secret, secretArn , secretName } = {} 
+      huronPersonSecrets: { secret, secretArn , secretName } = {},
+      storageParams: { previousStorageType, storageConfig: { sharedDeltaStorageDir, dynamodb } = {} }
     } = props;
 
     // Create CloudWatch log group
@@ -71,6 +71,68 @@ export class MergerTaskDefinition extends Construct {
       HURON_PERSON_CONFIG_JSON: EcsSecret.fromSecretsManager(secret!),
     };
 
+    const environment: { [key: string]: string } = {
+      REGION: region,
+      INPUT_BUCKET: inputBucketName,
+      // CHUNKS_BUCKET will be provided at runtime by Lambda
+      IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
+      PERSON_DELETE_TYPE: personDeleteType,
+      DRY_RUN: dryRun ? 'true' : 'false',
+      DYNAMODB_STATISTICS_TABLE_NAME: dynamodb!.statisticsTable.tableName,
+      DYNAMODB_MOCK_STATISTICS_TABLE_NAME: dynamodb!.mockStatisticsTable.tableName, // Isolated statistics table for mocked runs (flags.useMockTarget)
+      PREVIOUS_STORAGE_TYPE: previousStorageType!,
+      SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
+      DESCRIPTION1: 
+        `Container run by lambda function responding to S3 events when a new "chunk" 
+        file comprising person delta (hashes) data is deposited into the ${chunksBucketName} 
+        bucket.`,
+      DESCRIPTION2: 
+        `It checks the completeness of the delta chunks by referencing a metadata file created 
+        by the chunker. If all expected delta chunks are present in the ${chunksBucketName}`,
+      DESCRIPTION3:
+        `bucket, it triggers the merger task to concatenate all NDJSON chunk files into a single file named previous-input.ndjson 
+        in the same bucket, and then deletes the chunk files.`
+    };
+
+    switch(previousStorageType) {
+      case 's3':
+        if(sharedDeltaStorageDir) {
+          environment.SHARED_DELTA_STORAGE_DIR = sharedDeltaStorageDir;
+        }
+        break;
+      case 'dynamodb':
+        // Add DynamoDB-specific table names when using DynamoDB mode
+        // These tables only exist in DynamoDB mode and are used to distinguish between S3 and DynamoDB storage modes
+        const { 
+          personCurrentStateTable: { tableName: personCurrentStateTableName } = {}, 
+          personHistoryTable: { tableName: personHistoryTableName } = {},
+          mockTargetPersonTable: { tableName: mockTargetPersonTableName } = {},
+          mockPersonCurrentStateTable: { tableName: mockPersonCurrentStateTableName } = {},
+          mockPersonHistoryTable: { tableName: mockPersonHistoryTableName } = {},
+        } = dynamodb || {};
+        if (personCurrentStateTableName) {
+          environment.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME = personCurrentStateTableName;
+        }
+        if (personHistoryTableName) {
+          environment.DYNAMODB_PERSON_HISTORY_TABLE_NAME = personHistoryTableName;
+        }
+        if (mockTargetPersonTableName) {
+          environment.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = mockTargetPersonTableName;
+        }
+        if (mockPersonCurrentStateTableName) {
+          environment.DYNAMODB_MOCK_PERSON_CURRENT_STATE_TABLE_NAME = mockPersonCurrentStateTableName;
+        }
+        if (mockPersonHistoryTableName) {
+          environment.DYNAMODB_MOCK_PERSON_HISTORY_TABLE_NAME = mockPersonHistoryTableName;
+        }
+        break;
+      case 'database':
+        // Not supported yet.
+        break;
+      default:
+        throw new Error(`Unsupported storage type: ${previousStorageType}`);
+    }
+
     // Add container
     const container = this.taskDefinition.addContainer('MergerContainer', {
       containerName: 'merger',
@@ -83,27 +145,7 @@ export class MergerTaskDefinition extends Construct {
       }),
       memoryLimitMiB, // Hard limit for container memory - if the container exceeds this, it will be killed. This is required to prevent runaway memory usage in case of issues.
       memoryReservationMiB, // Soft limit for container memory - the container can use more memory if available.
-      environment: {
-        REGION: region,
-        INPUT_BUCKET: inputBucketName,
-        // CHUNKS_BUCKET will be provided at runtime by Lambda
-        SHARED_DELTA_STORAGE_DIR: sharedDeltaStorageDir,
-        IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
-        PERSON_DELETE_TYPE: personDeleteType,
-        DRY_RUN: dryRun ? 'true' : 'false',
-        DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbTables.statisticsTable.tableName,
-        SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
-        DESCRIPTION1: 
-          `Container run by lambda function responding to S3 events when a new "chunk" 
-          file comprising person delta (hashes) data is deposited into the ${chunksBucketName} 
-          bucket.`,
-        DESCRIPTION2: 
-          `It checks the completeness of the delta chunks by referencing a metadata file created 
-          by the chunker. If all expected delta chunks are present in the ${chunksBucketName}`,
-        DESCRIPTION3:
-          `bucket, it triggers the merger task to concatenate all NDJSON chunk files into a single file named previous-input.ndjson 
-          in the same bucket, and then deletes the chunk files.`
-      },
+      environment,
       secrets, // ECS secrets injected at runtime
     });
 
@@ -139,6 +181,7 @@ export class MergerTaskDefinition extends Construct {
     );
 
     // Grant DynamoDB permissions for writing error events and statistics
+    // BatchWriteItem is required because DynamoDBTable.putItem() routes through batchWrite() internally.
     this.taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
@@ -147,13 +190,135 @@ export class MergerTaskDefinition extends Construct {
           'dynamodb:UpdateItem',
           'dynamodb:Query',
           'dynamodb:GetItem',
+          'dynamodb:BatchWriteItem',
         ],
         resources: [
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.statisticsTable.tableName}`,
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.statisticsTable.tableName}/index/*`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.statisticsTable.tableName}`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.statisticsTable.tableName}/index/*`,
         ],
       })
     );
+
+    // Grant DynamoDB permissions for writing error events and statistics to the isolated mock table
+    // Used when flags.useMockTarget is true so bulk STATISTICS/ERROR/CHUNK_STATUS records never mix with production data
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'dynamodb:PutItem',
+          'dynamodb:UpdateItem',
+          'dynamodb:Query',
+          'dynamodb:GetItem',
+          'dynamodb:BatchWriteItem',
+        ],
+        resources: [
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}/index/*`,
+        ],
+      })
+    );
+
+    // Grant DynamoDB read/write permissions for PersonCurrentStateTable
+    // Used for deletion detection (finding persons in storage but not in source) in DynamoDB mode,
+    // and for marking soft-deleted persons so later runs don't select them again
+    // (PersonCurrentStateTable.markDeleted() routes through DynamoDBTable.batchWrite()).
+    if (dynamodb!.personCurrentStateTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:Query',
+            'dynamodb:GetItem',
+            'dynamodb:Scan', // Needed for full table scan to detect deletions
+            'dynamodb:PutItem',
+            'dynamodb:BatchWriteItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personCurrentStateTable.tableName}`,
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personCurrentStateTable.tableName}/index/*`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB write permissions for PersonHistoryTable
+    // Used for writing DELETED event records during merge in DynamoDB mode.
+    // BatchWriteItem is required because PersonHistoryTable.writeHistory() routes through
+    // DynamoDBTable.putItem() -> batchWrite() internally.
+    if (dynamodb!.personHistoryTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+            'dynamodb:BatchWriteItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personHistoryTable.tableName}`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB read/write permissions for mockPersonCurrentStateTable (deletion detection and
+    // soft-deleted marking during mocked runs)
+    if (dynamodb!.mockPersonCurrentStateTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:Query',
+            'dynamodb:GetItem',
+            'dynamodb:Scan',
+            'dynamodb:PutItem',
+            'dynamodb:BatchWriteItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonCurrentStateTable.tableName}`,
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonCurrentStateTable.tableName}/index/*`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB write permissions for mockPersonHistoryTable (DELETED event records during mocked runs)
+    // BatchWriteItem is required because PersonHistoryTable.writeHistory() routes through
+    // DynamoDBTable.putItem() -> batchWrite() internally.
+    if (dynamodb!.mockPersonHistoryTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+            'dynamodb:BatchWriteItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonHistoryTable.tableName}`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB read/write permissions for mockTargetPersonTable
+    // Used when flags.useMockTarget is true so deferred soft-deletes go through MockPersonDataTarget instead of the real Huron API
+    if (dynamodb!.mockTargetPersonTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:GetItem',
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+            'dynamodb:DeleteItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockTargetPersonTable.tableName}`,
+          ],
+        })
+      );
+    }
 
     // Grant ECS task protection permissions
     // This allows the running task to enable/disable scale-in protection via ECS agent endpoint

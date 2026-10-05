@@ -21,7 +21,21 @@ The chunker reads a large JSON file from S3, streams the person array, and write
 
 ### Processor Dual-Mode Operation
 
-The processor adapts to its environment automatically:
+The processor uses a router pattern (`docker/processor.ts`) that detects storage mode and delegates to the appropriate implementation:
+
+**ProcessorForS3 (src/processing/ProcessorForS3.ts - S3 Mode):**
+- Writes mini-deltas to S3 for each chunk
+- Maintains coordination via marker files
+- Merger consolidates all chunk deltas into single previous-input.ndjson
+
+**ProcessorForDynamoDB (src/processing/ProcessorForDynamoDb.ts - DynamoDB Mode):**
+- Writes directly to PersonCurrentState and PersonHistory tables
+- Uses atomic DynamoDB operations
+- No mini-deltas or marker files needed
+
+**Mode Detection:**
+- If `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` or `DYNAMODB_PERSON_HISTORY_TABLE_NAME` is set → DynamoDB mode
+- Otherwise → S3 mode (default)
 
 **Local Development (docker-compose):**
 - Reads `CHUNKS_BUCKET` and `CHUNK_KEY` environment variables
@@ -37,19 +51,88 @@ The processor adapts to its environment automatically:
 
 This dual-mode design allows identical code to run locally for testing and in Fargate for production.
 
-### Merger Operation
+### Merger Operation (Template Method Pattern)
 
-The merger runs after all processor tasks complete. It concatenates chunk output files into a single merged file for the next sync cycle.
+The merger uses an abstract base class with mode-specific implementations:
+
+**AbstractMerger (src/merging/AbstractMerger.ts - Base Class):**
+- Implements Template Method pattern for shared logic
+- `getTaskParameters()`: Reads from SQS or environment
+- `processDeferredDeletes()`: Handles soft-deletion of removed records
+- `main()`: Template method orchestrating full merge flow
+- `merge()`: Abstract method for mode-specific implementation
+
+**MergerForS3 (src/merging/MergerForS3.ts - S3 Mode Implementation):**
+- Consolidates delta chunk files from `deltas/{population}/{timestamp}/`
+- Merges with existing baseline (`previous-input.ndjson`)
+- Writes merged result to `delta-storage/previous-input.ndjson`
+- Cleans up temporary delta chunk files
+
+**MergerForDynamoDB (src/merging/MergerForDynamoDB.ts - DynamoDB Mode Implementation):**
+- No file consolidation needed (processors wrote directly to tables)
+- No baseline merging needed (state already in PersonCurrentStateTable)
+- `merge()` method is essentially a no-op
+- Still invokes DeferredDeleteHandler for soft-deletions
+
+**merger.ts (docker/merger.ts - Router):**
+- Detects storage mode using same logic as processor router
+- Routes to `MergerForS3` or `MergerForDynamoDB`
+- Single entry point for both modes
+
+**Critical Design Note:**
+- **BOTH modes require the merger service**
+- S3 mode: File consolidation + deletion handling
+- DynamoDB mode: Deletion handling only
+- Previous assumption that DynamoDB mode doesn't need merger was incorrect
 
 **Environment:**
-- Reads `CHUNKS_BUCKET` and `INPUT_BUCKET` environment variables
-- Lists all chunks: `{CHUNKS_BUCKET}/{INPUT_BUCKET}/chunks/chunk-*.ndjson`
-- Writes merged output: `{CHUNKS_BUCKET}/{INPUT_BUCKET}/previous-input.ndjson`
-- Deletes chunk files after successful merge
+- ECS Mode: Reads `SQS_QUEUE_URL` and processes messages
+- Local Mode: Reads `CHUNKS_BUCKET`, `CHUNK_DIRECTORY`, or `INPUT_KEY`
+- Writes to shared location: `{CHUNKS_BUCKET}/delta-storage/previous-input.ndjson`
+- Triggers DeferredDeleteHandler if configured
 
 **Trigger:**
 - In AWS: EventBridge rule polls metadata file and triggers merger when all chunks are processed
 - Locally: Run manually via `./run.sh merger` after processing all chunks
+
+## Storage Modes
+
+The pipeline supports two storage backends for delta state and metadata:
+
+### S3 Mode (Default)
+
+Stores all state and metadata in S3:
+- Chunk NDJSON files: `s3://bucket/chunks/{population}/{timestamp}/chunk-XXXX.ndjson`
+- Metadata file: `s3://bucket/chunks/{population}/{timestamp}/_metadata.json`
+- Flags file: `s3://bucket/chunks/{population}/{timestamp}/_flags.json`
+- Delta storage: `s3://bucket/delta-storage/{population}/previous-input.ndjson`
+- Hash storage: `s3://bucket/delta-storage/{population}/hashes.ndjson`
+
+**Environment variables:**
+- `DYNAMODB_STATISTICS_TABLE_NAME` - Required (for error tracking)
+- `DYNAMODB_ATOMIC_COUNTER_TABLE_NAME` - Required (for chunk ID generation)
+- Omit `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` and `DYNAMODB_PERSON_HISTORY_TABLE_NAME`
+
+### DynamoDB Mode
+
+Stores person state and history in DynamoDB tables:
+- **PersonCurrentStateTable** - Current hash state per person (PK: personId)
+- **PersonHistoryTable** - Historical change audit trail (PK: personId, SK: syncRunId)
+- **StatisticsTable** - Metadata, flags, error events (PK: integrationTimestamp, SK: eventType)
+- Chunk NDJSON files remain in S3 (required for parallel processing)
+
+**Environment variables:**
+- `DYNAMODB_STATISTICS_TABLE_NAME` - Required (for error tracking and metadata)
+- `DYNAMODB_ATOMIC_COUNTER_TABLE_NAME` - Required (for chunk ID generation)
+- `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` - Required (enables DynamoDB mode)
+- `DYNAMODB_PERSON_HISTORY_TABLE_NAME` - Required (enables DynamoDB mode)
+
+**Mode Detection:**
+ProcessorMetadataFactory detects storage mode by checking for DynamoDB-mode-specific environment variables:
+- If `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` or `DYNAMODB_PERSON_HISTORY_TABLE_NAME` is set → DynamoDB mode
+- Otherwise → S3 mode (default)
+
+**Note:** Statistics and atomic counter tables exist in BOTH modes. Only PersonCurrentStateTable and PersonHistoryTable are DynamoDB-mode-specific.
 
 ## Files
 
@@ -187,19 +270,34 @@ The AWS SDK automatically uses the specified profile. No need to set `AWS_ACCESS
 - `AWS_PROFILE` - AWS profile name from ~/.aws/credentials (default: default)
 
 ### Chunker-Specific
-- `INPUT_BUCKET` - Source bucket containing input JSON file (required)
-- `INPUT_KEY` - Key of input JSON file to process (required)
+- `INPUT_BUCKET` - Source bucket containing input JSON file (required for S3 mode)
+- `INPUT_KEY` - Key of input JSON file to process (required for S3 mode)
 - `CHUNKS_BUCKET` - Destination bucket for chunk files (required)
 - `ITEMS_PER_CHUNK` - Number of persons per chunk file (default: 200)
+- `DYNAMODB_ATOMIC_COUNTER_TABLE_NAME` - DynamoDB table for chunk ID generation (required)
+- `SECRET_ARN` - Secrets Manager ARN for configuration (optional, for API mode)
+- `STACK_ID`, `LANDSCAPE`, `ECS_CLUSTER_NAME`, `ECS_SERVICE_NAME`, `MAX_SCALING_CAPACITY` - ECS service scaling parameters
 
 ### Processor-Specific
 - `CHUNKS_BUCKET` - Bucket containing chunk files (required)
-- `CHUNK_KEY` - Key of specific chunk to process (required)
-- `HURON_API_ENDPOINT` - Huron API endpoint URL (optional, for future use)
+- `CHUNK_KEY` - Key of specific chunk to process (required for local mode)
+- `SQS_QUEUE_URL` - SQS queue for chunk notifications (required for ECS mode)
+- `DYNAMODB_STATISTICS_TABLE_NAME` - DynamoDB table for error tracking and statistics (required for both S3 and DynamoDB modes)
+- `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` - DynamoDB table for person state tracking (optional, enables DynamoDB mode)
+- `DYNAMODB_PERSON_HISTORY_TABLE_NAME` - DynamoDB table for change history audit trail (optional, enables DynamoDB mode)
+- `SECRET_ARN` - Secrets Manager ARN for configuration (optional)
+- `STATIC_MAP_USAGE` - JSON object specifying which static maps to load (e.g., `{ "orgMap": true }`)
+- `SHARED_DELTA_STORAGE_DIR` - S3 directory for baseline delta files (default: delta-storage)
 
 ### Merger-Specific
 - `CHUNKS_BUCKET` - Bucket containing chunk files (required)
 - `INPUT_BUCKET` - Original input bucket name, used as top-level folder prefix (required)
+- `CHUNK_DIRECTORY` - Explicit chunk directory path (optional, for direct execution)
+- `SQS_QUEUE_URL` - SQS queue for merge trigger (required for ECS mode)
+- `DYNAMODB_STATISTICS_TABLE_NAME` - DynamoDB table for statistics tracking (required for both S3 and DynamoDB modes)
+- `SECRET_ARN` - Secrets Manager ARN for configuration (optional)
+- `SHARED_DELTA_STORAGE_DIR` - S3 directory for baseline delta files (default: delta-storage)
+- `PERSON_DELETE_TYPE` - Deletion handling strategy (default: deferred)
 
 ## AWS Fargate Deployment
 

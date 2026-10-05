@@ -13,7 +13,7 @@ import { HuronPersonSecrets } from './Secrets';
 
 export interface AppConstructProps {
   context: IContext;
-  config?: Config;
+  config: Config;
   tags?: { [key: string]: string };
 }
 
@@ -27,9 +27,9 @@ export class AppConstruct extends Construct {
   public readonly queue: QueueInfrastructure;
   public readonly chunksBucket: Bucket;
   public readonly subscribingLambdas: SubscribingLambdas;
-  public readonly dynamoDbTables: DynamoDbTables;
   public readonly sourceSimulator?: SourceSimulator;
   public readonly huronPersonSecrets: HuronPersonSecrets;
+  public readonly dynamoDbTables: DynamoDbTables;
 
   constructor(scope: Construct, id: string, props: AppConstructProps) {
     super(scope, id);
@@ -68,7 +68,7 @@ export class AppConstruct extends Construct {
       config,
       huronPersonSecrets: this.huronPersonSecrets,
       stackScope: scope,  // Pass stack reference for escape hatches
-      dynamoDbTables: this.dynamoDbTables, // Pass DynamoDB tables to ECS infrastructure for task definitions
+      dynamoDbTables: this.dynamoDbTables, // Pass DynamoDB tables for task definitions (not in IContext)
       tags,
     });
 
@@ -85,12 +85,24 @@ export class AppConstruct extends Construct {
       'SQS_QUEUE_URL',
       this.queue.chunkerQueue.queueUrl
     );
+    // ProcessorServiceBooster reads processor queue depth to decide whether to "hit the ground
+    // running" scale the processor service up early, from within the chunker task.
+    this.ecs.taskDefinitions.chunker.taskDefinition.defaultContainer!.addEnvironment(
+      'PROCESSOR_QUEUE_URL',
+      this.queue.processorQueue.queueUrl
+    );
     this.ecs.taskDefinitions.processor.taskDefinition.defaultContainer!.addEnvironment(
       'SQS_QUEUE_URL',
       this.queue.processorQueue.queueUrl
     );
     this.ecs.taskDefinitions.merger.taskDefinition.defaultContainer!.addEnvironment(
       'SQS_QUEUE_URL',
+      this.queue.mergerQueue.queueUrl
+    );
+    // DynamoDB mode: the last processor to finish sends the merger-trigger message itself
+    // (no S3 metadata write to fire the MergerSubscriber Lambda), so it needs the merger queue's URL too.
+    this.ecs.taskDefinitions.processor.taskDefinition.defaultContainer!.addEnvironment(
+      'MERGER_QUEUE_URL',
       this.queue.mergerQueue.queueUrl
     );
 
@@ -168,10 +180,16 @@ export class AppConstruct extends Construct {
     // ========================================
     // 9. Merger Service (Phase 3)
     // ========================================
+    // Merger service is ALWAYS needed for both S3 and DynamoDB modes:
+    // - S3 mode: File consolidation + deferred deletion handling
+    // - DynamoDB mode: Deferred deletion handling (no file consolidation)
+    // 
+    // Both modes require DeferredDeleteHandler to soft-delete records removed from source.
     this.ecs.createMergerService(
       this.queue.mergerQueue,
       this.queue.mergerDeadLetterQueue
     );
+    console.log('[MergerService] Created (both S3 and DynamoDB modes require merger for deletion handling)');
 
     
     // Source Simulator (Optional) - Mock API for testing without 30-minute cooldown

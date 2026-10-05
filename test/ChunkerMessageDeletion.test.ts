@@ -10,8 +10,9 @@ import { ChunkerQueue } from '../src/chunking/ChunkerQueue';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
 import { TaskProtection } from '../src/TaskProtection';
-import { MetadataManager } from '../src/chunking/Metadata';
-import { HuronPersonCache } from '../src/PersonCache';
+import { MetadataFactory } from '../src/chunking/metadata/MetadataFactory';
+import { PersonCacheFactory } from '../src/person-cache/PersonCacheFactory';
+import { AbstractPersonCache } from '../src/person-cache/AbstractPersonCache';
 import { ConfigManager } from 'integration-huron-person';
 import * as Utils from '../src/Utils';
 
@@ -19,10 +20,8 @@ import * as Utils from '../src/Utils';
 jest.mock('../src/chunking/ChunkerQueue');
 jest.mock('../src/chunking/fetch/ChunkFromAPI');
 jest.mock('../src/chunking/filedrop/ChunkFromS3');
-jest.mock('../src/PersonCache');
 jest.mock('../src/TaskProtection');
 jest.mock('../src/Utils');
-jest.mock('../src/chunking/Metadata');
 jest.mock('integration-huron-person');
 
 describe('Chunker Main - Message Deletion', () => {
@@ -33,6 +32,7 @@ describe('Chunker Main - Message Deletion', () => {
   let deleteMessageSpy: jest.SpyInstance;
   let processExitSpy: jest.SpyInstance;
   let originalEnv: NodeJS.ProcessEnv;
+  let mockMetadataManager: any;
 
   beforeEach(() => {
     // Save original environment
@@ -49,6 +49,8 @@ describe('Chunker Main - Message Deletion', () => {
     process.env.ITEMS_PER_CHUNK = '200';
     process.env.PERSON_ID_FIELD = 'personid';
     process.env.DRY_RUN = 'false';
+    process.env.PREVIOUS_STORAGE_TYPE = 's3';  // Set storage mode for chunker.ts main() logging
+    process.env.SHARED_DELTA_STORAGE_DIR = 'delta-storage';  // Required for S3 mode
 
     // Create mock message
     mockMessage = {
@@ -119,9 +121,18 @@ describe('Chunker Main - Message Deletion', () => {
       disable: jest.fn().mockResolvedValue(undefined)
     } as any));
 
-    // Mock MetadataManager
-    (MetadataManager.read as jest.Mock) = jest.fn().mockResolvedValue({});
-    (MetadataManager.writeFlags as jest.Mock) = jest.fn().mockResolvedValue(undefined);
+    // Mock MetadataFactory to return a mock metadata manager (implementation-agnostic)
+    // This allows the test to remain agnostic to whether chunker uses S3 or DynamoDB storage
+    mockMetadataManager = {
+      read: jest.fn().mockResolvedValue({}),
+      writeFlags: jest.fn().mockResolvedValue(undefined),
+      write: jest.fn().mockResolvedValue(undefined),
+      readFlags: jest.fn().mockResolvedValue({}),
+      markRunFailed: jest.fn().mockResolvedValue(undefined),
+      readTerminalError: jest.fn().mockResolvedValue(null),
+      terminalErrorExists: jest.fn().mockResolvedValue(false)
+    };
+    jest.spyOn(MetadataFactory, 'create').mockReturnValue(mockMetadataManager);
 
     // Mock Utils
     (Utils.objectExistsInS3 as jest.Mock) = jest.fn().mockResolvedValue(true);
@@ -145,11 +156,11 @@ describe('Chunker Main - Message Deletion', () => {
     };
     (ConfigManager.getInstance as jest.Mock) = jest.fn().mockReturnValue(mockConfigManager);
 
-    // Mock HuronPersonCache
-    (HuronPersonCache as jest.MockedClass<typeof HuronPersonCache>).mockImplementation(() => ({
-      setS3PopulationCache: jest.fn().mockResolvedValue(undefined)
-    } as any));
-    (HuronPersonCache as any).CACHE_FILE_NAME = 'cache.ndjson';
+    // Mock PersonCacheFactory
+    (PersonCacheFactory.create as jest.Mock) = jest.fn().mockReturnValue({
+      setCache: jest.fn().mockResolvedValue(undefined),
+      cacheExists: jest.fn().mockResolvedValue(false)
+    });
 
     jest.clearAllMocks();
   });
@@ -238,7 +249,7 @@ describe('Chunker Main - Message Deletion', () => {
 
     it('should STILL delete message even if chunking already finished (early exit)', async () => {
       // Arrange: Metadata exists (chunking already done) - causes early return
-      const readSpy = jest.spyOn(MetadataManager, 'read').mockResolvedValue({
+      mockMetadataManager.read.mockResolvedValue({
         chunkCount: 10,
         totalRecords: 2000
       });
@@ -251,8 +262,6 @@ describe('Chunker Main - Message Deletion', () => {
       // received and needs to be deleted to prevent reprocessing
       expect(deleteMessageSpy).toHaveBeenCalledWith(mockMessage);
       expect(processExitSpy).toHaveBeenCalledWith(0);
-      
-      readSpy.mockRestore();
     });
   });
 

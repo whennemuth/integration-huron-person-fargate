@@ -1,5 +1,5 @@
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand, UpdateCommandInput } from "@aws-sdk/lib-dynamodb";
-import { IContext } from "../context/IContext";
+import { IContext } from "../../context/IContext";
 import { DescribeTableCommand, DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { TestEnvironment } from "integration-core";
 
