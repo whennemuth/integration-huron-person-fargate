@@ -8,6 +8,8 @@ import { EventType, IBucket } from 'aws-cdk-lib/aws-s3';
 import { LambdaDestination } from 'aws-cdk-lib/aws-s3-notifications';
 import { Construct } from 'constructs';
 import { FUNCTION_BASE_NAME } from '../../../src/merging/MergerSubscriber';
+import { IContext } from '../../../context/IContext';
+import { DYNAMODB_TABLE_NAME as STATISTICS_TABLE_NAME, DYNAMODB_MOCK_TABLE_NAME as MOCK_STATISTICS_TABLE_NAME } from '../../../src/dynamodb/StatisticsTable';
 
 export interface MergerSubscribingLambdaProps {
   vpc: IVpc;
@@ -19,6 +21,7 @@ export interface MergerSubscribingLambdaProps {
   timeoutSeconds: number;
   memorySizeMb: number;
   dryRun?: boolean;
+  context: IContext;
   tags?: { [key: string]: string };
 }
 
@@ -83,6 +86,15 @@ export class MergerSubscribingLambda extends Construct {
         MERGER_QUEUE_URL: props.mergerQueueUrl,
         CHUNKS_BUCKET_NAME: props.chunksBucketName,
         DRY_RUN: props.dryRun ? 'true' : 'false',
+        PREVIOUS_STORAGE_TYPE: props.context.PREVIOUS_STORAGE_TYPE || 's3',
+        // Conditionally add DynamoDB table names when in DynamoDB mode. Both real and mock
+        // table names are needed: chunker writes FLAGS/METADATA/TERMINAL_ERROR to whichever
+        // table matches flags.useMockTarget for that run, and this Lambda doesn't yet know
+        // which one until it tries (see MetadataFactoryForBootstrap.resolveMockAwareFlags()).
+        ...(props.context.PREVIOUS_STORAGE_TYPE === 'dynamodb' && {
+          DYNAMODB_STATISTICS_TABLE_NAME: STATISTICS_TABLE_NAME(props.context),
+          DYNAMODB_MOCK_STATISTICS_TABLE_NAME: MOCK_STATISTICS_TABLE_NAME(props.context),
+        }),
         DESCRIPTION1:
           `Sends SQS message to merger queue to trigger Fargate task that checks completeness 
           of the delta chunks by referencing a metadata file created by the chunker.`,
@@ -127,6 +139,28 @@ export class MergerSubscribingLambda extends Construct {
         resources: [queueArn],
       })
     );
+
+    // Grant DynamoDB permissions if in DynamoDB mode - GetItem only (read-only Lambda), on BOTH
+    // the real and mock statistics tables, since this Lambda tries the mock table first for
+    // FLAGS/METADATA/TERMINAL_ERROR lookups before falling back to the real table (see
+    // MetadataFactoryForBootstrap.resolveMockAwareFlags())
+    if (props.context.PREVIOUS_STORAGE_TYPE === 'dynamodb') {
+      const statisticsTableName = STATISTICS_TABLE_NAME(props.context);
+      const mockStatisticsTableName = MOCK_STATISTICS_TABLE_NAME(props.context);
+
+      this.function.addToRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:GetItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${props.region}:*:table/${statisticsTableName}`,
+            `arn:aws:dynamodb:${props.region}:*:table/${mockStatisticsTableName}`,
+          ],
+        })
+      );
+    }
 
     // Add S3 event notification to trigger Lambda when marker files are created
     // Marker files indicate a chunk has finished processing and prevent race conditions

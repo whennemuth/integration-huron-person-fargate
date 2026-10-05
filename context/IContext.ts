@@ -46,6 +46,12 @@ export interface IContext {
       memoryReservationMiB: number;
       logRetentionDays: number;
       retries?: RetryStrategyConfig;
+      /** Whether ChunkFromAPI should "hit the ground running" scale up the processor service early via ProcessorServiceBooster (default: true) */
+      boostProcessor?: boolean;
+      /** If true, the first non-empty source batch smaller than recordCount (a "partial") ends chunking; if false, only an empty batch does, since the source API can return spurious partials mid-population (default: false) */
+      stopAtFirstPartial?: boolean;
+      /** Safety cutoff: if a run's total source records would exceed this, the source is presumed glitched (never returning an empty batch) and chunking terminates as a failed run; <= 0 disables (default: 500000) */
+      maxTotalRecords?: number;
     };
     /** Processor task definition configuration */
     processorTaskDefinition: {
@@ -155,6 +161,26 @@ export interface IContext {
   /** Bulk reset configuration - controls whether to perform a bulk reset (delete all existing records in source system) before syncing */
   BULK_RESET?: boolean;
 
+  /**
+   * Storage mode for delta state and metadata tracking.
+   * 
+   * Values:
+   * - 'dynamodb' (default): Database-backed storage using PersonCurrentStateTable and PersonHistoryTable.
+   *   Processors write directly to DynamoDB tables. Merger performs deletion detection only.
+   * 
+   * - 'database': Database-backed storage using PostgreSQL/MySQL tables with SQL transactions.
+   *   Similar to 'dynamodb' but uses relational database instead of DynamoDB.
+   * 
+   * - 's3'|'file': File-based delta storage using NDJSON files.
+   *   Processors write chunk-specific mini-deltas (if parallel processing is enabled). 
+   *   Merger consolidates mini-deltas into final delta.
+   * 
+   * See fargate CLAUDE.md "Storage Modes" section and integration-core delta-strategy/dynamodb/README.md comparison table.
+   * 
+   * Default: 'dynamodb' (DynamoDB-backed state tracking)
+   */
+  PREVIOUS_STORAGE_TYPE?: HuronPersonConfig['storage']['type'];
+
   /** 
    * Trust previous storage configuration - controls whether to trust previously stored 
    * data (e.g., previous-input.ndjson) as the source of truth for existing records insofar
@@ -165,6 +191,7 @@ export interface IContext {
    * .
    */
   TRUST_PREVIOUS_STORAGE?: boolean;
+
 
   /** 
    * Dry-run mode configuration - controls whether operations actually modify data
@@ -190,4 +217,5 @@ export interface IContext {
       merger?: boolean;
     };
   };
+
 }

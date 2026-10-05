@@ -1,10 +1,20 @@
 /**
- * Comprehensive tests for processor.ts
+ * Comprehensive tests for ProcessorForS3 (src/processing/ProcessorForS3.ts)
  * 
  * Tests the Phase 2 processing logic that handles individual chunk files
  */
 
-import { extractChunkId, validateChunk, buildChunkConfig } from '../docker/processor';
+// Set PREVIOUS_STORAGE_TYPE before importing ProcessorForS3
+// (ProcessorForS3 module has top-level call to MetadataFactoryForBootstrap which requires this)
+process.env.PREVIOUS_STORAGE_TYPE = 's3';
+
+import { buildChunkConfig, resolveStaticMapUsage, resolveTableName } from '../src/processing/ProcessorForS3';
+import { StandardMetadataUtils } from '../src/chunking/metadata/MetadataUtils';
+import { ChunkFileManager } from '../src/chunking/metadata';
+
+const metadataUtils = new StandardMetadataUtils({});
+const extractChunkId = (s3Key: string) => metadataUtils.extractChunkId(s3Key);
+const validateChunk = ChunkFileManager.validateChunk;
 
 // Simple mock for ConfigManager to avoid file system dependencies
 jest.mock('integration-huron-person', () => ({
@@ -260,6 +270,46 @@ describe('Processor (Phase 2)', () => {
         const outputPath = basePath.replace('previous-input.ndjson', `chunk-${chunkId}.ndjson`);
         expect(outputPath).toBe(`chunks/client-abc/2026-03-03T19:58:41.277Z/chunk-${chunkId}.ndjson`);
       });
+    });
+  });
+
+  describe('resolveStaticMapUsage', () => {
+    it('forces all maps to false when useMockTarget is true, regardless of the deploy-time value', () => {
+      const result = resolveStaticMapUsage({ orgMap: true, stateMap: true, countryMap: true }, true);
+      expect(result).toEqual({ orgMap: false, stateMap: false, countryMap: false });
+    });
+
+    it('leaves staticMapUsage unchanged when useMockTarget is false', () => {
+      const staticMapUsage = { orgMap: true, stateMap: true, countryMap: false };
+      expect(resolveStaticMapUsage(staticMapUsage, false)).toBe(staticMapUsage);
+    });
+
+    it('leaves staticMapUsage unchanged when useMockTarget is undefined', () => {
+      const staticMapUsage = { orgMap: true, stateMap: true, countryMap: false };
+      expect(resolveStaticMapUsage(staticMapUsage, undefined)).toBe(staticMapUsage);
+    });
+
+    it('forces all maps to false when useMockTarget is true even if staticMapUsage was undefined', () => {
+      const result = resolveStaticMapUsage(undefined, true);
+      expect(result).toEqual({ orgMap: false, stateMap: false, countryMap: false });
+    });
+  });
+
+  describe('resolveTableName', () => {
+    it('returns the mock table name when useMockTarget is true', () => {
+      expect(resolveTableName('real-table', 'mock-table', true)).toBe('mock-table');
+    });
+
+    it('returns the real table name when useMockTarget is false', () => {
+      expect(resolveTableName('real-table', 'mock-table', false)).toBe('real-table');
+    });
+
+    it('returns the real table name when useMockTarget is undefined', () => {
+      expect(resolveTableName('real-table', 'mock-table', undefined)).toBe('real-table');
+    });
+
+    it('returns undefined when useMockTarget is true but no mock name is configured', () => {
+      expect(resolveTableName('real-table', undefined, true)).toBeUndefined();
     });
   });
 });

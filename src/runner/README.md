@@ -13,12 +13,14 @@ flowchart LR
   subgraph R[Launch]
     direction TB
       A[.env Configuration] --> B[Runner]
-      B -->|Message| Q[Queue]
-      Q -->|Metric assessment ↻| AL[Alarm ✓]
+      B -->|Message| Q1[Queue]
+      Q1 -->|Metric assessment ↻| AL[Alarm ✓]
       AL -->|Queue depth above zero detected| E[Chunking Service]
       E -->|↑↑↑ Scales up and writes files| F[S3 Bucket]
-      F -->|Appearance of files in bucket| G[Processor service Triggered → ⚙]
-      E <-->|Consumes messages and restocks with more to fuel upcoming tasks until done| Q
+      F -->|Appearance of files in bucket trigger... | L1[Lambda → ⚙]
+      L1 -->|Message| Q2[Queue] 
+      Q2 -->|Queue depth above zero detected| P[Processor service Triggered → ⚙]
+      E <-->|Consumes messages and restocks with more to fuel upcoming tasks until done| Q1
   end
   R --> QD[Queue Depleted]
   QD --> C
@@ -26,8 +28,8 @@ flowchart LR
     direction TB
       H[Queue] -->|Depleted of messages| J[Alarm ✗]
       J -->|Empty queue detected| K[Chunking Service]
-      K -->|↓↓↓ Scales down to zero| L[Processor service finishes]
-      L -->|Merger service runs one task| END[ ⊘ End]
+      K -->|↓↓↓ Scales down to zero| L2[Processor service finishes]
+      L2 -->|Merger service runs one task| END[ ⊘ End]
   end
 ```
 

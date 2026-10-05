@@ -1,6 +1,6 @@
 import { DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput, Message, ReceiveMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { TestEnvironment } from "integration-core";
-import { AbstractAtomicCounter } from "../AtomicCounter";
+import { AbstractAtomicCounter } from "../dynamodb/AtomicCounter";
 import { ApiChunkerEvent } from "./ChunkerSubscriber";
 import { handleApiEvent } from "./fetch/ChunkerApiSubscriber";
 import { TaskParameters } from "./fetch/ChunkFromAPI";
@@ -12,6 +12,25 @@ export type ChunkerQueueParams = {
   region?: string
   landscape?: string
 };
+
+/**
+ * Message body structure for chunker queue messages.
+ * Contains all parameters needed for chunking task execution.
+ */
+export interface ChunkerMessageBody {
+  baseUrl: string;
+  fetchPath: string;
+  populationType: string;
+  offset: number;
+  iterationLimit: number;
+  bulkReset?: boolean;
+  trustPreviousStorage?: boolean;
+  chunkDirectory?: string;
+  /** Mock target configuration: when true, processors use MockPersonDataTarget */
+  useMockTarget?: boolean;
+  /** Validation-only mode for mock target: log operations but don't execute */
+  mockTargetValidateOnly?: boolean;
+}
 
 export const CHUNKER_COUNTER_NAME = 'chunker-offset-counter';
 export const CHUNK_ORDINAL_COUNTER_NAME = 'chunker-chunk-ordinal-counter';
@@ -235,22 +254,29 @@ export class ChunkerQueue {
    * @param params.chunkDirectory Directory to store chunk data for this message's chunking task
    * @param params.taskParameters The parameters for the chunking task to process, which will be passed through to the next message
    * @param params.dryRun If true, will not actually send the message but will log the parameters instead (default: false)
+   * @param params.partialOrEmptyChunkEncountered If true, some parallel chunker task (not necessarily
+   * this one) has already encountered a partial-or-empty batch - the source queue only depletes,
+   * so no legitimate data is expected to remain for a newly-chained task either.
    * @returns true if message sent successfully, false if skipped
    */
   public sendNextChunkingMessage = async ( params: {
-    iterationLimit: number; offset: number, chunkDirectory: string, taskParameters: TaskParameters, dryRun?: boolean
+    iterationLimit: number; offset: number, chunkDirectory: string, taskParameters: TaskParameters, dryRun?: boolean,
+    partialOrEmptyChunkEncountered?: boolean
   }): Promise<boolean> => {
 
     const { QueueUrl } = this;
 
-    const { iterationLimit, offset: currentOffset, chunkDirectory, taskParameters, dryRun } = params; 
+    const { iterationLimit, offset: currentOffset, chunkDirectory, taskParameters, dryRun, partialOrEmptyChunkEncountered } = params; 
 
     const { 
       baseUrl, 
       fetchPath, 
       populationType, 
       bulkReset, 
-      trustPreviousStorage
+      trustPreviousStorage,
+      useMockTarget,
+      mockTargetValidateOnly,
+      personRecordProcessorCustomizations
     } = taskParameters;
 
     // Don't create next message if iterationLimit is 0 (process all)
@@ -259,8 +285,16 @@ export class ChunkerQueue {
       return false;
     }
 
+    // Some parallel task has already encountered a partial-or-empty batch - the source queue only
+    // depletes, so no legitimate data is expected to remain for a newly-chained task either.
+    if (partialOrEmptyChunkEncountered) {
+      console.log('ℹ️  A partial-or-empty batch has already been encountered by some task in this run. Not creating next message.');
+      return false;
+    }
+
     try {
       const nextOffset = await this.getNextOffset(currentOffset, iterationLimit);
+
       if (dryRun) {
         console.log(`[DRY RUN] Would send next chunking message to SQS: offset=${nextOffset}, iterationLimit=${iterationLimit}`);
         return true;
@@ -274,7 +308,10 @@ export class ChunkerQueue {
         trustPreviousStorage, 
         iterationLimit, 
         offset: nextOffset, 
-        chunkDirectory
+        chunkDirectory,
+        useMockTarget,
+        mockTargetValidateOnly,
+        personRecordProcessorCustomizations
       } satisfies ApiChunkerEvent;
 
       // Send the SQS message

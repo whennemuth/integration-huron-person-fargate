@@ -193,6 +193,8 @@ export class SQSQueueReader extends QueueReader {
       }
 
       const message = messages[0];
+
+      console.log(`📨 Received message from SQS queue: ${JSON.stringify(message)}`);
       
       // Parse S3 event notification JSON structure
       const s3Event = JSON.parse(message.Body || '{}');

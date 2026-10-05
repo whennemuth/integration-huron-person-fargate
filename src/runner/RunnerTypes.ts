@@ -17,6 +17,7 @@ export interface RunnerEnv {
   landscape?: string;
   bulkReset?: boolean;
   trustPreviousStorage?: boolean;
+  skipAtomicCounterReset?: boolean;
   messagesToPrepopulate: string;
   desiredCount: number;
   clusterName?: string;
@@ -27,6 +28,11 @@ export interface RunnerEnv {
   sourceSimulatorMockTotalPopulation?: number;
   sourceSimulatorMockSimulatedDelaySeconds?: number;
   sourceSimulatorMockErrorRate?: number;
+  mockTarget?: boolean;
+  mockTargetResetState?: boolean;
+  mockTargetValidateOnly?: boolean;
+  /** Comma-delimited list of personRecordProcessor Customization enum keys to activate for this run */
+  personRecordProcessorCustomizations?: string;
 }
 
 /**
@@ -36,6 +42,19 @@ export interface Endpoint {
   baseUrl: string;
   fetchPath: string;
 }
+
+/**
+ * Target configuration metadata.
+ * Unlike source endpoints (which are always URLs), target config describes
+ * whether to use mock target (DynamoDB table) or real target (Huron API).
+ */
+export type TargetConfig = {
+  useMockTarget: boolean;
+  mockTargetValidateOnly?: boolean;
+  mockTargetResetState?: boolean;
+  // Optional: Include real endpoint when NOT using mock
+  endpoint?: Endpoint;
+};
 
 /**
  * Normalized population type for chunking operations
@@ -59,16 +78,21 @@ export const extractEnvironment = (): RunnerEnv => {
     LANDSCAPE: landscape,
     BULK_RESET: bulkReset,
     TRUST_PREVIOUS_STORAGE: trustPreviousStorage,
-    SOURCE_SIMULATOR: sourceSimulator,
+    SKIP_ATOMIC_COUNTER_RESET: skipAtomicCounterReset,
     MESSAGES_TO_PREPOPULATE: messagesToPrepopulate = '0',
     DESIRED_COUNT,
     ECS_CLUSTER_NAME: clusterName,
     ECS_SERVICE_NAME: serviceName,
     MESSAGING_ONLY: messagingOnly,
     CHUNKING_ONLY: chunkingOnly,
+    SOURCE_SIMULATOR: sourceSimulator,
     SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION: sourceSimulatorMockTotalPopulation,
     SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS: sourceSimulatorMockSimulatedDelaySeconds,
-    SOURCE_SIMULATOR_MOCK_ERROR_RATE: sourceSimulatorMockErrorRate
+    SOURCE_SIMULATOR_MOCK_ERROR_RATE: sourceSimulatorMockErrorRate,
+    USE_MOCK_TARGET: mockTarget,
+    MOCK_TARGET_RESET_STATE: mockTargetResetState,
+    MOCK_TARGET_VALIDATE_ONLY: mockTargetValidateOnly,
+    PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS: personRecordProcessorCustomizations
   } = process.env;
 
   return {
@@ -87,13 +111,18 @@ export const extractEnvironment = (): RunnerEnv => {
     desiredCount: DESIRED_COUNT ? parseInt(DESIRED_COUNT) : 0,
     bulkReset: `${bulkReset}`.toLowerCase().trim() === 'true',
     trustPreviousStorage: `${trustPreviousStorage}`.toLowerCase().trim() === 'true',
+    skipAtomicCounterReset: `${skipAtomicCounterReset}`.toLowerCase().trim() === 'true',
     messagingOnly: `${messagingOnly}`.toLowerCase().trim() === 'true',
     chunkingOnly: `${chunkingOnly}`.toLowerCase().trim() === 'true',
     populationScope: buid ? 'single' : 'standard',
     sourceSimulator: `${sourceSimulator}`.toLowerCase().trim() === 'true',
     sourceSimulatorMockTotalPopulation: sourceSimulatorMockTotalPopulation ? parseInt(sourceSimulatorMockTotalPopulation) : undefined,
     sourceSimulatorMockSimulatedDelaySeconds: sourceSimulatorMockSimulatedDelaySeconds ? parseInt(sourceSimulatorMockSimulatedDelaySeconds) : undefined,
-    sourceSimulatorMockErrorRate: sourceSimulatorMockErrorRate ? parseFloat(sourceSimulatorMockErrorRate) : undefined
+    sourceSimulatorMockErrorRate: sourceSimulatorMockErrorRate ? parseFloat(sourceSimulatorMockErrorRate) : undefined,
+    mockTarget: `${mockTarget}`.toLowerCase().trim() === 'true',
+    mockTargetResetState: `${mockTargetResetState}`.toLowerCase().trim() === 'true',
+    mockTargetValidateOnly: `${mockTargetValidateOnly}`.toLowerCase().trim() === 'true',
+    personRecordProcessorCustomizations
   } satisfies RunnerEnv;
 }
 
@@ -118,7 +147,11 @@ export const setTestEnvironment = (): void => {
     'SOURCE_SIMULATOR',
     'SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION',
     'SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS',
-    'SOURCE_SIMULATOR_MOCK_ERROR_RATE'
+    'SOURCE_SIMULATOR_MOCK_ERROR_RATE',
+    'USE_MOCK_TARGET',
+    'MOCK_TARGET_RESET_STATE',
+    'MOCK_TARGET_VALIDATE_ONLY',
+    'PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS'
   ].forEach(testEnvironment.getVar);
 
   [

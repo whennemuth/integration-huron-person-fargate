@@ -326,9 +326,10 @@ describe('SourceSimulator Lambda Handler', () => {
 
       expect(person).toHaveProperty('personid');
       expect(person).toHaveProperty('bu_id');
-      expect(person).toHaveProperty('firstName');
-      expect(person).toHaveProperty('lastName');
-      expect(person).toHaveProperty('email');
+      // Names/email are nested to match the real CDM schema (personBasic.names[], email[])
+      expect(person.personBasic.names[0]).toHaveProperty('firstName');
+      expect(person.personBasic.names[0]).toHaveProperty('lastName');
+      expect(person.email[0]).toHaveProperty('address');
     });
 
     it('should vary person types (employee, student, affiliate)', async () => {

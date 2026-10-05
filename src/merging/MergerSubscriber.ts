@@ -1,6 +1,6 @@
 import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
-import { ChunkMetadata, MetadataManager } from '../chunking/Metadata';
+import { ChunkMetadata, MetadataFactoryForBootstrap } from '../chunking/metadata';
 
 export const FUNCTION_BASE_NAME = 'merger-subscriber';
 
@@ -87,79 +87,101 @@ export async function handler(event: any): Promise<any> {
   console.log(`Delta storage path: ${deltaStoragePath}`);
   console.log(`Chunk directory: ${chunkDirectory}`);
 
-  const terminalError = await MetadataManager.readTerminalError({
-    bucketName: bucket,
-    chunkDirectory,
-    region
-  });
-  if (terminalError) {
-    console.error(
-      `⛔ Merger blocked because chunking terminal error marker exists for ${chunkDirectory}. ` +
-      `Reason: ${terminalError.errorMessage || 'unknown error'}`
-    );
-    return { statusCode: 200, body: 'Run failed - merger blocked' };
-  }
+  try {
+    // Resolve which statistics table (mock or real) holds this run's records, since chunker may
+    // have written FLAGS/METADATA/TERMINAL_ERROR to either depending on flags.useMockTarget.
+    // See MetadataFactoryForBootstrap.resolveMockAwareFlags().
+    const metadataFactory = new MetadataFactoryForBootstrap();
+    const { metadata: metadataManager } = await metadataFactory.resolveMockAwareFlags({
+      bucketName: bucket, chunkDirectory, region
+    });
 
-  // Step 1: Validate contiguous marker ordinals to determine completion
-  // This replaces the metadata.chunkCount gate with marker-based validation.
-  // Merger is triggered only when markers form uninterrupted sequence 0..N.
-  const { isComplete, actualChunks, maxOrdinal, hasGaps } = await validateContiguousMarkerOrdinals(
-    deltaStoragePath,
-    markerFileKey
-  );
-
-  if (!isComplete) {
-    if (hasGaps) {
-      console.log(
-        `⏳ Marker gap detected: ${actualChunks} markers found but ordinals not contiguous (max: ${maxOrdinal})`
+    const terminalError = await metadataManager.readTerminalError({
+      bucketName: bucket,
+      chunkDirectory,
+      region
+    });
+    if (terminalError) {
+      console.error(
+        `⛔ Merger blocked because chunking terminal error marker exists for ${chunkDirectory}. ` +
+        `Reason: ${terminalError.errorMessage || 'unknown error'}`
       );
-    } else {
-      console.log(
-        `⏳ Waiting for markers: only ${actualChunks} markers found starting from 0`
-      );
+      return { statusCode: 200, body: 'Run failed - merger blocked' };
     }
-    return { statusCode: 200, body: 'Still processing' };
-  }
 
-  // Step 2: All markers are contiguous - get metadata for context and audit trail
-  const metadata = await getChunkMetadata(chunkDirectory, bucket, region);
-  
-  if (!metadata) {
-    console.log('Note: metadata file not found, but marker ordinals are contiguous - proceeding with merger');
-  } else if (metadata.chunkCount && actualChunks !== metadata.chunkCount) {
-    console.warn(
-      `⚠️  Metadata mismatch: metadata says ${metadata.chunkCount} chunks but markers show ${actualChunks} (using marker count)`
+    // Step 1: Read metadata to get expected chunk count for validation
+    const metadata = await getChunkMetadata(metadataManager, chunkDirectory, bucket, region);
+    
+    if (!metadata) {
+      const msg = '⚠️  Metadata file not found - blocking merger until metadata is available';
+      console.warn(msg);
+      return { statusCode: 200, body: msg };
+    } else if (!metadata.chunkCount) {
+      const msg = '⚠️  Metadata missing chunkCount field - blocking merger until chunkCount is available';
+      console.warn(msg);
+      return { statusCode: 200, body: msg };
+    }
+
+    // Step 2: Validate contiguous marker ordinals AND matching count to determine completion
+    // Merger is triggered only when markers form uninterrupted sequence 0..N AND count matches metadata.chunkCount
+    const { isComplete, actualChunks, maxOrdinal, hasGaps } = await validateContiguousMarkerOrdinals(
+      deltaStoragePath,
+      markerFileKey,
+      metadata?.chunkCount
     );
-  }
 
-  const dryRun = DRY_RUN.toLowerCase().trim() === 'true';
-  if(dryRun) {
-    console.log('DRY_RUN mode enabled - skipping merger trigger');
-    return { statusCode: 200, body: 'DRY_RUN - Merger trigger skipped' };
-  }
+    if (!isComplete) {
+      if (hasGaps) {
+        console.log(
+          `⏳ Marker gap detected: ${actualChunks} markers found but ordinals not contiguous (max: ${maxOrdinal})`
+        );
+      } else if (metadata?.chunkCount && actualChunks < metadata.chunkCount) {
+        console.log(
+          `⏳ Waiting for markers: ${actualChunks} of ${metadata.chunkCount} chunks complete`
+        );
+      } else {
+        console.log(
+          `⏳ Waiting for markers: only ${actualChunks} markers found starting from 0`
+        );
+      }
+      return { statusCode: 200, body: 'Still processing' };
+    }
 
-  // Step 3: All markers contiguous - trigger merger
-  console.log(`✅ All markers contiguous (${actualChunks} total): 0..${maxOrdinal}`);
+    const dryRun = DRY_RUN.toLowerCase().trim() === 'true';
+    if(dryRun) {
+      console.log('DRY_RUN mode enabled - skipping merger trigger');
+      return { statusCode: 200, body: 'DRY_RUN - Merger trigger skipped' };
+    }
 
-  const triggered = await triggerMerger(
-    chunkDirectory, 
-    metadata?.createdAt || new Date().toISOString()
-  );
+    // Step 3: All markers validated - trigger merger
+    console.log(`✅ All markers complete: ${actualChunks} of ${metadata?.chunkCount || actualChunks} chunks processed (0..${maxOrdinal})`);
 
-  if (triggered) {
-    return { statusCode: 200, body: 'Merger triggered' };
-  } else {
-    return { statusCode: 500, body: 'Failed to trigger merger' };
+    const triggered = await triggerMerger(
+      chunkDirectory, 
+      metadata?.createdAt || new Date().toISOString()
+    );
+
+    if (triggered) {
+      return { statusCode: 200, body: 'Merger triggered' };
+    } else {
+      return { statusCode: 500, body: 'Failed to trigger merger' };
+    }
+  } catch (error: any) {
+    console.error(`✗ Unexpected error checking/triggering merger for ${chunkDirectory}:`, error);
+    return { statusCode: 500, body: `Failed to trigger merger: ${error.message}` };
   }
 }
 
+
 /**
  * Reads metadata file to determine expected chunk count
+ * @param metadataManager - Metadata manager instance (from MetadataFactoryForBootstrap)
  * @param chunkDirectory - The chunk directory path (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z")
  * @param bucketName - S3 bucket name (optional, uses CHUNKS_BUCKET_NAME env var if not provided)
  * @param region - AWS region (optional, uses REGION env var if not provided)
  */
 export async function getChunkMetadata(
+  metadataManager: ReturnType<MetadataFactoryForBootstrap['createMetadataForBootstrap']>,
   chunkDirectory: string,
   bucketName?: string,
   region?: string
@@ -169,8 +191,7 @@ export async function getChunkMetadata(
     console.error('Missing required bucket name (parameter or CHUNKS_BUCKET_NAME env var)');
     return null;
   }
-
-  const metadata = await MetadataManager.read({
+  const metadata = await metadataManager.read({
     bucketName: bucket,
     chunkDirectory,
     region: region || process.env.REGION
@@ -192,19 +213,24 @@ export async function getChunkMetadata(
 }
 
 /**
- * Validates that marker files form a contiguous ordinal sequence starting from 0.
- * This replaces metadata.chunkCount as the authoritative completion signal.
+ * Validates that marker files form a contiguous ordinal sequence starting from 0
+ * AND that the count matches the expected chunk count from metadata.
  * 
- * Returns true only when markers present: 0, 1, 2, ..., N with no gaps.
+ * Returns isComplete=true only when:
+ * 1. Markers form contiguous sequence: 0, 1, 2, ..., N with no gaps
+ * 2. Total marker count matches expectedChunkCount (if provided)
+ * 
  * Failed-status markers still count as terminal (merger proceeds regardless of failure).
  * Handles S3 pagination for 1000+ markers.
  * 
  * @param deltaStoragePath - The delta storage path (e.g., "deltas/person-full/2026-03-03T19:58:41.277Z")
  * @param currentMarkerKey - The current marker file that triggered this check (to avoid stale-run issues)
+ * @param expectedChunkCount - Expected total chunks from metadata (optional, for backwards compatibility)
  */
 async function validateContiguousMarkerOrdinals(
   deltaStoragePath: string,
-  currentMarkerKey: string
+  currentMarkerKey: string,
+  expectedChunkCount?: number
 ): Promise<{ isComplete: boolean; actualChunks: number; maxOrdinal: number; hasGaps: boolean }> {
   if (!CHUNKS_BUCKET_NAME) {
     return { isComplete: false, actualChunks: 0, maxOrdinal: -1, hasGaps: true };
@@ -273,8 +299,16 @@ async function validateContiguousMarkerOrdinals(
       return { isComplete: false, actualChunks, maxOrdinal, hasGaps: true };
     }
 
-    // Contiguous sequence 0..maxOrdinal confirmed
-    console.log(`✓ Contiguous marker ordinals validated: 0..${maxOrdinal} (${actualChunks} total)`);
+    // Validate count matches expected (if provided)
+    const countMatches = expectedChunkCount === undefined || actualChunks === expectedChunkCount;
+    
+    if (!countMatches) {
+      console.log(`⏳ Waiting for markers: ${actualChunks} of ${expectedChunkCount} chunks complete (contiguous but incomplete)`);
+      return { isComplete: false, actualChunks, maxOrdinal, hasGaps: false };
+    }
+
+    // Both contiguity and count validated
+    console.log(`✓ Contiguous marker ordinals validated: 0..${maxOrdinal} (${actualChunks} total)${expectedChunkCount !== undefined ? ` - matches expected count ${expectedChunkCount}` : ''}`);
     return { isComplete: true, actualChunks, maxOrdinal, hasGaps: false };
 
   } catch (error: any) {
@@ -345,7 +379,7 @@ async function triggerMerger(chunkDirectory: string, createdAt: string): Promise
   };
 
   try {
-    console.log('Sending message to merger queue:', JSON.stringify(message, null, 2));
+    console.log('Sending message to merger queue:', JSON.stringify(message));
     await sqsClient.send(new SendMessageCommand({
       QueueUrl: MERGER_QUEUE_URL,
       MessageBody: JSON.stringify(message),

@@ -1,4 +1,5 @@
-import { HuronPersonCache } from '../src/PersonCache';
+import { PersonCacheForS3 } from '../src/person-cache/PersonCacheForS3';
+import { AbstractPersonTarget } from '../src/person-cache/PersonTargetReal';
 import { S3, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { mockClient } from 'aws-sdk-client-mock';
 import { sdkStreamMixin } from '@smithy/util-stream';
@@ -29,10 +30,11 @@ jest.mock('integration-huron-person', () => {
 
 const s3Mock = mockClient(S3);
 
-describe('HuronPersonCache', () => {
+describe('PersonCacheForS3', () => {
   let mockConfig: Config;
   let mockCache: jest.Mocked<BasicCache>;
   let mockListPeople: jest.Mocked<ListPeople>;
+  let mockPersonTarget: jest.Mocked<AbstractPersonTarget>;
 
   const createMockPerson = (sourceIdentifier: string): HuronPerson => ({
     sourceIdentifier,
@@ -96,27 +98,31 @@ describe('HuronPersonCache', () => {
       listSourceIdentifiers: jest.fn()
     } as any;
     
+    mockPersonTarget = {
+      getFullPopulationFromTarget: jest.fn()
+    } as any;
+    
     (ListPeople as jest.Mock).mockImplementation(() => mockListPeople);
   });
 
   describe('Constructor', () => {
     it('should create instance with config', () => {
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       expect(cache).toBeDefined();
     });
 
     it('should create instance with cache', () => {
-      const cache = new HuronPersonCache({ cache: mockCache });
+      const cache = new PersonCacheForS3({ cache: mockCache, personTarget: mockPersonTarget });
       expect(cache).toBeDefined();
     });
 
     it('should create instance with both config and cache', () => {
-      const cache = new HuronPersonCache({ config: mockConfig, cache: mockCache });
+      const cache = new PersonCacheForS3({ config: mockConfig, cache: mockCache, personTarget: mockPersonTarget });
       expect(cache).toBeDefined();
     });
 
     it('should create instance without parameters', () => {
-      const cache = new HuronPersonCache();
+      const cache = new PersonCacheForS3();
       expect(cache).toBeDefined();
     });
   });
@@ -129,21 +135,20 @@ describe('HuronPersonCache', () => {
         createMockPerson('SRC003')
       ];
       
-      mockListPeople.listSourceIdentifiers.mockResolvedValue(mockPeople);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue(mockPeople);
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       const result = await cache.getFullPopulationFromTargetAPI();
 
       expect(result).toEqual(mockPeople);
       expect(result).toHaveLength(3);
-      expect(ListPeople).toHaveBeenCalledWith(mockConfig, 500);
-      expect(mockListPeople.listSourceIdentifiers).toHaveBeenCalled();
+      expect(mockPersonTarget.getFullPopulationFromTarget).toHaveBeenCalledWith(mockConfig);
     });
 
     it('should handle empty population', async () => {
-      mockListPeople.listSourceIdentifiers.mockResolvedValue([]);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue([]);
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       const result = await cache.getFullPopulationFromTargetAPI();
 
       expect(result).toEqual([]);
@@ -151,15 +156,15 @@ describe('HuronPersonCache', () => {
     });
 
     it('should propagate API errors', async () => {
-      mockListPeople.listSourceIdentifiers.mockRejectedValue(new Error('API connection failed'));
+      mockPersonTarget.getFullPopulationFromTarget.mockRejectedValue(new Error('API connection failed'));
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       await expect(cache.getFullPopulationFromTargetAPI()).rejects.toThrow('API connection failed');
     });
   });
 
-  describe('setS3PopulationCache', () => {
+  describe('setCache', () => {
     it('should write population cache to S3', async () => {
       const mockPeople = [
         createMockPerson('SRC001'),
@@ -167,12 +172,12 @@ describe('HuronPersonCache', () => {
         createMockPerson('SRC003')
       ];
       
-      mockListPeople.listSourceIdentifiers.mockResolvedValue(mockPeople);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue(mockPeople);
       s3Mock.onAnyCommand().resolves({});
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
-      await cache.setS3PopulationCache({
+      await cache.setCache({
         bucketName: 'test-bucket',
         key: 'test-path/_personCache.txt',
         region: 'us-east-2'
@@ -207,12 +212,12 @@ describe('HuronPersonCache', () => {
     });
 
     it('should handle empty population', async () => {
-      mockListPeople.listSourceIdentifiers.mockResolvedValue([]);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue([]);
       s3Mock.onAnyCommand().resolves({});
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
-      await cache.setS3PopulationCache({
+      await cache.setCache({
         bucketName: 'test-bucket',
         key: 'test-path/_personCache.txt',
         region: 'us-east-2'
@@ -235,12 +240,12 @@ describe('HuronPersonCache', () => {
         { ...createMockPerson('SRC004'), sourceIdentifier: null as any }
       ];
       
-      mockListPeople.listSourceIdentifiers.mockResolvedValue(mockPeople);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue(mockPeople);
       s3Mock.onAnyCommand().resolves({});
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
-      await cache.setS3PopulationCache({
+      await cache.setCache({
         bucketName: 'test-bucket',
         key: 'test-path/_personCache.txt',
         region: 'us-east-2'
@@ -265,12 +270,12 @@ describe('HuronPersonCache', () => {
         createMockPerson(`SRC${String(i).padStart(6, '0')}`)
       );
       
-      mockListPeople.listSourceIdentifiers.mockResolvedValue(mockPeople);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue(mockPeople);
       s3Mock.onAnyCommand().resolves({});
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
-      await cache.setS3PopulationCache({
+      await cache.setCache({
         bucketName: 'test-bucket',
         key: 'test-path/_personCache.txt',
         region: 'us-east-2'
@@ -288,13 +293,13 @@ describe('HuronPersonCache', () => {
     it('should throw error when S3 write fails', async () => {
       const mockPeople = [createMockPerson('SRC001')];
       
-      mockListPeople.listSourceIdentifiers.mockResolvedValue(mockPeople);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue(mockPeople);
       s3Mock.onAnyCommand().rejects(new Error('Access Denied'));
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       await expect(
-        cache.setS3PopulationCache({
+        cache.setCache({
           bucketName: 'test-bucket',
           key: 'test-path/_personCache.txt',
           region: 'us-east-2'
@@ -303,7 +308,7 @@ describe('HuronPersonCache', () => {
     });
   });
 
-  describe('getS3PopulationCache', () => {
+  describe('getCache', () => {
     const createMockS3Response = (sourceIdentifiers: string[]) => {
       const content = sourceIdentifiers.join('\n');
       const stream = sdkStreamMixin(Readable.from([content]));
@@ -320,9 +325,9 @@ describe('HuronPersonCache', () => {
       const sourceIds = ['SRC001', 'SRC002', 'SRC003'];
       s3Mock.onAnyCommand().resolves(createMockS3Response(sourceIds));
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
-      const result = await cache.getS3PopulationCache({
+      const result = await cache.getCache({
         bucketName: 'test-bucket',
         key: 'test-path/_personCache.txt',
         region: 'us-east-2'
@@ -347,9 +352,9 @@ describe('HuronPersonCache', () => {
       const stream = sdkStreamMixin(Readable.from(['']));
       s3Mock.onAnyCommand().resolves({ Body: stream, Metadata: {} });
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
-      const result = await cache.getS3PopulationCache({
+      const result = await cache.getCache({
         bucketName: 'test-bucket',
         key: 'test-path/_personCache.txt',
         region: 'us-east-2'
@@ -364,9 +369,9 @@ describe('HuronPersonCache', () => {
       const stream = sdkStreamMixin(Readable.from([content]));
       s3Mock.onAnyCommand().resolves({ Body: stream, Metadata: {} });
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
-      const result = await cache.getS3PopulationCache({
+      const result = await cache.getCache({
         bucketName: 'test-bucket',
         key: 'test-path/_personCache.txt',
         region: 'us-east-2'
@@ -385,9 +390,9 @@ describe('HuronPersonCache', () => {
       );
       s3Mock.onAnyCommand().resolves(createMockS3Response(sourceIds));
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
-      const result = await cache.getS3PopulationCache({
+      const result = await cache.getCache({
         bucketName: 'test-bucket',
         key: 'test-path/_personCache.txt',
         region: 'us-east-2'
@@ -403,9 +408,9 @@ describe('HuronPersonCache', () => {
       error.name = 'NoSuchKey';
       s3Mock.onAnyCommand().rejects(error);
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
-      const result = await cache.getS3PopulationCache({
+      const result = await cache.getCache({
         bucketName: 'test-bucket',
         key: 'test-path/_personCache.txt',
         region: 'us-east-2'
@@ -419,9 +424,9 @@ describe('HuronPersonCache', () => {
     it('should handle cache file without Body', async () => {
       s3Mock.onAnyCommand().resolves({ Metadata: {} });
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
-      const result = await cache.getS3PopulationCache({
+      const result = await cache.getCache({
         bucketName: 'test-bucket',
         key: 'test-path/_personCache.txt',
         region: 'us-east-2'
@@ -434,10 +439,10 @@ describe('HuronPersonCache', () => {
     it('should throw error for S3 access errors', async () => {
       s3Mock.onAnyCommand().rejects(new Error('Access Denied'));
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       await expect(
-        cache.getS3PopulationCache({
+        cache.getCache({
           bucketName: 'test-bucket',
           key: 'test-path/_personCache.txt',
           region: 'us-east-2'
@@ -450,9 +455,9 @@ describe('HuronPersonCache', () => {
       const stream = sdkStreamMixin(Readable.from([content]));
       s3Mock.onAnyCommand().resolves({ Body: stream, Metadata: {} });
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
-      const result = await cache.getS3PopulationCache({
+      const result = await cache.getCache({
         bucketName: 'test-bucket',
         key: 'test-path/_personCache.txt',
         region: 'us-east-2'
@@ -474,7 +479,7 @@ describe('HuronPersonCache', () => {
         createMockPerson('SRC003')
       ];
       
-      mockListPeople.listSourceIdentifiers.mockResolvedValue(mockPeople);
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue(mockPeople);
       
       let writtenContent: string = '';
       
@@ -493,17 +498,17 @@ describe('HuronPersonCache', () => {
         });
       });
 
-      const cache = new HuronPersonCache({ config: mockConfig });
+      const cache = new PersonCacheForS3({ config: mockConfig, personTarget: mockPersonTarget });
       
       // Write cache
-      await cache.setS3PopulationCache({
+      await cache.setCache({
         bucketName: 'test-bucket',
         key: 'test-path/_personCache.txt',
         region: 'us-east-2'
       });
 
       // Read cache
-      const result = await cache.getS3PopulationCache({
+      const result = await cache.getCache({
         bucketName: 'test-bucket',
         key: 'test-path/_personCache.txt',
         region: 'us-east-2'
@@ -518,7 +523,7 @@ describe('HuronPersonCache', () => {
 
   describe('Static properties', () => {
     it('should have CACHE_FILE_NAME constant', () => {
-      expect(HuronPersonCache.CACHE_FILE_NAME).toBe('_personCache.txt');
+      expect(PersonCacheForS3.CACHE_FILE_NAME).toBe('_personCache.txt');
     });
   });
 });

@@ -11,7 +11,7 @@ import { IPersonArrayWrapper, PersonArrayWrapper } from "../PersonArrayWrapper";
 import { FileSystemStorageAdapter, IStorageAdapter, S3StorageAdapter } from "../../storage";
 import { extractChunkDirectory } from '../filedrop/ChunkPathUtils';
 import { getLocalConfig } from '../../Utils';
-import { SyncPopulation } from '../../../docker/chunkTypes';
+import { SyncPopulation, DEFAULT_MAX_TOTAL_RECORDS } from '../../../docker/chunkTypes';
 
 type SourceApiRetryStrategy = {
   executeWithRetry: <T>(fn: () => Promise<T>, context?: string) => Promise<T>;
@@ -80,6 +80,34 @@ export interface BigJsonFetchConfig {
 
   /** Optional retry strategy for source API calls (e.g., 429 handling). */
   retryStrategy?: SourceApiRetryStrategy;
+
+  /**
+   * Optional guard checked before every fetch iteration; return true if offset is already past
+   * a boundary another parallel task has established as the true end, so this iteration's data
+   * should be discarded as an API glitch instead of being written to a chunk file.
+   */
+  isOffsetPastKnownEnd?: (offset: number) => Promise<boolean>;
+
+  /**
+   * Optional (default: false). If true, the first batch smaller than itemsPerChunk (a "partial")
+   * ends this task's fetch loop; if false, only an empty batch does, since the source API can
+   * return spurious partials mid-population.
+   */
+  stopAtFirstPartial?: boolean;
+
+  /**
+   * Optional safety cutoff (default: DEFAULT_MAX_TOTAL_RECORDS; <= 0 disables). If the run-wide
+   * record total would exceed this, the source is presumed glitched (never returning an empty
+   * batch) and chunking ends as a terminal error.
+   */
+  maxTotalRecords?: number;
+
+  /**
+   * Records already contributed to this run by other (completed) chunker tasks, counted toward
+   * maxTotalRecords (default: 0). Excludes still-running parallel tasks, so the cutoff can be
+   * overshot by at most their in-flight records.
+   */
+  runTotalRecordsAtStart?: number;
 }
 
 export type ChunkOrdinalAllocator = () => Promise<number>;
@@ -97,8 +125,13 @@ export interface ChunkResult {
   /** Number of chunk files created */
   chunkCount: number;
 
-  /** Indicates if this chunk reached the end of records (indicates this is the final chunk of the overall sync operation) */
-  reachedTheEndOfRecords: boolean;
+  /**
+   * Indicates this task detected the end of the source records: an empty batch, or (only if
+   * stopAtFirstPartial) a batch smaller than the requested recordCount. Also set on a terminal
+   * error or if this task fetched no records at all. Not necessarily the end of the overall sync
+   * operation, since other parallel tasks may still be mid-fetch or yet to run.
+   */
+  endOfRecordsDetected: boolean;
 
   /** Indicates a terminal fetch/chunking error occurred (for run-level fast fail signaling). */
   terminalErrorEncountered: boolean;
@@ -143,6 +176,10 @@ export class BigJsonFetch {
   private readonly dryRun: boolean;
   private readonly chunkOrdinalAllocator: ChunkOrdinalAllocator;
   private readonly retryStrategy?: SourceApiRetryStrategy;
+  private readonly isOffsetPastKnownEnd?: (offset: number) => Promise<boolean>;
+  private readonly stopAtFirstPartial: boolean;
+  private readonly maxTotalRecords: number;
+  private readonly runTotalRecordsAtStart: number;
 
   constructor(config: BigJsonFetchConfig) {
     let localNextOrdinal = config.offset || 0;
@@ -157,6 +194,10 @@ export class BigJsonFetch {
     this.iterationLimit = config.iterationLimit;
     this.dryRun = config.dryRun || false;
     this.retryStrategy = config.retryStrategy;
+    this.isOffsetPastKnownEnd = config.isOffsetPastKnownEnd;
+    this.stopAtFirstPartial = config.stopAtFirstPartial ?? false;
+    this.maxTotalRecords = config.maxTotalRecords ?? DEFAULT_MAX_TOTAL_RECORDS;
+    this.runTotalRecordsAtStart = config.runTotalRecordsAtStart ?? 0;
     this.chunkOrdinalAllocator = config.chunkOrdinalAllocator || (async () => {
       const nextOrdinal = localNextOrdinal;
       localNextOrdinal++;
@@ -184,10 +225,10 @@ export class BigJsonFetch {
    * 3. Batch processor calls API with recordCount and offset parameters
    * 4. For each batch, extracts person records and writes chunk file
    * 5. Returns metadata about created chunks
-   * 6. Indicates if the end of records was reached
+   * 6. Indicates if this task detected the end of the source records (see ChunkResult.endOfRecordsDetected)
    * 
    * @returns ChunkResult with chunk keys, counts, and metadata
-   * @throws Error if API call fails or no person records are found
+   * @throws Error if API call fails or no person records are found 
    */
   public async fetchAndChunk(): Promise<ChunkResult> {
     console.log(`Starting fetch and chunk operation`);
@@ -223,7 +264,9 @@ export class BigJsonFetch {
       chunkDirPath: chunkDir, 
       offset: this.offset,
       iterationLimit: this.isNotBatchable(dataSource) ? -1 : this.iterationLimit,
-      onChunkWritten: (key: string) => chunkKeys.push(key) 
+      onChunkWritten: (key: string) => chunkKeys.push(key),
+      isOffsetPastKnownEnd: this.isOffsetPastKnownEnd,
+      stopAtFirstPartial: this.stopAtFirstPartial
     };
     const batchProcessor = new class extends BuCdmPeopleDataSourceBatch {
       private currentBatchNumber = 0;
@@ -235,14 +278,17 @@ export class BigJsonFetch {
         offset?: number,
         iterationLimit?: number,
         onChunkWritten: (key: string) => void,
+        isOffsetPastKnownEnd?: (offset: number) => Promise<boolean>,
+        stopAtFirstPartial?: boolean,
       }) {
-        const { dataSource, batchSize, offset = 0, iterationLimit = 0 } = params;
-        super({ dataSource, batchSize, offset, iterationLimit });
+        const { dataSource, batchSize, offset = 0, iterationLimit = 0, isOffsetPastKnownEnd, stopAtFirstPartial } = params;
+        super({ dataSource, batchSize, offset, iterationLimit, isOffsetPastKnownEnd, stopAtFirstPartial });
         this.currentBatchNumber = offset;
       }
 
       protected process = async (response: any[]): Promise<void> => {
         const { params: { chunkDirPath, onChunkWritten } } = this;
+        self.enforceMaxTotalRecords(this.recordsProcessed(), response.length);
         // Extract persons from response
         const persons = await self.extractPersonsFromResponse(response);
         
@@ -276,27 +322,30 @@ export class BigJsonFetch {
     }(batchProcessorParams);
 
     // Process all batches
-    let reachedTheEndOfRecords = false;
+    let endOfRecordsDetected = false;
     let terminalErrorEncountered = false;
     let terminalErrorMessage: string | undefined;
     try {
+      // Fail fast without calling the source if completed tasks have already exceeded the cutoff.
+      this.enforceMaxTotalRecords(0, 0);
       await batchProcessor.processBatch();
-      reachedTheEndOfRecords = batchProcessor.reachedTheEndOfRecords();
+      endOfRecordsDetected = batchProcessor.reachedTheEndOfRecords();
     } catch (error: any) {
       terminalErrorEncountered = true;
       terminalErrorMessage = error?.message || 'Unknown terminal chunking error';
       console.error(`Failed to fetch and chunk from API: ${terminalErrorMessage}`);
       console.error('Stopping overall chunking here due to error');
-      // Equivalent terminal signal to reachedTheEndOfRecords for run-level fast-fail orchestration.
-      reachedTheEndOfRecords = true;
+      // Equivalent terminal signal to endOfRecordsDetected for run-level fast-fail orchestration.
+      endOfRecordsDetected = true;
     }
 
     const totalRecords = batchProcessor.recordsProcessed();
 
-    if (totalRecords === 0) {
-      console.warn('No person records found from API calls');
-      console.error('Stopping overall chunking here due to this unexpected condition');
-      reachedTheEndOfRecords = true; // Treat as end of records to prevent further processing
+    if (totalRecords === 0 && !terminalErrorEncountered) {
+      // Normal for a task chained just past the end (e.g. the prior task's range ended exactly on
+      // the last populated batch), so not an error by itself.
+      console.warn('No person records found from API calls - treating as the end of the source records');
+      endOfRecordsDetected = true;
     }
 
     timer.stop();
@@ -306,10 +355,29 @@ export class BigJsonFetch {
       chunkKeys,
       totalRecords,
       chunkCount: chunkKeys.length,
-      reachedTheEndOfRecords,
+      endOfRecordsDetected,
       terminalErrorEncountered,
       terminalErrorMessage
     };
+  }
+
+  /**
+   * Throws (surfacing as a terminal chunking error) if adding batchLength records would push the
+   * run-wide total past maxTotalRecords - i.e. the source appears to never signal its end.
+   */
+  public enforceMaxTotalRecords(taskRecordsSoFar: number, batchLength: number): void {
+    const { maxTotalRecords, runTotalRecordsAtStart } = this;
+    if (maxTotalRecords <= 0) {
+      return;
+    }
+    const runTotal = runTotalRecordsAtStart + taskRecordsSoFar + batchLength;
+    if (runTotal > maxTotalRecords) {
+      throw new Error(
+        `Safety cutoff: run-wide source record total (${runTotal}) would exceed MAX_TOTAL_RECORDS ` +
+        `(${maxTotalRecords}). Presuming the source is glitched (never returning an empty batch) and ` +
+        `terminating chunking early.`
+      );
+    }
   }
 
   /**
@@ -471,16 +539,22 @@ if (require.main === module) {
       'REGION',
       'HURON_PERSON_CONFIG_JSON',
       'CACHE_ENABLED',
-      'CACHE_PATH'
+      'CACHE_PATH',
+      'STOP_AT_FIRST_PARTIAL',
+      'MAX_TOTAL_RECORDS'
     ].forEach(testEnvironment.getVar);
 
     const { 
       MODE, ITEMS_PER_CHUNK = '200', DRY_RUN = 'false', 
       DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT = '0', 
-      DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET = '0' 
+      DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET = '0',
+      STOP_AT_FIRST_PARTIAL = 'false',
+      MAX_TOTAL_RECORDS = `${DEFAULT_MAX_TOTAL_RECORDS}`
     } = process.env;
     const itemsPerChunk = parseInt(ITEMS_PER_CHUNK, 10);
     const dryRun = DRY_RUN.toLowerCase() === 'true';
+    const stopAtFirstPartial = STOP_AT_FIRST_PARTIAL.toLowerCase() === 'true';
+    const maxTotalRecords = parseInt(MAX_TOTAL_RECORDS, 10);
     const chunksPerTask = parseInt(DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT, 10);
     const chunksOffset = parseInt(DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET, 10);
 
@@ -538,7 +612,9 @@ if (require.main === module) {
           clientId,
           personIdField: 'personid',
           personArrayWrapper: new PersonArrayWrapper(fsOutputStorage, 'personid'),
-          dryRun
+          dryRun,
+          stopAtFirstPartial,
+          maxTotalRecords
         };
 
         const fsFetcher = new BigJsonFetch(fsFetcherConfig);
@@ -585,7 +661,9 @@ if (require.main === module) {
           clientId,
           personIdField: 'personid',
           personArrayWrapper: new PersonArrayWrapper(s3OutputStorage, 'personid'),
-          dryRun
+          dryRun,
+          stopAtFirstPartial,
+          maxTotalRecords
         };
 
         const s3Fetcher = new BigJsonFetch(s3FetcherConfig);

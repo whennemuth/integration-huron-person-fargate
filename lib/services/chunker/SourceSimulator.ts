@@ -6,7 +6,7 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { ENVIRONMENT_VARIABLES_NAMES, FUNCTION_BASE_NAME } from "../../../src/chunking/fetch/SourceSimulator";
 import { HuronPersonSecrets } from '../../Secrets';
-import { DYNAMODB_TABLE_NAME } from '../../../src/AtomicCounter';
+import { DYNAMODB_TABLE_NAME } from '../../../src/dynamodb/AtomicCounter';
 
 export interface SourceSimulatorProps {
   huronPersonSecrets: HuronPersonSecrets;  

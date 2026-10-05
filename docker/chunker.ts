@@ -45,89 +45,18 @@
 
 import { Message } from '@aws-sdk/client-sqs';
 import { TestEnvironment, Timer } from 'integration-core';
-import { Config, ConfigManager } from 'integration-huron-person';
+import { Config } from 'integration-huron-person';
 import { ChunkerQueue } from '../src/chunking/ChunkerQueue';
 import { ChunkFromAPI } from '../src/chunking/fetch/ChunkFromAPI';
 import { ChunkFromS3 } from '../src/chunking/filedrop/ChunkFromS3';
-import { MetadataManager, ReadMetadataParams, WriteMetadataParams } from '../src/chunking/Metadata';
-import { HuronPersonCache } from '../src/PersonCache';
+import { MetadataBroker } from '../src/chunking/metadata';
+import { PersonCacheFactory } from '../src/person-cache/PersonCacheFactory';
+import { AbstractPersonCache } from '../src/person-cache/AbstractPersonCache';
 import { TaskProtection } from '../src/TaskProtection';
-import { getLocalConfig, objectExistsInS3 } from '../src/Utils';
-import { SyncPopulation } from './chunkTypes';
-
-export type IChunkFromSource = {
-  runChunking: (params: ChunkFromParams) => Promise<void>
-  noMessagesFromQueue?: boolean
-  getMessage: () => Message | undefined
-  getChunkDirectory: () => string
-  getBulkResetFlag?: () => boolean  // Optional getter for bulkReset flag from task parameters
-  getTrustPreviousStorageFlag?: () => boolean  // Optional getter for trustPreviousStorage flag from task parameters
-  getSyncPopulation?: () => SyncPopulation  // Optional getter for syncPopulation from task parameters
-}
-
-export type ChunkFromParams = {
-  chunksBucket: string,
-  region: string | undefined,
-  itemsPerChunk: number,
-  personIdField: string,
-  bulkReset?: boolean, // To override the bulkReset flag set in the TaskParameters of the chunker instance.
-  trustPreviousStorage?: boolean, // Controls whether previous delta storage is trusted for create-vs-patch decisions.
-  dryRun: string
-}
+import { getConfig, getLocalConfig, objectExistsInS3 } from '../src/Utils';
+import { ChunkFromParams, IChunkFromSource, SyncPopulation } from './chunkTypes';
 
 const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
-
-/**
- * Write metadata file for merger trigger detection
- */
-export async function writeChunkMetadata(params: WriteMetadataParams) {
-  await MetadataManager.write(params);
-  console.log('\n✓ Metadata file written to S3');
-}
-
-/**
- * Bail out if this is an extraneous task where the end of chunking was reached after its SQS message 
- * was created. Presence of the metadata file indicates that the chunking process had already 
- * completed and the service had already "realized" it had reached the end and scaled down, but due 
- * to the asynchronous nature of SQS and scaling, we may have some tasks that were triggered by 
- * messages that were created before the service realized it had reached the end, and these tasks 
- * should just exit immediately without doing any work.
- * @param params 
- * @returns true if chunking has already finished (metadata file exists), false otherwise
- */
-export async function chunkingAlreadyFinished(params: { 
-  bucketName: string, chunkDirectory: string, region: string | undefined 
-}): Promise<boolean> {
-  const { bucketName, chunkDirectory, region } = params;
-  const metadata = await MetadataManager.read({ 
-    bucketName, chunkDirectory, region 
-  } satisfies ReadMetadataParams);
-
-  let retval = true; // Assume finished unless we can confirm otherwise by finding metadata
-  if(!metadata) {
-    retval = false;
-  }
-
-  if (Object.keys(metadata).length === 0) {
-    retval = false;
-  }
-  
-  if(retval) {
-    console.log(`🔍 Existing metadata found for this chunk directory: ${JSON.stringify(metadata)}`);
-  }
-  return retval;
-}
-
-/**
- * Bail out early if a terminal chunking error marker exists for this run.
- * The marker file itself provides at-a-glance failure visibility in S3 directory listings.
- */
-export async function chunkingTerminalErrorEncountered(params: {
-  bucketName: string, chunkDirectory: string, region: string | undefined
-}): Promise<boolean> {
-  const { bucketName, chunkDirectory, region } = params;
-  return MetadataManager.terminalErrorExists({ bucketName, chunkDirectory, region });
-}
 
 /**
  * Auto scaling grace period: Allow time for ECS auto scaling activity to complete
@@ -152,36 +81,6 @@ const pauseBeforeEarlyExit = async (seconds: number) => {
   console.log(`⏳ Pause complete. Exiting now.`);
 };
 
-/**
- * Get configuration from environment variables, Secrets Manager, or local file system 
- * (for local dev)
- * Priority: 
- *   HURON_PERSON_CONFIG_JSON (TaskDef secret injection) > 
- *   SECRET_ARN (Secrets Manager) > 
- *   Environment > 
- *   FileSystem (local dev)
- * @returns 
- */
-export const getConfig = async (): Promise<Config> => {
-  const { 
-    /** SECRET_ARN: Secrets Manager ARN containing config */
-    SECRET_ARN,
-    /** HURON_PERSON_CONFIG_PATH: Path to config.json (fallback for local dev only) */
-    HURON_PERSON_CONFIG_PATH
-  } = process.env;
-
-  // Load configuration.
-  const configManager = ConfigManager.getInstance();
-  const localConfigPath = HURON_PERSON_CONFIG_PATH || getLocalConfig();
-  return await configManager
-    .reset()
-    .fromJsonString('HURON_PERSON_CONFIG_JSON')   // ← TaskDef secret injection
-    .fromSecretManager(SECRET_ARN)                // ← Fallback to Secrets Manager
-    .fromEnvironment()                            // ← Fallback to individual env var overrides
-    .fromFileSystem(localConfigPath)              // ← Local dev only
-    .getConfigAsync('people');
-}
-
 const getChunkerInstance = async (config: Config, chunkerQueue: ChunkerQueue): Promise<IChunkFromSource | undefined> => {
   
   if (isEcsTask()) {
@@ -202,6 +101,7 @@ const getChunkerInstance = async (config: Config, chunkerQueue: ChunkerQueue): P
         getMessage = () => undefined
         getChunkDirectory = () => ''
         getSyncPopulation = () => SyncPopulation.PersonFull
+        acquiredCacheLock = false
       }();
     }
     
@@ -260,31 +160,90 @@ const getChunkerInstance = async (config: Config, chunkerQueue: ChunkerQueue): P
 }
 
 /**
- * Determine if the shared delta storage file exists in S3, which indicates that a previous sync 
- * operation was run and we have a baseline to compare against for delta processing. Without this
- * baseline, there is no other way to check if any given person exists in the target system, except
- * by looking them up first, which requires the bulkReset flag be set to true (env var: BULK_RESET=true).
+ * Check if there is any previous delta storage (baseline person data) to use for delta processing.
+ * The existence or absence of previous data determines whether bulkReset should be enabled.
+ * 
+ * Storage Mode Detection:
+ * - S3 mode: Checks for previous-input.ndjson file in SHARED_DELTA_STORAGE_DIR
+ * - DynamoDB mode: Queries PersonCurrentStateTable for any existing records
+ * 
+ * If no baseline exists, the chunker must set bulkReset=true to force target system lookups
+ * for each person (to determine CREATE vs UPDATE operations).
  * @param bucket 
  * @param region 
  */
-const sharedDeltaStorageFileExists = async (bucket: string, region?: string): Promise<boolean> => {
-  const { SHARED_DELTA_STORAGE_DIR='delta-storage' } = process.env;
-  const deltaStorageKey = `${SHARED_DELTA_STORAGE_DIR}/previous-input.ndjson`;
-  const retval = await objectExistsInS3(bucket, deltaStorageKey, region);
-  if(retval) {
-    console.log(`✓ Found existing delta storage file at s3://${bucket}/${deltaStorageKey}`);
-  } else {
-    console.warn(`✗ No existing delta storage file found at s3://${bucket}/${deltaStorageKey} - ` +
-      `setting/overriding bulkReset=true to force target system lookups to determine create vs ` +
-      `update for each person record (this may cause the sync to run slower than usual, or this ` +
-      `may be the first time a sync has been run and you forgot to set the BULK_RESET ` +
-      `environment variable to true)`);
+const sharedDeltaStorageExists = async (bucket: string, region?: string): Promise<boolean> => {
+  const { SHARED_DELTA_STORAGE_DIR='delta-storage', PREVIOUS_STORAGE_TYPE } = process.env;
+  
+  if (!PREVIOUS_STORAGE_TYPE) {
+    throw new Error('PREVIOUS_STORAGE_TYPE environment variable is required but not set. Cannot determine storage backend.');
   }
-  return retval;
+  
+  const storageType = PREVIOUS_STORAGE_TYPE.toLowerCase();
+  
+  switch(storageType) {
+    case 's3':
+      // S3 mode: Check for previous-input.ndjson file
+      const deltaStorageKey = `${SHARED_DELTA_STORAGE_DIR}/previous-input.ndjson`;
+      const s3Exists = await objectExistsInS3(bucket, deltaStorageKey, region);
+      if(s3Exists) {
+        console.log(`✓ Found existing delta storage file at s3://${bucket}/${deltaStorageKey} (S3 mode)`);
+      } else {
+        console.warn(`✗ No existing delta storage file found at s3://${bucket}/${deltaStorageKey} (S3 mode) - ` +
+          `setting/overriding bulkReset=true to force target system lookups to determine create vs ` +
+          `update for each person record (this may cause the sync to run slower than usual, or this ` +
+          `may be the first time a sync has been run and you forgot to set the BULK_RESET ` +
+          `environment variable to true)`);
+      }
+      return s3Exists;
+      
+    case 'dynamodb':
+      // DynamoDB mode: Check if PersonCurrentStateTable has any records
+      const { DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME } = process.env;
+      if (!DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME) {
+        throw new Error('DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME is required for DynamoDB storage mode');
+      }
+      
+      // Query PersonCurrentStateTable to check if any baseline data exists
+      const { DynamoDBClient } = await import('@aws-sdk/client-dynamodb');
+      const { DynamoDBDocumentClient, ScanCommand } = await import('@aws-sdk/lib-dynamodb');
+      
+      const client = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
+      const scanResult = await client.send(new ScanCommand({
+        TableName: DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME,
+        Limit: 1  // Only need to know if ANY record exists
+      }));
+      
+      const dynamoDbHasRecords = (scanResult.Items && scanResult.Items.length > 0) || false;
+      if(dynamoDbHasRecords) {
+        console.log(`✓ Found existing baseline data in PersonCurrentStateTable (DynamoDB mode)`);
+      } else {
+        console.warn(`✗ No baseline data found in PersonCurrentStateTable (DynamoDB mode) - ` +
+          `setting/overriding bulkReset=true to force target system lookups to determine create vs ` +
+          `update for each person record (this may cause the sync to run slower than usual, or this ` +
+          `may be the first time a sync has been run)`);
+      }
+      return dynamoDbHasRecords;
+      
+    default:
+      throw new Error(`Unsupported PREVIOUS_STORAGE_TYPE: ${PREVIOUS_STORAGE_TYPE}. Must be 's3', 'file', or 'dynamodb'.`);
+  }
 }
 
 export async function main() {
   console.log('=== Phase 1: Chunker ===\n');
+
+  // Log storage mode and mock target configuration at startup
+  const storageMode = process.env.PREVIOUS_STORAGE_TYPE || 'undefined';
+  const mockTargetTableName = process.env.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME;
+  console.log(`Storage mode: ${storageMode}`);
+  if (storageMode === 'dynamodb') {
+    console.log(`  - PersonCurrentStateTable: ${process.env.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || 'not set'}`);
+    console.log(`  - MockTargetPersonTable: ${mockTargetTableName || 'not set'}`);
+  } else if (storageMode === 's3') {
+    console.log(`  - Shared delta storage dir: ${process.env.SHARED_DELTA_STORAGE_DIR || 'not set'}`);
+  }
+  console.log();
 
   let chunker: IChunkFromSource | undefined;
   let chunkerQueue: ChunkerQueue = new ChunkerQueue({
@@ -350,9 +309,12 @@ export async function main() {
       return;
     }
 
-    const terminalErrorEncountered = await chunkingTerminalErrorEncountered({
-      bucketName: chunksBucket, chunkDirectory: chunker?.getChunkDirectory(), region
+    const metadataBroker = new MetadataBroker({
+      config, bucketName: chunksBucket, chunkDirectory: chunker?.getChunkDirectory(), region,
+      useMockTarget: chunker?.getUseMockTarget?.() || false
     });
+
+    const terminalErrorEncountered = await metadataBroker.isTerminalErrorEncountered();
     if (terminalErrorEncountered) {
       console.log('⊘ Cancelling. A terminal chunking error marker already exists for this chunk directory.');
       exitCode = 1;
@@ -360,12 +322,11 @@ export async function main() {
       return;
     }
 
-    // Completion short-circuit: once metadata exists for this chunk directory, this task is obsolete.
-    // In the simulator's stateful depletion model, allocation occurs at execution time from a shared
-    // supply, so remaining late-arriving tasks are expected to return empty payloads and can be skipped.
-    const alreadyFinished = await chunkingAlreadyFinished({
-      bucketName: chunksBucket, chunkDirectory: chunker?.getChunkDirectory(), region
-    });
+    // Completion short-circuit: once any parallel task has encountered a partial batch, the
+    // source queue can only be as drained or more drained by now, so a late-arriving task (based
+    // on an SQS message created before that happened) can be safely abandoned - see
+    // MetadataBroker.isAlreadyFinished doc comment.
+    const alreadyFinished = await metadataBroker.isAlreadyFinished();
     if (alreadyFinished) {
       let messageDetails = '';
       if (chunker instanceof ChunkFromAPI) {
@@ -387,26 +348,35 @@ export async function main() {
         console.log('Chunk ordinal mode: offset-derived fallback (non-atomic)');
       }
 
-      // Send next chunking message BEFORE starting this task's processing
-      // This enables true parallelism: the next task can start before the current one finishes
-      await chunker.sendNextChunkingMessage(chunkerQueue, dryRun.toLowerCase() === 'true');
+      // Send next chunking message BEFORE starting this task's processing.
+      // This enables true parallelism: the next task can start before the current one finishes.
+      //
+      // NOTE: Mock target flags (useMockTarget, mockTargetValidateOnly) are propagated through
+      // subsequent messages for consistency, even though only the first chunker task needs them
+      // (to write FLAGS to storage). Subsequent chunker tasks skip the write (conditional write 
+      // pattern), so they don't use these flags. Processor tasks read FLAGS from storage, not 
+      // from messages. Propagation of this FLAG data is not required for subsequent chunker 
+      // tasks - it's only needed for the first task. It's done for consistency and 
+      // self-describing messages, not functional necessity.
+      const partialOrEmptyChunkEncountered = await metadataBroker.hasAnyTaskEncounteredPartial();
+      await chunker.sendNextChunkingMessage(chunkerQueue, dryRun.toLowerCase() === 'true', partialOrEmptyChunkEncountered);
     }
 
-    // Check if shared delta storage file exists in S3 to determine if we have a baseline for doing 
-    // lookups during chunk processing, or if we need to set the bulkReset flag to true to force lookups 
-    // for every record.
+    // Check if shared delta storage file exists (S3 or DynamoDB) to determine if we have a baseline 
+    // for doing lookups during chunk processing, or if we need to set the bulkReset flag to true to 
+    // force lookups for every record.
     // Priority: SQS message bulkReset > No historical data check
-    const hasHistoricalData = await sharedDeltaStorageFileExists(chunksBucket, region);
+    const hasHistoricalData = await sharedDeltaStorageExists(chunksBucket, region);
     const bulkResetFromMessage = chunker.getBulkResetFlag?.() || false;
     
     if (bulkResetFromMessage) {
       console.log('✓ bulkReset=true from SQS message - will create person cache for lookups (if not already created).');
       chunkFromParams.bulkReset = true;
     } else if (!hasHistoricalData) {
-      console.log('✓ No historical data found - setting bulkReset=true to force target system lookups');
+      console.log(`✓ No historical data found (checked ${storageMode} storage) - setting bulkReset=true to force target system lookups`);
       chunkFromParams.bulkReset = true;
     } else {
-      console.log('✓ Historical data exists and bulkReset not requested - using delta comparison');
+      console.log(`✓ Historical data exists in ${storageMode} storage and bulkReset not requested - using delta comparison`);
       chunkFromParams.bulkReset = false;
     }
 
@@ -417,35 +387,49 @@ export async function main() {
     const syncPopulation = chunker.getSyncPopulation?.() || SyncPopulation.PersonFull;
     console.log(`Sync population type: ${syncPopulation}`);
 
+    // Get target configuration from chunker
+    const useMockTarget = chunker.getUseMockTarget?.() || false;
+    const mockTargetValidateOnly = chunker.getMockTargetValidateOnly?.() || false;
+    console.log(`Mock target mode: ${useMockTarget ? 'enabled' : 'disabled'}`);
+    if (useMockTarget) {
+      console.log(`  - Validate only: ${mockTargetValidateOnly}`);
+    }
+
+    // Get personRecordProcessor customization selection from chunker (comma-delimited Customization keys)
+    const personRecordProcessorCustomizations = chunker.getPersonRecordProcessorCustomizations?.();
+    if (personRecordProcessorCustomizations) {
+      console.log(`personRecordProcessor customization(s) requested: ${personRecordProcessorCustomizations}`);
+    }
+
     // Write flags file BEFORE chunking starts so processor tasks can read it immediately
-    await MetadataManager.writeFlags({
+    await metadataBroker.writeFlags({
       bucketName: chunksBucket,
       chunkDirectory: chunker.getChunkDirectory(),
       bulkReset: chunkFromParams.bulkReset,
       trustPreviousStorage: chunkFromParams.trustPreviousStorage,
       syncPopulation,
+      useMockTarget,
+      mockTargetValidateOnly,
+      personRecordProcessorCustomizations,
       dryRun: dryRun === 'true',
       region
     });
 
     /**
-     * Writes the full population from the target API to an S3 file as a cache for lookup during chunk processing.
+     * Ensure population cache exists for processor lookup.
+     * In mock target mode, fetches population from MockTargetPersonTable instead of real Huron API.
+     * Cache creation is thread-safe; concurrent tasks will coordinate using marker file locks.
      */
     if(chunkFromParams.bulkReset || !chunkFromParams.trustPreviousStorage) {
       const config = await getConfig();
-      const { CACHE_FILE_NAME } = HuronPersonCache;
-      const cache = new HuronPersonCache({ config });
-      const fileParms = { 
+      const { CACHE_FILE_NAME } = AbstractPersonCache;
+      const cache = PersonCacheFactory.create(config, useMockTarget);
+      const cacheParams = { 
         bucketName: chunksBucket, 
         key: chunker.getChunkDirectory() + `/${CACHE_FILE_NAME}`, 
         region: region! 
-      }
-      if(await cache.s3PopulationCacheExists(fileParms)) {
-        console.log(`✓ Population cache file already exists in S3 at s3://${fileParms.bucketName}/${fileParms.key}`);
-      }
-      else {
-        await cache.setS3PopulationCache(fileParms);
-      }
+      };
+      await cache.ensureCache(cacheParams);
     }
 
     await chunker.runChunking(chunkFromParams);
@@ -455,7 +439,12 @@ export async function main() {
     const chunkDirectory = chunker?.getChunkDirectory?.();
     if (chunkDirectory) {
       try {
-        await MetadataManager.markRunFailed({
+        const config = await getConfig();
+        const metadataBroker = new MetadataBroker({
+          config, bucketName: process.env.CHUNKS_BUCKET!, chunkDirectory, region: process.env.REGION,
+          useMockTarget: chunker?.getUseMockTarget?.() || false
+        });
+        await metadataBroker.markRunFailed({
           bucketName: process.env.CHUNKS_BUCKET!,
           chunkDirectory,
           region: process.env.REGION,
@@ -513,6 +502,11 @@ if (require.main === module) {
     'TRUST_PREVIOUS_STORAGE',
     'MAX_SCALING_CAPACITY',
     'ECS_CLUSTER_NAME',
+    'PROCESSOR_ECS_SERVICE_NAME',
+    'PROCESSOR_QUEUE_URL',
+    'BOOST_PROCESSOR',
+    'STOP_AT_FIRST_PARTIAL',
+    'MAX_TOTAL_RECORDS',
     'CACHE_ENABLED',
     'CACHE_PATH',
     'RETRY_STRATEGY',

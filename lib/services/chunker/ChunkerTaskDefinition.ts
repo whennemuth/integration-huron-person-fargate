@@ -6,8 +6,10 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { RetryStrategyConfig } from '../../../src/ApiErrorRetryStrategy';
 import { HuronPersonSecrets } from '../../Secrets';
-import { DynamoDbTables } from '../../DynamoDB';
+import { StorageParams } from '../../TaskDefinitions';
 import { SERVICE_LOGICAL_ID } from './ChunkerService';
+import { SERVICE_LOGICAL_ID as PROCESSOR_SERVICE_LOGICAL_ID } from '../processor/ProcessorService';
+import { DEFAULT_MAX_TOTAL_RECORDS } from '../../../docker/chunkTypes';
 
 export interface ChunkerTaskDefinitionProps {
   repository: IRepository;
@@ -19,10 +21,9 @@ export interface ChunkerTaskDefinitionProps {
   queueUrl: string;
   inputBucketName: string;
   chunksBucketName: string;
-  dynamoDbTables: DynamoDbTables;
   stackId: string;
   itemsPerChunk: number;
-  sharedDeltaStorageDir: string;
+  storageParams: StorageParams;
   region: string;
   ecsClusterName: string;
   maxScalingCapacity: number;
@@ -30,6 +31,12 @@ export interface ChunkerTaskDefinitionProps {
   ecsChunkerServiceName: string;
   landscape: string;
   retries?: RetryStrategyConfig;
+  /** Whether to "hit the ground running" scale up the processor service early via ProcessorServiceBooster (default: true) */
+  boostProcessor?: boolean;
+  /** If true, the first partial source batch ends chunking; if false, only an empty batch does (default: false) */
+  stopAtFirstPartial?: boolean;
+  /** Run-wide source record safety cutoff; <= 0 disables (default: DEFAULT_MAX_TOTAL_RECORDS) */
+  maxTotalRecords?: number;
   dryRun?: boolean;
   tags?: { [key: string]: string };
 }
@@ -45,10 +52,11 @@ export class ChunkerTaskDefinition extends Construct {
     super(scope, id);
 
     const { 
-      huronPersonSecrets: { secret, secretArn , secretName } = {}, dynamoDbTables, logRetentionDays, 
+      huronPersonSecrets: { secret, secretArn } = {}, logRetentionDays, 
       memoryLimitMiB, memoryReservationMiB, cpu, region, queueUrl, itemsPerChunk, chunksBucketName, 
       inputBucketName, repository, imageTag, ecsClusterName, maxScalingCapacity, stackId, 
-      ecsChunkerServiceName, landscape, dryRun, tags, retries
+      ecsChunkerServiceName, landscape, dryRun, tags, retries, boostProcessor, stopAtFirstPartial, maxTotalRecords,
+      storageParams: { previousStorageType, storageConfig: { sharedDeltaStorageDir, dynamodb } = {} }
     } = props;
 
     const environment: { [key: string]: string } = {
@@ -61,11 +69,12 @@ export class ChunkerTaskDefinition extends Construct {
       REGION: region,
       ECS_CLUSTER_NAME: ecsClusterName,
       ECS_SERVICE_NAME: SERVICE_LOGICAL_ID,
+      PROCESSOR_ECS_SERVICE_NAME: PROCESSOR_SERVICE_LOGICAL_ID,
       MAX_SCALING_CAPACITY: maxScalingCapacity.toString(),
       SQS_QUEUE_URL: queueUrl,
       CHUNKS_BUCKET: chunksBucketName,
-      SHARED_DELTA_STORAGE_DIR: props.sharedDeltaStorageDir,
-      DYNAMODB_ATOMIC_COUNTER_TABLE_NAME: dynamoDbTables.atomicCounterTable.tableName,
+      PREVIOUS_STORAGE_TYPE: previousStorageType!,
+      DYNAMODB_ATOMIC_COUNTER_TABLE_NAME: dynamodb!.atomicCounterTable.tableName,
       ITEMS_PER_CHUNK: itemsPerChunk.toString(),
       PERSON_ID_FIELD: 'personid',
       STACK_ID: stackId,
@@ -73,11 +82,45 @@ export class ChunkerTaskDefinition extends Construct {
       SECRET_ARN: secretArn!,
       IS_ECS_TASK: 'true',
       PAUSE_BEFORE_EARLY_EXIT: 'true', // Number of seconds to pause before early exit
-      DRY_RUN: dryRun ? 'true' : 'false'
+      DRY_RUN: dryRun ? 'true' : 'false',
+      BOOST_PROCESSOR: (boostProcessor ?? true) ? 'true' : 'false',
+      STOP_AT_FIRST_PARTIAL: (stopAtFirstPartial ?? false) ? 'true' : 'false',
+      MAX_TOTAL_RECORDS: `${maxTotalRecords ?? DEFAULT_MAX_TOTAL_RECORDS}`
     };
 
     if (retries && (retries.retryStrategyOptions || retries.retryStrategyType)) {
       environment.RETRY_STRATEGY = JSON.stringify(retries);
+    }
+
+    // Set storage-mode-specific environment variables
+    switch(previousStorageType) {
+      case 's3':
+        if(sharedDeltaStorageDir) {
+          environment.SHARED_DELTA_STORAGE_DIR = sharedDeltaStorageDir;
+        }
+        break;
+      case 'dynamodb':
+        // Add DynamoDB-specific table names when using DynamoDB mode
+        const { 
+          personCurrentStateTable: { tableName: personCurrentStateTableName } = {},
+          mockTargetPersonTable: { tableName: mockTargetPersonTableName } = {},
+          statisticsTable: { tableName: statisticsTableName } = {},
+          mockStatisticsTable: { tableName: mockStatisticsTableName } = {},
+        } = dynamodb || {};
+        if (personCurrentStateTableName) {
+          environment.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME = personCurrentStateTableName;
+        }
+        if (mockTargetPersonTableName) {
+          environment.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = mockTargetPersonTableName;
+        }
+        // Required by MetadataFactory.create() to route _flags.json/_metadata.json writes to DynamoDB
+        if (statisticsTableName) {
+          environment.DYNAMODB_STATISTICS_TABLE_NAME = statisticsTableName;
+        }
+        if (mockStatisticsTableName) {
+          environment.DYNAMODB_MOCK_STATISTICS_TABLE_NAME = mockStatisticsTableName;
+        }
+        break;
     }
 
     // Create CloudWatch log group
@@ -195,13 +238,14 @@ export class ChunkerTaskDefinition extends Construct {
     // even though the secret is also injected as an environment variable.
     secret!.grantRead(this.taskDefinition.taskRole); // Grant read access to the secret for the task role (used by the application code at runtime)
 
-    // Grant SQS SendMessage permission for chunker queue
-    // This allows chunker tasks to send the next message for parallel chunking
+    // Grant SQS SendMessage/GetQueueAttributes permissions - the latter is used by
+    // ProcessorServiceBooster to read the processor queue's backlog depth
     this.taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
         actions: [
           'sqs:SendMessage',
+          'sqs:GetQueueAttributes',
         ],
         resources: [
           `arn:aws:sqs:${region}:${Stack.of(this).account}:*`,
@@ -220,6 +264,46 @@ export class ChunkerTaskDefinition extends Construct {
         resources: [
           `arn:aws:ecs:${region}:${Stack.of(this).account}:service/${ecsClusterName}/${ecsChunkerServiceName}`,
         ],
+      })
+    );
+
+    // Grant ECS DescribeServices/UpdateService permissions for the PROCESSOR service - used by
+    // ProcessorServiceBooster (via DesiredCount) to "hit the ground running" scale it up early
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'ecs:DescribeServices',
+          'ecs:UpdateService',
+        ],
+        resources: [
+          `arn:aws:ecs:${region}:${Stack.of(this).account}:service/${ecsClusterName}/${PROCESSOR_SERVICE_LOGICAL_ID}`,
+        ],
+      })
+    );
+
+    // Grant application-autoscaling lookup permission for the processor service's max capacity.
+    // DescribeScalableTargets does not support resource-level scoping.
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'application-autoscaling:DescribeScalableTargets',
+        ],
+        resources: ['*'],
+      })
+    );
+
+    // Grant lookup permissions for the processor's scale-in alarm (MetricsCatchupDelay, used by
+    // ProcessorServiceBooster before boosting) - neither action supports resource-level scoping.
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'application-autoscaling:DescribeScalingPolicies',
+          'cloudwatch:DescribeAlarms',
+        ],
+        resources: ['*'],
       })
     );
 
@@ -248,11 +332,88 @@ export class ChunkerTaskDefinition extends Construct {
           'dynamodb:GetItem',
         ],
         resources: [
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.atomicCounterTable.tableName}`,
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamoDbTables.atomicCounterTable.tableName}/index/*`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.atomicCounterTable.tableName}`,
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.atomicCounterTable.tableName}/index/*`,
         ],
       })
     );
+
+    // Grant DynamoDB write permissions for PersonCurrentStateTable
+    // Used for storing current sync state of each person in DynamoDB mode
+    // Also grant read permission (Scan with Limit=1) to check if baseline data exists
+    if (dynamodb!.personCurrentStateTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:Scan',       // Read: Used by sharedDeltaStorageExists() to check if any baseline data exists
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.personCurrentStateTable.tableName}`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB read permissions for MockTargetPersonTable
+    // Used when PersonCache needs to fetch population from mock target (instead of real API)
+    if (dynamodb!.mockTargetPersonTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:Scan',
+            'dynamodb:Query',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockTargetPersonTable.tableName}`,
+          ],
+        })
+      );
+    }
+
+    // Grant DynamoDB read/write permissions for StatisticsTable
+    // Used for reading/writing METADATA, FLAGS, and TERMINAL_ERROR event records in DynamoDB mode.
+    // BatchWriteItem is required because DynamoDBTable.putItem() routes through batchWrite() internally.
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'dynamodb:GetItem',
+          'dynamodb:Query',
+          'dynamodb:PutItem',
+          'dynamodb:UpdateItem',
+          'dynamodb:BatchWriteItem',
+        ],
+        resources: [
+          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.statisticsTable.tableName}`,
+        ],
+      })
+    );
+
+    // Grant DynamoDB read/write permissions for the isolated mock statistics table
+    // Used when the run is mock (flags.useMockTarget=true) so its entire statistics-table trail
+    // (FLAGS/METADATA/TERMINAL_ERROR/STATISTICS/ERROR/CHUNK_STATUS/PROCESSOR_BOOST_CLAIM/
+    // MERGER_TRIGGER_CLAIM) stays in this table only
+    if (dynamodb!.mockStatisticsTable) {
+      this.taskDefinition.addToTaskRolePolicy(
+        new PolicyStatement({
+          effect: Effect.ALLOW,
+          actions: [
+            'dynamodb:GetItem',
+            'dynamodb:Query',
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+            'dynamodb:BatchWriteItem',
+          ],
+          resources: [
+            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}`,
+          ],
+        })
+      );
+    }
 
     // Apply any resource-specific tags - tags not defined in IContext.TAGS
     if (tags) {

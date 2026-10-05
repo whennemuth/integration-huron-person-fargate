@@ -1,9 +1,9 @@
-import { DataSourceConfig } from 'integration-huron-person';
+import { DataSourceConfig, Config } from 'integration-huron-person';
 import { DesiredCount } from '../DesiredCount';
 import { QueueSeeder } from '../chunking/fetch/QueueSeeder';
 import { ChunkingServiceRunner } from './AbstractRunner';
-import { Endpoint, NormalizedPopulationType, RunnerEnv } from './RunnerTypes';
-import { AbstractAtomicCounter } from '../AtomicCounter';
+import { Endpoint, NormalizedPopulationType, RunnerEnv, TargetConfig } from './RunnerTypes';
+import { AbstractAtomicCounter } from '../dynamodb/AtomicCounter';
 import { CHUNKER_COUNTER_NAME } from '../chunking/ChunkerQueue';
 import { MetricsCatchupDelay } from './MetricsCatchupDelay';
 
@@ -103,7 +103,7 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
     return true;
   }
 
-  public async resolveDataSource(config: any): Promise<Endpoint> {
+  public async resolveDataSource(config: Config): Promise<Endpoint> {
     let { 
       endpointConfig: { baseUrl } = {}, 
       fetchPath 
@@ -111,9 +111,23 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
     return { baseUrl: baseUrl!, fetchPath: fetchPath! };
   }
 
+  public async resolveDataTarget(config: Config): Promise<TargetConfig> {
+    // Standard runners use real Huron API target (unless overridden by decorator)
+    const { dataTarget } = config;
+    return {
+      useMockTarget: this.env.mockTarget || false,
+      mockTargetValidateOnly: this.env.mockTargetValidateOnly,
+      endpoint: {
+        baseUrl: dataTarget?.endpointConfig?.baseUrl || '',
+        fetchPath: dataTarget?.personsPath || ''
+      }
+    };
+  }
+
   public async execute(
-    endpoint: Endpoint, 
-    config: any, 
+    sourceEndpoint: Endpoint,
+    targetConfig: TargetConfig,
+    config: Config,
     populationType: NormalizedPopulationType
   ): Promise<void> {
     const { env } = this;
@@ -125,7 +139,7 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
     }
 
     // Seed the queue
-    await this.seedQueue(endpoint, env, populationType, seedNumber);
+    await this.seedQueue(sourceEndpoint, targetConfig, env, populationType, seedNumber);
 
     // Scale ECS service if requested
     if (env.desiredCount > 0) {
@@ -166,7 +180,8 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
   }
 
   private async seedQueue(
-    endpoint: Endpoint, 
+    endpoint: Endpoint,
+    targetConfig: TargetConfig,
     env: RunnerEnv, 
     populationType: NormalizedPopulationType,
     seedNumber: number
@@ -185,7 +200,10 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
       iterationLimit: env.iterationLimit ? env.iterationLimit : 0,
       messagesToSeed: seedNumber,
       queueUrl: env.queueUrl!,
-      dryRun: false
+      dryRun: false,
+      useMockTarget: targetConfig.useMockTarget,
+      mockTargetValidateOnly: targetConfig.mockTargetValidateOnly,
+      personRecordProcessorCustomizations: env.personRecordProcessorCustomizations
     });
     
     // Reset the atomic counters to ensure a clean slate for seeded messages and chunk ordinals
