@@ -73,13 +73,13 @@ export class MergerTaskDefinition extends Construct {
 
     const environment: { [key: string]: string } = {
       REGION: region,
+      LANDSCAPE: landscape, // A "mock\d*" landscape signals mock mode at runtime (see isMockLandscape in src/Utils.ts)
       INPUT_BUCKET: inputBucketName,
       // CHUNKS_BUCKET will be provided at runtime by Lambda
       IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
       PERSON_DELETE_TYPE: personDeleteType,
       DRY_RUN: dryRun ? 'true' : 'false',
       DYNAMODB_STATISTICS_TABLE_NAME: dynamodb!.statisticsTable.tableName,
-      DYNAMODB_MOCK_STATISTICS_TABLE_NAME: dynamodb!.mockStatisticsTable.tableName, // Isolated statistics table for mocked runs (flags.useMockTarget)
       PREVIOUS_STORAGE_TYPE: previousStorageType!,
       SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
       DESCRIPTION1: 
@@ -106,9 +106,6 @@ export class MergerTaskDefinition extends Construct {
         const { 
           personCurrentStateTable: { tableName: personCurrentStateTableName } = {}, 
           personHistoryTable: { tableName: personHistoryTableName } = {},
-          mockTargetPersonTable: { tableName: mockTargetPersonTableName } = {},
-          mockPersonCurrentStateTable: { tableName: mockPersonCurrentStateTableName } = {},
-          mockPersonHistoryTable: { tableName: mockPersonHistoryTableName } = {},
         } = dynamodb || {};
         if (personCurrentStateTableName) {
           environment.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME = personCurrentStateTableName;
@@ -116,21 +113,17 @@ export class MergerTaskDefinition extends Construct {
         if (personHistoryTableName) {
           environment.DYNAMODB_PERSON_HISTORY_TABLE_NAME = personHistoryTableName;
         }
-        if (mockTargetPersonTableName) {
-          environment.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = mockTargetPersonTableName;
-        }
-        if (mockPersonCurrentStateTableName) {
-          environment.DYNAMODB_MOCK_PERSON_CURRENT_STATE_TABLE_NAME = mockPersonCurrentStateTableName;
-        }
-        if (mockPersonHistoryTableName) {
-          environment.DYNAMODB_MOCK_PERSON_HISTORY_TABLE_NAME = mockPersonHistoryTableName;
-        }
         break;
       case 'database':
         // Not supported yet.
         break;
       default:
         throw new Error(`Unsupported storage type: ${previousStorageType}`);
+    }
+
+    // Mock landscapes only: the table MockPersonDataTarget writes to in place of the real target API
+    if (dynamodb?.mockTargetPersonTable) {
+      environment.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = dynamodb.mockTargetPersonTable.tableName;
     }
 
     // Add container
@@ -199,25 +192,6 @@ export class MergerTaskDefinition extends Construct {
       })
     );
 
-    // Grant DynamoDB permissions for writing error events and statistics to the isolated mock table
-    // Used when flags.useMockTarget is true so bulk STATISTICS/ERROR/CHUNK_STATUS records never mix with production data
-    this.taskDefinition.addToTaskRolePolicy(
-      new PolicyStatement({
-        effect: Effect.ALLOW,
-        actions: [
-          'dynamodb:PutItem',
-          'dynamodb:UpdateItem',
-          'dynamodb:Query',
-          'dynamodb:GetItem',
-          'dynamodb:BatchWriteItem',
-        ],
-        resources: [
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}`,
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}/index/*`,
-        ],
-      })
-    );
-
     // Grant DynamoDB read/write permissions for PersonCurrentStateTable
     // Used for deletion detection (finding persons in storage but not in source) in DynamoDB mode,
     // and for marking soft-deleted persons so later runs don't select them again
@@ -261,48 +235,8 @@ export class MergerTaskDefinition extends Construct {
       );
     }
 
-    // Grant DynamoDB read/write permissions for mockPersonCurrentStateTable (deletion detection and
-    // soft-deleted marking during mocked runs)
-    if (dynamodb!.mockPersonCurrentStateTable) {
-      this.taskDefinition.addToTaskRolePolicy(
-        new PolicyStatement({
-          effect: Effect.ALLOW,
-          actions: [
-            'dynamodb:Query',
-            'dynamodb:GetItem',
-            'dynamodb:Scan',
-            'dynamodb:PutItem',
-            'dynamodb:BatchWriteItem',
-          ],
-          resources: [
-            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonCurrentStateTable.tableName}`,
-            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonCurrentStateTable.tableName}/index/*`,
-          ],
-        })
-      );
-    }
-
-    // Grant DynamoDB write permissions for mockPersonHistoryTable (DELETED event records during mocked runs)
-    // BatchWriteItem is required because PersonHistoryTable.writeHistory() routes through
-    // DynamoDBTable.putItem() -> batchWrite() internally.
-    if (dynamodb!.mockPersonHistoryTable) {
-      this.taskDefinition.addToTaskRolePolicy(
-        new PolicyStatement({
-          effect: Effect.ALLOW,
-          actions: [
-            'dynamodb:PutItem',
-            'dynamodb:UpdateItem',
-            'dynamodb:BatchWriteItem',
-          ],
-          resources: [
-            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonHistoryTable.tableName}`,
-          ],
-        })
-      );
-    }
-
-    // Grant DynamoDB read/write permissions for mockTargetPersonTable
-    // Used when flags.useMockTarget is true so deferred soft-deletes go through MockPersonDataTarget instead of the real Huron API
+    // Grant DynamoDB read/write permissions for mockTargetPersonTable (mock landscapes only)
+    // Deferred soft-deletes go through MockPersonDataTarget instead of the real Huron API
     if (dynamodb!.mockTargetPersonTable) {
       this.taskDefinition.addToTaskRolePolicy(
         new PolicyStatement({

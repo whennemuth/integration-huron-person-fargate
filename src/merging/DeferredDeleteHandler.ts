@@ -457,11 +457,7 @@ export class DeferredDeleteHandler {
     }
 
     // Create error tracker for deletion operations
-    // Redirected to the isolated mock statistics table when useMockTarget is true, so bulk
-    // STATISTICS/ERROR records never mix with production data
-    const statisticsTableName = useMockTarget
-      ? (process.env.DYNAMODB_MOCK_STATISTICS_TABLE_NAME || '')
-      : (process.env.DYNAMODB_STATISTICS_TABLE_NAME || '');
+    const statisticsTableName = process.env.DYNAMODB_STATISTICS_TABLE_NAME || '';
     const errorTracker = new TrackingTargetApiErrorProcessor({
       tableName: statisticsTableName,
       integrationTimestamp: new Date().toISOString(),
@@ -498,7 +494,6 @@ if(require.main === module) {
       'SECRET_ARN',
       'HURON_PERSON_CONFIG_JSON',
       'DYNAMODB_STATISTICS_TABLE_NAME',
-      'DYNAMODB_MOCK_STATISTICS_TABLE_NAME',
       'CACHE_ENABLED',
       'CACHE_PATH'
     ].forEach(testEnvironment.getVar);

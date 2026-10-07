@@ -28,7 +28,7 @@ export interface RunnerEnv {
   sourceSimulatorMockTotalPopulation?: number;
   sourceSimulatorMockSimulatedDelaySeconds?: number;
   sourceSimulatorMockErrorRate?: number;
-  mockTarget?: boolean;
+  /** Mock landscapes only: truncate the landscape's run-state tables before the run */
   mockTargetResetState?: boolean;
   mockTargetValidateOnly?: boolean;
   /** Comma-delimited list of personRecordProcessor Customization enum keys to activate for this run */
@@ -45,14 +45,13 @@ export interface Endpoint {
 
 /**
  * Target configuration metadata.
- * Unlike source endpoints (which are always URLs), target config describes
- * whether to use mock target (DynamoDB table) or real target (Huron API).
+ * Whether the mock target (DynamoDB table) or real target (Huron API) is used is NOT decided
+ * here - it is a property of the landscape (see isMockLandscape in src/Utils.ts).
  */
 export type TargetConfig = {
-  useMockTarget: boolean;
+  /** Mock landscapes only: log mock target operations without executing them */
   mockTargetValidateOnly?: boolean;
-  mockTargetResetState?: boolean;
-  // Optional: Include real endpoint when NOT using mock
+  // Optional: Include real endpoint
   endpoint?: Endpoint;
 };
 
@@ -89,7 +88,6 @@ export const extractEnvironment = (): RunnerEnv => {
     SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION: sourceSimulatorMockTotalPopulation,
     SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS: sourceSimulatorMockSimulatedDelaySeconds,
     SOURCE_SIMULATOR_MOCK_ERROR_RATE: sourceSimulatorMockErrorRate,
-    USE_MOCK_TARGET: mockTarget,
     MOCK_TARGET_RESET_STATE: mockTargetResetState,
     MOCK_TARGET_VALIDATE_ONLY: mockTargetValidateOnly,
     PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS: personRecordProcessorCustomizations
@@ -119,7 +117,6 @@ export const extractEnvironment = (): RunnerEnv => {
     sourceSimulatorMockTotalPopulation: sourceSimulatorMockTotalPopulation ? parseInt(sourceSimulatorMockTotalPopulation) : undefined,
     sourceSimulatorMockSimulatedDelaySeconds: sourceSimulatorMockSimulatedDelaySeconds ? parseInt(sourceSimulatorMockSimulatedDelaySeconds) : undefined,
     sourceSimulatorMockErrorRate: sourceSimulatorMockErrorRate ? parseFloat(sourceSimulatorMockErrorRate) : undefined,
-    mockTarget: `${mockTarget}`.toLowerCase().trim() === 'true',
     mockTargetResetState: `${mockTargetResetState}`.toLowerCase().trim() === 'true',
     mockTargetValidateOnly: `${mockTargetValidateOnly}`.toLowerCase().trim() === 'true',
     personRecordProcessorCustomizations
@@ -148,7 +145,6 @@ export const setTestEnvironment = (): void => {
     'SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION',
     'SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS',
     'SOURCE_SIMULATOR_MOCK_ERROR_RATE',
-    'USE_MOCK_TARGET',
     'MOCK_TARGET_RESET_STATE',
     'MOCK_TARGET_VALIDATE_ONLY',
     'PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS'

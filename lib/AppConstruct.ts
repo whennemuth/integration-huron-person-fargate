@@ -10,6 +10,7 @@ import { DynamoDbTables } from './DynamoDB';
 import { Config } from 'integration-huron-person';
 import { SourceSimulator } from './services/chunker/SourceSimulator';
 import { HuronPersonSecrets } from './Secrets';
+import { isMockLandscape, MOCK_LANDSCAPE_PATTERN } from '../src/Utils';
 
 export interface AppConstructProps {
   context: IContext;
@@ -36,6 +37,15 @@ export class AppConstruct extends Construct {
 
     const { context: ctx, config, tags } = props;
     const { S3: { chunksBucket }, TAGS: { Landscape } } = ctx;
+
+    // Source simulation entails target simulation: simulated source data must never reach a real
+    // target, so the simulator may only exist in a mock landscape (whose target is always mocked).
+    if (ctx.LAMBDA.sourceSimulator?.enabled && !isMockLandscape(Landscape.toLowerCase())) {
+      throw new Error(
+        `LAMBDA.sourceSimulator.enabled is true, but landscape "${Landscape}" is not a mock landscape ` +
+        `(must match ${MOCK_LANDSCAPE_PATTERN}). Disable the source simulator or deploy to a mock landscape.`
+      );
+    }
 
     // ========================================
     // 1. ECR Repository
@@ -192,7 +202,7 @@ export class AppConstruct extends Construct {
     console.log('[MergerService] Created (both S3 and DynamoDB modes require merger for deletion handling)');
 
     
-    // Source Simulator (Optional) - Mock API for testing without 30-minute cooldown
+    // Source Simulator (Optional, mock landscapes only) - Mock API for testing without 30-minute cooldown
     if (ctx.LAMBDA.sourceSimulator?.enabled) {
       this.sourceSimulator = new SourceSimulator(this, 'SourceSimulator', {
         huronPersonSecrets: this.huronPersonSecrets,

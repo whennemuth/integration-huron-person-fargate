@@ -409,15 +409,11 @@ export abstract class AbstractDeferredDeleteHandler {
   }
 
   /**
-   * Create error tracker for deletion operations. Redirected to the isolated mock statistics 
-   * table when useMockTarget is true, so bulk STATISTICS/ERROR records never mix with 
-   * production data.
+   * Create error tracker for deletion operations.
    */
   public getErrorTracker = async (): Promise<TrackingTargetApiErrorProcessor | undefined> => {
-    const { useMockTarget, region } = this.params;
-    const statisticsTableName = useMockTarget
-      ? (process.env.DYNAMODB_MOCK_STATISTICS_TABLE_NAME || '')
-      : (process.env.DYNAMODB_STATISTICS_TABLE_NAME || '');
+    const { region } = this.params;
+    const statisticsTableName = process.env.DYNAMODB_STATISTICS_TABLE_NAME || '';
     const errorTracker = new TrackingTargetApiErrorProcessor({
       tableName: statisticsTableName,
       integrationTimestamp: new Date().toISOString(),

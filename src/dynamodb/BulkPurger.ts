@@ -1,26 +1,22 @@
 import { TestEnvironment } from "integration-core";
-import { 
-  DYNAMODB_TABLE_NAME as personRecordProcessorLogTableName 
-} from "./PersonRecordProcessorLogTable";
-import { 
-  main as mockTargetPersonTableMain,
+import { Config } from "integration-huron-person";
+import {
+  MockTargetPersonTable,
   DYNAMODB_TABLE_NAME as mockTargetPersonTableName} from "./MockTargetPersonTable";
-import { 
-  main as personCurrentStateTableMain,
-  DYNAMODB_TABLE_NAME as personCurrentStateTableName,
-  DYNAMODB_MOCK_TABLE_NAME as personCurrentStateMockTableName
+import {
+  PersonCurrentStateTable,
+  DYNAMODB_TABLE_NAME as personCurrentStateTableName
 } from "./PersonCurrentStateTable";
-import { 
-  main as personHistoryTableMain,
-  DYNAMODB_TABLE_NAME as personHistoryTableName,
-  DYNAMODB_MOCK_TABLE_NAME as personHistoryMockTableName 
+import {
+  PersonHistoryTable,
+  DYNAMODB_TABLE_NAME as personHistoryTableName
 } from "./PersonHistoryTable";
-import { 
-  main as statisticsTableMain,
+import {
   DYNAMODB_TABLE_NAME as statisticsTableName,
-  DYNAMODB_MOCK_TABLE_NAME as statisticsMockTableName
+  StatisticsTable
 } from "./StatisticsTable";
 import { IContext } from "../../context/IContext";
+import { getConfig, isMockLandscape, MOCK_LANDSCAPE_PATTERN } from "../Utils";
 
 export enum BulkPurgerMode {
   DELETE = 'delete',
@@ -37,22 +33,35 @@ export enum BulkPurgerTables {
 export type BulkPurgerConfig = {
   mode: BulkPurgerMode;
   tables?: BulkPurgerTables[];
-  mock?: boolean;
   syncRunId?: string;
   chunkSize?: number;
   dryRun?: boolean;
+  /** The stack/landscape whose tables are purged. Defaults to context/context.json. */
+  context?: IContext;
+  /**
+   * Purging is refused unless the landscape is a mock landscape (see isMockLandscape), whose
+   * tables only ever hold mock-run data. Set to true to deliberately purge a non-mock landscape.
+   */
+  force?: boolean;
+  /** Only needed to truncate the mock target table - loaded via getConfig() if omitted. */
+  integrationConfig?: Config;
 };
 
+/**
+ * Bulk purges the standard tables of one landscape - used to reset a mock landscape's run state
+ * (see MockLandscapeRunnerDecorator), since a mock landscape uses the same tables as any other.
+ */
 export class BulkPurger {
   private tables: BulkPurgerTables[] = [];
   private mode: BulkPurgerMode;
-  private mock:boolean = true;
   private dryRun:boolean = true;
+  private force:boolean = false;
   private chunkSize?: number;
   private syncRunId?: string;
 
   constructor(private config: BulkPurgerConfig) {
-    console.log(`BulkPurger initialized with: ${JSON.stringify(this.config, null, 2)}`);
+    const { context, integrationConfig, ...loggable } = this.config;
+    console.log(`BulkPurger initialized with: ${JSON.stringify(loggable, null, 2)}`);
 
     this.mode = config.mode;
     this.syncRunId = config.syncRunId;
@@ -62,12 +71,11 @@ export class BulkPurger {
       throw new Error('syncRunId is required when mode is DELETE');
     }
 
-    // Default mock to true, and only set to false if explicitly false in the config.
-    if(typeof config.mock === 'boolean') {
-      this.mock = config.mock;
-    }
     if(typeof config.dryRun === 'boolean') {
       this.dryRun = config.dryRun;
+    }
+    if(typeof config.force === 'boolean') {
+      this.force = config.force;
     }
 
     if((config.tables ?? []).length === 0) {
@@ -81,24 +89,35 @@ export class BulkPurger {
       this.tables = config.tables ?? [];
     }
 
-    console.log(`BulkPurger config resolved to: ${JSON.stringify({ 
-      tables: this.tables, 
-      mode: this.mode, 
-      mock: this.mock,
+    console.log(`BulkPurger config resolved to: ${JSON.stringify({
+      tables: this.tables,
+      mode: this.mode,
       dryRun: this.dryRun,
+      force: this.force,
       syncRunId: this.syncRunId,
       chunkSize: this.chunkSize
     }, null, 2)}`);
   }
 
   protected async loadContext(): Promise<IContext> {
+    if (this.config.context) {
+      return this.config.context;
+    }
     const context = await require('../../context/context.json') as IContext;
     return context;
   }
 
   public purge = async (): Promise<void> => {
-    const { mode, loadContext, Delete, truncate} = this;
-    const context = await loadContext();
+    const { mode, loadContext, Delete, truncate, force } = this;
+    const context = await loadContext.call(this);
+    const landscape = context.TAGS.Landscape.toLowerCase();
+    if (!isMockLandscape(landscape)) {
+      if (!force) {
+        throw new Error(`Refusing to purge tables of landscape "${landscape}": it is not a mock landscape ` +
+          `(must match ${MOCK_LANDSCAPE_PATTERN}). Set force=true to purge it anyway.`);
+      }
+      console.warn(`⚠️  force=true: purging tables of NON-mock landscape "${landscape}"`);
+    }
     const { DELETE, TRUNCATE } = BulkPurgerMode;
     switch(mode) {
       case DELETE:
@@ -111,7 +130,7 @@ export class BulkPurger {
   }
 
   private Delete = async (context: IContext): Promise<void> => {
-    const { mode, syncRunId, tables, mock, dryRun } = this;
+    const { mode, syncRunId, tables, dryRun } = this;
     let tableName: string;
     let msg: string;
 
@@ -122,10 +141,7 @@ export class BulkPurger {
       switch(table) {
         case BulkPurgerTables.STATISTICS:
           tableName = statisticsTableName(context);
-          if(mock) {
-            tableName = statisticsMockTableName(context);
-            process.env.STATISTICS_TABLE_STATISTICS_TABLE_NAME_OVERRIDE = tableName;
-          }
+          process.env.STATISTICS_TABLE_STATISTICS_TABLE_NAME_OVERRIDE = tableName;
           if(syncRunId) {
             process.env.STATISTICS_TABLE_STATISTICS_TABLE_INTEGRATION_TIMESTAMP = syncRunId;
           }
@@ -146,79 +162,46 @@ export class BulkPurger {
   }
 
   private truncate = async (context: IContext): Promise<void> => {
-    const { mock, mode, tables, chunkSize, dryRun } = this;
+    const { mode, tables, chunkSize, dryRun } = this;
     const { MOCK_TARGET_PERSON, PERSON_CURRENT_STATE, PERSON_HISTORY, STATISTICS } = BulkPurgerTables;
-    let tableName: string;
-    let msg: string;
+    const { REGION: region } = context;
 
     for (const table of tables) {
-      // Set the environment variables for each table before purging
+      let tableName: string;
+      let purge: () => Promise<void>;
+
       switch(table) {
-
         case MOCK_TARGET_PERSON:
-          process.env.MOCK_TARGET_PERSON_TABLE_MOCK_TARGET_PERSON_TABLE_TASK = mode;
           tableName = mockTargetPersonTableName(context);
-          process.env.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = tableName;
-          msg = `Running ${mode} against ${tableName}`
-          if(dryRun) {
-            console.log(`DRYRUN: ${msg}`);
-            break;
-          }
-          console.log(msg);
-          await mockTargetPersonTableMain();
+          purge = async () => {
+            const config = this.config.integrationConfig ?? await getConfig();
+            await new MockTargetPersonTable({ config, tableName }).truncate(chunkSize);
+          };
           break;
-
         case PERSON_CURRENT_STATE:
           tableName = personCurrentStateTableName(context);
-          if(mock) {
-            tableName = personCurrentStateMockTableName(context);
-            process.env.PERSON_CURRENT_STATE_TABLE_PERSON_CURRENT_STATE_TABLE_NAME_OVERRIDE = personCurrentStateMockTableName(context);
-          }
-          process.env.PERSON_CURRENT_STATE_TABLE_PERSON_CURRENT_STATE_TABLE_TASK = mode;
-          process.env.PERSON_CURRENT_STATE_TABLE_TRUNCATE_CHUNK_SIZE = chunkSize?.toString();
-          msg = `Running ${mode} against ${tableName}`
-          if(dryRun) {
-            console.log(`DRYRUN: ${msg}`);
-            break;
-          }
-          console.log(msg);
-          await personCurrentStateTableMain();
+          purge = () => PersonCurrentStateTable.fromTableName(tableName, region).truncate(chunkSize);
           break;
-
         case PERSON_HISTORY:
           tableName = personHistoryTableName(context);
-          if(mock) {
-            tableName = personHistoryMockTableName(context);
-            process.env.PERSON_HISTORY_TABLE_PERSON_HISTORY_TABLE_NAME_OVERRIDE = tableName;
-          }
-          process.env.PERSON_HISTORY_TABLE_PERSON_HISTORY_TABLE_TASK = mode;
-          process.env.PERSON_HISTORY_TABLE_TRUNCATE_CHUNK_SIZE = chunkSize?.toString();
-          msg = `Running ${mode} against ${tableName}`
-          if(dryRun) {
-            console.log(`DRYRUN: ${msg}`);
-            break;
-          }
-          console.log(msg);
-          await personHistoryTableMain();
+          purge = () => PersonHistoryTable.fromTableName(tableName, region).truncate(chunkSize);
           break;
-
         case STATISTICS:
           tableName = statisticsTableName(context);
-          if(mock) {
-            tableName = statisticsMockTableName(context);
-            process.env.STATISTICS_TABLE_STATISTICS_TABLE_NAME_OVERRIDE = tableName;
-          }
-          process.env.STATISTICS_TABLE_STATISTICS_TABLE_TASK = mode;
-          process.env.STATISTICS_TABLE_TRUNCATE_CHUNK_SIZE = chunkSize?.toString();
-          msg = `Running ${mode} against ${tableName}`
-          if(dryRun) {
-            console.log(`DRYRUN: ${msg}`);
-            break;
-          }
-          console.log(msg);
-          await statisticsTableMain();
+          purge = () => StatisticsTable.fromTableName(tableName, region).truncate(chunkSize);
           break;
+        default:
+          console.warn(`Unknown table: ${table}, skipping...`);
+          continue;
       }
+
+      const msg = `Running ${mode} against ${tableName}`;
+      if(dryRun) {
+        console.log(`DRYRUN: ${msg}`);
+        continue;
+      }
+      console.log(msg);
+      await purge();
     }
   }
 }
@@ -226,19 +209,19 @@ export class BulkPurger {
 
 if(require.main === module) {
   const testEnvironment = TestEnvironment('BULK_PURGER');
-  [ 
-    'MODE', 
-    'TABLES', 
-    'MOCK', 
+  [
+    'MODE',
+    'TABLES',
+    'FORCE',
     'TRUNCATE_CHUNK_SIZE',
     'SYNC_RUN_ID',
     'DRYRUN'
   ].forEach(testEnvironment.getVar);
-  
+
   const config: BulkPurgerConfig = {
     mode: testEnvironment.getVar('MODE') as BulkPurgerMode,
     tables: (testEnvironment.getVar('TABLES') ?? '').split(',').map(table => table.trim()).filter(table => table) as BulkPurgerTables[],
-    mock: testEnvironment.getVar('MOCK') !== 'false',
+    force: testEnvironment.getVar('FORCE') === 'true',
     syncRunId: testEnvironment.getVar('SYNC_RUN_ID'),
     chunkSize: parseInt(testEnvironment.getVar('TRUNCATE_CHUNK_SIZE') ?? '25', 10),
     dryRun: testEnvironment.getVar('DRYRUN') !== 'false'

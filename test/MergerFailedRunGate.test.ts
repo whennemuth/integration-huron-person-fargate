@@ -23,9 +23,9 @@ describe('Merger deferred deletes are never attempted for a failed run', () => {
   const mockResolve = (terminalErrorExists: boolean) => {
     const terminalErrorExistsFn = jest.fn().mockResolvedValue(terminalErrorExists);
     (MetadataFactoryForBootstrap as unknown as jest.Mock).mockImplementation(() => ({
-      resolveMockAwareFlags: jest.fn().mockResolvedValue({
+      readFlagsForBootstrap: jest.fn().mockResolvedValue({
         metadata: { terminalErrorExists: terminalErrorExistsFn },
-        flags: { syncPopulation: SyncPopulation.PersonFull, useMockTarget: false }
+        flags: { syncPopulation: SyncPopulation.PersonFull }
       })
     }));
     return terminalErrorExistsFn;

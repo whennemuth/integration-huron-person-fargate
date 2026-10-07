@@ -32,9 +32,10 @@ import { getLocalConfig } from '../Utils';
  * 5. List all persons: Scan (for validation/audit)
  * 
  * Usage:
- * When flags.useMockTarget is true, processors use MockPersonDataTarget which writes to this table
- * instead of calling the real target API. This allows full end-to-end testing with source
- * simulator without affecting real target system data.
+ * Exists only in a mock landscape (see isMockLandscape in src/Utils.ts), where processors always
+ * use MockPersonDataTarget, which writes to this table instead of calling the real target API.
+ * This allows full end-to-end testing with the source simulator without affecting real target
+ * system data.
  */
 
 export const DYNAMODB_TABLE_NAME = (context: IContext): string => {

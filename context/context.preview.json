@@ -23,6 +23,9 @@
       "memoryLimitMiB": 4096,
       "memoryReservationMiB": 2048,
       "logRetentionDays": 90,
+      "boostProcessor": true,
+      "stopAtFirstPartial": false,
+      "maxTotalRecords": 500000,
       "retries": {
         "retryStrategyType": "AGGRESSIVE"
       }
@@ -34,7 +37,8 @@
       "logRetentionDays": 90,
       "retries": {
         "retryStrategyType": "THROTTLING_ONLY"
-      }
+      },
+      "boostProcessor": true
     },
     "mergerTaskDefinition": {
       "cpu": 1024,
@@ -47,7 +51,7 @@
       "chunksPerTask": 0
     },
     "processorService": {
-      "maxScalingCapacity": 5
+      "maxScalingCapacity": 15
     }
   },
   "SQS": {
@@ -70,7 +74,7 @@
       "pollIntervalMinutes": 2
     },
     "sourceSimulator": {
-      "enabled": true,
+      "enabled": false,
       "timeoutSeconds": 60,
       "memorySizeMb": 256,
       "mockTotalPopulation": 1950,

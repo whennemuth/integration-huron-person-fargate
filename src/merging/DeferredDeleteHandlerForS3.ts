@@ -5,6 +5,7 @@ import { Readable } from "stream";
 import { AbstractDeferredDeleteHandler, DeferredDeleteHandlerCoreParams } from "./AbstractDeferredDeleteHandler";
 import { isDeletedHash, toDeletedHash } from "./DeletedHashMarker";
 import { BasicCache, Config, FieldDefinitions } from 'integration-huron-person';
+import { runningInMockLandscape } from "../Utils";
 
 export type DeferredDeleteHandlerForS3Params = DeferredDeleteHandlerCoreParams & {
   bucketName: string;
@@ -161,8 +162,7 @@ if(require.main === module) {
       'SECRET_ARN',
       'HURON_PERSON_CONFIG_JSON',
       'DYNAMODB_STATISTICS_TABLE_NAME',
-      'DYNAMODB_MOCK_STATISTICS_TABLE_NAME',
-      'USE_MOCK_TARGET',
+      'LANDSCAPE',
       'CACHE_ENABLED',
       'CACHE_PATH'
     ].forEach(testEnvironment.getVar);
@@ -193,7 +193,7 @@ if(require.main === module) {
       baselineNdjsonPath: targetKey,
       mergedNdjsonPath: sourceKey,
       region,
-      useMockTarget: process.env.USE_MOCK_TARGET === 'true',
+      useMockTarget: runningInMockLandscape(),
     } as DeferredDeleteHandlerForS3Params);
 
 

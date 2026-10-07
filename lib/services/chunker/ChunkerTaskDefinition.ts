@@ -103,24 +103,21 @@ export class ChunkerTaskDefinition extends Construct {
         // Add DynamoDB-specific table names when using DynamoDB mode
         const { 
           personCurrentStateTable: { tableName: personCurrentStateTableName } = {},
-          mockTargetPersonTable: { tableName: mockTargetPersonTableName } = {},
           statisticsTable: { tableName: statisticsTableName } = {},
-          mockStatisticsTable: { tableName: mockStatisticsTableName } = {},
         } = dynamodb || {};
         if (personCurrentStateTableName) {
           environment.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME = personCurrentStateTableName;
-        }
-        if (mockTargetPersonTableName) {
-          environment.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = mockTargetPersonTableName;
         }
         // Required by MetadataFactory.create() to route _flags.json/_metadata.json writes to DynamoDB
         if (statisticsTableName) {
           environment.DYNAMODB_STATISTICS_TABLE_NAME = statisticsTableName;
         }
-        if (mockStatisticsTableName) {
-          environment.DYNAMODB_MOCK_STATISTICS_TABLE_NAME = mockStatisticsTableName;
-        }
         break;
+    }
+
+    // Mock landscapes only: the table MockPersonDataTarget writes to in place of the real target API
+    if (dynamodb?.mockTargetPersonTable) {
+      environment.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = dynamodb.mockTargetPersonTable.tableName;
     }
 
     // Create CloudWatch log group
@@ -357,7 +354,7 @@ export class ChunkerTaskDefinition extends Construct {
       );
     }
 
-    // Grant DynamoDB read permissions for MockTargetPersonTable
+    // Grant DynamoDB read permissions for MockTargetPersonTable (mock landscapes only)
     // Used when PersonCache needs to fetch population from mock target (instead of real API)
     if (dynamodb!.mockTargetPersonTable) {
       this.taskDefinition.addToTaskRolePolicy(
@@ -392,28 +389,6 @@ export class ChunkerTaskDefinition extends Construct {
         ],
       })
     );
-
-    // Grant DynamoDB read/write permissions for the isolated mock statistics table
-    // Used when the run is mock (flags.useMockTarget=true) so its entire statistics-table trail
-    // (FLAGS/METADATA/TERMINAL_ERROR/STATISTICS/ERROR/CHUNK_STATUS/PROCESSOR_BOOST_CLAIM/
-    // MERGER_TRIGGER_CLAIM) stays in this table only
-    if (dynamodb!.mockStatisticsTable) {
-      this.taskDefinition.addToTaskRolePolicy(
-        new PolicyStatement({
-          effect: Effect.ALLOW,
-          actions: [
-            'dynamodb:GetItem',
-            'dynamodb:Query',
-            'dynamodb:PutItem',
-            'dynamodb:UpdateItem',
-            'dynamodb:BatchWriteItem',
-          ],
-          resources: [
-            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}`,
-          ],
-        })
-      );
-    }
 
     // Apply any resource-specific tags - tags not defined in IContext.TAGS
     if (tags) {

@@ -117,6 +117,8 @@ export interface IContext {
      * Optional: Source Simulator mock API configuration
      * When enabled, creates a Lambda Function URL that simulates the source person API
      * for testing without the 30-minute cooldown constraint of the real API.
+     * May only be enabled in a mock landscape (TAGS.Landscape matching /^mock\d*$/ - see
+     * isMockLandscape in src/Utils.ts), whose target is always mocked. Synthesis fails otherwise.
      */
     sourceSimulator?: {
       /** Enable/disable creation of the source simulator */

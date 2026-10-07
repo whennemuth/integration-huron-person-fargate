@@ -13,9 +13,11 @@ export type Flags = {
   runFailed?: boolean;
   runFailureMessage?: string;
   runFailureTimestamp?: string;
-  /** Mock target configuration - when present, processors use MockPersonDataTarget instead of real target API */
-  useMockTarget?: boolean;
-  /** Validation-only mode for mock target: log operations but don't execute */
+  /**
+   * Validation-only mode for mock target: log operations but don't execute. Only meaningful in a
+   * mock landscape - whether the mock target is used at all is decided by the landscape
+   * (see isMockLandscape in src/Utils.ts), not by a per-run flag.
+   */
   mockTargetValidateOnly?: boolean;
   /**
    * Comma-delimited list of personRecordProcessor Customization enum keys (see

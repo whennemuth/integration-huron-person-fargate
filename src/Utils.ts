@@ -11,6 +11,26 @@ export const getStackName = (context:IContext):string => {
   return `${STACK_ID}-${Landscape}`;
 }
 
+/**
+ * A landscape named "mock", "mock1", "mock2", etc. is dedicated to mocked runs (source simulator
+ * and/or mock target). Its stack holds no real data, so mock runs use its standard tables as-is.
+ * This name is the single signal of mock mode - for CDK (deploy time) and for the ECS tasks/Runner
+ * (runtime, via the LANDSCAPE environment variable).
+ */
+export const MOCK_LANDSCAPE_PATTERN = /^mock\d*$/;
+
+export const isMockLandscape = (landscape?: string): boolean => {
+  return MOCK_LANDSCAPE_PATTERN.test(landscape ?? '');
+}
+
+/**
+ * Runtime form of isMockLandscape() for ECS tasks, whose task definitions carry the landscape
+ * in the LANDSCAPE environment variable.
+ */
+export const runningInMockLandscape = (): boolean => {
+  return isMockLandscape(process.env.LANDSCAPE);
+}
+
 export const echoStackName = () => {
   const contextModule = require('../context/context.json') as IContext;
   const stackName = getStackName(contextModule);

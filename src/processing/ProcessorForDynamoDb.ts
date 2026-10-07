@@ -66,7 +66,7 @@ import { SyncPopulation } from '../../docker/chunkTypes';
 import { getRetryStrategy } from '../ApiErrorRetryStrategy';
 import { NextChunk, QueueReader } from '../Queue';
 import { TaskProtection } from '../TaskProtection';
-import { getLocalConfig } from '../Utils';
+import { getLocalConfig, runningInMockLandscape } from '../Utils';
 import { ChunkFileManager } from '../chunking/metadata';
 import { MetadataFactoryForBootstrap } from '../chunking/metadata/MetadataFactory';
 import { StandardMetadataUtils } from '../chunking/metadata/MetadataUtils';
@@ -79,14 +79,10 @@ import {
   resolveCommonFlags,
   resolveCustomPersonProcessor,
   resolveNextChunk,
-  resolveStaticMapUsage,
-  resolveTableName,
   writeTrackerStatistics
 } from './ProcessorCommon';
 
 const metadataUtils = new StandardMetadataUtils({});
-
-export { resolveStaticMapUsage, resolveTableName };
 
 /**
  * Triggers the merger Fargate task by sending a message to SQS.
@@ -121,7 +117,7 @@ async function triggerMerger(
 
   try {
     const sqsClient = new SQSClient({ region });
-    console.log('Sending message to merger queue:', JSON.stringify(message, null, 2));
+    console.log('Sending message to merger queue:', JSON.stringify(message));
     await sqsClient.send(new SendMessageCommand({
       QueueUrl: mergerQueueUrl,
       MessageBody: JSON.stringify(message),
@@ -211,7 +207,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
   } = process.env;
   
   const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
-  let staticMapUsage: StaticMapUsage | undefined = STATIC_MAP_USAGE ? JSON.parse(STATIC_MAP_USAGE) : undefined;
+  const staticMapUsage: StaticMapUsage | undefined = STATIC_MAP_USAGE ? JSON.parse(STATIC_MAP_USAGE) : undefined;
 
   const timer = new Timer();
   timer.start();
@@ -247,19 +243,16 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     // Validate required information
     ChunkFileManager.validateChunk(nextChunk);
 
-    // Read flags - tries the mock statistics table first (if configured), falling back to the
-    // real table, since flags.useMockTarget (what determines which table chunker used) can only
-    // be learned from the flags themselves. See MetadataFactoryForBootstrap.resolveMockAwareFlags().
+    // Read this run's flags (written by the chunker before chunking started)
     chunkDirectory = s3Key!.substring(0, s3Key!.lastIndexOf('/'));
-    const { flags, statisticsTableName: resolvedStatisticsTableName } = await new MetadataFactoryForBootstrap()
-      .resolveMockAwareFlags({ bucketName, chunkDirectory, region });
+    const { flags } = await new MetadataFactoryForBootstrap()
+      .readFlagsForBootstrap({ bucketName, chunkDirectory, region });
 
     const { bulkReset, trustPreviousStorage, syncPopulation } = resolveCommonFlags(flags, BULK_RESET);
 
-    staticMapUsage = resolveStaticMapUsage(staticMapUsage, flags.useMockTarget);
-    if (flags.useMockTarget) {
-      console.log(`Static map usage overridden for mock target mode: ${JSON.stringify(staticMapUsage)}`);
-    }
+    // A mock landscape always uses the mock target (MockPersonDataTarget) - see isMockLandscape()
+    const useMockTarget = runningInMockLandscape();
+    console.log(`Mock target mode: ${useMockTarget ? 'enabled (mock landscape)' : 'disabled'}`);
 
 
     // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
@@ -282,18 +275,8 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     }
 
     // Get DynamoDB table names from environment variables (required)
-    // Redirected to isolated mock tables when flags.useMockTarget is true, so DeltaStrategyForDynamoDB
-    // never mixes mocked person hash/history state with production data
-    const currentStateTableName = resolveTableName(
-      process.env.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME,
-      process.env.DYNAMODB_MOCK_PERSON_CURRENT_STATE_TABLE_NAME,
-      flags.useMockTarget
-    );
-    const historyTableName = resolveTableName(
-      process.env.DYNAMODB_PERSON_HISTORY_TABLE_NAME,
-      process.env.DYNAMODB_MOCK_PERSON_HISTORY_TABLE_NAME,
-      flags.useMockTarget
-    );
+    const currentStateTableName = process.env.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME;
+    const historyTableName = process.env.DYNAMODB_PERSON_HISTORY_TABLE_NAME;
 
     if (!currentStateTableName || !historyTableName) {
       console.error('ERROR: DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME and DYNAMODB_PERSON_HISTORY_TABLE_NAME environment variables required');
@@ -304,10 +287,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     console.log(`PersonHistory table: ${historyTableName}\n`);
 
     // Initialize error tracker
-    // Uses the already-resolved statistics table (mock or real, whichever holds this run's FLAGS -
-    // see MetadataFactoryForBootstrap.resolveMockAwareFlags()), so STATISTICS/ERROR/CHUNK_STATUS/
-    // METADATA records for a mock run never mix with production data, and never split across tables.
-    errorTrackingStatisticsTableName = resolvedStatisticsTableName;
+    errorTrackingStatisticsTableName = process.env.DYNAMODB_STATISTICS_TABLE_NAME;
     errorTracker = buildErrorTracker({ tableName: errorTrackingStatisticsTableName, integrationTimestamp, region });
 
     // Build config with DynamoDB delta storage
@@ -349,7 +329,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
       retryStrategy,
       cleanupPreviousData: false, // DynamoDB manages its own data, no cleanup needed
       ignoreRemovals: syncPopulation === SyncPopulation.PersonDelta,
-      flags, // Pass flags for mock target support
+      flags: { ...flags, useMockTarget }, // Selects MockPersonDataTarget in a mock landscape
       syncRunId: integrationTimestamp, // Pass integration timestamp as sync run ID
       personRecordProcessor: customPersonProcessor
     });
@@ -397,8 +377,6 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
       // DynamoDB Mode: Write CHUNK_STATUS and check for completion to trigger merger
       if (errorTrackingStatisticsTableName && chunkId && integrationTimestamp) {
         try {
-          // Uses the same resolved (mock-or-real) statistics table as the error tracker, so a
-          // mock run's completion detection never looks at the wrong table's chunkCount.
           const statisticsTable = StatisticsTable.fromTableName(errorTrackingStatisticsTableName, region);
 
           // Step 1: Write this processor's CHUNK_STATUS
@@ -493,9 +471,7 @@ if (require.main === module) {
     'SQS_QUEUE_URL',
     'DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME',
     'DYNAMODB_PERSON_HISTORY_TABLE_NAME',
-    'DYNAMODB_MOCK_PERSON_CURRENT_STATE_TABLE_NAME',
-    'DYNAMODB_MOCK_PERSON_HISTORY_TABLE_NAME',
-    'DYNAMODB_MOCK_STATISTICS_TABLE_NAME',
+    'DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME',
     'HURON_PERSON_CONFIG_JSON',
     'STATIC_MAP_USAGE',
     'DRY_RUN',

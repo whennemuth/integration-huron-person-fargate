@@ -26,8 +26,6 @@ export interface ChunkerMessageBody {
   bulkReset?: boolean;
   trustPreviousStorage?: boolean;
   chunkDirectory?: string;
-  /** Mock target configuration: when true, processors use MockPersonDataTarget */
-  useMockTarget?: boolean;
   /** Validation-only mode for mock target: log operations but don't execute */
   mockTargetValidateOnly?: boolean;
 }
@@ -274,7 +272,6 @@ export class ChunkerQueue {
       populationType, 
       bulkReset, 
       trustPreviousStorage,
-      useMockTarget,
       mockTargetValidateOnly,
       personRecordProcessorCustomizations
     } = taskParameters;
@@ -309,8 +306,7 @@ export class ChunkerQueue {
         iterationLimit, 
         offset: nextOffset, 
         chunkDirectory,
-        useMockTarget,
-        mockTargetValidateOnly,
+          mockTargetValidateOnly,
         personRecordProcessorCustomizations
       } satisfies ApiChunkerEvent;
 

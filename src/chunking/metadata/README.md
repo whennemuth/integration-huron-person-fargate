@@ -33,7 +33,7 @@ sequenceDiagram
 
     Note over C1,S: === NORMAL SUCCESS PATH ===
     
-    C1->>S: 1. writeFlags()<br/>(bulkReset, trustPreviousStorage,<br/>syncPopulation, useMockTarget)
+    C1->>S: 1. writeFlags()<br/>(bulkReset, trustPreviousStorage,<br/>syncPopulation, mockTargetValidateOnly)
     Note over C1: FLAGS written BEFORE<br/>chunking starts
     
     C1->>S: 2. Create chunk-XXXX.ndjson files<br/>(stream person records)
@@ -45,7 +45,7 @@ sequenceDiagram
     and
         P->>S: readFlags(chunkDirectory)
         S-->>P: Returns FLAGS
-        Note over P: Use bulkReset,<br/>syncPopulation,<br/>useMockTarget for processing
+        Note over P: Use bulkReset,<br/>syncPopulation<br/>for processing
         P->>P: Process chunk-XXXX.ndjson
     end
     
@@ -153,8 +153,8 @@ type Flags = {
   runFailed?: boolean;
   runFailureMessage?: string;
   runFailureTimestamp?: string;
-  // Mock target configuration
-  useMockTarget?: boolean;
+  // Mock target validate-only mode (mock landscapes only - whether the mock target is used
+  // at all is decided by the landscape, see isMockLandscape in src/Utils.ts)
   mockTargetValidateOnly?: boolean;
 };
 ```
@@ -228,7 +228,6 @@ AbstractMetadata (abstract base)
   "bulkReset": false,
   "trustPreviousStorage": true,
   "syncPopulation": "PersonFull",
-  "useMockTarget": false,
   "mockTargetValidateOnly": false
 }
 ```
@@ -310,7 +309,6 @@ Attributes: {
   bulkReset: false,
   trustPreviousStorage: true,
   syncPopulation: "PersonFull",
-  useMockTarget: false,
   mockTargetValidateOnly: false,
   // Optional failure tracking (present only after markRunFailed):
   runFailed: false,
