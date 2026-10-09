@@ -28,7 +28,6 @@ echo ""
 echo -e "${GREEN}=== Deployment Complete! ===${NC}"
 echo ""
 echo -e "${YELLOW}Stack outputs:${NC}"
-cdk output --all
 
 echo ""
 echo -e "${YELLOW}Next steps:${NC}"
