@@ -8,8 +8,7 @@ import { QueueInfrastructure } from './QueueInfrastructure';
 import { SubscribingLambdas } from './SubscribingLambdas';
 import { DynamoDbTables } from './DynamoDB';
 import { Config } from 'integration-huron-person';
-import { SourceSimulator } from './services/chunker/SourceSimulator';
-import { TargetSimulator } from './services/processor/TargetSimulator';
+import { Simulator } from './Simulator';
 import { HuronPersonSecrets } from './Secrets';
 import { isMockLandscape, MOCK_LANDSCAPE_PATTERN } from '../src/Utils';
 
@@ -29,8 +28,7 @@ export class AppConstruct extends Construct {
   public readonly queue: QueueInfrastructure;
   public readonly chunksBucket: Bucket;
   public readonly subscribingLambdas: SubscribingLambdas;
-  public readonly sourceSimulator?: SourceSimulator;
-  public readonly targetSimulator?: TargetSimulator;
+  public readonly simulator?: Simulator;
   public readonly huronPersonSecrets: HuronPersonSecrets;
   public readonly dynamoDbTables: DynamoDbTables;
 
@@ -72,22 +70,13 @@ export class AppConstruct extends Construct {
     // In a mock landscape the integration config's data target is the target simulator, so the
     // ECS tasks call it through their ordinary Huron client code without knowing it is a fake.
     if (isMockLandscape(Landscape.toLowerCase())) {
-      const { targetSimulator: tsCtx } = ctx.LAMBDA;
-      this.targetSimulator = new TargetSimulator(this, 'TargetSimulator', {
-        landscape: Landscape.toLowerCase(),
-        stackId: ctx.STACK_ID,
-        region: ctx.REGION,
-        table: this.dynamoDbTables.mockTargetPersonTable!,
-        timeoutSeconds: tsCtx?.timeoutSeconds,
-        memorySizeMb: tsCtx?.memorySizeMb,
-        listCacheTtlSeconds: tsCtx?.listCacheTtlSeconds,
+      this.simulator = new Simulator(this, 'Simulator', {
+        context: ctx,
+        mockTargetPersonTable: this.dynamoDbTables.mockTargetPersonTable!,
         tags,
       });
     }
-    this.huronPersonSecrets = new HuronPersonSecrets(this, props.context, this.targetSimulator && {
-      baseUrl: this.targetSimulator.baseUrl,
-      externalToken: this.targetSimulator.externalToken,
-    });
+    this.huronPersonSecrets = new HuronPersonSecrets(this, props.context, this.simulator?.dataTargetOverride);
     
     // ========================================
     // 4. ECS Infrastructure (Cluster + Task Definitions)
@@ -222,27 +211,8 @@ export class AppConstruct extends Construct {
     console.log('[MergerService] Created (both S3 and DynamoDB modes require merger for deletion handling)');
 
     
-    // Source Simulator (Optional, mock landscapes only) - Mock API for testing without 30-minute cooldown
-    if (ctx.LAMBDA.sourceSimulator?.enabled) {
-      this.sourceSimulator = new SourceSimulator(this, 'SourceSimulator', {
-        huronPersonSecrets: this.huronPersonSecrets,
-        landscape: ctx.TAGS.Landscape.toLowerCase(),
-        stackId: ctx.STACK_ID,
-        region: ctx.REGION,
-        account: ctx.ACCOUNT,
-        timeoutSeconds: ctx.LAMBDA.sourceSimulator.timeoutSeconds,
-        memorySizeMb: ctx.LAMBDA.sourceSimulator.memorySizeMb,
-        mockTotalPopulation: ctx.LAMBDA.sourceSimulator.mockTotalPopulation,
-        mockErrorRate: ctx.LAMBDA.sourceSimulator.mockErrorRate,
-        simulatedDelaySeconds: ctx.LAMBDA.sourceSimulator.simulatedDelaySeconds,
-        secretArn: this.huronPersonSecrets.secretArn,
-        tags,
-      });
-
-      console.log('[SubscribingLambdas] Source Simulator enabled - Function URL will be created');
-    } else {
-      console.log('[SubscribingLambdas] Source Simulator disabled - Skipping creation');
-    }
-    
+    // Source simulator (optional, mock landscapes only): mock API for testing without the 30-minute cooldown.
+    // Needs the config secret, which in turn needed the target simulator, hence the second step.
+    this.simulator?.createSourceSimulator(this.huronPersonSecrets);
   }
 }

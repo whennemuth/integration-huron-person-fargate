@@ -100,7 +100,7 @@ export class IntegrationHuronPersonLambdaStack extends Stack {
       description: 'DynamoDB table for processor statistics and error tracking',
     });
 
-    const { functionUrl } = app.sourceSimulator || {};
+    const { functionUrl } = app.simulator?.sourceSimulator || {};
     if(functionUrl) {
       new CfnOutput(this, 'SourceSimulatorUrl', {
         value: functionUrl,
