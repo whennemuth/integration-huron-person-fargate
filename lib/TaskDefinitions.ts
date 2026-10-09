@@ -88,7 +88,7 @@ export class TaskDefinitions extends Construct {
     }
     
     // Chunker task definition
-    this.chunker = new ChunkerTaskDefinition(this, 'chunker', {
+    this.chunker = new ChunkerTaskDefinition(this, 'Chunker', {
       repository,
       cpu: ctx.ECS.chunkerTaskDefinition.cpu,
       memoryLimitMiB: ctx.ECS.chunkerTaskDefinition.memoryLimitMiB,
@@ -115,7 +115,7 @@ export class TaskDefinitions extends Construct {
     });
 
     // Processor task definition (queue URL will be set separately in Stack.ts)
-    this.processor = new ProcessorTaskDefinition(this, 'processor', {
+    this.processor = new ProcessorTaskDefinition(this, 'Processor', {
       repository,
       cpu: ctx.ECS.processorTaskDefinition.cpu,
       memoryLimitMiB: ctx.ECS.processorTaskDefinition.memoryLimitMiB,
@@ -134,7 +134,7 @@ export class TaskDefinitions extends Construct {
     });
 
     // Merger task definition
-    this.merger = new MergerTaskDefinition(this, 'merger', {
+    this.merger = new MergerTaskDefinition(this, 'Merger', {
       repository,
       cpu: ctx.ECS.mergerTaskDefinition.cpu,
       memoryLimitMiB: ctx.ECS.mergerTaskDefinition.memoryLimitMiB,
