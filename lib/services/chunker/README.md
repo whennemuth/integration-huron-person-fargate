@@ -313,6 +313,10 @@ The **Source Simulator** is an optional Lambda Function URL that simulates the s
 
 ### Configuration
 
+**Mock landscapes only**: the simulator may only be enabled for a landscape matching `^mock\d*$`
+(e.g. `context/context.mock.json`), whose target is always mocked. Synthesis fails if it is enabled
+in any other landscape, so simulated data can never reach the real target system.
+
 Enable in `context/IContext.ts`:
 
 ```typescript

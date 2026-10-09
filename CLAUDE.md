@@ -69,12 +69,14 @@ If you cannot fully verify an abstraction's behavior:
 
 ### Real Example: config.preLoadedMaps Dead Code
 
-A runner decorator (`MockTargetRunnerDecorator`) mutated `config.preLoadedMaps = {orgMap:false, ...}` believing this would prevent organization/state/country lookups from calling the real Huron API in mock target mode:
+A runner decorator (`MockTargetRunnerDecorator`, since replaced by `MockLandscapeRunnerDecorator`) mutated `config.preLoadedMaps = {orgMap:false, ...}` believing this would prevent organization/state/country lookups from calling the real Huron API in mock target mode:
 - **Assumption**: Setting this field on the Runner's `Config` object would reach the running processor task
 - **Reality**: `config.preLoadedMaps` is only ever read by CDK at deploy time (`ProcessorTaskDefinition.ts`) to bake `STATIC_MAP_USAGE` into the ECS task's environment variables - from an entirely different `Config` object loaded from disk, not the one the Runner mutated at invocation time
 - **Result**: The override compiled and ran with zero errors, logged nothing wrong, and had absolutely no effect - mock-mode runs could still trigger real organization API calls
 
 This was fixed by forcing `StaticMapUsage` at the point it's actually consumed - inside the processor, immediately after `flags.useMockTarget` is read from chunk metadata (the same channel already used to select the mock data target) - rather than trying to inject it upstream through a Config object that never reaches the running task. The lesson: a runtime override that "looks right" and produces no errors can still be a no-op if it mutates the wrong instance of a config object that exists in two different lifecycles (deploy-time vs invocation-time).
+
+(Since superseded: mock mode is now a deploy-time property of a mock landscape - see "Mock Landscapes" below - whose target simulator answers the same calls the real Huron API would, so no static-map override is needed at all; the runtime override `resolveStaticMapUsage()` was removed.)
 
 ### Source Simulator
 
@@ -85,7 +87,7 @@ The source simulator (`src/chunking/fetch/SourceSimulator.ts`) is a Lambda Funct
 - `/terms`: mock current-terms data (6 static terms: 2 current, 2 past, 2 future) - required because `DataMapperOrg.isCurrentSemester()` needs terms data to filter student semesters, and running with `RUNNER_CHUNKING_ONLY=false` exercises this path
 - Optional `nonCurrentTermRate` query parameter (0.0-1.0, default 0.0): probability that a simulated student is assigned a non-current term, for testing semester-filtering logic
 
-**Safety enforcement - source simulation entails target simulation**: `RUNNER_SOURCE_SIMULATOR=true` automatically forces `useMockTarget=true` (in `Runner.ts` and, redundantly, in `MockTargetRunnerDecorator`) whenever the processor phase is enabled (`RUNNER_CHUNKING_ONLY=false`). There is no supported way to run simulated source data against the real Huron target API - this is enforced in code, not just documented as a convention.
+**Safety enforcement - source simulation entails target simulation**: the source simulator may only exist in a mock landscape (see "Mock Landscapes" below), whose target is always mocked. This is enforced twice: `lib/AppConstruct.ts` refuses to synthesize a stack with `LAMBDA.sourceSimulator.enabled` in a non-mock landscape (so real stacks have no simulator Lambda at all), and `Runner.ts` aborts when `RUNNER_SOURCE_SIMULATOR=true` targets a non-mock landscape. There is no supported way to run simulated source data against the real Huron target API.
 
 ### User Override
 
@@ -149,7 +151,7 @@ bail on `isTerminalErrorEncountered()` and the S3-mode merger is blocked. Precis
 the in-flight records of concurrently running tasks.
 
 **Failed runs never reach deactivations**: A run is "failed" when its TERMINAL_ERROR record exists
-(DynamoDB: PK=syncRunId, SK=`TERMINAL_ERROR` in the resolved mock-or-real statistics table;
+(DynamoDB: PK=syncRunId, SK=`TERMINAL_ERROR` in the statistics table;
 S3: `_terminal_error.json`). Gates: `MergerSubscriber` (S3 mode, blocks merger),
 `ProcessorForDynamoDb`'s last-processor check (does not trigger the merger), and
 `MergerForS3`/`MergerForDynamoDB.runDeferredDeletes()` (skip deletion handling, both modes).
@@ -275,15 +277,11 @@ The pipeline supports two storage modes for delta state and metadata, controlled
    - `PersonCacheForDynamoDb` (facade delegating to S3 - optimal for bulk data)
    - `PersonCacheFactory` switches on `config.storage.type`
    
-   **Mock Target Support** (Strategy Pattern):
-   - `AbstractPersonTarget` interface: Abstracts person data source
-   - `PersonTargetReal`: Fetches from real Huron API via ListPeople
-   - `PersonTargetMocked`: Scans MockTargetPersonTable (DynamoDB) for test data
-   - Factory injects appropriate PersonTarget based on `useMockTarget` flag
+   **Person target** (Strategy Pattern):
+   - `AbstractPersonTarget` interface: Abstracts the target system the cache is built from
+   - `PersonTargetReal`: Fetches from the target API (config.dataTarget) via ListPeople - the real
+     Huron API, or in a mock landscape the target simulator (see "Mock Landscapes" below)
    - Design: Dependency injection enables testing without environment coupling
-   - `MockPersonDataTarget.getPersonByBuid()` (integration-huron-person): single-person existence check used by `UpsertDeltaStrategy` when `flags.useMockTarget` is true, so the create-vs-update lookup never hits the real Huron API in mock mode
-   - DELETE against the mock target is a soft-delete (`deactivated`/`deactivatedAt` attributes, plus `data.__active=false`), matching Huron's soft-delete-only requirement - records are never removed from MockTargetPersonTable, only marked inactive
-   - `StaticMapUsage` is forced to `{orgMap:false, stateMap:false, countryMap:false}` at runtime (via `resolveStaticMapUsage()` in ProcessorForS3.ts/ProcessorForDynamoDb.ts) whenever `flags.useMockTarget` is true, overriding whatever `STATIC_MAP_USAGE` was baked into the task at deploy time
 
 3. **Metadata** (src/chunking/metadata/)
    - `AbstractMetadata` with 19 methods (5 static, 14 abstract)
@@ -291,56 +289,68 @@ The pipeline supports two storage modes for delta state and metadata, controlled
    - `MetadataForDynamoDb` (StatisticsTable with `eventType` field)
    - `MetadataFactory` switches on `config.storage.type`
 
-### Mock-Run Statistics Isolation (DynamoDB Mode)
+### Mock Landscapes
 
-**"Mock run" definition**: `flags.useMockTarget === true`. This single flag covers BOTH a
-mock-target-only run (real source API, mock target - a "hybrid") AND a source-simulator run
-(which always forces `useMockTarget=true`, per `Runner.ts`'s safety enforcement). Routing logic
-never needs to separately check `sourceSimulator` - checking `useMockTarget` alone is sufficient
-and already covers both cases identically.
+**The signal**: any landscape whose name matches `^mock\d*$` (`mock`, `mock1`, `mock2`, ...) is a
+*mock landscape* - a stack dedicated to mocked runs. `isMockLandscape()` (src/Utils.ts) is the single
+test for it, used only by CDK (with the lower-cased `TAGS.Landscape`), the Runner and `BulkPurger`.
+There is no per-run "mock" flag, and **the pipeline's runtime code (chunker, processor, merger) has
+no mock awareness at all**: mock-ness is a deploy-time property of the stack.
 
-**What gets isolated**: ALL StatisticsTable record types for a mock run - `FLAGS`, `METADATA`,
-`TERMINAL_ERROR`, `STATISTICS`, `ERROR:*`, and `CHUNK_STATUS_*` - go to the isolated
-`DYNAMODB_MOCK_STATISTICS_TABLE_NAME` table instead of the real one. This guarantees a single
-sync run's statistics-table trail never spans both tables. (An earlier iteration of this design
-kept FLAGS/METADATA/TERMINAL_ERROR on the real table unconditionally, treating them as
-"control-plane" records exempt from isolation - that was corrected, since it caused a mock run's
-own bootstrap Flags lookup to silently miss and default `useMockTarget` back to `false`.)
+**Why a landscape, not isolation tables**: nearly every resource name already carries the
+landscape (`${STACK_ID}-<kind>-${landscape}` tables, queues, cluster, Lambdas, config secret, chunks
+bucket, the stack itself), so a dedicated mock stack isolates everything by construction - including
+the S3 delta storage and the chunker's baseline scan, which the old per-run isolation tables never
+covered. A mock stack uses the **standard** tables; they simply never hold real data.
 
-**The bootstrap circularity problem**: Processor and Merger need to read the FLAGS record to
-learn `flags.useMockTarget` - but that same flag determines which of the two tables FLAGS was
-written to. Neither the Processor's SQS message (a native S3 `ObjectCreated` event, forwarded
-verbatim by `ProcessorSubscriber.ts` - bucket/key only, no custom fields) nor the chunk file's S3
-object metadata carries `useMockTarget`, so there's no way to know which table to check ahead of
-time.
+**The target simulator** (`src/target-simulator/TargetSimulator.ts`, CDK:
+`lib/services/processor/TargetSimulator.ts`): a Lambda behind an API Gateway HTTP API that impersonates
+the subset of the Huron person API the pipeline uses - token request, `POST`/`PATCH`/`GET /api/v2/persons[/{hrn}]`
+with filters/paging - storing persons in the mock target table. CDK injects its endpoint (and a generated
+external token, from a separate `.../target-simulator/token/<landscape>` secret, via a CloudFormation
+dynamic reference) into the mock stack's integration config secret as
+`dataTarget.endpointConfig.baseUrl`/`externalToken`. So the ECS tasks run the ordinary
+`HuronPersonDataTarget`/`ReadPerson`/`ListPeople` code against it, unaware it is a fake.
+- Contract quirks it must honor (see the file header and `test/TargetSimulator.test.ts`, which drives
+  the real client classes against it): "not found" is `200 {data: []}`; `pagination[offset]` is a
+  page index and a page past the end is `200 {data: []}`; `filter[...includeInactive...]` is a flag;
+  hrns (`hrn:hrs:persons:<sourceIdentifier>`) are derived, so `PATCH /{hrn}` needs no index.
+- DELETE (`PATCH {active:false}`) is a soft delete (`deactivated`/`deactivatedAt` + `data.active=false`);
+  records are never removed, matching Huron's soft-delete-only behavior.
+- The simulator reads its token from its own secret, never the config secret, keeping the CloudFormation
+  dependency one-way (config secret -> simulator).
+- **Why an HTTP API, not a Lambda Function URL**: the Huron client deliberately sends UNENCODED `[ ]`
+  in query strings (`pagination[offset]=0`, `filter[0!sourceIdentifier!and]=...` - see
+  integration-huron-person `UrlSerializer.ts`; the real Huron API rejects the encoded form). A Function
+  URL rejects such requests with `400 {"message":null}` before ever invoking the function (the first
+  mock run failed this way). The local contract test cannot catch front-door strictness like this
+  (Node's HTTP server accepts anything), so after any change to the simulator's front door, probe the
+  deployed endpoint: `curl -g "<endpoint>/api/v2/persons?pagination[offset]=0"` must return the
+  simulator's own `401 {"errors":[...]}`, not an AWS-generated 400.
+- `MockPersonDataTarget`, `DataTargetFlags.useMockTarget` and Upsert's mock branch have been removed
+  from integration-huron-person; the target simulator is the only mock target.
 
-**Solution**: `MetadataFactoryForBootstrap.resolveMockAwareFlags()` (src/chunking/metadata/MetadataFactory.ts)
-tries the mock statistics table first (if DynamoDB mode and a mock table is configured); if no
-FLAGS record is found there, falls back to the real table. Returns `{ metadata, flags,
-statisticsTableName }` so callers reuse the resolved table for everything else tied to that
-`syncRunId` (METADATA, TERMINAL_ERROR, CHUNK_STATUS, STATISTICS, ERROR, MERGER_TRIGGER_CLAIM) without
-re-resolving.
+**What differs in a mock stack**:
+- Exactly one extra table: `${STACK_ID}-mock-target-person-${landscape}` (MockTargetPersonTable),
+  backing the target simulator. Non-mock stacks have no `-mock-` tables at all.
+- The target simulator (always) and source simulator (if enabled - synthesis fails if enabled
+  in a non-mock landscape). Neither exists in any other landscape.
+- Its integration config (`integration-huron-person/config/config.mock.json`) sets
+  `dataTarget.endpointConfig.baseUrl` to an unroutable placeholder, which CDK replaces with the
+  simulator's URL in the deployed secret (so a local harness pointed at the file still fails loudly
+  instead of reaching a real target), and `preLoadedMaps` like preview (`orgMap` false; state/country
+  maps come from CSV files, not Huron).
 
-**Where it's used**:
-- `ProcessorForDynamoDb.ts`: replaces a module-level, real-table-only bootstrap with a
-  per-invocation resolved call; the same resolved table also drives the error tracker AND the
-  "last processor triggers merger" completion-detection logic (`CHUNK_STATUS`/`METADATA`/
-  `mergerTriggered`), which previously hardcoded the real table.
-- `AbstractMerger.ts`'s `processDeferredDeletes()`: same pattern, for reading `syncPopulation`/
-  `useMockTarget` before deciding on deletion handling.
-- `MergerSubscriber.ts` (S3-triggered Lambda) + `MergerSubscribingLambda.ts` (CDK construct):
-  same pattern for `readTerminalError`/`read` (metadata) checks; the Lambda's IAM role and env
-  vars now include both `DYNAMODB_STATISTICS_TABLE_NAME` and `DYNAMODB_MOCK_STATISTICS_TABLE_NAME`.
+**Runner**: when `LANDSCAPE` is a mock landscape, `Runner.ts` wraps the runner in
+`MockLandscapeRunnerDecorator`, which verifies the mock stack is deployed (mock target table exists),
+optionally resets its run state (`RUNNER_MOCK_TARGET_RESET_STATE=true` truncates the mock target,
+person current-state, person history and statistics tables via `BulkPurger`), and warns about
+"hybrid" runs (real source API -> mock target) - which remain supported (`RUNNER_SOURCE_SIMULATOR=false`
+against a mock landscape), but consume from the real, depleting source API like any other landscape.
+`BulkPurger` refuses to purge a non-mock landscape unless `force: true`.
 
-**Where it's NOT needed**:
-- `docker/chunker.ts` / `ChunkFromAPI.ts`: no circularity - `useMockTarget` is already known
-  directly from task parameters (the chunker's own SQS message, which unlike the processor's DOES
-  carry `useMockTarget` as a custom field) before any statistics-table read/write happens.
-- `ProcessorForS3.ts`: `docker/processor.ts` only routes to it when `PREVIOUS_STORAGE_TYPE=s3`,
-  in which case FLAGS/METADATA live in a single S3 file location (no mock/real table split at
-  all), so there's nothing to resolve. Its error tracker's mock/real table selection (via
-  `resolveTableName()`) already runs *after* flags are available from that single S3 read, with
-  no circularity.
+**Deploying one**: `context/context.mock.json` (+ git-ignored `context/mock.env`) -> `./context/swap.sh mock`,
+then `cdk deploy`. Add `context.mock1.json` etc. for more mock stacks.
 
 **Switching Between Modes**:
 ```typescript
@@ -568,7 +578,7 @@ customization runs, see below).
 **Selecting which customization(s) run - Flags, not task-definition env vars**: Which
 customization is active is deliberately **not** an `IContext`/task-definition environment
 variable (that would require a full stack redeploy to change). Instead it follows the same
-runtime-configuration precedent as `flags.useMockTarget`: a `personRecordProcessorCustomizations`
+runtime-configuration precedent as `flags.bulkReset`: a `personRecordProcessorCustomizations`
 field (comma-delimited `Customization` keys) flows through
 `src/chunking/metadata/IMetadataStorage.ts`'s `Flags` type, which is written to S3/DynamoDB
 *before* chunking starts and read back by each processor task - so it can be changed per-run
@@ -594,7 +604,7 @@ without redeploying anything. The full pipeline:
    - so it's persisted to the run's Flags record before any processor task starts.
 7. `ProcessorForS3.ts`/`ProcessorForDynamoDb.ts` read it back via
    `flags.personRecordProcessorCustomizations` (from the same `readFlagsFromChunkKey()` call
-   already used for `flags.useMockTarget` etc.) and pass it to `personRecordProcessorFactory()`.
+   already used for `flags.bulkReset` etc.) and pass it to `personRecordProcessorFactory()`.
 
 **Wiring/DI**: `docker/processor.ts` (the S3-vs-DynamoDB router) accepts an optional
 `personRecordProcessor: PersonRecordProcessor` parameter and threads it through to whichever of

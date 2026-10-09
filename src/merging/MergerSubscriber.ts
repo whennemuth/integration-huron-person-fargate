@@ -88,13 +88,7 @@ export async function handler(event: any): Promise<any> {
   console.log(`Chunk directory: ${chunkDirectory}`);
 
   try {
-    // Resolve which statistics table (mock or real) holds this run's records, since chunker may
-    // have written FLAGS/METADATA/TERMINAL_ERROR to either depending on flags.useMockTarget.
-    // See MetadataFactoryForBootstrap.resolveMockAwareFlags().
-    const metadataFactory = new MetadataFactoryForBootstrap();
-    const { metadata: metadataManager } = await metadataFactory.resolveMockAwareFlags({
-      bucketName: bucket, chunkDirectory, region
-    });
+    const metadataManager = new MetadataFactoryForBootstrap().createMetadataForBootstrap();
 
     const terminalError = await metadataManager.readTerminalError({
       bucketName: bucket,

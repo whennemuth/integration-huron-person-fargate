@@ -2,7 +2,6 @@ import { PersonCacheFactory } from '../src/person-cache/PersonCacheFactory';
 import { PersonCacheForS3 } from '../src/person-cache/PersonCacheForS3';
 import { PersonCacheForDynamoDb } from '../src/person-cache/PersonCacheForDynamoDb';
 import { PersonTargetReal } from '../src/person-cache/PersonTargetReal';
-import { PersonTargetMocked } from '../src/person-cache/PersonTargetMocked';
 import { Config } from 'integration-huron-person';
 
 describe('PersonCacheFactory', () => {
@@ -44,18 +43,6 @@ describe('PersonCacheFactory', () => {
       const cache = PersonCacheFactory.create(mockS3Config) as PersonCacheForS3;
       expect(cache).toBeInstanceOf(PersonCacheForS3);
       expect((cache as any).personTarget).toBeInstanceOf(PersonTargetReal);
-    });
-
-    it('should create PersonCacheForS3 instance with PersonTargetMocked when useMockTarget=true', () => {
-      const cache = PersonCacheFactory.create(mockS3Config, true) as PersonCacheForS3;
-      expect(cache).toBeInstanceOf(PersonCacheForS3);
-      expect((cache as any).personTarget).toBeInstanceOf(PersonTargetMocked);
-    });
-
-    it('should pass PersonTargetMocked through to PersonCacheForDynamoDb facade', () => {
-      const cache = PersonCacheFactory.create(mockDynamoDbConfig, true) as PersonCacheForDynamoDb;
-      expect(cache).toBeInstanceOf(PersonCacheForDynamoDb);
-      expect((cache as any).personTarget).toBeInstanceOf(PersonTargetMocked);
     });
 
     it('should handle file storage type and return PersonCacheForS3', () => {

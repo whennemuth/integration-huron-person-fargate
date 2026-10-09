@@ -73,7 +73,6 @@ export class ProcessorTaskDefinition extends Construct {
       DYNAMODB_STATISTICS_TABLE_NAME: dynamodb!.statisticsTable.tableName,
       // CHUNKS_BUCKET and CHUNK_KEY are set from SQS messages at runtime (not env vars)
       STATIC_MAP_USAGE: `{ "orgMap": ${orgMap}, "stateMap": ${stateMap}, "countryMap": ${countryMap} }`, // Used by processor to determine which static maps to load in data mapper
-      DYNAMODB_MOCK_STATISTICS_TABLE_NAME: dynamodb!.mockStatisticsTable.tableName, // Isolated statistics table for mocked runs (flags.useMockTarget)
       PERSON_RECORD_PROCESSOR_LOG_TABLE_NAME: dynamodb!.personRecordProcessorLogTable.tableName, // Shared log table for personRecordProcessor customizations
       SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
       IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
@@ -96,24 +95,12 @@ export class ProcessorTaskDefinition extends Construct {
         const { 
           personCurrentStateTable: { tableName: personCurrentStateTableName } = {}, 
           personHistoryTable: { tableName: personHistoryTableName } = {},
-          mockTargetPersonTable: { tableName: mockTargetPersonTableName } = {},
-          mockPersonCurrentStateTable: { tableName: mockPersonCurrentStateTableName } = {},
-          mockPersonHistoryTable: { tableName: mockPersonHistoryTableName } = {},
         } = dynamodb || {};
         if (personCurrentStateTableName) {
           environment.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME = personCurrentStateTableName;
         }
         if (personHistoryTableName) {
           environment.DYNAMODB_PERSON_HISTORY_TABLE_NAME = personHistoryTableName;
-        }
-        if (mockTargetPersonTableName) {
-          environment.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = mockTargetPersonTableName;
-        }
-        if (mockPersonCurrentStateTableName) {
-          environment.DYNAMODB_MOCK_PERSON_CURRENT_STATE_TABLE_NAME = mockPersonCurrentStateTableName;
-        }
-        if (mockPersonHistoryTableName) {
-          environment.DYNAMODB_MOCK_PERSON_HISTORY_TABLE_NAME = mockPersonHistoryTableName;
         }
         break;
       case 'database':
@@ -303,82 +290,6 @@ export class ProcessorTaskDefinition extends Construct {
       })
     );
 
-    // Grant DynamoDB read/write permissions for mockTargetPersonTable
-    // Used when flags.useMockTarget is true to simulate target system without calling real API
-    this.taskDefinition.addToTaskRolePolicy(
-      new PolicyStatement({
-        effect: Effect.ALLOW,
-        actions: [
-          'dynamodb:GetItem',
-          'dynamodb:PutItem',
-          'dynamodb:UpdateItem',
-          'dynamodb:DeleteItem',
-          'dynamodb:Query',
-          'dynamodb:Scan',
-          'dynamodb:BatchGetItem',
-        ],
-        resources: [
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockTargetPersonTable.tableName}`,
-        ],
-      })
-    );
-
-    // Grant DynamoDB read/write permissions for mockStatisticsTable
-    // Used when flags.useMockTarget is true so bulk STATISTICS/ERROR/CHUNK_STATUS records never mix with production data
-    this.taskDefinition.addToTaskRolePolicy(
-      new PolicyStatement({
-        effect: Effect.ALLOW,
-        actions: [
-          'dynamodb:PutItem',
-          'dynamodb:UpdateItem',
-          'dynamodb:Query',
-          'dynamodb:GetItem',
-          'dynamodb:BatchWriteItem',
-        ],
-        resources: [
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}`,
-          `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockStatisticsTable.tableName}/index/*`,
-        ],
-      })
-    );
-
-    // Grant DynamoDB read/write permissions for mockPersonCurrentStateTable and mockPersonHistoryTable
-    // Used when flags.useMockTarget is true so DeltaStrategyForDynamoDB never mixes mocked hash/history state with production data
-    if (dynamodb!.mockPersonCurrentStateTable) {
-      this.taskDefinition.addToTaskRolePolicy(
-        new PolicyStatement({
-          effect: Effect.ALLOW,
-          actions: [
-            'dynamodb:GetItem',
-            'dynamodb:PutItem',
-            'dynamodb:UpdateItem',
-            'dynamodb:Query',
-            'dynamodb:BatchGetItem',
-            'dynamodb:BatchWriteItem',
-          ],
-          resources: [
-            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonCurrentStateTable.tableName}`,
-            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonCurrentStateTable.tableName}/index/*`,
-          ],
-        })
-      );
-    }
-
-    if (dynamodb!.mockPersonHistoryTable) {
-      this.taskDefinition.addToTaskRolePolicy(
-        new PolicyStatement({
-          effect: Effect.ALLOW,
-          actions: [
-            'dynamodb:PutItem',
-            'dynamodb:UpdateItem',
-            'dynamodb:BatchWriteItem',
-          ],
-          resources: [
-            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockPersonHistoryTable.tableName}`,
-          ],
-        })
-      );
-    }
 
     // Grant ECS task protection permissions
     // This allows the running task to enable/disable scale-in protection via ECS agent endpoint

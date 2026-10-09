@@ -23,8 +23,6 @@ export type IChunkFromSource = {
   getBulkResetFlag?: () => boolean  // Optional getter for bulkReset flag from task parameters
   getTrustPreviousStorageFlag?: () => boolean  // Optional getter for trustPreviousStorage flag from task parameters
   getSyncPopulation?: () => SyncPopulation  // Optional getter for syncPopulation from task parameters
-  getUseMockTarget?: () => boolean  // Optional getter for useMockTarget flag from task parameters
-  getMockTargetValidateOnly?: () => boolean  // Optional getter for mockTargetValidateOnly flag from task parameters
   getPersonRecordProcessorCustomizations?: () => string | undefined  // Optional getter for personRecordProcessorCustomizations from task parameters
 }
 

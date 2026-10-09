@@ -66,15 +66,11 @@ import {
   resolveCommonFlags,
   resolveCustomPersonProcessor,
   resolveNextChunk,
-  resolveStaticMapUsage,
-  resolveTableName,
   writeTrackerStatistics
 } from './ProcessorCommon';
 
 const metadataStorage = new MetadataFactoryForBootstrap().createMetadataForBootstrap();
 const metadataUtils = new StandardMetadataUtils({});
-
-export { resolveStaticMapUsage, resolveTableName };
 
 /**
  * Create a config with S3 data source for the chunk
@@ -240,12 +236,11 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     DRY_RUN,
     BULK_RESET,
     DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbStatisticsTableName,
-    DYNAMODB_MOCK_STATISTICS_TABLE_NAME: dynamoDbMockStatisticsTableName,
     RETRY_STRATEGY,
     SHARED_DELTA_STORAGE_DIR='delta-storage'
   } = process.env;  
   const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';
-  let staticMapUsage: StaticMapUsage | undefined = STATIC_MAP_USAGE ? JSON.parse(STATIC_MAP_USAGE) : undefined;
+  const staticMapUsage: StaticMapUsage | undefined = STATIC_MAP_USAGE ? JSON.parse(STATIC_MAP_USAGE) : undefined;
 
   const timer = new Timer();
   timer.start();
@@ -284,10 +279,6 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
 
     const { bulkReset, trustPreviousStorage, syncPopulation } = resolveCommonFlags(flags, BULK_RESET);
 
-    staticMapUsage = resolveStaticMapUsage(staticMapUsage, flags.useMockTarget);
-    if (flags.useMockTarget) {
-      console.log(`Static map usage overridden for mock target mode: ${JSON.stringify(staticMapUsage)}`);
-    }
 
     // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
     chunkId = metadataUtils.extractChunkId(s3Key!);
@@ -309,10 +300,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     }
 
     // Initialize error tracker for capturing errors and statistics to DynamoDB
-    // Redirected to the isolated mock statistics table when flags.useMockTarget is true, so bulk
-    // STATISTICS/ERROR records never mix with production data.
-    const errorTrackingStatisticsTableName = resolveTableName(dynamoDbStatisticsTableName, dynamoDbMockStatisticsTableName, flags.useMockTarget);
-    errorTracker = buildErrorTracker({ tableName: errorTrackingStatisticsTableName, integrationTimestamp, region });
+    errorTracker = buildErrorTracker({ tableName: dynamoDbStatisticsTableName, integrationTimestamp, region });
 
     // Build config with S3 data source pointing to this chunk
     const config = await buildChunkConfig({
@@ -372,8 +360,6 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
       retryStrategy, // Inject retry strategy for handling transient API failures (429, 5xx, network errors)
       cleanupPreviousData,
       ignoreRemovals: syncPopulation === SyncPopulation.PersonDelta, // Ignore removals in delta computation since chunk processing is only a partial population and merger determines removals at the end of the full sync
-      flags, // Pass flags for mock target support
-      syncRunId: integrationTimestamp, // Pass integration timestamp as sync run ID
       personRecordProcessor: customPersonProcessor
     });
     
@@ -467,7 +453,6 @@ if (require.main === module) {
     'DRY_RUN',
     'BULK_RESET',
     'DYNAMODB_STATISTICS_TABLE_NAME',
-    'DYNAMODB_MOCK_STATISTICS_TABLE_NAME',
     'RETRY_STRATEGY',
     'SHARED_DELTA_STORAGE_DIR',
     'IS_ECS_TASK',

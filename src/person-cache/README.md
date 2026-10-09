@@ -21,12 +21,14 @@ AbstractPersonCache (abstract)
 
 ```
 AbstractPersonTarget (interface)
-├── PersonTargetReal → Queries real Huron API via ListPeople
-└── PersonTargetMocked → Scans mockTargetPersonTable (DynamoDB) for test data
+└── PersonTargetReal → Queries the target API (config.dataTarget) via ListPeople
 ```
 
+In a mock landscape, config.dataTarget points at the target simulator (an HTTP stand-in for the
+Huron API - see src/target-simulator/TargetSimulator.ts), so PersonTargetReal works unchanged there.
+
 **Benefits**:
-- **Single Responsibility**: PersonTargetReal handles API, PersonTargetMocked handles DynamoDB
+- **Single Responsibility**: PersonTargetReal handles the target API; cache classes handle storage
 - **Open/Closed**: Add new sources without modifying cache classes
 - **Dependency Inversion**: Cache depends on abstraction, not concrete implementations
 - **Testability**: Easily mock personTarget without environment setup
@@ -34,10 +36,8 @@ AbstractPersonTarget (interface)
 
 **Factory Wiring**:
 ```typescript
-// PersonCacheFactory.create(config, useMockTarget)
-const personTarget = useMockTarget ? 
-  new PersonTargetMocked() :   // ← Test mode: DynamoDB
-  new PersonTargetReal();       // ← Production: Huron API
+// PersonCacheFactory.create(config)
+const personTarget = new PersonTargetReal(); // ← the target API from config.dataTarget
 
 return new PersonCacheForS3({ config, personTarget });
 ```
@@ -128,11 +128,8 @@ if (result.created) {
 ```typescript
 import { PersonCacheFactory } from './person-cache/PersonCacheFactory';
 
-// Production mode: Query real Huron API
-const cache = PersonCacheFactory.create(config, false);
-
-// Mock target mode: Query mockTargetPersonTable (DynamoDB)
-const mockCache = PersonCacheFactory.create(config, true);
+// Query the target API from config.dataTarget (Huron, or a mock landscape's target simulator)
+const cache = PersonCacheFactory.create(config);
 
 // Thread-safe cache creation (handles concurrent tasks)
 await cache.ensureCache({ 
@@ -155,15 +152,10 @@ console.log(`Cache contains ${buids.size} BUIDs`);
 
 ```typescript
 import { PersonCacheForS3 } from './person-cache/PersonCacheForS3';
-import { PersonTargetReal, PersonTargetMocked } from './person-cache/PersonTarget*';
+import { PersonTargetReal } from './person-cache/PersonTargetReal';
 
-// With real target
 const personTarget = new PersonTargetReal();
 const cache = new PersonCacheForS3({ config, personTarget });
-
-// With mocked target
-const mockTarget = new PersonTargetMocked();
-const mockCache = new PersonCacheForS3({ config, personTarget: mockTarget });
 
 await cache.ensureCache({ bucketName, key, region });
 ```

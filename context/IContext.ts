@@ -117,6 +117,8 @@ export interface IContext {
      * Optional: Source Simulator mock API configuration
      * When enabled, creates a Lambda Function URL that simulates the source person API
      * for testing without the 30-minute cooldown constraint of the real API.
+     * May only be enabled in a mock landscape (TAGS.Landscape matching /^mock\d*$/ - see
+     * isMockLandscape in src/Utils.ts), whose target is always mocked. Synthesis fails otherwise.
      */
     sourceSimulator?: {
       /** Enable/disable creation of the source simulator */
@@ -131,6 +133,19 @@ export interface IContext {
       mockErrorRate?: number;
       /** Simulated delay in seconds before responding (simulates slow API behavior, default: 0) */
       simulatedDelaySeconds?: number;
+    };
+    /**
+     * Optional: Target Simulator settings. The target simulator (a Lambda behind an HTTP API that
+     * impersonates the Huron person API) is created automatically in every mock landscape, and
+     * never in any other - these only tune it.
+     */
+    targetSimulator?: {
+      /** Lambda timeout in seconds (default: 29 - the HTTP API integration times out at 30) */
+      timeoutSeconds?: number;
+      /** Lambda memory allocation in MB (default: 512) */
+      memorySizeMb?: number;
+      /** How long a full person listing may be served from Lambda memory (default: 30) */
+      listCacheTtlSeconds?: number;
     };
   };
 

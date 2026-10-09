@@ -1,6 +1,6 @@
 import { S3 } from '@aws-sdk/client-s3';
 import { BasicPushAllOperation, FieldSet, TestEnvironment } from "integration-core";
-import { BasicCache, Cache, Config, ConfigManager, DataTargetFactory, FieldDefinitions, ReadPerson, TargetPersonDeleteType } from "integration-huron-person";
+import { BasicCache, Cache, Config, ConfigManager, FieldDefinitions, HuronPersonDataTarget, ReadPerson, TargetPersonDeleteType } from "integration-huron-person";
 import * as readline from 'readline';
 import { Readable } from 'stream';
 import { TrackingTargetApiErrorProcessor } from "../ApiErrorTracking";
@@ -15,7 +15,6 @@ export type DeferredDeleteHandlerParams = {
   config: Config;                // Configuration for PersonDataTarget initialization
   cache: Cache<string, string>;  // JWT token cache
   errorTracker: TrackingTargetApiErrorProcessor;
-  useMockTarget?: boolean;        // If true, soft-deletes go to MockPersonDataTarget instead of the real Huron API
 };
 
 export type DeferredDeleteResult = {
@@ -124,7 +123,7 @@ export class DeferredDeleteHandler {
    */
   public getRemovedRecords = async (): Promise<FieldSet[]> => {
     const { 
-      params: { bucketName, mergedNdjsonPath, baselineNdjsonPath, useMockTarget }, 
+      params: { bucketName, mergedNdjsonPath, baselineNdjsonPath }, 
       readNdjsonFile, findRemovedRecords, enrichRemovedRecordsWithHrn
     } = this;
 
@@ -142,9 +141,7 @@ export class DeferredDeleteHandler {
     const removedRecords = findRemovedRecords(baseline, consolidated);
 
     // Step 4: Enrich removed records with HRN if missing (lookup via sourceIdentifier).
-    // Skipped in mock mode - MockPersonDataTarget keys deletes off sourceIdentifier, not HRN,
-    // so this real-API lookup is both unnecessary and would defeat mock isolation.
-    const enrichedRecords = useMockTarget ? removedRecords : await enrichRemovedRecordsWithHrn(removedRecords);
+    const enrichedRecords = await enrichRemovedRecordsWithHrn(removedRecords);
 
     return enrichedRecords;
   }
@@ -187,14 +184,7 @@ export class DeferredDeleteHandler {
 
       console.log(`\nIdentified ${removedRecords.length} record(s) for soft deletion`);
 
-      // Select real vs mock target based on useMockTarget flag, so mocked runs never hit the real Huron API
-      const targetFactory = new DataTargetFactory({
-        config,
-        flags: { useMockTarget: this.params.useMockTarget },
-        cache,
-        errorEventProcessor
-      });
-      const dataTarget = targetFactory.create();
+      const dataTarget = new HuronPersonDataTarget({ config, cache, errorEventProcessor });
 
       console.log('Starting batch soft-delete operation...');
       const batchResult = dataTarget.pushAll
@@ -430,10 +420,9 @@ export class DeferredDeleteHandler {
     bucketName: string, 
     sourceKey: string, 
     targetKey: string, 
-    primaryKeyFieldNames: string[],
-    useMockTarget?: boolean
+    primaryKeyFieldNames: string[]
   }): Promise<DeferredDeleteHandler | undefined> => {
-    const { region, bucketName, sourceKey, targetKey, primaryKeyFieldNames, useMockTarget } = params;
+    const { region, bucketName, sourceKey, targetKey, primaryKeyFieldNames } = params;
     // Load config for PersonDataTarget initialization
     const { HURON_PERSON_CONFIG_PATH, SECRET_ARN } = process.env;
     const configManager = ConfigManager.getInstance();
@@ -457,11 +446,7 @@ export class DeferredDeleteHandler {
     }
 
     // Create error tracker for deletion operations
-    // Redirected to the isolated mock statistics table when useMockTarget is true, so bulk
-    // STATISTICS/ERROR records never mix with production data
-    const statisticsTableName = useMockTarget
-      ? (process.env.DYNAMODB_MOCK_STATISTICS_TABLE_NAME || '')
-      : (process.env.DYNAMODB_STATISTICS_TABLE_NAME || '');
+    const statisticsTableName = process.env.DYNAMODB_STATISTICS_TABLE_NAME || '';
     const errorTracker = new TrackingTargetApiErrorProcessor({
       tableName: statisticsTableName,
       integrationTimestamp: new Date().toISOString(),
@@ -478,8 +463,7 @@ export class DeferredDeleteHandler {
       primaryKeyFieldNames,                 // For identifying same records
       config,
       cache,
-      errorTracker,
-      useMockTarget
+      errorTracker
     });
   }
 }
@@ -498,7 +482,6 @@ if(require.main === module) {
       'SECRET_ARN',
       'HURON_PERSON_CONFIG_JSON',
       'DYNAMODB_STATISTICS_TABLE_NAME',
-      'DYNAMODB_MOCK_STATISTICS_TABLE_NAME',
       'CACHE_ENABLED',
       'CACHE_PATH'
     ].forEach(testEnvironment.getVar);

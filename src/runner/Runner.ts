@@ -1,7 +1,8 @@
 import { ChunkingServiceRunner } from './AbstractRunner';
 import { ChunkingOnlyRunnerDecorator } from './decorators/ChunkingOnlyRunnerDecorator';
 import { MessagingOnlyRunnerDecorator } from './decorators/MessagingOnlyRunnerDecorator';
-import { MockTargetRunnerDecorator } from './decorators/MockTargetRunnerDecorator';
+import { MockLandscapeRunnerDecorator } from './decorators/MockLandscapeRunnerDecorator';
+import { isMockLandscape, MOCK_LANDSCAPE_PATTERN } from '../Utils';
 import { RestoreToFullOperationRunnerDecorator } from './decorators/RestoreToFullOperationRunnerDecorator';
 import { SourceSimulatorRunnerDecorator } from './decorators/SourceSimulatorRunnerDecorator';
 import { QueueSeedingRunner } from './RunnerForQueueSeeding';
@@ -45,10 +46,14 @@ export async function startChunkingService(env?: RunnerEnv) {
     return;
   }
 
-  // Auto-correct: Force mock target to true when source simulator is enabled
-  if (env.sourceSimulator && !env.mockTarget) {
-    console.log('⚠️  Source simulator enabled without mock target - automatically enabling MOCK_TARGET.');
-    env.mockTarget = true;
+  // SAFETY ENFORCEMENT: Simulated source data must never reach a real target. Only a mock landscape
+  // (whose target is always mocked) may run the source simulator - and only a mock landscape has a
+  // source simulator deployed in the first place (enforced at synth time in lib/AppConstruct.ts).
+  const mockLandscape = isMockLandscape(env.landscape);
+  if (env.sourceSimulator && !mockLandscape) {
+    console.error(`✗ SOURCE_SIMULATOR=true requires a mock landscape (matching ${MOCK_LANDSCAPE_PATTERN}), ` +
+      `but LANDSCAPE=${env.landscape}. Aborting.`);
+    return;
   }
 
   // Auto-correct: Force mock population to 1 when using single-person mode with source simulator
@@ -87,10 +92,10 @@ export async function startChunkingService(env?: RunnerEnv) {
   if(env.sourceSimulator) {
     runner = new SourceSimulatorRunnerDecorator(runner);
   }
-  // SAFETY ENFORCEMENT: Mock target is ALWAYS used when source simulator is active.
-  // This prevents simulated data from reaching the real target API.
-  if(env.mockTarget || env.sourceSimulator) {
-    runner = new MockTargetRunnerDecorator(runner);
+  // A mock landscape always uses the mock target - the decorator verifies the mock stack and
+  // optionally resets its run state.
+  if(mockLandscape) {
+    runner = new MockLandscapeRunnerDecorator(runner);
   }
   if ( !env.messagingOnly && !env.chunkingOnly && !env.sourceSimulator) {
     runner = new RestoreToFullOperationRunnerDecorator(runner);

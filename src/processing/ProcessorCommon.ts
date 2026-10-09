@@ -9,7 +9,6 @@
 
 import { humanReadableFromMilliseconds, IntegrationResult } from 'integration-core';
 import { PersonRecordProcessor, TargetApiErrorEventProcessor } from 'integration-huron-person';
-import type { StaticMapUsage } from 'integration-huron-person/dist/types/src/data-mapper/DataMapper';
 import { SyncPopulation } from '../../docker/chunkTypes';
 import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../ApiErrorTracking';
 import { NextChunk, QueueReader } from '../Queue';
@@ -17,24 +16,6 @@ import { Flags } from '../chunking/metadata/IMetadataStorage';
 import { personRecordProcessorFactory } from './custom/PersonRecordProcessorFactory';
 
 export const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
-
-/**
- * Mock target mode never calls the real org/state/country APIs, regardless of the deploy-time STATIC_MAP_USAGE env var
- */
-export function resolveStaticMapUsage(staticMapUsage: StaticMapUsage | undefined, useMockTarget: boolean | undefined): StaticMapUsage | undefined {
-  if (useMockTarget) {
-    return { orgMap: false, stateMap: false, countryMap: false };
-  }
-  return staticMapUsage;
-}
-
-/**
- * Redirect to the isolated mock-mode table name when flags.useMockTarget is true, so mocked runs
- * never mix bulk data with production tables.
- */
-export function resolveTableName(realName: string | undefined, mockName: string | undefined, useMockTarget: boolean | undefined): string | undefined {
-  return useMockTarget ? mockName : realName;
-}
 
 /**
  * Resolves which chunk to process from either env vars (direct invocation) or the SQS queue

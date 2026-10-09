@@ -20,8 +20,6 @@ export type QueueSeederParams = {
   messagesToSeed: number;
   queueUrl: string;
   dryRun?: boolean;
-  useMockTarget?: boolean;
-  mockTargetValidateOnly?: boolean;
   personRecordProcessorCustomizations?: string;
 };
 
@@ -62,8 +60,6 @@ export class QueueSeeder {
   private offsetCounter?: AbstractAtomicCounter;
   private chunkOrdinalCounter?: AbstractAtomicCounter;
   private chunkDirectory?: string;
-  private useMockTarget?: boolean;
-  private mockTargetValidateOnly?: boolean;
   private personRecordProcessorCustomizations?: string;
 
   constructor(private params: QueueSeederParams) {
@@ -72,8 +68,6 @@ export class QueueSeeder {
       stackId=STACK_ID, 
       region=REGION, 
       landscape=LANDSCAPE,
-      useMockTarget,
-      mockTargetValidateOnly,
       personRecordProcessorCustomizations
     } = params || {};
     if(!stackId) {
@@ -86,8 +80,6 @@ export class QueueSeeder {
       throw new Error('LANDSCAPE is required to initialize QueueSeeder');
     }
 
-    this.useMockTarget = useMockTarget;
-    this.mockTargetValidateOnly = mockTargetValidateOnly;
     this.personRecordProcessorCustomizations = personRecordProcessorCustomizations;
 
     console.log('Atomic counters detected in QueueSeeder constructor');
@@ -213,8 +205,6 @@ export class QueueSeeder {
         iterationLimit,
         offset,
         chunkDirectory: this.chunkDirectory,
-        useMockTarget: this.useMockTarget,
-        mockTargetValidateOnly: this.mockTargetValidateOnly,
         personRecordProcessorCustomizations: this.personRecordProcessorCustomizations,
         processingMetadata: {
           processedAt: new Date().toISOString(),

@@ -43,10 +43,6 @@ export type MergeResultForDynamoDB = MergeResult & {
   syncRunId: string;
 };
 
-/** Redirect to the isolated mock-mode table name when useMockTarget is true. */
-function resolveTableName(realName: string | undefined, mockName: string | undefined, useMockTarget: boolean | undefined): string | undefined {
-  return useMockTarget ? mockName : realName;
-}
 
 export class MergerForDynamoDB extends AbstractMerger {
 
@@ -147,13 +143,10 @@ export class MergerForDynamoDB extends AbstractMerger {
     const { bucketName, chunkDir, region, syncRunId, primaryKeyFieldNames } = mergeContext;
 
     // First check if the population type for this sync is compatible with deletion processing.
-    // Tries the mock statistics table first (if configured), falling back to the real table, since
-    // flags.useMockTarget (what determines which tables processors used) can only be learned from
-    // the flags themselves. See MetadataFactoryForBootstrap.resolveMockAwareFlags().
-    const { metadata, flags } = await new MetadataFactoryForBootstrap().resolveMockAwareFlags({
+    const { metadata, flags } = await new MetadataFactoryForBootstrap().readFlagsForBootstrap({
       bucketName, chunkDirectory: chunkDir, region
     });
-    const { syncPopulation, useMockTarget } = flags;
+    const { syncPopulation } = flags;
 
     if (await metadata.terminalErrorExists({ bucketName, chunkDirectory: chunkDir, region })) {
       console.error(`  ⛔ Run is marked failed (TERMINAL_ERROR) - deletion handling skipped.`);
@@ -165,16 +158,8 @@ export class MergerForDynamoDB extends AbstractMerger {
       return;
     }
 
-    const personCurrentStateTableName = resolveTableName(
-      process.env.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME,
-      process.env.DYNAMODB_MOCK_PERSON_CURRENT_STATE_TABLE_NAME,
-      useMockTarget
-    );
-    const personHistoryTableName = resolveTableName(
-      process.env.DYNAMODB_PERSON_HISTORY_TABLE_NAME,
-      process.env.DYNAMODB_MOCK_PERSON_HISTORY_TABLE_NAME,
-      useMockTarget
-    );
+    const personCurrentStateTableName = process.env.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME;
+    const personHistoryTableName = process.env.DYNAMODB_PERSON_HISTORY_TABLE_NAME;
 
     if (!personCurrentStateTableName || !personHistoryTableName) {
       console.warn(`  Missing DynamoDB table name(s) for deletion processing. Skipping.`);
@@ -191,7 +176,6 @@ export class MergerForDynamoDB extends AbstractMerger {
         syncRunId,
         primaryKeyFieldNames,
         region,
-        useMockTarget,
       } as DeferredDeleteHandlerForDynamoDBParams);
 
       const deletionResult = await deleteHandler.processDeletes();

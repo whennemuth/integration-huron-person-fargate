@@ -24,8 +24,6 @@ export type TaskParameters = {
   offset?: number;
   iterationLimit?: number;
   chunkDirectory?: string;
-  useMockTarget?: boolean;
-  mockTargetValidateOnly?: boolean;
   /** Comma-delimited list of personRecordProcessor Customization enum keys to activate for this run */
   personRecordProcessorCustomizations?: string;
 };
@@ -240,8 +238,6 @@ export class ChunkFromAPI implements IChunkFromSource {
     const chunkDirectory = messageBody.chunkDirectory;
     const bulkReset = messageBody.bulkReset;
     const trustPreviousStorage = messageBody.trustPreviousStorage;
-    const useMockTarget = messageBody.useMockTarget;
-    const mockTargetValidateOnly = messageBody.mockTargetValidateOnly;
     const personRecordProcessorCustomizations = messageBody.personRecordProcessorCustomizations;
 
     this.taskParameters = { 
@@ -255,8 +251,6 @@ export class ChunkFromAPI implements IChunkFromSource {
       trustPreviousStorage: typeof trustPreviousStorage === 'boolean'
         ? trustPreviousStorage
         : trustPreviousStorage === 'true',
-      useMockTarget: typeof useMockTarget === 'boolean' ? useMockTarget : useMockTarget === 'true',
-      mockTargetValidateOnly: typeof mockTargetValidateOnly === 'boolean' ? mockTargetValidateOnly : mockTargetValidateOnly === 'true',
       personRecordProcessorCustomizations
     };
 
@@ -407,22 +401,6 @@ export class ChunkFromAPI implements IChunkFromSource {
   }
 
   /**
-   * Get the useMockTarget flag from task parameters.
-   * Returns true if mock target mode should be enabled, false otherwise.
-   */
-  public getUseMockTarget = (): boolean => {
-    return this.taskParameters?.useMockTarget || false;
-  }
-
-  /**
-   * Get the mockTargetValidateOnly flag from task parameters.
-   * Returns true if validation-only mode should be used with mock target, false otherwise.
-   */
-  public getMockTargetValidateOnly = (): boolean => {
-    return this.taskParameters?.mockTargetValidateOnly || false;
-  }
-
-  /**
    * Get the comma-delimited personRecordProcessorCustomizations string from task parameters, if any.
    */
   public getPersonRecordProcessorCustomizations = (): string | undefined => {
@@ -514,14 +492,9 @@ export class ChunkFromAPI implements IChunkFromSource {
       // Extract chunk base path (creates key like: chunks/person-full/2026-04-09T15:28:18.703Z)
       const chunkDirectory = this.getChunkDirectory();
 
-      // Create metadata broker for config.storage.type (S3 or DynamoDB) - routes ALL statistics-
-      // table records (FLAGS/METADATA/TERMINAL_ERROR) to the isolated mock table when this is a
-      // mock run, mirroring chunker.ts's MetadataBroker construction. "Mock run" = useMockTarget true,
-      // covering both mock-target-only and source-simulator runs (which always force
-      // useMockTarget=true) - either way, the whole run's trail stays in exactly one table.
+      // Create metadata broker for config.storage.type (S3 or DynamoDB)
       const metadataBroker = new MetadataBroker({
-        config: this.config, bucketName: chunksBucket, chunkDirectory, region,
-        useMockTarget: this.getUseMockTarget()
+        config: this.config, bucketName: chunksBucket, chunkDirectory, region
       });
 
       console.log(`Chunks: s3://${chunksBucket}/${chunkDirectory}/`);

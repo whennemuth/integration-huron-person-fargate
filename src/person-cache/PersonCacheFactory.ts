@@ -2,7 +2,6 @@ import { Config } from "integration-huron-person";
 import { AbstractPersonCache } from './AbstractPersonCache';
 import { PersonCacheForDynamoDb } from './PersonCacheForDynamoDb';
 import { PersonCacheForS3 } from './PersonCacheForS3';
-import { PersonTargetMocked } from "./PersonTargetMocked";
 import { PersonTargetReal } from "./PersonTargetReal";
 
 /**
@@ -29,18 +28,13 @@ export class PersonCacheFactory {
    * Create person cache instance based on storage configuration.
    * 
    * @param config - Configuration object with storage.type field
-   * @param useMockTarget - Whether to use mock target mode (query DynamoDB instead of real API)
    * @returns AbstractPersonCache implementation (S3 or DynamoDB)
    */
-  public static create(
-    config: Config, 
-    useMockTarget?: boolean
-  ): AbstractPersonCache {
+  public static create(config: Config): AbstractPersonCache {
 
-    const personTarget = useMockTarget ? 
-      new PersonTargetMocked() : 
-      new PersonTargetReal();
-      
+    // The target API from config.dataTarget - the real Huron API, or a mock landscape's target simulator
+    const personTarget = new PersonTargetReal();
+
     switch (config.storage.type) {
       case 's3':
       case 'file':

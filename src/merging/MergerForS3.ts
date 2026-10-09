@@ -284,13 +284,10 @@ export class MergerForS3 extends AbstractMerger {
     const targetKey = `${sharedDeltaStorageDir}/previous-input.ndjson`;
 
     // First check if the population type for this sync is compatible with deletion processing.
-    // Tries the mock statistics table first (if configured), falling back to the real table, since
-    // flags.useMockTarget (what determines which table chunker used) can only be learned from the
-    // flags themselves. See MetadataFactoryForBootstrap.resolveMockAwareFlags().
-    const { metadata, flags } = await new MetadataFactoryForBootstrap().resolveMockAwareFlags({
+    const { metadata, flags } = await new MetadataFactoryForBootstrap().readFlagsForBootstrap({
       bucketName, chunkDirectory: chunkDir, region
     });
-    const { syncPopulation, useMockTarget } = flags;
+    const { syncPopulation } = flags;
 
     if (await metadata.terminalErrorExists({ bucketName, chunkDirectory: chunkDir, region })) {
       console.error(`  ⛔ Run is marked failed (terminal error marker) - deletion handling skipped.`);
@@ -316,7 +313,6 @@ export class MergerForS3 extends AbstractMerger {
         baselineNdjsonPath: targetKey,
         mergedNdjsonPath: sourceKey,
         region,
-        useMockTarget,
       } as DeferredDeleteHandlerForS3Params);
 
       const deletionResult = await deleteHandler!.processDeletes();

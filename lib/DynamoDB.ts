@@ -1,13 +1,13 @@
 import { RemovalPolicy } from 'aws-cdk-lib';
-import { AttributeType, BillingMode, CfnTable, Table, TableEncryption } from 'aws-cdk-lib/aws-dynamodb';
+import { AttributeType, BillingMode, Table, TableEncryption } from 'aws-cdk-lib/aws-dynamodb';
 import { Construct } from 'constructs';
 import { IContext } from '../context/IContext';
+import { isMockLandscape } from '../src/Utils';
 import { 
   DYNAMODB_PARTITION_KEY as statisticsPartitionKey, 
   DYNAMODB_SECONDARY_PARTITION_KEY as statisticsSecondaryPartitionKey, 
   DYNAMODB_SORT_KEY as statisticsSortKey, 
-  DYNAMODB_TABLE_NAME as statisticsTableName,
-  DYNAMODB_MOCK_TABLE_NAME as mockStatisticsTableName
+  DYNAMODB_TABLE_NAME as statisticsTableName
 } from '../src/dynamodb/StatisticsTable';
 import {
   DYNAMODB_TABLE_NAME as atomicCounterTableName,
@@ -15,7 +15,6 @@ import {
 } from '../src/dynamodb/AtomicCounter';
 import {
   DYNAMODB_TABLE_NAME as personCurrentStateTableName,
-  DYNAMODB_MOCK_TABLE_NAME as mockPersonCurrentStateTableName,
   DYNAMODB_PARTITION_KEY as personCurrentStatePartitionKey,
   DYNAMODB_GSI_INDEX_NAME as personCurrentStateGSIIndexName,
   DYNAMODB_GSI_PARTITION_KEY as personCurrentStateGSIPartitionKey,
@@ -23,7 +22,6 @@ import {
 } from '../src/dynamodb/PersonCurrentStateTable';
 import {
   DYNAMODB_TABLE_NAME as personHistoryTableName,
-  DYNAMODB_MOCK_TABLE_NAME as mockPersonHistoryTableName,
   DYNAMODB_PARTITION_KEY as personHistoryPartitionKey,
   DYNAMODB_SORT_KEY as personHistorySortKey,
   DYNAMODB_GSI1_INDEX_NAME as personHistoryGSI1IndexName,
@@ -49,9 +47,6 @@ export enum TableResourceIds {
   PERSON_CURRENT_STATE_TABLE = 'PersonCurrentStateTable',
   PERSON_HISTORY_TABLE = 'PersonHistoryTable',
   MOCK_TARGET_PERSON_TABLE = 'MockTargetPersonTable',
-  MOCK_STATISTICS_TABLE = 'MockStatisticsTable',
-  MOCK_PERSON_CURRENT_STATE_TABLE = 'MockPersonCurrentStateTable',
-  MOCK_PERSON_HISTORY_TABLE = 'MockPersonHistoryTable',
   PERSON_RECORD_PROCESSOR_LOG_TABLE = 'PersonRecordProcessorLogTable'
 }
 export interface ProcessorStatisticsTableProps {
@@ -65,34 +60,31 @@ export interface ProcessorStatisticsTableProps {
  *   2) Atomic counters for various operations.
  *   3) Person current state (DynamoDB-based delta strategy, optional).
  *   4) Person history audit trail (DynamoDB-based delta strategy, optional).
- *   5) Mock target state (for testing with source simulator, always created).
+ *   5) Mock target state (mock landscapes only - see isMockLandscape() in src/Utils.ts).
+ *
+ * A mock landscape (e.g. "mock", "mock1") is a stack dedicated to mocked runs, so mocked runs use the
+ * standard tables above as-is - no isolated "mock" variants of them are needed. The only extra table
+ * a mock stack has is the mock target table, which stands in for the target system itself.
  */
 export class DynamoDbTables extends Construct {
   public statisticsTable: Table;
   public atomicCounterTable: Table;
   public personCurrentStateTable?: Table;
   public personHistoryTable?: Table;
-  public mockTargetPersonTable: Table;
-  public mockStatisticsTable: Table;
-  public mockPersonCurrentStateTable?: Table;
-  public mockPersonHistoryTable?: Table;
+  public mockTargetPersonTable?: Table;
   public personRecordProcessorLogTable: Table;
-  mockConstruct: Construct;
 
   constructor(private params: { scope: Construct, id: string, props: ProcessorStatisticsTableProps }) {
     super(params.scope, params.id);
-
-    // Nested under `this` (not params.scope) so mock tables' aws:cdk:path shows as
-    // App/DynamoDb/Mocks/... rather than a sibling of DynamoDb
-    this.mockConstruct = new Construct(this, 'MockTables');
 
     this.createStatisticsTable();
 
     this.createAtomicCounterTable();
 
-    this.createMockTargetPersonTable();
-
-    this.createMockStatisticsTable();
+    // Lower-cased to match the LANDSCAPE value the ECS tasks see at runtime (and every resource name)
+    if (isMockLandscape(params.props.context.TAGS.Landscape.toLowerCase())) {
+      this.createMockTargetPersonTable();
+    }
 
     this.createPersonRecordProcessorLogTable();
 
@@ -102,8 +94,6 @@ export class DynamoDbTables extends Construct {
     if (previousStorageType === 'dynamodb') {
       this.createPersonCurrentStateTable();
       this.createPersonHistoryTable();
-      this.createMockPersonCurrentStateTable();
-      this.createMockPersonHistoryTable();
     }
   }
 
@@ -226,7 +216,7 @@ export class DynamoDbTables extends Construct {
    *   collision-free per person
    * - `data`: generic JSON blob whose shape is defined by the writing customization
    *
-   * Kept as a single shared table (not one per customization, no mock variant) so future
+   * Kept as a single shared table (not one per customization) so future
    * customizations require no CDK/schema changes.
    */
   private createPersonRecordProcessorLogTable = () => {
@@ -391,37 +381,32 @@ export class DynamoDbTables extends Construct {
   }
 
   /**
-   * DynamoDB table for storing mock target system state (for testing with source simulator).
+   * DynamoDB table backing the target simulator (mock landscapes only) - see
+   * src/target-simulator/TargetSimulator.ts and src/dynamodb/MockTargetPersonTable.ts.
    * 
    * Table Design:
-   * - Partition Key (PK): `personId` - Unique person identifier
+   * - Partition Key (PK): `personId` - the person's sourceIdentifier (BUID)
    * - No Sort Key: One record per person (overwrite on update)
    * 
    * Attributes:
    * - personId: string - BUID
-   * - data: object - Full person record as it would exist in target system
-   * - lastModified: string - ISO timestamp of last update
-   * - createdAt: string - ISO timestamp when record was first created
-   * - syncRunId: string - ISO timestamp of sync run that last modified this person
-   * 
-   * Access Patterns:
-   * 1. Get person: GetItem by personId
-   * 2. Batch get: BatchGetItem by personIds
-   * 3. Create/Update: PutItem
-   * 4. Delete: DeleteItem
-   * 5. List all: Scan
+   * - hrn: string - HRN the simulator assigned at creation
+   * - data: object - Full person record as the target system would return it
+   * - createdAt / lastModified: string - ISO timestamps
+   * - deactivated / deactivatedAt - soft-delete state
    * 
    * Purpose:
-   * When flags.useMockTarget is true, processors use MockPersonDataTarget which writes to this
-   * table instead of calling the real target API. This allows full end-to-end testing
-   * with source simulator without affecting real target system data.
+   * In a mock landscape, the integration config points the ECS tasks at the target simulator, which
+   * impersonates the Huron person API and stores persons here. This allows full end-to-end testing
+   * with the source simulator (or a real source, for "hybrid" runs) without affecting real target
+   * system data - and without the pipeline knowing it is not talking to Huron.
    */
   private createMockTargetPersonTable = () => {
     const { context, tags } = this.params.props;
 
     const { MOCK_TARGET_PERSON_TABLE } = TableResourceIds;
 
-    this.mockTargetPersonTable = new Table(this.mockConstruct, MOCK_TARGET_PERSON_TABLE, {
+    this.mockTargetPersonTable = new Table(this, MOCK_TARGET_PERSON_TABLE, {
       tableName: mockTargetPersonTableName(context),
       partitionKey: {
         name: mockTargetPersonPartitionKey,
@@ -434,133 +419,6 @@ export class DynamoDbTables extends Construct {
         recoveryPeriodInDays: 35,
       },
       removalPolicy: RemovalPolicy.DESTROY,
-    });
-    // Pinned so the construct-path move doesn't change dependents' Ref values (IAM policies, task defs)
-    (this.mockTargetPersonTable.node.defaultChild as CfnTable).overrideLogicalId('AppDynamoDbMockTargetPersonTable2BE0D169');
-  }
-
-  /**
-   * Isolated statistics table for mocked (source simulator + mock target) runs.
-   * Only bulk STATISTICS/ERROR/CHUNK_STATUS records are redirected here - FLAGS/METADATA
-   * control-plane records always stay in the real StatisticsTable so every phase can
-   * bootstrap discovery of useMockTarget from one well-known location.
-   */
-  private createMockStatisticsTable = () => {
-    const { context } = this.params.props;
-
-    const { MOCK_STATISTICS_TABLE } = TableResourceIds;
-
-    this.mockStatisticsTable = new Table(this.mockConstruct, MOCK_STATISTICS_TABLE, {
-      tableName: mockStatisticsTableName(context),
-      partitionKey: {
-        name: statisticsPartitionKey,
-        type: AttributeType.STRING,
-      },
-      sortKey: {
-        name: statisticsSortKey,
-        type: AttributeType.STRING,
-      },
-      billingMode: BillingMode.PAY_PER_REQUEST,
-      encryption: TableEncryption.AWS_MANAGED,
-      removalPolicy: RemovalPolicy.DESTROY,
-    });
-    // Pinned so the construct-path move doesn't change dependents' Ref values (IAM policies, task defs)
-    (this.mockStatisticsTable.node.defaultChild as CfnTable).overrideLogicalId('AppDynamoDbMockStatisticsTable4840F10E');
-
-    this.mockStatisticsTable.addGlobalSecondaryIndex({
-      indexName: 'errorType-timestamp-index',
-      partitionKey: {
-        name: statisticsSecondaryPartitionKey,
-        type: AttributeType.STRING,
-      },
-      sortKey: {
-        name: statisticsPartitionKey,
-        type: AttributeType.STRING,
-      },
-    });
-  }
-
-  /**
-   * Isolated PersonCurrentState table for mocked runs (see createMockStatisticsTable comment).
-   */
-  private createMockPersonCurrentStateTable = () => {
-    const { context } = this.params.props;
-
-    const { MOCK_PERSON_CURRENT_STATE_TABLE } = TableResourceIds;
-
-    this.mockPersonCurrentStateTable = new Table(this.mockConstruct, MOCK_PERSON_CURRENT_STATE_TABLE, {
-      tableName: mockPersonCurrentStateTableName(context),
-      partitionKey: {
-        name: personCurrentStatePartitionKey,
-        type: AttributeType.STRING,
-      },
-      billingMode: BillingMode.PAY_PER_REQUEST,
-      encryption: TableEncryption.AWS_MANAGED,
-      removalPolicy: RemovalPolicy.DESTROY,
-    });
-    // Pinned so the construct-path move doesn't change dependents' Ref values (IAM policies, task defs)
-    (this.mockPersonCurrentStateTable.node.defaultChild as CfnTable).overrideLogicalId('AppDynamoDbMockPersonCurrentStateTable93F5EF37');
-
-    this.mockPersonCurrentStateTable.addGlobalSecondaryIndex({
-      indexName: personCurrentStateGSIIndexName,
-      partitionKey: {
-        name: personCurrentStateGSIPartitionKey,
-        type: AttributeType.STRING,
-      },
-      sortKey: {
-        name: personCurrentStateGSISortKey,
-        type: AttributeType.STRING,
-      },
-    });
-  }
-
-  /**
-   * Isolated PersonHistory table for mocked runs (see createMockStatisticsTable comment).
-   */
-  private createMockPersonHistoryTable = () => {
-    const { context } = this.params.props;
-
-    const { MOCK_PERSON_HISTORY_TABLE } = TableResourceIds;
-
-    this.mockPersonHistoryTable = new Table(this.mockConstruct, MOCK_PERSON_HISTORY_TABLE, {
-      tableName: mockPersonHistoryTableName(context),
-      partitionKey: {
-        name: personHistoryPartitionKey,
-        type: AttributeType.STRING,
-      },
-      sortKey: {
-        name: personHistorySortKey,
-        type: AttributeType.STRING,
-      },
-      billingMode: BillingMode.PAY_PER_REQUEST,
-      encryption: TableEncryption.AWS_MANAGED,
-      removalPolicy: RemovalPolicy.DESTROY,
-    });
-    // Pinned so the construct-path move doesn't change dependents' Ref values (IAM policies, task defs)
-    (this.mockPersonHistoryTable.node.defaultChild as CfnTable).overrideLogicalId('AppDynamoDbMockPersonHistoryTableE99331A6');
-
-    this.mockPersonHistoryTable.addGlobalSecondaryIndex({
-      indexName: personHistoryGSI1IndexName,
-      partitionKey: {
-        name: personHistoryGSI1PartitionKey,
-        type: AttributeType.STRING,
-      },
-      sortKey: {
-        name: personHistoryGSI1SortKey,
-        type: AttributeType.STRING,
-      },
-    });
-
-    this.mockPersonHistoryTable.addGlobalSecondaryIndex({
-      indexName: personHistoryGSI2IndexName,
-      partitionKey: {
-        name: personHistoryGSI2PartitionKey,
-        type: AttributeType.STRING,
-      },
-      sortKey: {
-        name: personHistoryGSI2SortKey,
-        type: AttributeType.STRING,
-      },
     });
   }
 
@@ -584,19 +442,10 @@ export class DynamoDbTables extends Construct {
         }
         return this.personHistoryTable.grantReadWriteData(grantee);
       case TableResourceIds.MOCK_TARGET_PERSON_TABLE:
+        if (!this.mockTargetPersonTable) {
+          throw new Error('MockTargetPersonTable not created - landscape is not a mock landscape');
+        }
         return this.mockTargetPersonTable.grantReadWriteData(grantee);
-      case TableResourceIds.MOCK_STATISTICS_TABLE:
-        return this.mockStatisticsTable.grantReadWriteData(grantee);
-      case TableResourceIds.MOCK_PERSON_CURRENT_STATE_TABLE:
-        if (!this.mockPersonCurrentStateTable) {
-          throw new Error('MockPersonCurrentStateTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
-        }
-        return this.mockPersonCurrentStateTable.grantReadWriteData(grantee);
-      case TableResourceIds.MOCK_PERSON_HISTORY_TABLE:
-        if (!this.mockPersonHistoryTable) {
-          throw new Error('MockPersonHistoryTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
-        }
-        return this.mockPersonHistoryTable.grantReadWriteData(grantee);
       case TableResourceIds.PERSON_RECORD_PROCESSOR_LOG_TABLE:
         return this.personRecordProcessorLogTable.grantReadWriteData(grantee);
       default:
@@ -624,19 +473,10 @@ export class DynamoDbTables extends Construct {
         }
         return this.personHistoryTable.grantReadData(grantee);
       case TableResourceIds.MOCK_TARGET_PERSON_TABLE:
+        if (!this.mockTargetPersonTable) {
+          throw new Error('MockTargetPersonTable not created - landscape is not a mock landscape');
+        }
         return this.mockTargetPersonTable.grantReadData(grantee);
-      case TableResourceIds.MOCK_STATISTICS_TABLE:
-        return this.mockStatisticsTable.grantReadData(grantee);
-      case TableResourceIds.MOCK_PERSON_CURRENT_STATE_TABLE:
-        if (!this.mockPersonCurrentStateTable) {
-          throw new Error('MockPersonCurrentStateTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
-        }
-        return this.mockPersonCurrentStateTable.grantReadData(grantee);
-      case TableResourceIds.MOCK_PERSON_HISTORY_TABLE:
-        if (!this.mockPersonHistoryTable) {
-          throw new Error('MockPersonHistoryTable not created - PREVIOUS_STORAGE_TYPE is not \'dynamodb\'');
-        }
-        return this.mockPersonHistoryTable.grantReadData(grantee);
       case TableResourceIds.PERSON_RECORD_PROCESSOR_LOG_TABLE:
         return this.personRecordProcessorLogTable.grantReadData(grantee);
       default:

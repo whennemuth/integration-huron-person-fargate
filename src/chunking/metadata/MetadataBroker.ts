@@ -8,8 +8,6 @@ export type MetadataBrokerParams = {
   bucketName: string;
   chunkDirectory: string;
   region: string | undefined;
-  /** Route to the isolated mock statistics table when true (DynamoDB mode) */
-  useMockTarget?: boolean;
 };
 
 /**
@@ -21,7 +19,7 @@ export type MetadataBrokerParams = {
  * avoiding a mutual-import relationship between those modules.
  *
  * Holds a single IMetadataStorage instance (created via MetadataFactory) plus the
- * bucketName/chunkDirectory/region/useMockTarget context shared by all reads/writes for one
+ * bucketName/chunkDirectory/region context shared by all reads/writes for one
  * chunk directory, so callers stop repeating those on every call.
  */
 export class MetadataBroker {
@@ -31,16 +29,14 @@ export class MetadataBroker {
   private readonly region: string | undefined;
 
   constructor(params: MetadataBrokerParams) {
-    const { config, bucketName, chunkDirectory, region, useMockTarget = false } = params;
+    const { config, bucketName, chunkDirectory, region } = params;
     this.bucketName = bucketName;
     this.chunkDirectory = chunkDirectory;
     this.region = region;
     this.metadata = MetadataFactory.create({
       config,
       previousStorageType: process.env.PREVIOUS_STORAGE_TYPE,
-      statisticsTableName: useMockTarget
-        ? process.env.DYNAMODB_MOCK_STATISTICS_TABLE_NAME
-        : process.env.DYNAMODB_STATISTICS_TABLE_NAME
+      statisticsTableName: process.env.DYNAMODB_STATISTICS_TABLE_NAME
     });
   }
 

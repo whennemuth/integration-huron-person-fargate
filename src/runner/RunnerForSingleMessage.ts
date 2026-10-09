@@ -43,11 +43,9 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
   }
 
   public async resolveDataTarget(config: Config): Promise<TargetConfig> {
-    // Standard runners use real Huron API target (unless overridden by decorator)
+    // The target itself (real vs mock) is determined by the landscape, not the runner
     const { dataTarget } = config;
     return {
-      useMockTarget: this.env.mockTarget || false,
-      mockTargetValidateOnly: this.env.mockTargetValidateOnly,
       endpoint: {
         baseUrl: dataTarget?.endpointConfig?.baseUrl || '',
         fetchPath: dataTarget?.personsPath || ''
@@ -70,8 +68,6 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
       trustPreviousStorage,
       iterationLimit: iterationLimit ? iterationLimit : 0,
       offset: 0,
-      useMockTarget: targetConfig.useMockTarget,
-      mockTargetValidateOnly: targetConfig.mockTargetValidateOnly,
       personRecordProcessorCustomizations,
       processingMetadata: {
         processedAt: new Date().toISOString(),
