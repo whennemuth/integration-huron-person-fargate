@@ -40,7 +40,7 @@ export class QueueInfrastructure extends Construct {
     // 1. Chunker Queues
     // ========================================
     this.chunkerDeadLetterQueue = new Queue(this, 'ChunkerDeadLetterQueue', {
-      queueName: `${QUEUE_BASE_NAME}-chunker-queue-dlq-${Landscape.toLowerCase()}`,
+      queueName: `${Landscape.toLowerCase()}-${QUEUE_BASE_NAME}-chunker-queue-dlq`,
       retentionPeriod: Duration.days(14),
     });
     // Or create a fifo queue.
@@ -52,7 +52,7 @@ export class QueueInfrastructure extends Construct {
     // });
 
     this.chunkerQueue = new Queue(this, 'ChunkerQueue', {
-      queueName: `${QUEUE_BASE_NAME}-chunker-queue-${Landscape.toLowerCase()}`,
+      queueName: `${Landscape.toLowerCase()}-${QUEUE_BASE_NAME}-chunker-queue`,
       visibilityTimeout: Duration.seconds(ctx.SQS.visibilityTimeoutSeconds),
       retentionPeriod: Duration.days(ctx.SQS.retentionPeriodDays),
       deadLetterQueue: {
@@ -65,12 +65,12 @@ export class QueueInfrastructure extends Construct {
     // 2. Processor Queues
     // ========================================
     this.processorDeadLetterQueue = new Queue(this, 'ProcessorDeadLetterQueue', {
-      queueName: `${QUEUE_BASE_NAME}-processor-queue-dlq-${Landscape.toLowerCase()}`,
+      queueName: `${Landscape.toLowerCase()}-${QUEUE_BASE_NAME}-processor-queue-dlq`,
       retentionPeriod: Duration.days(14),
     });
 
     this.processorQueue = new Queue(this, 'ProcessorQueue', {
-      queueName: `${QUEUE_BASE_NAME}-processor-queue-${Landscape.toLowerCase()}`,
+      queueName: `${Landscape.toLowerCase()}-${QUEUE_BASE_NAME}-processor-queue`,
       visibilityTimeout: Duration.seconds(ctx.SQS.visibilityTimeoutSeconds),
       retentionPeriod: Duration.days(ctx.SQS.retentionPeriodDays),
       deadLetterQueue: {
@@ -83,12 +83,12 @@ export class QueueInfrastructure extends Construct {
     // 3. Merger Queues
     // ========================================
     this.mergerDeadLetterQueue = new Queue(this, 'MergerDeadLetterQueue', {
-      queueName: `${QUEUE_BASE_NAME}-merger-queue-dlq-${Landscape.toLowerCase()}`,
+      queueName: `${Landscape.toLowerCase()}-${QUEUE_BASE_NAME}-merger-queue-dlq`,
       retentionPeriod: Duration.days(14),
     });
 
     this.mergerQueue = new Queue(this, 'MergerQueue', {
-      queueName: `${QUEUE_BASE_NAME}-merger-queue-${Landscape.toLowerCase()}`,
+      queueName: `${Landscape.toLowerCase()}-${QUEUE_BASE_NAME}-merger-queue`,
       visibilityTimeout: Duration.seconds(ctx.SQS.visibilityTimeoutSeconds),
       retentionPeriod: Duration.days(ctx.SQS.retentionPeriodDays),
       deadLetterQueue: {
