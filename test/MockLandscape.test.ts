@@ -4,7 +4,7 @@ import { IContext } from '../context/IContext';
 import { DynamoDbTables } from '../lib/DynamoDB';
 import { AppConstruct } from '../lib/AppConstruct';
 import { BulkPurger, BulkPurgerMode } from '../src/dynamodb/BulkPurger';
-import { isMockLandscape, runningInMockLandscape } from '../src/Utils';
+import { isMockLandscape } from '../src/Utils';
 import { ChunkingServiceRunner } from '../src/runner/AbstractRunner';
 import { MockLandscapeRunnerDecorator } from '../src/runner/decorators/MockLandscapeRunnerDecorator';
 import { RunnerEnv } from '../src/runner/RunnerTypes';
@@ -37,22 +37,6 @@ describe('isMockLandscape', () => {
       expect(isMockLandscape(landscape)).toBe(false);
     }
   );
-
-  describe('runningInMockLandscape', () => {
-    const original = process.env.LANDSCAPE;
-    afterEach(() => {
-      if (original === undefined) delete process.env.LANDSCAPE; else process.env.LANDSCAPE = original;
-    });
-
-    it('reads the LANDSCAPE environment variable baked into the ECS task definitions', () => {
-      process.env.LANDSCAPE = 'mock3';
-      expect(runningInMockLandscape()).toBe(true);
-      process.env.LANDSCAPE = 'preview';
-      expect(runningInMockLandscape()).toBe(false);
-      delete process.env.LANDSCAPE;
-      expect(runningInMockLandscape()).toBe(false);
-    });
-  });
 });
 
 describe('DynamoDbTables (CDK)', () => {
@@ -147,13 +131,5 @@ describe('MockLandscapeRunnerDecorator', () => {
     const decorator = new MockLandscapeRunnerDecorator(wrapped);
     await expect(decorator.validatePrerequisites()).resolves.toBe(false);
     expect(wrapped.validatePrerequisites).not.toHaveBeenCalled();
-  });
-
-  it('forwards mockTargetValidateOnly onto the wrapped runner\'s target config', async () => {
-    const decorator = new MockLandscapeRunnerDecorator(wrappedRunner({ landscape: 'mock', mockTargetValidateOnly: true }));
-    await expect(decorator.resolveDataTarget({} as any)).resolves.toEqual({
-      endpoint: { baseUrl: 'b', fetchPath: 'f' },
-      mockTargetValidateOnly: true
-    });
   });
 });

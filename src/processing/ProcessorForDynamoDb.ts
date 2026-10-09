@@ -66,7 +66,7 @@ import { SyncPopulation } from '../../docker/chunkTypes';
 import { getRetryStrategy } from '../ApiErrorRetryStrategy';
 import { NextChunk, QueueReader } from '../Queue';
 import { TaskProtection } from '../TaskProtection';
-import { getLocalConfig, runningInMockLandscape } from '../Utils';
+import { getLocalConfig } from '../Utils';
 import { ChunkFileManager } from '../chunking/metadata';
 import { MetadataFactoryForBootstrap } from '../chunking/metadata/MetadataFactory';
 import { StandardMetadataUtils } from '../chunking/metadata/MetadataUtils';
@@ -250,10 +250,6 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
 
     const { bulkReset, trustPreviousStorage, syncPopulation } = resolveCommonFlags(flags, BULK_RESET);
 
-    // A mock landscape always uses the mock target (MockPersonDataTarget) - see isMockLandscape()
-    const useMockTarget = runningInMockLandscape();
-    console.log(`Mock target mode: ${useMockTarget ? 'enabled (mock landscape)' : 'disabled'}`);
-
 
     // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
     chunkId = metadataUtils.extractChunkId(s3Key!);
@@ -329,8 +325,6 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
       retryStrategy,
       cleanupPreviousData: false, // DynamoDB manages its own data, no cleanup needed
       ignoreRemovals: syncPopulation === SyncPopulation.PersonDelta,
-      flags: { ...flags, useMockTarget }, // Selects MockPersonDataTarget in a mock landscape
-      syncRunId: integrationTimestamp, // Pass integration timestamp as sync run ID
       personRecordProcessor: customPersonProcessor
     });
     
@@ -471,7 +465,6 @@ if (require.main === module) {
     'SQS_QUEUE_URL',
     'DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME',
     'DYNAMODB_PERSON_HISTORY_TABLE_NAME',
-    'DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME',
     'HURON_PERSON_CONFIG_JSON',
     'STATIC_MAP_USAGE',
     'DRY_RUN',

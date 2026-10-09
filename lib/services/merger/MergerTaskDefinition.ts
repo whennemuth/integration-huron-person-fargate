@@ -73,7 +73,6 @@ export class MergerTaskDefinition extends Construct {
 
     const environment: { [key: string]: string } = {
       REGION: region,
-      LANDSCAPE: landscape, // A "mock\d*" landscape signals mock mode at runtime (see isMockLandscape in src/Utils.ts)
       INPUT_BUCKET: inputBucketName,
       // CHUNKS_BUCKET will be provided at runtime by Lambda
       IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
@@ -119,11 +118,6 @@ export class MergerTaskDefinition extends Construct {
         break;
       default:
         throw new Error(`Unsupported storage type: ${previousStorageType}`);
-    }
-
-    // Mock landscapes only: the table MockPersonDataTarget writes to in place of the real target API
-    if (dynamodb?.mockTargetPersonTable) {
-      environment.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = dynamodb.mockTargetPersonTable.tableName;
     }
 
     // Add container
@@ -235,24 +229,6 @@ export class MergerTaskDefinition extends Construct {
       );
     }
 
-    // Grant DynamoDB read/write permissions for mockTargetPersonTable (mock landscapes only)
-    // Deferred soft-deletes go through MockPersonDataTarget instead of the real Huron API
-    if (dynamodb!.mockTargetPersonTable) {
-      this.taskDefinition.addToTaskRolePolicy(
-        new PolicyStatement({
-          effect: Effect.ALLOW,
-          actions: [
-            'dynamodb:GetItem',
-            'dynamodb:PutItem',
-            'dynamodb:UpdateItem',
-            'dynamodb:DeleteItem',
-          ],
-          resources: [
-            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockTargetPersonTable.tableName}`,
-          ],
-        })
-      );
-    }
 
     // Grant ECS task protection permissions
     // This allows the running task to enable/disable scale-in protection via ECS agent endpoint

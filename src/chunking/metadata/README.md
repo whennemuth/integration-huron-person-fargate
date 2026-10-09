@@ -33,7 +33,7 @@ sequenceDiagram
 
     Note over C1,S: === NORMAL SUCCESS PATH ===
     
-    C1->>S: 1. writeFlags()<br/>(bulkReset, trustPreviousStorage,<br/>syncPopulation, mockTargetValidateOnly)
+    C1->>S: 1. writeFlags()<br/>(bulkReset, trustPreviousStorage,<br/>syncPopulation)
     Note over C1: FLAGS written BEFORE<br/>chunking starts
     
     C1->>S: 2. Create chunk-XXXX.ndjson files<br/>(stream person records)
@@ -153,9 +153,6 @@ type Flags = {
   runFailed?: boolean;
   runFailureMessage?: string;
   runFailureTimestamp?: string;
-  // Mock target validate-only mode (mock landscapes only - whether the mock target is used
-  // at all is decided by the landscape, see isMockLandscape in src/Utils.ts)
-  mockTargetValidateOnly?: boolean;
 };
 ```
 
@@ -227,8 +224,7 @@ AbstractMetadata (abstract base)
 {
   "bulkReset": false,
   "trustPreviousStorage": true,
-  "syncPopulation": "PersonFull",
-  "mockTargetValidateOnly": false
+  "syncPopulation": "PersonFull"
 }
 ```
 
@@ -309,7 +305,6 @@ Attributes: {
   bulkReset: false,
   trustPreviousStorage: true,
   syncPopulation: "PersonFull",
-  mockTargetValidateOnly: false,
   // Optional failure tracking (present only after markRunFailed):
   runFailed: false,
   runFailureMessage: undefined,

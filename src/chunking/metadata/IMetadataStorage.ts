@@ -14,12 +14,6 @@ export type Flags = {
   runFailureMessage?: string;
   runFailureTimestamp?: string;
   /**
-   * Validation-only mode for mock target: log operations but don't execute. Only meaningful in a
-   * mock landscape - whether the mock target is used at all is decided by the landscape
-   * (see isMockLandscape in src/Utils.ts), not by a per-run flag.
-   */
-  mockTargetValidateOnly?: boolean;
-  /**
    * Comma-delimited list of personRecordProcessor Customization enum keys (see
    * src/processing/custom/AbstractCustomPersonProcessor.ts) to activate for this run, e.g.
    * 'ORG_COMPARISON_LOGGING' or 'ORG_COMPARISON_LOGGING,SOME_OTHER_CUSTOMIZATION'. Propagated

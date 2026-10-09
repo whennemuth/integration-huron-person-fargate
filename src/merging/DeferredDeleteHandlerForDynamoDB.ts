@@ -52,8 +52,6 @@ export class DeferredDeleteHandlerForDynamoDB extends AbstractDeferredDeleteHand
   public getRemovedRecords = async (): Promise<FieldSet[]> => {
     const { findRemovedRecords, enrichRemovedRecordsWithHrn, readCurrentPopulation, readBaselinePopulation } = this;
 
-    const { useMockTarget } = this.params as DeferredDeleteHandlerForDynamoDBParams;
-
     console.log(`Reading current population from chunk files`);
     const current = await readCurrentPopulation();
     console.log(`  Parsed ${current.length} record(s) from current population`);
@@ -66,9 +64,7 @@ export class DeferredDeleteHandlerForDynamoDB extends AbstractDeferredDeleteHand
     const removedRecords = findRemovedRecords(baseline, current);
 
     // Step 4: Enrich removed records with HRN if missing (lookup via sourceIdentifier).
-    // Skipped in mock mode - MockPersonDataTarget keys deletes off sourceIdentifier, not HRN,
-    // so this real-API lookup is both unnecessary and would defeat mock isolation.
-    const enrichedRecords = useMockTarget ? removedRecords : await enrichRemovedRecordsWithHrn(removedRecords);
+    const enrichedRecords = await enrichRemovedRecordsWithHrn(removedRecords);
 
     return enrichedRecords;
   }

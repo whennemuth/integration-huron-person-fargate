@@ -134,6 +134,19 @@ export interface IContext {
       /** Simulated delay in seconds before responding (simulates slow API behavior, default: 0) */
       simulatedDelaySeconds?: number;
     };
+    /**
+     * Optional: Target Simulator settings. The target simulator (a Lambda behind an HTTP API that
+     * impersonates the Huron person API) is created automatically in every mock landscape, and
+     * never in any other - these only tune it.
+     */
+    targetSimulator?: {
+      /** Lambda timeout in seconds (default: 29 - the HTTP API integration times out at 30) */
+      timeoutSeconds?: number;
+      /** Lambda memory allocation in MB (default: 512) */
+      memorySizeMb?: number;
+      /** How long a full person listing may be served from Lambda memory (default: 30) */
+      listCacheTtlSeconds?: number;
+    };
   };
 
   /**

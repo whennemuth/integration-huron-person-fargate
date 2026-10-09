@@ -4,7 +4,7 @@
  * so that subsequent full syncs don't select them for deletion again.
  */
 
-import { TargetPersonDeleteType, HuronPersonDataTarget, MockPersonDataTarget, ReadPerson } from 'integration-huron-person';
+import { TargetPersonDeleteType, HuronPersonDataTarget, ReadPerson } from 'integration-huron-person';
 import { FieldSet, Status } from 'integration-core';
 import { mockClient } from 'aws-sdk-client-mock';
 import { S3, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -20,9 +20,6 @@ import { PersonHistoryTable } from '../src/dynamodb/PersonHistoryTable';
 
 const mockPushAll = jest.fn();
 HuronPersonDataTarget.prototype.pushAll = mockPushAll;
-
-const mockPushOne = jest.fn();
-MockPersonDataTarget.prototype.pushOne = mockPushOne;
 
 const mockReadPersonBySourceIdentifier = jest.fn();
 ReadPerson.prototype.readPersonBySourceIdentifier = mockReadPersonBySourceIdentifier;
@@ -113,7 +110,7 @@ describe('DeferredDeleteHandlerForDynamoDB', () => {
   let stateTable: { getAllPersons: jest.Mock; markDeleted: jest.Mock };
   let historyTable: { batchWriteHistory: jest.Mock };
 
-  const createHandler = (useMockTarget: boolean) => new DeferredDeleteHandlerForDynamoDB({
+  const createHandler = () => new DeferredDeleteHandlerForDynamoDB({
     bucketName: 'bucket',
     chunkDirectory: `chunks/person-full/${syncRunId}`,
     personCurrentStateTableName: 'state-table',
@@ -123,14 +120,12 @@ describe('DeferredDeleteHandlerForDynamoDB', () => {
     region: 'us-east-2',
     config: mockConfig,
     cache: mockCache,
-    useMockTarget,
   });
 
   beforeEach(() => {
     jest.clearAllMocks();
     jest.spyOn(console, 'log').mockImplementation(() => undefined);
     process.env.PERSON_DELETE_TYPE = 'soft';
-    process.env.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = 'mock-target-table';
 
     stateTable = {
       getAllPersons: jest.fn().mockResolvedValue([
@@ -150,19 +145,19 @@ describe('DeferredDeleteHandlerForDynamoDB', () => {
   afterEach(() => {
     jest.restoreAllMocks();
     delete process.env.PERSON_DELETE_TYPE;
-    delete process.env.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME;
   });
 
   it('excludes already soft-deleted persons from the removal candidates', async () => {
-    const removed = await createHandler(true).getRemovedRecords();
+    const removed = await createHandler().getRemovedRecords();
 
     expect(removed.map(sourceIdentifierOf)).toEqual(['U00000002']);
   });
 
-  it('marks mock-target successes (primaryKey [{ personId }]) as deleted and writes DELETED history', async () => {
-    mockPushOne.mockResolvedValue({ status: Status.SUCCESS, primaryKey: [{ personId: 'U00000002' }] });
+  it('marks successes (primaryKey [{ hrn }]) as deleted and writes DELETED history', async () => {
+    mockReadPersonBySourceIdentifier.mockResolvedValue([{ hrn: 'hrn:person:2' }]);
+    mockPushAll.mockResolvedValue({ successes: [{ status: Status.SUCCESS, primaryKey: [{ hrn: 'hrn:person:2' }] }], failures: [] });
 
-    const result = await createHandler(true).processDeletes();
+    const result = await createHandler().processDeletes();
 
     expect(result.deletedCount).toBe(1);
     expect(stateTable.markDeleted).toHaveBeenCalledWith([{ personId: 'U00000002', hash: 'h2' }], syncRunId);
@@ -171,19 +166,11 @@ describe('DeferredDeleteHandlerForDynamoDB', () => {
     ]);
   });
 
-  it('marks real-target successes (primaryKey [{ hrn }]) as deleted', async () => {
-    mockReadPersonBySourceIdentifier.mockResolvedValue([{ hrn: 'hrn:person:2' }]);
-    mockPushAll.mockResolvedValue({ successes: [{ status: Status.SUCCESS, primaryKey: [{ hrn: 'hrn:person:2' }] }], failures: [] });
-
-    await createHandler(false).processDeletes();
-
-    expect(stateTable.markDeleted).toHaveBeenCalledWith([{ personId: 'U00000002', hash: 'h2' }], syncRunId);
-  });
-
   it('does not mark records whose soft-delete failed', async () => {
-    mockPushOne.mockResolvedValue({ status: Status.FAILURE, primaryKey: [{ personId: 'U00000002' }] });
+    mockReadPersonBySourceIdentifier.mockResolvedValue([{ hrn: 'hrn:person:2' }]);
+    mockPushAll.mockResolvedValue({ successes: [], failures: [{ status: Status.FAILURE, primaryKey: [{ hrn: 'hrn:person:2' }] }] });
 
-    await createHandler(true).processDeletes();
+    await createHandler().processDeletes();
 
     expect(stateTable.markDeleted).not.toHaveBeenCalled();
     expect(historyTable.batchWriteHistory).not.toHaveBeenCalled();
@@ -207,7 +194,6 @@ describe('DeferredDeleteHandlerForS3', () => {
     region: 'us-east-2',
     config: mockConfig,
     cache: mockCache,
-    useMockTarget: true,
   });
 
   beforeEach(() => {
@@ -215,7 +201,6 @@ describe('DeferredDeleteHandlerForS3', () => {
     s3Mock.reset();
     jest.spyOn(console, 'log').mockImplementation(() => undefined);
     process.env.PERSON_DELETE_TYPE = 'soft';
-    process.env.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = 'mock-target-table';
 
     // Return a fresh stream per call, since the baseline is read twice (detection, then marking)
     s3Mock.on(GetObjectCommand, { Bucket: bucketName, Key: baselineNdjsonPath })
@@ -228,7 +213,6 @@ describe('DeferredDeleteHandlerForS3', () => {
   afterEach(() => {
     jest.restoreAllMocks();
     delete process.env.PERSON_DELETE_TYPE;
-    delete process.env.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME;
   });
 
   it('excludes already soft-deleted persons from the removal candidates', async () => {
@@ -238,7 +222,8 @@ describe('DeferredDeleteHandlerForS3', () => {
   });
 
   it('rewrites the baseline with successfully soft-deleted persons marked, leaving all others intact', async () => {
-    mockPushOne.mockResolvedValue({ status: Status.SUCCESS, primaryKey: [{ personId: 'U00000002' }] });
+    mockReadPersonBySourceIdentifier.mockResolvedValue([{ hrn: 'hrn:person:2' }]);
+    mockPushAll.mockResolvedValue({ successes: [{ status: Status.SUCCESS, primaryKey: [{ hrn: 'hrn:person:2' }] }], failures: [] });
 
     await createHandler().processDeletes();
 
@@ -255,7 +240,8 @@ describe('DeferredDeleteHandlerForS3', () => {
   });
 
   it('does not rewrite the baseline when every soft-delete failed', async () => {
-    mockPushOne.mockResolvedValue({ status: Status.FAILURE, primaryKey: [{ personId: 'U00000002' }] });
+    mockReadPersonBySourceIdentifier.mockResolvedValue([{ hrn: 'hrn:person:2' }]);
+    mockPushAll.mockResolvedValue({ successes: [], failures: [{ status: Status.FAILURE, primaryKey: [{ hrn: 'hrn:person:2' }] }] });
 
     await createHandler().processDeletes();
 

@@ -30,7 +30,6 @@ export interface RunnerEnv {
   sourceSimulatorMockErrorRate?: number;
   /** Mock landscapes only: truncate the landscape's run-state tables before the run */
   mockTargetResetState?: boolean;
-  mockTargetValidateOnly?: boolean;
   /** Comma-delimited list of personRecordProcessor Customization enum keys to activate for this run */
   personRecordProcessorCustomizations?: string;
 }
@@ -45,13 +44,10 @@ export interface Endpoint {
 
 /**
  * Target configuration metadata.
- * Whether the mock target (DynamoDB table) or real target (Huron API) is used is NOT decided
- * here - it is a property of the landscape (see isMockLandscape in src/Utils.ts).
+ * Which target system is used (the real Huron API, or a mock landscape's target simulator) is NOT
+ * decided here - it is part of the landscape's integration config (see isMockLandscape in src/Utils.ts).
  */
 export type TargetConfig = {
-  /** Mock landscapes only: log mock target operations without executing them */
-  mockTargetValidateOnly?: boolean;
-  // Optional: Include real endpoint
   endpoint?: Endpoint;
 };
 
@@ -89,7 +85,6 @@ export const extractEnvironment = (): RunnerEnv => {
     SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS: sourceSimulatorMockSimulatedDelaySeconds,
     SOURCE_SIMULATOR_MOCK_ERROR_RATE: sourceSimulatorMockErrorRate,
     MOCK_TARGET_RESET_STATE: mockTargetResetState,
-    MOCK_TARGET_VALIDATE_ONLY: mockTargetValidateOnly,
     PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS: personRecordProcessorCustomizations
   } = process.env;
 
@@ -118,7 +113,6 @@ export const extractEnvironment = (): RunnerEnv => {
     sourceSimulatorMockSimulatedDelaySeconds: sourceSimulatorMockSimulatedDelaySeconds ? parseInt(sourceSimulatorMockSimulatedDelaySeconds) : undefined,
     sourceSimulatorMockErrorRate: sourceSimulatorMockErrorRate ? parseFloat(sourceSimulatorMockErrorRate) : undefined,
     mockTargetResetState: `${mockTargetResetState}`.toLowerCase().trim() === 'true',
-    mockTargetValidateOnly: `${mockTargetValidateOnly}`.toLowerCase().trim() === 'true',
     personRecordProcessorCustomizations
   } satisfies RunnerEnv;
 }
@@ -146,7 +140,6 @@ export const setTestEnvironment = (): void => {
     'SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS',
     'SOURCE_SIMULATOR_MOCK_ERROR_RATE',
     'MOCK_TARGET_RESET_STATE',
-    'MOCK_TARGET_VALIDATE_ONLY',
     'PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS'
   ].forEach(testEnvironment.getVar);
 

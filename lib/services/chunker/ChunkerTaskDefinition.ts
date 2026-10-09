@@ -115,11 +115,6 @@ export class ChunkerTaskDefinition extends Construct {
         break;
     }
 
-    // Mock landscapes only: the table MockPersonDataTarget writes to in place of the real target API
-    if (dynamodb?.mockTargetPersonTable) {
-      environment.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = dynamodb.mockTargetPersonTable.tableName;
-    }
-
     // Create CloudWatch log group
     const logGroup = new LogGroup(this, 'LogGroup', {
       logGroupName: `/ecs/huron-person-chunker-${landscape}`,
@@ -354,22 +349,6 @@ export class ChunkerTaskDefinition extends Construct {
       );
     }
 
-    // Grant DynamoDB read permissions for MockTargetPersonTable (mock landscapes only)
-    // Used when PersonCache needs to fetch population from mock target (instead of real API)
-    if (dynamodb!.mockTargetPersonTable) {
-      this.taskDefinition.addToTaskRolePolicy(
-        new PolicyStatement({
-          effect: Effect.ALLOW,
-          actions: [
-            'dynamodb:Scan',
-            'dynamodb:Query',
-          ],
-          resources: [
-            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockTargetPersonTable.tableName}`,
-          ],
-        })
-      );
-    }
 
     // Grant DynamoDB read/write permissions for StatisticsTable
     // Used for reading/writing METADATA, FLAGS, and TERMINAL_ERROR event records in DynamoDB mode.

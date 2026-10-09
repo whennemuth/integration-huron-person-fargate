@@ -167,7 +167,6 @@ export class MetadataForS3 implements IMetadataStorage {
       bulkReset,
       trustPreviousStorage,
       syncPopulation,
-      mockTargetValidateOnly,
       runFailed,
       runFailureMessage,
       runFailureTimestamp,
@@ -188,9 +187,6 @@ export class MetadataForS3 implements IMetadataStorage {
       syncPopulation
     };
 
-    if (mockTargetValidateOnly !== undefined) {
-      flags.mockTargetValidateOnly = mockTargetValidateOnly;
-    }
     if (runFailed !== undefined) {
       flags.runFailed = runFailed;
     }

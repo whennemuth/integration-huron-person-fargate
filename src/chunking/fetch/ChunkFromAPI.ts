@@ -24,7 +24,6 @@ export type TaskParameters = {
   offset?: number;
   iterationLimit?: number;
   chunkDirectory?: string;
-  mockTargetValidateOnly?: boolean;
   /** Comma-delimited list of personRecordProcessor Customization enum keys to activate for this run */
   personRecordProcessorCustomizations?: string;
 };
@@ -239,7 +238,6 @@ export class ChunkFromAPI implements IChunkFromSource {
     const chunkDirectory = messageBody.chunkDirectory;
     const bulkReset = messageBody.bulkReset;
     const trustPreviousStorage = messageBody.trustPreviousStorage;
-    const mockTargetValidateOnly = messageBody.mockTargetValidateOnly;
     const personRecordProcessorCustomizations = messageBody.personRecordProcessorCustomizations;
 
     this.taskParameters = { 
@@ -253,7 +251,6 @@ export class ChunkFromAPI implements IChunkFromSource {
       trustPreviousStorage: typeof trustPreviousStorage === 'boolean'
         ? trustPreviousStorage
         : trustPreviousStorage === 'true',
-      mockTargetValidateOnly: typeof mockTargetValidateOnly === 'boolean' ? mockTargetValidateOnly : mockTargetValidateOnly === 'true',
       personRecordProcessorCustomizations
     };
 
@@ -401,14 +398,6 @@ export class ChunkFromAPI implements IChunkFromSource {
    */
   public getSyncPopulation = (): SyncPopulation => {
     return (this.taskParameters?.populationType as SyncPopulation) || ChunkFromAPI.defaultPopulationType;
-  }
-
-  /**
-   * Get the mockTargetValidateOnly flag from task parameters.
-   * Returns true if validation-only mode should be used with mock target, false otherwise.
-   */
-  public getMockTargetValidateOnly = (): boolean => {
-    return this.taskParameters?.mockTargetValidateOnly || false;
   }
 
   /**

@@ -54,7 +54,7 @@ import { SyncPopulation } from '../../docker/chunkTypes';
 import { getRetryStrategy } from '../ApiErrorRetryStrategy';
 import { NextChunk, QueueReader } from '../Queue';
 import { TaskProtection } from '../TaskProtection';
-import { getLocalConfig, runningInMockLandscape } from '../Utils';
+import { getLocalConfig } from '../Utils';
 import { ChunkFileManager } from '../chunking/metadata';
 import { MetadataFactoryForBootstrap } from '../chunking/metadata/MetadataFactory';
 import { StandardMetadataUtils } from '../chunking/metadata/MetadataUtils';
@@ -279,9 +279,6 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
 
     const { bulkReset, trustPreviousStorage, syncPopulation } = resolveCommonFlags(flags, BULK_RESET);
 
-    // A mock landscape always uses the mock target (MockPersonDataTarget) - see isMockLandscape()
-    const useMockTarget = runningInMockLandscape();
-    console.log(`Mock target mode: ${useMockTarget ? 'enabled (mock landscape)' : 'disabled'}`);
 
     // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
     chunkId = metadataUtils.extractChunkId(s3Key!);
@@ -363,8 +360,6 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
       retryStrategy, // Inject retry strategy for handling transient API failures (429, 5xx, network errors)
       cleanupPreviousData,
       ignoreRemovals: syncPopulation === SyncPopulation.PersonDelta, // Ignore removals in delta computation since chunk processing is only a partial population and merger determines removals at the end of the full sync
-      flags: { ...flags, useMockTarget }, // Selects MockPersonDataTarget in a mock landscape
-      syncRunId: integrationTimestamp, // Pass integration timestamp as sync run ID
       personRecordProcessor: customPersonProcessor
     });
     

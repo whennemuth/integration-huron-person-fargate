@@ -149,7 +149,6 @@ export class MetadataForDynamoDb implements IMetadataStorage {
       bulkReset,
       trustPreviousStorage,
       syncPopulation,
-      mockTargetValidateOnly,
       runFailed,
       runFailureMessage,
       runFailureTimestamp,
@@ -166,9 +165,6 @@ export class MetadataForDynamoDb implements IMetadataStorage {
       syncPopulation
     };
 
-    if (mockTargetValidateOnly !== undefined) {
-      flags.mockTargetValidateOnly = mockTargetValidateOnly;
-    }
     if (runFailed !== undefined) {
       flags.runFailed = runFailed;
     }

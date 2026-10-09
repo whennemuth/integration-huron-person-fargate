@@ -9,6 +9,7 @@ import { SubscribingLambdas } from './SubscribingLambdas';
 import { DynamoDbTables } from './DynamoDB';
 import { Config } from 'integration-huron-person';
 import { SourceSimulator } from './services/chunker/SourceSimulator';
+import { TargetSimulator } from './services/processor/TargetSimulator';
 import { HuronPersonSecrets } from './Secrets';
 import { isMockLandscape, MOCK_LANDSCAPE_PATTERN } from '../src/Utils';
 
@@ -29,6 +30,7 @@ export class AppConstruct extends Construct {
   public readonly chunksBucket: Bucket;
   public readonly subscribingLambdas: SubscribingLambdas;
   public readonly sourceSimulator?: SourceSimulator;
+  public readonly targetSimulator?: TargetSimulator;
   public readonly huronPersonSecrets: HuronPersonSecrets;
   public readonly dynamoDbTables: DynamoDbTables;
 
@@ -65,9 +67,27 @@ export class AppConstruct extends Construct {
     }});
 
     // ========================================
-    // 3. Secrets Manager Secret for Huron Person Integration
+    // 3. Target Simulator (mock landscapes only) + Secrets Manager Secret for Huron Person Integration
     // ========================================
-    this.huronPersonSecrets = new HuronPersonSecrets(this, props.context);
+    // In a mock landscape the integration config's data target is the target simulator, so the
+    // ECS tasks call it through their ordinary Huron client code without knowing it is a fake.
+    if (isMockLandscape(Landscape.toLowerCase())) {
+      const { targetSimulator: tsCtx } = ctx.LAMBDA;
+      this.targetSimulator = new TargetSimulator(this, 'TargetSimulator', {
+        landscape: Landscape.toLowerCase(),
+        stackId: ctx.STACK_ID,
+        region: ctx.REGION,
+        table: this.dynamoDbTables.mockTargetPersonTable!,
+        timeoutSeconds: tsCtx?.timeoutSeconds,
+        memorySizeMb: tsCtx?.memorySizeMb,
+        listCacheTtlSeconds: tsCtx?.listCacheTtlSeconds,
+        tags,
+      });
+    }
+    this.huronPersonSecrets = new HuronPersonSecrets(this, props.context, this.targetSimulator && {
+      baseUrl: this.targetSimulator.baseUrl,
+      externalToken: this.targetSimulator.externalToken,
+    });
     
     // ========================================
     // 4. ECS Infrastructure (Cluster + Task Definitions)

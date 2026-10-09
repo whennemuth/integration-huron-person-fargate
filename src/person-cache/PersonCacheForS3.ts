@@ -253,8 +253,8 @@ export class PersonCacheForS3 extends AbstractPersonCache {
   /**
    * Fetch full population from target API.
    * 
-   * In mock target mode, "pretends" DynamoDB mockTargetPersonTable is the Target API.
-   * In real mode, calls ListPeople to query actual Huron API.
+   * Calls ListPeople against config.dataTarget - the actual Huron API, or in a mock landscape the
+   * target simulator that impersonates it.
    * 
    * This is the source of truth for the cache.
    * 

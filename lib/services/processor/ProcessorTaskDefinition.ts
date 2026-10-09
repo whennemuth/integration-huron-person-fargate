@@ -68,7 +68,6 @@ export class ProcessorTaskDefinition extends Construct {
     // Add container with environment variables
     const environment: { [key: string]: string } = {
       REGION: region,
-      LANDSCAPE: landscape, // A "mock\d*" landscape signals mock mode at runtime (see isMockLandscape in src/Utils.ts)
       SQS_QUEUE_URL: queueUrl,
       PREVIOUS_STORAGE_TYPE: previousStorageType!,
       DYNAMODB_STATISTICS_TABLE_NAME: dynamodb!.statisticsTable.tableName,
@@ -109,11 +108,6 @@ export class ProcessorTaskDefinition extends Construct {
         break;
       default:
         throw new Error(`Unsupported storage type: ${previousStorageType}`);
-    }
-
-    // Mock landscapes only: the table MockPersonDataTarget writes to in place of the real target API
-    if (dynamodb?.mockTargetPersonTable) {
-      environment.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME = dynamodb.mockTargetPersonTable.tableName;
     }
 
     // Check if the context includes retry strategy configuration and add it to environment variables if present.
@@ -296,27 +290,6 @@ export class ProcessorTaskDefinition extends Construct {
       })
     );
 
-    // Grant DynamoDB read/write permissions for mockTargetPersonTable (mock landscapes only)
-    // Used by MockPersonDataTarget to simulate the target system without calling the real API
-    if (dynamodb!.mockTargetPersonTable) {
-      this.taskDefinition.addToTaskRolePolicy(
-        new PolicyStatement({
-          effect: Effect.ALLOW,
-          actions: [
-            'dynamodb:GetItem',
-            'dynamodb:PutItem',
-            'dynamodb:UpdateItem',
-            'dynamodb:DeleteItem',
-            'dynamodb:Query',
-            'dynamodb:Scan',
-            'dynamodb:BatchGetItem',
-          ],
-          resources: [
-            `arn:aws:dynamodb:${region}:${Stack.of(this).account}:table/${dynamodb!.mockTargetPersonTable.tableName}`,
-          ],
-        })
-      );
-    }
 
     // Grant ECS task protection permissions
     // This allows the running task to enable/disable scale-in protection via ECS agent endpoint

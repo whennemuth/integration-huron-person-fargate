@@ -26,8 +26,6 @@ export interface ChunkerMessageBody {
   bulkReset?: boolean;
   trustPreviousStorage?: boolean;
   chunkDirectory?: string;
-  /** Validation-only mode for mock target: log operations but don't execute */
-  mockTargetValidateOnly?: boolean;
 }
 
 export const CHUNKER_COUNTER_NAME = 'chunker-offset-counter';
@@ -272,7 +270,6 @@ export class ChunkerQueue {
       populationType, 
       bulkReset, 
       trustPreviousStorage,
-      mockTargetValidateOnly,
       personRecordProcessorCustomizations
     } = taskParameters;
 
@@ -306,8 +303,7 @@ export class ChunkerQueue {
         iterationLimit, 
         offset: nextOffset, 
         chunkDirectory,
-          mockTargetValidateOnly,
-        personRecordProcessorCustomizations
+            personRecordProcessorCustomizations
       } satisfies ApiChunkerEvent;
 
       // Send the SQS message

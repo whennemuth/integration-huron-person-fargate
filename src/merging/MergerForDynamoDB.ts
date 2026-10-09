@@ -23,7 +23,6 @@ import { FieldDefinitions } from 'integration-huron-person';
 import { extractChunkDirectory } from '../chunking/filedrop/ChunkPathUtils';
 import { MetadataFactoryForBootstrap, StandardMetadataUtils } from '../chunking/metadata';
 import { SyncPopulation } from '../../docker/chunkTypes';
-import { runningInMockLandscape } from '../Utils';
 import { AbstractMerger, MergeContext, MergeResult, TaskParameters } from './AbstractMerger';
 import { DeferredDeleteHandlerForDynamoDB, DeferredDeleteHandlerForDynamoDBParams } from './DeferredDeleteHandlerForDynamoDB';
 
@@ -148,8 +147,6 @@ export class MergerForDynamoDB extends AbstractMerger {
       bucketName, chunkDirectory: chunkDir, region
     });
     const { syncPopulation } = flags;
-    // A mock landscape always uses the mock target (MockPersonDataTarget) - see isMockLandscape()
-    const useMockTarget = runningInMockLandscape();
 
     if (await metadata.terminalErrorExists({ bucketName, chunkDirectory: chunkDir, region })) {
       console.error(`  ⛔ Run is marked failed (TERMINAL_ERROR) - deletion handling skipped.`);
@@ -179,7 +176,6 @@ export class MergerForDynamoDB extends AbstractMerger {
         syncRunId,
         primaryKeyFieldNames,
         region,
-        useMockTarget,
       } as DeferredDeleteHandlerForDynamoDBParams);
 
       const deletionResult = await deleteHandler.processDeletes();

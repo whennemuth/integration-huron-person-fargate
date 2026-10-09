@@ -53,7 +53,7 @@ import { MetadataBroker } from '../src/chunking/metadata';
 import { PersonCacheFactory } from '../src/person-cache/PersonCacheFactory';
 import { AbstractPersonCache } from '../src/person-cache/AbstractPersonCache';
 import { TaskProtection } from '../src/TaskProtection';
-import { getConfig, getLocalConfig, objectExistsInS3, runningInMockLandscape } from '../src/Utils';
+import { getConfig, getLocalConfig, objectExistsInS3 } from '../src/Utils';
 import { ChunkFromParams, IChunkFromSource, SyncPopulation } from './chunkTypes';
 
 const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
@@ -235,12 +235,9 @@ export async function main() {
 
   // Log storage mode and mock target configuration at startup
   const storageMode = process.env.PREVIOUS_STORAGE_TYPE || 'undefined';
-  const mockTargetTableName = process.env.DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME;
   console.log(`Storage mode: ${storageMode}`);
-  console.log(`Mock landscape: ${runningInMockLandscape() ? 'yes' : 'no'} (LANDSCAPE=${process.env.LANDSCAPE || 'not set'})`);
   if (storageMode === 'dynamodb') {
     console.log(`  - PersonCurrentStateTable: ${process.env.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || 'not set'}`);
-    console.log(`  - MockTargetPersonTable: ${mockTargetTableName || 'not set'}`);
   } else if (storageMode === 's3') {
     console.log(`  - Shared delta storage dir: ${process.env.SHARED_DELTA_STORAGE_DIR || 'not set'}`);
   }
@@ -351,7 +348,7 @@ export async function main() {
       // Send next chunking message BEFORE starting this task's processing.
       // This enables true parallelism: the next task can start before the current one finishes.
       //
-      // NOTE: The mock target flag (mockTargetValidateOnly) is propagated through
+      // NOTE: Run flags (e.g. bulkReset, personRecordProcessorCustomizations) are propagated through
       // subsequent messages for consistency, even though only the first chunker task needs them
       // (to write FLAGS to storage). Subsequent chunker tasks skip the write (conditional write 
       // pattern), so they don't use these flags. Processor tasks read FLAGS from storage, not 
@@ -387,15 +384,6 @@ export async function main() {
     const syncPopulation = chunker.getSyncPopulation?.() || SyncPopulation.PersonFull;
     console.log(`Sync population type: ${syncPopulation}`);
 
-    // Mock target mode is a property of the landscape (a "mock\d*" landscape always uses the mock
-    // target), not of the run - so it is not written to flags. Only validateOnly comes from the run.
-    const useMockTarget = runningInMockLandscape();
-    const mockTargetValidateOnly = chunker.getMockTargetValidateOnly?.() || false;
-    console.log(`Mock target mode: ${useMockTarget ? 'enabled' : 'disabled'}`);
-    if (useMockTarget) {
-      console.log(`  - Validate only: ${mockTargetValidateOnly}`);
-    }
-
     // Get personRecordProcessor customization selection from chunker (comma-delimited Customization keys)
     const personRecordProcessorCustomizations = chunker.getPersonRecordProcessorCustomizations?.();
     if (personRecordProcessorCustomizations) {
@@ -409,7 +397,6 @@ export async function main() {
       bulkReset: chunkFromParams.bulkReset,
       trustPreviousStorage: chunkFromParams.trustPreviousStorage,
       syncPopulation,
-      mockTargetValidateOnly,
       personRecordProcessorCustomizations,
       dryRun: dryRun === 'true',
       region
@@ -417,13 +404,12 @@ export async function main() {
 
     /**
      * Ensure population cache exists for processor lookup.
-     * In mock target mode, fetches population from MockTargetPersonTable instead of real Huron API.
      * Cache creation is thread-safe; concurrent tasks will coordinate using marker file locks.
      */
     if(chunkFromParams.bulkReset || !chunkFromParams.trustPreviousStorage) {
       const config = await getConfig();
       const { CACHE_FILE_NAME } = AbstractPersonCache;
-      const cache = PersonCacheFactory.create(config, useMockTarget);
+      const cache = PersonCacheFactory.create(config);
       const cacheParams = { 
         bucketName: chunksBucket, 
         key: chunker.getChunkDirectory() + `/${CACHE_FILE_NAME}`, 

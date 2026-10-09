@@ -381,30 +381,25 @@ export class DynamoDbTables extends Construct {
   }
 
   /**
-   * DynamoDB table for storing mock target system state (mock landscapes only).
+   * DynamoDB table backing the target simulator (mock landscapes only) - see
+   * src/target-simulator/TargetSimulator.ts and src/dynamodb/MockTargetPersonTable.ts.
    * 
    * Table Design:
-   * - Partition Key (PK): `personId` - Unique person identifier
+   * - Partition Key (PK): `personId` - the person's sourceIdentifier (BUID)
    * - No Sort Key: One record per person (overwrite on update)
    * 
    * Attributes:
    * - personId: string - BUID
-   * - data: object - Full person record as it would exist in target system
-   * - lastModified: string - ISO timestamp of last update
-   * - createdAt: string - ISO timestamp when record was first created
-   * - syncRunId: string - ISO timestamp of sync run that last modified this person
-   * 
-   * Access Patterns:
-   * 1. Get person: GetItem by personId
-   * 2. Batch get: BatchGetItem by personIds
-   * 3. Create/Update: PutItem
-   * 4. Delete: DeleteItem
-   * 5. List all: Scan
+   * - hrn: string - HRN the simulator assigned at creation
+   * - data: object - Full person record as the target system would return it
+   * - createdAt / lastModified: string - ISO timestamps
+   * - deactivated / deactivatedAt - soft-delete state
    * 
    * Purpose:
-   * In a mock landscape, processors use MockPersonDataTarget which writes to this table instead
-   * of calling the real target API. This allows full end-to-end testing with the source simulator
-   * (or a real source, for "hybrid" runs) without affecting real target system data.
+   * In a mock landscape, the integration config points the ECS tasks at the target simulator, which
+   * impersonates the Huron person API and stores persons here. This allows full end-to-end testing
+   * with the source simulator (or a real source, for "hybrid" runs) without affecting real target
+   * system data - and without the pipeline knowing it is not talking to Huron.
    */
   private createMockTargetPersonTable = () => {
     const { context, tags } = this.params.props;

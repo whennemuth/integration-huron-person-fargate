@@ -1,5 +1,5 @@
 import { BasicPushAllOperation, FieldSet, TestEnvironment } from "integration-core";
-import { BasicCache, Cache, Config, ConfigManager, DataTargetFactory, FieldDefinitions, ReadPerson, TargetPersonDeleteType } from "integration-huron-person";
+import { BasicCache, Cache, Config, ConfigManager, FieldDefinitions, HuronPersonDataTarget, ReadPerson, TargetPersonDeleteType } from "integration-huron-person";
 import { TrackingTargetApiErrorProcessor } from "../ApiErrorTracking";
 import { getLocalConfig } from "../Utils";
 
@@ -9,7 +9,6 @@ export type DeferredDeleteHandlerCoreParams = {
   config?: Config;                // Configuration for PersonDataTarget initialization
   cache?: Cache<string, string>;  // JWT token cache
   errorTracker?: TrackingTargetApiErrorProcessor;
-  useMockTarget?: boolean;        // If true, soft-deletes go to MockPersonDataTarget instead of the real Huron API
 };
 
 export type DeferredDeleteResult = {
@@ -133,17 +132,10 @@ export abstract class AbstractDeferredDeleteHandler {
 
       console.log(`\nIdentified ${removedRecords.length} record(s) for soft deletion`);
 
-      // Select real vs mock target based on useMockTarget flag, so mocked runs never hit the real Huron API
       const config = await this.getConfig();
       const cache = await this.getCache();
       const errorEventProcessor = await this.getErrorTracker();
-      const targetFactory = new DataTargetFactory({
-        config,
-        flags: { useMockTarget: this.params.useMockTarget },
-        cache,
-        errorEventProcessor
-      });
-      const dataTarget = targetFactory.create();
+      const dataTarget = new HuronPersonDataTarget({ config, cache, errorEventProcessor });
 
       console.log('Starting batch soft-delete operation...');
       const batchResult = dataTarget.pushAll
@@ -343,9 +335,8 @@ export abstract class AbstractDeferredDeleteHandler {
    *
    * Used to correlate push results with removed records, which can't be done by primary key
    * field name: removed records carry sourceIdentifier (plus hrn once enriched), while push
-   * results carry whatever identifier the target returns - MockPersonDataTarget returns
-   * [{ personId }] and HuronPersonDataTarget returns [{ hrn }]. sourceIdentifier, personId and id
-   * all hold the BUID, so they share a token namespace.
+   * results carry whatever identifier the target returns - HuronPersonDataTarget returns
+   * [{ hrn }]. sourceIdentifier, personId and id all hold the BUID, so they share a token namespace.
    *
    * Example: [{ sourceIdentifier: 'U12345678' }, { hrn: 'hrn:hrs:persons:abc' }]
    *   returns ['buid:U12345678', 'hrn:hrn:hrs:persons:abc']

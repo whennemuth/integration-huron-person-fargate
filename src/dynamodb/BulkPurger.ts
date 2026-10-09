@@ -1,5 +1,4 @@
 import { TestEnvironment } from "integration-core";
-import { Config } from "integration-huron-person";
 import {
   MockTargetPersonTable,
   DYNAMODB_TABLE_NAME as mockTargetPersonTableName} from "./MockTargetPersonTable";
@@ -16,7 +15,7 @@ import {
   StatisticsTable
 } from "./StatisticsTable";
 import { IContext } from "../../context/IContext";
-import { getConfig, isMockLandscape, MOCK_LANDSCAPE_PATTERN } from "../Utils";
+import { isMockLandscape, MOCK_LANDSCAPE_PATTERN } from "../Utils";
 
 export enum BulkPurgerMode {
   DELETE = 'delete',
@@ -43,8 +42,6 @@ export type BulkPurgerConfig = {
    * tables only ever hold mock-run data. Set to true to deliberately purge a non-mock landscape.
    */
   force?: boolean;
-  /** Only needed to truncate the mock target table - loaded via getConfig() if omitted. */
-  integrationConfig?: Config;
 };
 
 /**
@@ -60,7 +57,7 @@ export class BulkPurger {
   private syncRunId?: string;
 
   constructor(private config: BulkPurgerConfig) {
-    const { context, integrationConfig, ...loggable } = this.config;
+    const { context, ...loggable } = this.config;
     console.log(`BulkPurger initialized with: ${JSON.stringify(loggable, null, 2)}`);
 
     this.mode = config.mode;
@@ -173,10 +170,7 @@ export class BulkPurger {
       switch(table) {
         case MOCK_TARGET_PERSON:
           tableName = mockTargetPersonTableName(context);
-          purge = async () => {
-            const config = this.config.integrationConfig ?? await getConfig();
-            await new MockTargetPersonTable({ config, tableName }).truncate(chunkSize);
-          };
+          purge = () => new MockTargetPersonTable({ tableName, region }).truncate(chunkSize);
           break;
         case PERSON_CURRENT_STATE:
           tableName = personCurrentStateTableName(context);

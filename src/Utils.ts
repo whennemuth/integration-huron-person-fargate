@@ -23,14 +23,6 @@ export const isMockLandscape = (landscape?: string): boolean => {
   return MOCK_LANDSCAPE_PATTERN.test(landscape ?? '');
 }
 
-/**
- * Runtime form of isMockLandscape() for ECS tasks, whose task definitions carry the landscape
- * in the LANDSCAPE environment variable.
- */
-export const runningInMockLandscape = (): boolean => {
-  return isMockLandscape(process.env.LANDSCAPE);
-}
-
 export const echoStackName = () => {
   const contextModule = require('../context/context.json') as IContext;
   const stackName = getStackName(contextModule);

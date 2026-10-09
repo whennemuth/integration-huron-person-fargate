@@ -41,7 +41,6 @@ export class SinglePersonRunner extends ChunkingServiceRunner {
     // The target itself (real vs mock) is determined by the landscape, not the runner
     const { dataTarget } = config;
     return {
-      mockTargetValidateOnly: this.env.mockTargetValidateOnly,
       endpoint: {
         baseUrl: dataTarget?.endpointConfig?.baseUrl || '',
         fetchPath: dataTarget?.personsPath || ''
@@ -66,7 +65,6 @@ export class SinglePersonRunner extends ChunkingServiceRunner {
       trustPreviousStorage,
       iterationLimit: iterationLimit ? iterationLimit : 0,
       offset: 0,
-      mockTargetValidateOnly: targetConfig.mockTargetValidateOnly,
       personRecordProcessorCustomizations,
       processingMetadata: {
         processedAt: new Date().toISOString(),

@@ -5,6 +5,15 @@ import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { RemovalPolicy, SecretValue } from "aws-cdk-lib";
 
 /**
+ * Replaces the data target endpoint in the integration config - used by mock landscapes to point
+ * the ECS tasks at the target simulator. Values may be CDK tokens (resolved at deploy time).
+ */
+export type DataTargetOverride = {
+  baseUrl: string;
+  externalToken: string;
+};
+
+/**
  * A Secrets Manager secret that holds the Huron Person integration configuration and secrets.
  * This secret is injected into ECS Fargate tasks as an environment variable at runtime,
  * ensuring sensitive credentials never appear in CloudFormation templates or logs.
@@ -12,10 +21,10 @@ import { RemovalPolicy, SecretValue } from "aws-cdk-lib";
 export class HuronPersonSecrets {
   private _secret: Secret;
 
-  constructor(scope: Construct, context: IContext) {
+  constructor(scope: Construct, context: IContext, dataTargetOverride?: DataTargetOverride) {
     const { STACK_ID, S3: { chunksBucket } = {}, TAGS: { Landscape = 'dev' } = {} } = context;
 
-    const integrationConfig = buildSecretValue(context);
+    const integrationConfig = buildSecretValue(context, dataTargetOverride);
 
     const secretName = `${STACK_ID}/integration/_config/${Landscape}`;
 
@@ -50,9 +59,10 @@ export class HuronPersonSecrets {
  * 3. HURON_PERSON_CONFIG.configPath from context (if config is a path reference)
  * 
  * @param context - CDK context containing HURON_PERSON_CONFIG
+ * @param dataTargetOverride - Optional data target endpoint to substitute (mock landscapes)
  * @returns JSON string of the complete configuration
  */
-export const buildSecretValue = (context: IContext): string => {
+export const buildSecretValue = (context: IContext, dataTargetOverride?: DataTargetOverride): string => {
   const { HURON_PERSON_CONFIG, S3: { chunksBucket } = {}, TAGS: { Landscape = 'dev' } = {} } = context;
 
   const bucketName = `${chunksBucket}-${Landscape.toLowerCase()}`;
@@ -91,6 +101,22 @@ export const buildSecretValue = (context: IContext): string => {
   }
 
   const integrationConfig = cfgMgr.getConfig('none');
+
+  /**
+   * Applied after the config is resolved (rather than as a ConfigManager source) because the values
+   * are CDK tokens: they survive JSON.stringify as placeholders and are resolved by CloudFormation.
+   */
+  if (dataTargetOverride) {
+    // Mutate a copy: ConfigManager hands out a shared instance that is validated again elsewhere,
+    // and a token placeholder is not a valid URL until CloudFormation resolves it.
+    const secretConfig = JSON.parse(JSON.stringify(integrationConfig));
+    const { baseUrl, externalToken } = dataTargetOverride;
+    const endpointConfig = secretConfig.dataTarget.endpointConfig;
+    endpointConfig.authMethod = 'externalToken';
+    endpointConfig.baseUrl = baseUrl;
+    endpointConfig.externalToken = externalToken;
+    return JSON.stringify(secretConfig);
+  }
 
   return JSON.stringify(integrationConfig);
 };

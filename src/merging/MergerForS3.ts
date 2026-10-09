@@ -13,7 +13,7 @@
 import { S3 } from '@aws-sdk/client-s3';
 import { FieldSet } from 'integration-core';
 import { FieldDefinitions, HashMapMerger } from 'integration-huron-person';
-import { objectExistsInS3, runningInMockLandscape } from '../Utils';
+import { objectExistsInS3 } from '../Utils';
 import { MergeEngine } from './MergeEngine';
 import { AbstractMerger, MergeContext, MergeResult, TaskParameters } from './AbstractMerger';
 import { extractChunkDirectory } from '../chunking/filedrop/ChunkPathUtils';
@@ -288,8 +288,6 @@ export class MergerForS3 extends AbstractMerger {
       bucketName, chunkDirectory: chunkDir, region
     });
     const { syncPopulation } = flags;
-    // A mock landscape always uses the mock target (MockPersonDataTarget) - see isMockLandscape()
-    const useMockTarget = runningInMockLandscape();
 
     if (await metadata.terminalErrorExists({ bucketName, chunkDirectory: chunkDir, region })) {
       console.error(`  ⛔ Run is marked failed (terminal error marker) - deletion handling skipped.`);
@@ -315,7 +313,6 @@ export class MergerForS3 extends AbstractMerger {
         baselineNdjsonPath: targetKey,
         mergedNdjsonPath: sourceKey,
         region,
-        useMockTarget,
       } as DeferredDeleteHandlerForS3Params);
 
       const deletionResult = await deleteHandler!.processDeletes();

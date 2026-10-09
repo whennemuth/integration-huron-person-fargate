@@ -76,7 +76,7 @@ A runner decorator (`MockTargetRunnerDecorator`, since replaced by `MockLandscap
 
 This was fixed by forcing `StaticMapUsage` at the point it's actually consumed - inside the processor, immediately after `flags.useMockTarget` is read from chunk metadata (the same channel already used to select the mock data target) - rather than trying to inject it upstream through a Config object that never reaches the running task. The lesson: a runtime override that "looks right" and produces no errors can still be a no-op if it mutates the wrong instance of a config object that exists in two different lifecycles (deploy-time vs invocation-time).
 
-(Since superseded: mock mode is now a deploy-time property of a mock landscape - see "Mock Landscapes" below - so the deploy-time channel is the correct one after all. `config.mock.json` sets `preLoadedMaps` all false, which bakes the right `STATIC_MAP_USAGE` into a mock stack's processor task, and the runtime override `resolveStaticMapUsage()` was removed.)
+(Since superseded: mock mode is now a deploy-time property of a mock landscape - see "Mock Landscapes" below - whose target simulator answers the same calls the real Huron API would, so no static-map override is needed at all; the runtime override `resolveStaticMapUsage()` was removed.)
 
 ### Source Simulator
 
@@ -277,15 +277,11 @@ The pipeline supports two storage modes for delta state and metadata, controlled
    - `PersonCacheForDynamoDb` (facade delegating to S3 - optimal for bulk data)
    - `PersonCacheFactory` switches on `config.storage.type`
    
-   **Mock Target Support** (Strategy Pattern):
-   - `AbstractPersonTarget` interface: Abstracts person data source
-   - `PersonTargetReal`: Fetches from real Huron API via ListPeople
-   - `PersonTargetMocked`: Scans MockTargetPersonTable (DynamoDB) for test data
-   - Factory injects appropriate PersonTarget based on `useMockTarget` (= `runningInMockLandscape()` in `docker/chunker.ts`)
+   **Person target** (Strategy Pattern):
+   - `AbstractPersonTarget` interface: Abstracts the target system the cache is built from
+   - `PersonTargetReal`: Fetches from the target API (config.dataTarget) via ListPeople - the real
+     Huron API, or in a mock landscape the target simulator (see "Mock Landscapes" below)
    - Design: Dependency injection enables testing without environment coupling
-   - `MockPersonDataTarget.getPersonByBuid()` (integration-huron-person): single-person existence check used by `UpsertDeltaStrategy` when `flags.useMockTarget` is true (processors set it from the landscape), so the create-vs-update lookup never hits the real Huron API in mock mode
-   - DELETE against the mock target is a soft-delete (`deactivated`/`deactivatedAt` attributes, plus `data.__active=false`), matching Huron's soft-delete-only requirement - records are never removed from MockTargetPersonTable, only marked inactive
-   - `StaticMapUsage` in a mock landscape is `{orgMap:false, stateMap:false, countryMap:false}`, baked into the processor task at deploy time from `config.mock.json`'s `preLoadedMaps` (no runtime override)
 
 3. **Metadata** (src/chunking/metadata/)
    - `AbstractMetadata` with 19 methods (5 static, 14 abstract)
@@ -296,11 +292,10 @@ The pipeline supports two storage modes for delta state and metadata, controlled
 ### Mock Landscapes
 
 **The signal**: any landscape whose name matches `^mock\d*$` (`mock`, `mock1`, `mock2`, ...) is a
-*mock landscape* - a stack dedicated to mocked runs. `isMockLandscape()` / `runningInMockLandscape()`
-(src/Utils.ts) are the single test for it: CDK passes the (lower-cased) `TAGS.Landscape`, and ECS
-tasks read the `LANDSCAPE` env var baked into all three task definitions. There is no per-run
-"mock" flag (`flags.useMockTarget` / `USE_MOCK_TARGET` were removed): mock-ness is a deploy-time
-property of the stack.
+*mock landscape* - a stack dedicated to mocked runs. `isMockLandscape()` (src/Utils.ts) is the single
+test for it, used only by CDK (with the lower-cased `TAGS.Landscape`), the Runner and `BulkPurger`.
+There is no per-run "mock" flag, and **the pipeline's runtime code (chunker, processor, merger) has
+no mock awareness at all**: mock-ness is a deploy-time property of the stack.
 
 **Why a landscape, not isolation tables**: nearly every resource name already carries the
 landscape (`${STACK_ID}-<kind>-${landscape}` tables, queues, cluster, Lambdas, config secret, chunks
@@ -308,25 +303,51 @@ bucket, the stack itself), so a dedicated mock stack isolates everything by cons
 the S3 delta storage and the chunker's baseline scan, which the old per-run isolation tables never
 covered. A mock stack uses the **standard** tables; they simply never hold real data.
 
+**The target simulator** (`src/target-simulator/TargetSimulator.ts`, CDK:
+`lib/services/processor/TargetSimulator.ts`): a Lambda behind an API Gateway HTTP API that impersonates
+the subset of the Huron person API the pipeline uses - token request, `POST`/`PATCH`/`GET /api/v2/persons[/{hrn}]`
+with filters/paging - storing persons in the mock target table. CDK injects its endpoint (and a generated
+external token, from a separate `.../target-simulator/token/<landscape>` secret, via a CloudFormation
+dynamic reference) into the mock stack's integration config secret as
+`dataTarget.endpointConfig.baseUrl`/`externalToken`. So the ECS tasks run the ordinary
+`HuronPersonDataTarget`/`ReadPerson`/`ListPeople` code against it, unaware it is a fake.
+- Contract quirks it must honor (see the file header and `test/TargetSimulator.test.ts`, which drives
+  the real client classes against it): "not found" is `200 {data: []}`; `pagination[offset]` is a
+  page index and a page past the end is `200 {data: []}`; `filter[...includeInactive...]` is a flag;
+  hrns (`hrn:hrs:persons:<sourceIdentifier>`) are derived, so `PATCH /{hrn}` needs no index.
+- DELETE (`PATCH {active:false}`) is a soft delete (`deactivated`/`deactivatedAt` + `data.active=false`);
+  records are never removed, matching Huron's soft-delete-only behavior.
+- The simulator reads its token from its own secret, never the config secret, keeping the CloudFormation
+  dependency one-way (config secret -> simulator).
+- **Why an HTTP API, not a Lambda Function URL**: the Huron client deliberately sends UNENCODED `[ ]`
+  in query strings (`pagination[offset]=0`, `filter[0!sourceIdentifier!and]=...` - see
+  integration-huron-person `UrlSerializer.ts`; the real Huron API rejects the encoded form). A Function
+  URL rejects such requests with `400 {"message":null}` before ever invoking the function (the first
+  mock run failed this way). The local contract test cannot catch front-door strictness like this
+  (Node's HTTP server accepts anything), so after any change to the simulator's front door, probe the
+  deployed endpoint: `curl -g "<endpoint>/api/v2/persons?pagination[offset]=0"` must return the
+  simulator's own `401 {"errors":[...]}`, not an AWS-generated 400.
+- `MockPersonDataTarget`, `DataTargetFlags.useMockTarget` and Upsert's mock branch have been removed
+  from integration-huron-person; the target simulator is the only mock target.
+
 **What differs in a mock stack**:
 - Exactly one extra table: `${STACK_ID}-mock-target-person-${landscape}` (MockTargetPersonTable),
-  standing in for the target system. Non-mock stacks have no `-mock-` tables at all.
-- The source simulator (and only there - synthesis fails if enabled elsewhere).
-- Processors/merger select `MockPersonDataTarget` (`flags: { ...flags, useMockTarget }` passed to
-  `HuronPersonIntegration`/`DataTargetFactory`), the chunker's PersonCache uses
-  `PersonTargetMocked`, and deferred deletes skip real-API HRN enrichment.
-- Its integration config (`integration-huron-person/config/config.mock.json`) points
-  `dataTarget.endpointConfig.baseUrl` at an unroutable placeholder, so any accidental real-target
-  call fails loudly, and sets `preLoadedMaps` all false.
+  backing the target simulator. Non-mock stacks have no `-mock-` tables at all.
+- The target simulator (always) and source simulator (if enabled - synthesis fails if enabled
+  in a non-mock landscape). Neither exists in any other landscape.
+- Its integration config (`integration-huron-person/config/config.mock.json`) sets
+  `dataTarget.endpointConfig.baseUrl` to an unroutable placeholder, which CDK replaces with the
+  simulator's URL in the deployed secret (so a local harness pointed at the file still fails loudly
+  instead of reaching a real target), and `preLoadedMaps` like preview (`orgMap` false; state/country
+  maps come from CSV files, not Huron).
 
 **Runner**: when `LANDSCAPE` is a mock landscape, `Runner.ts` wraps the runner in
 `MockLandscapeRunnerDecorator`, which verifies the mock stack is deployed (mock target table exists),
 optionally resets its run state (`RUNNER_MOCK_TARGET_RESET_STATE=true` truncates the mock target,
-person current-state, person history and statistics tables via `BulkPurger`), forwards
-`mockTargetValidateOnly`, and warns about "hybrid" runs (real source API -> mock target) - which
-remain supported (`RUNNER_SOURCE_SIMULATOR=false` against a mock landscape), but consume from the
-real, depleting source API like any other landscape. `BulkPurger` refuses to purge a non-mock
-landscape unless `force: true`.
+person current-state, person history and statistics tables via `BulkPurger`), and warns about
+"hybrid" runs (real source API -> mock target) - which remain supported (`RUNNER_SOURCE_SIMULATOR=false`
+against a mock landscape), but consume from the real, depleting source API like any other landscape.
+`BulkPurger` refuses to purge a non-mock landscape unless `force: true`.
 
 **Deploying one**: `context/context.mock.json` (+ git-ignored `context/mock.env`) -> `./context/swap.sh mock`,
 then `cdk deploy`. Add `context.mock1.json` etc. for more mock stacks.
@@ -557,7 +578,7 @@ customization runs, see below).
 **Selecting which customization(s) run - Flags, not task-definition env vars**: Which
 customization is active is deliberately **not** an `IContext`/task-definition environment
 variable (that would require a full stack redeploy to change). Instead it follows the same
-runtime-configuration precedent as `flags.mockTargetValidateOnly`: a `personRecordProcessorCustomizations`
+runtime-configuration precedent as `flags.bulkReset`: a `personRecordProcessorCustomizations`
 field (comma-delimited `Customization` keys) flows through
 `src/chunking/metadata/IMetadataStorage.ts`'s `Flags` type, which is written to S3/DynamoDB
 *before* chunking starts and read back by each processor task - so it can be changed per-run

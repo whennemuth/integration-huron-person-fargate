@@ -62,8 +62,6 @@ export interface ApiChunkerEvent {
   iterationLimit?: number;
   offset?: number;
   chunkDirectory?: string;
-  /** Validation-only mode for mock target: log operations but don't execute */
-  mockTargetValidateOnly?: boolean;
   /**
    * Comma-delimited list of personRecordProcessor Customization enum keys (see
    * src/processing/custom/AbstractCustomPersonProcessor.ts) to activate for this run.

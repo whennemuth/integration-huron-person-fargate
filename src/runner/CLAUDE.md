@@ -111,10 +111,11 @@ Design intent: avoid immediate desired-count reversal due to stale scale-in alar
   - Warns about potential overseeding relative to simulated population.
 
 - `decorators/MockLandscapeRunnerDecorator.ts`
-  - Applied automatically whenever `LANDSCAPE` is a mock landscape (`^mock\d*$`, see `isMockLandscape` in `src/Utils.ts`). There is no `USE_MOCK_TARGET` switch: a mock landscape's target is always mocked, a real landscape's never is.
-  - Verifies the mock stack is deployed (its mock target table exists).
+  - Applied automatically whenever `LANDSCAPE` is a mock landscape (`^mock\d*$`, see `isMockLandscape` in `src/Utils.ts`). There is no `USE_MOCK_TARGET` switch: a mock landscape's integration config always points at its target simulator, a real landscape's never does.
+  - Verifies the mock stack is deployed (its mock target table - the target simulator's storage - exists).
   - `MOCK_TARGET_RESET_STATE=true`: truncates the mock target, person current-state, person history and statistics tables of that landscape (via `BulkPurger`) so the delta baseline and mock target start in agreement.
-  - Forwards `MOCK_TARGET_VALIDATE_ONLY`; warns about hybrid runs (real source -> mock target), especially `person-delta` ones, since the real source API depletes as it is read.
+  - Warns about hybrid runs (real source -> mock target), especially `person-delta` ones, since the real source API depletes as it is read.
+  - Must NOT override `start()` (see the note in the class): the inherited template method has to run against the decorator, or its `validatePrerequisites()` is silently bypassed.
   - `Runner.ts` aborts outright if `SOURCE_SIMULATOR=true` targets a non-mock landscape.
 
 ### Environment extraction and harness support

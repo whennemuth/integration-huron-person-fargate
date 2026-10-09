@@ -5,7 +5,6 @@ import { Readable } from "stream";
 import { AbstractDeferredDeleteHandler, DeferredDeleteHandlerCoreParams } from "./AbstractDeferredDeleteHandler";
 import { isDeletedHash, toDeletedHash } from "./DeletedHashMarker";
 import { BasicCache, Config, FieldDefinitions } from 'integration-huron-person';
-import { runningInMockLandscape } from "../Utils";
 
 export type DeferredDeleteHandlerForS3Params = DeferredDeleteHandlerCoreParams & {
   bucketName: string;
@@ -76,7 +75,7 @@ export class DeferredDeleteHandlerForS3 extends AbstractDeferredDeleteHandler {
       readNdjsonFile, findRemovedRecords, enrichRemovedRecordsWithHrn
     } = this;
 
-    const { bucketName, mergedNdjsonPath, baselineNdjsonPath, useMockTarget } = this.params as DeferredDeleteHandlerForS3Params;
+    const { bucketName, mergedNdjsonPath, baselineNdjsonPath } = this.params as DeferredDeleteHandlerForS3Params;
 
     // Step 1: Read consolidated file (current source state)
     console.log(`Reading consolidated file: s3://${bucketName}/${mergedNdjsonPath}`);
@@ -99,9 +98,7 @@ export class DeferredDeleteHandlerForS3 extends AbstractDeferredDeleteHandler {
     const removedRecords = findRemovedRecords(baseline, consolidated);
 
     // Step 4: Enrich removed records with HRN if missing (lookup via sourceIdentifier).
-    // Skipped in mock mode - MockPersonDataTarget keys deletes off sourceIdentifier, not HRN,
-    // so this real-API lookup is both unnecessary and would defeat mock isolation.
-    const enrichedRecords = useMockTarget ? removedRecords : await enrichRemovedRecordsWithHrn(removedRecords);
+    const enrichedRecords = await enrichRemovedRecordsWithHrn(removedRecords);
 
     return enrichedRecords;
   }
@@ -162,7 +159,6 @@ if(require.main === module) {
       'SECRET_ARN',
       'HURON_PERSON_CONFIG_JSON',
       'DYNAMODB_STATISTICS_TABLE_NAME',
-      'LANDSCAPE',
       'CACHE_ENABLED',
       'CACHE_PATH'
     ].forEach(testEnvironment.getVar);
@@ -193,7 +189,6 @@ if(require.main === module) {
       baselineNdjsonPath: targetKey,
       mergedNdjsonPath: sourceKey,
       region,
-      useMockTarget: runningInMockLandscape(),
     } as DeferredDeleteHandlerForS3Params);
 
 

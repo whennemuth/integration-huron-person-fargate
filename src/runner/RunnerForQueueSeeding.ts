@@ -115,7 +115,6 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
     // The target itself (real vs mock) is determined by the landscape, not the runner
     const { dataTarget } = config;
     return {
-      mockTargetValidateOnly: this.env.mockTargetValidateOnly,
       endpoint: {
         baseUrl: dataTarget?.endpointConfig?.baseUrl || '',
         fetchPath: dataTarget?.personsPath || ''
@@ -200,7 +199,6 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
       messagesToSeed: seedNumber,
       queueUrl: env.queueUrl!,
       dryRun: false,
-      mockTargetValidateOnly: targetConfig.mockTargetValidateOnly,
       personRecordProcessorCustomizations: env.personRecordProcessorCustomizations
     });
     
