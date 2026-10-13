@@ -1,5 +1,5 @@
 import { Config, DataSourceConfig } from "integration-huron-person";
-import { ENVIRONMENT_VARIABLES_NAMES, SourceSimulatorFunctionURL, getSimulatorCounter, FUNCTION_BASE_NAME as sourceSimulatorFunctionBaseName } from "../../chunking/fetch/SourceSimulator";
+import { ENVIRONMENT_VARIABLES_NAMES, PERSON_PATH, SourceSimulatorFunctionURL, getSimulatorCounter, personIndexFromBuid, FUNCTION_BASE_NAME as sourceSimulatorFunctionBaseName } from "../../chunking/fetch/SourceSimulator";
 import { ChunkingServiceRunner } from "../AbstractRunner";
 import { LambdaFunctionEnvironmentVariable } from "../LambdaFunctionEnvironmentVariable";
 import { Endpoint, NormalizedPopulationType, TargetConfig } from "../RunnerTypes";
@@ -10,6 +10,9 @@ import { Endpoint, NormalizedPopulationType, TargetConfig } from "../RunnerTypes
  * 
  * The decorator overrides both the people and terms data source endpoints to point to the
  * source simulator Lambda Function URL, which simulates responses from the real BU CDM APIs.
+ * In single person mode (SINGLE_PERSON_BUID) the source is the simulator's single person endpoint
+ * (`/person?buid=...`) instead, which returns the same payload the people endpoint produces for
+ * that person.
  */
 export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
   constructor(private readonly wrappedRunner: ChunkingServiceRunner) {
@@ -67,6 +70,20 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
     const getNbr = (nbr: number | undefined): number => nbr && !isNaN(nbr) ? nbr : 0;
     
     const { buid } = this.wrappedRunner.env;
+
+    // Single person mode: the simulator only knows BUIDs it generates itself (U + digits), and only
+    // returns a person within its population.
+    if (buid) {
+      const index = personIndexFromBuid(buid);
+      if (index === undefined) {
+        console.error(`SINGLE_PERSON_BUID=${buid} is not a BUID the source simulator generates ("U" followed by digits, e.g. U0000042).`);
+        return false;
+      }
+      const { totalPopulation } = await this.getSourceSimulatorPredictions(total);
+      if (totalPopulation > 0 && index >= totalPopulation) {
+        console.warn(`SINGLE_PERSON_BUID=${buid} is beyond the source simulator's population (${totalPopulation}), so it will return no person.`);
+      }
+    }
     
     // Warn if queue seeding is being carried out that we are not overseeding as determined by
     // comparing the seedNumber math to source simulator predicted population.
@@ -101,6 +118,7 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
 
   public async resolveDataSource(config: Config): Promise<Endpoint> {
     const { region, landscape, sourceSimulator, stackId, sourceSimulatorMockTotalPopulation: total } = this.wrappedRunner.env;
+    const { buid } = this.wrappedRunner.env;
     let { 
       endpointConfig: { baseUrl } = {}, 
       fetchPath 
@@ -119,9 +137,11 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
     const sourceSimulatorFunctionUrl = new SourceSimulatorFunctionURL({ landscape, region });
     const functionUrlObj = new URL(await sourceSimulatorFunctionUrl.getUrl());
     baseUrl = `${functionUrlObj.protocol}//${functionUrlObj.host}`;
-    fetchPath = functionUrlObj.pathname || '/';
+    fetchPath = buid
+      ? `${PERSON_PATH}?buid=${encodeURIComponent(buid)}`
+      : functionUrlObj.pathname || '/';
     
-    console.log(`Using source simulator for people endpoint: ${JSON.stringify({ baseUrl, fetchPath }, null, 2)}`);
+    console.log(`Using source simulator for ${buid ? 'single person' : 'people'} endpoint: ${JSON.stringify({ baseUrl, fetchPath }, null, 2)}`);
 
     // Also override terms data source to use source simulator
     if (config.dataSource?.terms) {
@@ -129,6 +149,11 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
       config.dataSource.terms.endpointConfig.baseUrl = baseUrl;
       config.dataSource.terms.fetchPath = termsFetchPath;
       console.log(`Using source simulator for terms endpoint: ${JSON.stringify({ baseUrl, fetchPath: termsFetchPath }, null, 2)}`);
+    }
+
+    if (buid) {
+      // The single person endpoint is stateless: no predictions to log, no depletion counter to reset.
+      return { baseUrl: baseUrl!, fetchPath: fetchPath! };
     }
 
     await this.logSourceSimulatorPredictions(total);

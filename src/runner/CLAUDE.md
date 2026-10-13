@@ -106,7 +106,7 @@ Design intent: avoid immediate desired-count reversal due to stale scale-in alar
 - `decorators/SourceSimulatorRunnerDecorator.ts`
   - Validates source simulator URL exists.
   - Applies simulator Lambda env overrides in one batched update.
-  - Uses simulator endpoint instead of configured upstream endpoint.
+  - Uses simulator endpoint instead of configured upstream endpoint: `/` (people), or `/person?buid=<SINGLE_PERSON_BUID>` in single person mode, which returns the same payload `/` produces for that person (so no population-of-1 workaround is needed). Single person mode skips the predictions and the counter reset (the endpoint is stateless), fails prerequisites for a BUID the simulator does not generate (`U` + digits), and warns for one beyond its population.
   - Resets simulator atomic counter.
   - Warns about potential overseeding relative to simulated population.
 

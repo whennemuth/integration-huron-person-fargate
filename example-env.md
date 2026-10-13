@@ -313,6 +313,7 @@ SOURCE_SIMULATOR_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-x
 # Optional: Specify query parameters for testing
 SOURCE_SIMULATOR_RECORD_COUNT=10
 SOURCE_SIMULATOR_OFFSET=0
+# SOURCE_SIMULATOR_BUID=U0000042   # optional: call the single person endpoint (/person?buid=) instead
 # Required for REMOTE task only
 SOURCE_SIMULATOR_FUNCTION_URL=<https://your-lambda-function-url.lambda-url.us-east-2.on.aws/>
 SOURCE_SIMULATOR_API_KEY=<your-api-key>

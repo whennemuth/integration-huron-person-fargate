@@ -6,9 +6,10 @@
  * 
  * **Endpoints:**
  * - `/` or empty path: Person data endpoint (people API)
+ * - `/person?buid=U0000042`: Single person endpoint (person API)
  * - `/terms` or `/current-terms`: Current terms endpoint
- * 
- * **Design (Person Endpoint):**
+ *
+ * **Design (People Endpoint):**
  * - Stateful depletion model: Every request claims the next contiguous slice of available records
  * - Non-deterministic by request params: `offset` is accepted for compatibility but does not drive allocation
  * - Validates API key from Secrets Manager against incoming requests
@@ -16,15 +17,31 @@
  * - Matches real API response structure: `{ response: [persons] }`
  * - Simulates slow API: Optional delay before responding via MOCK_SIMULATED_DELAY_SECONDS
  * 
+ * **Design (Single Person Endpoint):**
+ * - Mirrors the real person API: one person, selected by the `buid` query parameter. The `buid`
+ *   parameter is also what makes the chunker treat the fetch as a single request rather than
+ *   paging through it (see `BigJsonFetch.isNotBatchable()`)
+ * - Stateless and idempotent: `U0000042` is the person at index 41, the same payload the people
+ *   endpoint produces when its depletion reaches that index. The depletion counter is not touched.
+ * - A BUID beyond MOCK_TOTAL_POPULATION returns `{ response: [] }` (not in the source), and a
+ *   missing or malformed BUID (not `U` + digits) returns 400
+ * - Accepts `nonCurrentTermRate` like the people endpoint
+ *
  * **Design (Terms Endpoint):**
  * - Returns static list of 6 terms (2 current, 2 past, 2 future)
  * - No pagination (terms are small dataset)
  * - Matches real API response structure: `{ response: [terms] }`
  * 
- * **Query Parameters (Person Endpoint):**
+ * **Query Parameters (People Endpoint):**
  * - `recordCount`: Number of records to return (default: 200)
  * - `offset`: Batch offset for pagination (default: 0)
- * - `nonCurrentTermRate`: Probability (0.0-1.0) that students have non-current term (default: 0.0)
+ * - `nonCurrentTermRate`: Proportion (0.0-1.0) of students with a non-current term (default: 0.0).
+ *   Which students get one is decided by a hash of the person's index, not by chance, so a person's
+ *   payload is the same on every request.
+ *
+ * **Query Parameters (Single Person Endpoint):**
+ * - `buid`: The person's BUID, e.g. `U0000042` (required)
+ * - `nonCurrentTermRate`: As for the people endpoint
  * 
  * **Headers:**
  * - `Authorization`: Bearer token containing API key
@@ -70,6 +87,42 @@ interface Term {
 
 export const FUNCTION_BASE_NAME = 'source-simulator';
 export const SIMULATOR_COUNTER_NAME = 'simulator-offset-counter';
+export const PERSON_PATH = '/person';
+const BUID_PATTERN = /^U(\d+)$/;
+
+/**
+ * Convert a BUID into the index of the simulated person it identifies (the inverse of the personid
+ * built by generateMockPerson): `U0000001` -> 0, `U0000042` -> 41.
+ *
+ * @param buid - BUID of a simulated person, e.g. `U0000042`
+ * @returns The zero-based person index, or undefined if the BUID is not `U` + digits or is `U0000000`
+ */
+export function personIndexFromBuid(buid: string | undefined): number | undefined {
+  const match = BUID_PATTERN.exec((buid ?? '').trim());
+  if (!match) {
+    return undefined;
+  }
+  const index = parseInt(match[1], 10) - 1;
+  return index >= 0 ? index : undefined;
+}
+
+/**
+ * Deterministic stand-in for Math.random() keyed on a person index: maps the index to a well-mixed
+ * value in [0, 1) (MurmurHash3's 32-bit finalizer), so a person's random-looking attributes come out
+ * the same on every request and from either the people or the single person endpoint.
+ *
+ * @param index - Zero-based person index
+ * @returns A value in [0, 1)
+ */
+function unitIntervalHash(index: number): number {
+  let h = (index + 1) >>> 0;
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
 export enum ENVIRONMENT_VARIABLES_NAMES {
   MOCK_TOTAL_POPULATION = 'MOCK_TOTAL_POPULATION',
   MOCK_ERROR_RATE = 'MOCK_ERROR_RATE',
@@ -160,7 +213,7 @@ interface MockPerson {
  * 
  * @param index - Zero-based index for person ID generation
  * @param options - Optional configuration
- * @param options.nonCurrentTermRate - Probability (0.0-1.0) that students have non-current term (default: 0.0)
+ * @param options.nonCurrentTermRate - Proportion (0.0-1.0) of students with a non-current term (default: 0.0)
  * @returns Mock person object with minimal fields DataMapper uses
  */
 function generateMockPerson(index: number, options?: { nonCurrentTermRate?: number }): MockPerson {
@@ -206,9 +259,9 @@ function generateMockPerson(index: number, options?: { nonCurrentTermRate?: numb
   }
   // Student (33% of population)
   else if (personType === 1) {
-    // Probabilistic term assignment based on nonCurrentTermRate
-    // If random() < rate, assign past term "2256", else assign current term "2261"
-    const useNonCurrentTerm = Math.random() < nonCurrentTermRate;
+    // Term assignment based on nonCurrentTermRate, seeded by the index so the same person always
+    // gets the same term. If hash < rate, assign past term "2256", else assign current term "2261"
+    const useNonCurrentTerm = unitIntervalHash(index) < nonCurrentTermRate;
     const termCode = useNonCurrentTerm ? '2256' : '2261';
 
     basePerson.studentInfo = {
@@ -382,17 +435,22 @@ function validateApiKey(event: APIGatewayProxyEventV2, expectedApiKey: string | 
 /**
  * Determine which endpoint is being requested based on the raw path.
  * 
- * @param rawPath - The raw path from the Lambda event (e.g., '/', '/terms', '/current-terms')
- * @returns 'people' for person data endpoint, 'terms' for current terms endpoint
+ * @param rawPath - The raw path from the Lambda event (e.g., '/', '/person', '/terms', '/current-terms')
+ * @returns 'people' for person data endpoint, 'person' for the single person endpoint, 'terms' for
+ * current terms endpoint
  */
-function getEndpointType(rawPath: string): 'people' | 'terms' {
+function getEndpointType(rawPath: string): 'people' | 'person' | 'terms' {
   const normalized = (rawPath || '/').toLowerCase().trim();
-  
+
   // If path contains 'term', route to terms endpoint
   if (normalized.includes('term')) {
     return 'terms';
   }
-  
+
+  if (normalized.replace(/\/+$/, '') === PERSON_PATH) {
+    return 'person';
+  }
+
   // Default to people endpoint
   return 'people';
 }
@@ -460,8 +518,73 @@ function generateMockTerms(): Term[] {
 }
 
 /**
+ * Parse the optional nonCurrentTermRate query parameter (0.0 to 1.0, default 0.0), which controls
+ * the proportion of students with a non-current term. Out-of-range values are clamped.
+ */
+function parseNonCurrentTermRate(queryParams: Record<string, string | undefined>): number {
+  const nonCurrentTermRate = parseFloat(queryParams.nonCurrentTermRate || '0.0');
+  if (nonCurrentTermRate < 0.0 || nonCurrentTermRate > 1.0) {
+    console.warn(`Invalid nonCurrentTermRate=${nonCurrentTermRate}, clamping to [0.0, 1.0]`);
+    return Math.max(0.0, Math.min(1.0, nonCurrentTermRate));
+  }
+  return nonCurrentTermRate;
+}
+
+/**
+ * Single person endpoint: return the simulated person identified by the `buid` query parameter.
+ * Stateless - the depletion counter used by the people endpoint is not touched.
+ */
+async function handlePersonRequest(event: APIGatewayProxyEventV2, requestStartTime: number): Promise<APIGatewayProxyResultV2> {
+  const queryParams = event.queryStringParameters || {};
+  const { buid } = queryParams;
+  const totalPopulation = parseInt(process.env.MOCK_TOTAL_POPULATION || '10000', 10);
+  const errorRate = parseFloat(process.env.MOCK_ERROR_RATE || '0.0');
+  const nonCurrentTermRate = parseNonCurrentTermRate(queryParams);
+
+  const index = personIndexFromBuid(buid);
+  if (index === undefined) {
+    console.error(`Missing or malformed buid query parameter: ${buid}`);
+    return {
+      statusCode: 400,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: `Missing or malformed buid query parameter (expected "U" followed by digits): ${buid}` }),
+    };
+  }
+
+  if (errorRate > 0 && Math.random() < errorRate) {
+    console.error('Simulating API error based on MOCK_ERROR_RATE');
+    return {
+      statusCode: 500,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: 'Simulated API error' }),
+    };
+  }
+
+  // A person beyond the population is not in the source (e.g. dropped by a smaller follow-up run).
+  const persons: MockPerson[] = index < totalPopulation
+    ? [generateMockPerson(index, { nonCurrentTermRate })]
+    : [];
+  console.log(`Returning ${persons.length} person(s) for buid=${buid} (index=${index}, totalPopulation=${totalPopulation})`);
+
+  // Simulate API delay if configured (mimics slow real API behavior)
+  const simulatedDelaySeconds = parseFloat(process.env.MOCK_SIMULATED_DELAY_SECONDS || '0');
+  const remainingDelay = simulatedDelaySeconds - (Date.now() - requestStartTime) / 1000;
+  if (remainingDelay > 0) {
+    console.log(`Simulating API delay: waiting ${remainingDelay.toFixed(2)} more seconds before responding`);
+    await new Promise(resolve => setTimeout(resolve, remainingDelay * 1000));
+  }
+
+  return {
+    statusCode: 200,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ response: persons }),
+  };
+}
+
+/**
  * Main Lambda handler for Function URL requests.
- * Supports both person data endpoint (/) and current terms endpoint (/terms).
+ * Supports the person data endpoint (/), the single person endpoint (/person?buid=...) and the
+ * current terms endpoint (/terms).
  */
 export async function handler(event: APIGatewayProxyEventV2, context: Context): Promise<APIGatewayProxyResultV2> {
   const requestStartTime = Date.now();
@@ -539,6 +662,11 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
     };
   }
 
+  if (endpointType === 'person') {
+    console.log('Routing to single person endpoint');
+    return handlePersonRequest(event, requestStartTime);
+  }
+
   // Continue with people endpoint logic
   // Parse query parameters
   const queryParams = event.queryStringParameters || {};
@@ -546,15 +674,7 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
   const offset = parseInt(queryParams.offset || '0', 10);
   const totalPopulation = parseInt(process.env.MOCK_TOTAL_POPULATION || '10000', 10);
   const errorRate = parseFloat(process.env.MOCK_ERROR_RATE || '0.0');
-  
-  // Parse optional nonCurrentTermRate parameter (0.0 to 1.0, default 0.0)
-  // Controls probability that students have non-current term
-  let nonCurrentTermRate = parseFloat(queryParams.nonCurrentTermRate || '0.0');
-  // Clamp to valid range [0.0, 1.0]
-  if (nonCurrentTermRate < 0.0 || nonCurrentTermRate > 1.0) {
-    console.warn(`Invalid nonCurrentTermRate=${nonCurrentTermRate}, clamping to [0.0, 1.0]`);
-    nonCurrentTermRate = Math.max(0.0, Math.min(1.0, nonCurrentTermRate));
-  }
+  const nonCurrentTermRate = parseNonCurrentTermRate(queryParams);
 
   console.log(`Generating mock data: offset=${offset}, recordCount=${recordCount}, totalPopulation=${totalPopulation}, nonCurrentTermRate=${nonCurrentTermRate}`);
   console.log('Note: offset is accepted for API compatibility but ignored for stateful depletion allocation');
@@ -694,6 +814,9 @@ if (require.main === module) {
     'OUTPUT_FILE_PATH'
   ].forEach(testEnvironment.getVar);
 
+  // Optional: set a BUID (e.g. U0000042) to call the single person endpoint instead of the people endpoint
+  testEnvironment.getVarOrEmptyString('BUID');
+
   const { LOCAL, REMOTE } = Task;
   const { 
     TASK: task = LOCAL, 
@@ -701,8 +824,13 @@ if (require.main === module) {
     PEOPLE_API_KEY: apiKey = 'test-api-key',
     RECORD_COUNT: recordCount = '10',
     OFFSET: offset = '0',
-    OUTPUT_FILE_PATH: outputFilePath = './scrap/source-simulator-output.json'
+    OUTPUT_FILE_PATH: outputFilePath = './scrap/source-simulator-output.json',
+    BUID: buid
   } = process.env;
+
+  const path = buid ? PERSON_PATH : '/';
+  const queryStringParameters: Record<string, string> = buid ? { buid } : { recordCount, offset };
+  const rawQueryString = new URLSearchParams(queryStringParameters).toString();
 
   (async () => {
     try {
@@ -714,15 +842,12 @@ if (require.main === module) {
           const mockEvent: APIGatewayProxyEventV2 = {
             version: '2.0',
             routeKey: '$default',
-            rawPath: '/',
-            rawQueryString: `recordCount=${recordCount}&offset=${offset}`,
+            rawPath: path,
+            rawQueryString,
             headers: {
               'x-api-key': apiKey,
             },
-            queryStringParameters: {
-              recordCount,
-              offset,
-            },
+            queryStringParameters,
             requestContext: {
               accountId: '123456789012',
               apiId: 'local-test',
@@ -730,7 +855,7 @@ if (require.main === module) {
               domainPrefix: 'local-test',
               http: {
                 method: 'GET',
-                path: '/',
+                path,
                 protocol: 'HTTP/1.1',
                 sourceIp: '127.0.0.1',
                 userAgent: 'test-harness',
@@ -759,7 +884,7 @@ if (require.main === module) {
             succeed: () => {},
           };
 
-          console.log(`Query parameters: recordCount=${recordCount}, offset=${offset}`);
+          console.log(`Path: ${path}, query parameters: ${rawQueryString}`);
           console.log('Calling handler...\n');
 
           const result = await handler(mockEvent, mockContext);
@@ -807,7 +932,7 @@ if (require.main === module) {
 
           console.log(`Function URL: ${FUNCTION_URL}`);
           console.log(`Base URL: ${baseUrl}`);
-          console.log(`Query parameters: recordCount=${recordCount}, offset=${offset}`);
+          console.log(`Path: ${path}, query parameters: ${rawQueryString}`);
           console.log('Making API call...\n');
 
           const { BuApiClientForApiKey } = require('integration-huron-person');
@@ -819,11 +944,8 @@ if (require.main === module) {
           } satisfies EndpointConfigForApiKey);
 
           const response = await apiClient.get({
-            url: '/',
-            params: {
-              recordCount,
-              offset,
-            },
+            url: path,
+            params: queryStringParameters,
           });
 
           console.log('\n=== Response ===');

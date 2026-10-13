@@ -372,6 +372,13 @@ https://your-function-url.lambda-url.us-east-2.on.aws/?recordCount=500&offset=2
 ```
 Returns persons 1000-1499 (offset 2 × 500 records)
 
+### Single Person Endpoint
+
+`/person?buid=U0000042` returns one person, mirroring the real person API: the same payload the
+people endpoint produces for that person, without consuming anything from a run. A BUID beyond
+`MOCK_TOTAL_POPULATION` returns `{ "response": [] }`; a missing or malformed one returns 400.
+Runner.ts uses it when `RUNNER_SINGLE_PERSON_BUID` is set with `RUNNER_SOURCE_SIMULATOR=true`.
+
 ### Mock Data Structure
 
 Generated persons include minimal fields for DataMapper:
@@ -419,6 +426,7 @@ SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION=1000
 SOURCE_SIMULATOR_SECRET_ARN=<your-secret-arn>
 SOURCE_SIMULATOR_RECORD_COUNT=10
 SOURCE_SIMULATOR_OFFSET=0
+# SOURCE_SIMULATOR_BUID=U0000042   # optional: call /person?buid= instead
 SOURCE_SIMULATOR_API_KEY=test-api-key
 
 # Run the harness
@@ -435,6 +443,7 @@ SOURCE_SIMULATOR_FUNCTION_URL=https://your-function-url.lambda-url.us-east-2.on.
 SOURCE_SIMULATOR_API_KEY=<your-api-key>
 SOURCE_SIMULATOR_RECORD_COUNT=10
 SOURCE_SIMULATOR_OFFSET=0
+# SOURCE_SIMULATOR_BUID=U0000042   # optional: call /person?buid= instead
 
 # Run the harness
 npx ts-node src/chunking/fetch/SourceSimulator.ts

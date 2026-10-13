@@ -56,14 +56,6 @@ export async function startChunkingService(env?: RunnerEnv) {
     return;
   }
 
-  // Auto-correct: Force mock population to 1 when using single-person mode with source simulator
-  if (env.buid && env.sourceSimulator) {
-    if (env.sourceSimulatorMockTotalPopulation && env.sourceSimulatorMockTotalPopulation !== 1) {
-      console.log(`⚠️  SINGLE_PERSON_BUID is set - automatically overriding MOCK_TOTAL_POPULATION from ${env.sourceSimulatorMockTotalPopulation} to 1`);
-    }
-    env.sourceSimulatorMockTotalPopulation = 1;
-  }
-
   const seedNumber = parseInt(env.messagesToPrepopulate);
 
   let runner: ChunkingServiceRunner;

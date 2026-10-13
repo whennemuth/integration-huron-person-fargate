@@ -1,4 +1,4 @@
-import { handler, resetSourceSimulatorState } from '../src/chunking/fetch/SourceSimulator';
+import { handler, personIndexFromBuid, resetSourceSimulatorState } from '../src/chunking/fetch/SourceSimulator';
 import { APIGatewayProxyEventV2, Context } from 'aws-lambda';
 import { ConfigManager } from 'integration-huron-person';
 
@@ -398,6 +398,129 @@ describe('SourceSimulator Lambda Handler', () => {
       const body = parseResponseBody(response);
       // Should cap at population size (1000)
       expect(body.response).toHaveLength(1000);
+    });
+  });
+
+  describe('Single Person Endpoint (/person?buid=)', () => {
+    const getPerson = async (buid?: string, extra: Record<string, string> = {}, path: string = '/person') => {
+      const params = buid === undefined ? { ...extra } : { buid, ...extra };
+      return assertProxyResult(await handler(createEvent(params, undefined, path), mockContext));
+    };
+
+    it('should return the person identified by the BUID', async () => {
+      const response = await getPerson('U0000042');
+
+      expect(response.statusCode).toBe(200);
+      const body = parseResponseBody(response);
+      expect(body.response).toHaveLength(1);
+      expect(body.response[0].personid).toBe('U0000042');
+      expect(body.response[0].bu_id).toBe('00000042');
+    });
+
+    it('should return the same payload the people endpoint produces for that person', async () => {
+      const nonCurrentTermRate = '0.5';
+      const people = parseResponseBody(assertProxyResult(
+        await handler(createEvent({ recordCount: '60', nonCurrentTermRate }), mockContext)
+      )).response;
+
+      for (const expected of people) {
+        const actual = parseResponseBody(await getPerson(expected.personid, { nonCurrentTermRate })).response[0];
+        expect(actual).toEqual(expected);
+      }
+    });
+
+    it('should not consume from the people endpoint depletion counter', async () => {
+      await getPerson('U0000001');
+      await getPerson('U0000500');
+
+      const body = parseResponseBody(assertProxyResult(await handler(createEvent({ recordCount: '10' }), mockContext)));
+      expect(body.response[0].personid).toBe('U0000001');
+    });
+
+    it('should return an empty response for a BUID beyond MOCK_TOTAL_POPULATION', async () => {
+      const lastResponse = parseResponseBody(await getPerson('U0001000')).response;
+      expect(lastResponse).toHaveLength(1);
+
+      const response = await getPerson('U0001001');
+      expect(response.statusCode).toBe(200);
+      expect(parseResponseBody(response).response).toEqual([]);
+    });
+
+    it.each([
+      ['missing', undefined],
+      ['empty', ''],
+      ['not U + digits', 'X0000042'],
+      ['lower case u', 'u0000042'],
+      ['trailing characters', 'U0000042a'],
+      ['zero', 'U0000000'],
+    ])('should return 400 for a %s BUID', async (_label, buid) => {
+      const response = await getPerson(buid as string | undefined);
+      expect(response.statusCode).toBe(400);
+      expect(parseResponseBody(response).error).toContain('buid');
+    });
+
+    it('should accept a trailing slash on the path', async () => {
+      const response = await getPerson('U0000007', {}, '/person/');
+      expect(parseResponseBody(response).response[0].personid).toBe('U0000007');
+    });
+
+    it('should require an API key', async () => {
+      const event = createEvent({ buid: 'U0000042' }, {}, '/person');
+      const response = assertProxyResult(await handler(event, mockContext));
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('should return 500 based on MOCK_ERROR_RATE', async () => {
+      process.env.MOCK_ERROR_RATE = '1.0';
+      const response = await getPerson('U0000042');
+      expect(response.statusCode).toBe(500);
+    });
+  });
+
+  describe('personIndexFromBuid', () => {
+    it.each([
+      ['U0000001', 0],
+      ['U0000042', 41],
+      ['U0001856', 1855],
+      ['U12345678', 12345677],
+      [' U0000042 ', 41],
+    ])('maps %s to index %i', (buid, index) => {
+      expect(personIndexFromBuid(buid)).toBe(index);
+    });
+
+    it.each([undefined, '', 'U', 'U0000000', 'u0000042', '00000042', 'U00000x2'])('rejects %p', (buid) => {
+      expect(personIndexFromBuid(buid)).toBeUndefined();
+    });
+  });
+
+  describe('Student term assignment (nonCurrentTermRate)', () => {
+    // Every third person (index 1, 4, 7, ...) is a student.
+    const studentTerms = async (nonCurrentTermRate: string): Promise<string[]> => {
+      resetSourceSimulatorState();
+      const persons = parseResponseBody(assertProxyResult(
+        await handler(createEvent({ recordCount: '300', nonCurrentTermRate }), mockContext)
+      )).response;
+      return persons
+        .filter((p: any) => p.studentInfo)
+        .map((p: any) => p.studentInfo.studentSemester[0].studentSemesterInfo.academicTerm.term.code);
+    };
+
+    it('should give every student the current term at rate 0.0', async () => {
+      expect(new Set(await studentTerms('0.0'))).toEqual(new Set(['2261']));
+    });
+
+    it('should give every student the non-current term at rate 1.0', async () => {
+      expect(new Set(await studentTerms('1.0'))).toEqual(new Set(['2256']));
+    });
+
+    it('should give roughly the requested proportion a non-current term, identically on every request', async () => {
+      const first = await studentTerms('0.5');
+      const second = await studentTerms('0.5');
+
+      expect(second).toEqual(first);
+      const nonCurrent = first.filter(code => code === '2256').length;
+      expect(nonCurrent / first.length).toBeGreaterThan(0.3);
+      expect(nonCurrent / first.length).toBeLessThan(0.7);
     });
   });
 
