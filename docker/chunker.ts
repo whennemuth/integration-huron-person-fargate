@@ -390,6 +390,12 @@ export async function main() {
       console.log(`personRecordProcessor customization(s) requested: ${personRecordProcessorCustomizations}`);
     }
 
+    // Terms endpoint override for the processor tasks (set only for simulated-source runs)
+    const termsEndpoint = chunker.getTermsEndpoint?.();
+    if (termsEndpoint) {
+      console.log(`Terms endpoint for this run: ${termsEndpoint.baseUrl}${termsEndpoint.fetchPath}`);
+    }
+
     // Write flags file BEFORE chunking starts so processor tasks can read it immediately
     await metadataBroker.writeFlags({
       bucketName: chunksBucket,
@@ -398,6 +404,7 @@ export async function main() {
       trustPreviousStorage: chunkFromParams.trustPreviousStorage,
       syncPopulation,
       personRecordProcessorCustomizations,
+      termsEndpoint,
       dryRun: dryRun === 'true',
       region
     });

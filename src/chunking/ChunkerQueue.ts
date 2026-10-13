@@ -270,7 +270,8 @@ export class ChunkerQueue {
       populationType, 
       bulkReset, 
       trustPreviousStorage,
-      personRecordProcessorCustomizations
+      personRecordProcessorCustomizations,
+      termsEndpoint
     } = taskParameters;
 
     // Don't create next message if iterationLimit is 0 (process all)
@@ -303,7 +304,8 @@ export class ChunkerQueue {
         iterationLimit, 
         offset: nextOffset, 
         chunkDirectory,
-            personRecordProcessorCustomizations
+        personRecordProcessorCustomizations,
+        termsEndpoint
       } satisfies ApiChunkerEvent;
 
       // Send the SQS message

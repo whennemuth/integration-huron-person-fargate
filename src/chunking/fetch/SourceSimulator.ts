@@ -12,7 +12,7 @@
  * **Design (People Endpoint):**
  * - Stateful depletion model: Every request claims the next contiguous slice of available records
  * - Non-deterministic by request params: `offset` is accepted for compatibility but does not drive allocation
- * - Validates API key from Secrets Manager against incoming requests
+ * - Validates the people API key from Secrets Manager against incoming requests
  * - Returns minimal field set (only fields DataMapper uses)
  * - Matches real API response structure: `{ response: [persons] }`
  * - Simulates slow API: Optional delay before responding via MOCK_SIMULATED_DELAY_SECONDS
@@ -28,6 +28,9 @@
  * - Accepts `nonCurrentTermRate` like the people endpoint
  *
  * **Design (Terms Endpoint):**
+ * - Called by the processor tasks for simulated-source runs (the Runner sends the terms endpoint
+ *   along with the run, see Flags.termsEndpoint), so validates the terms API key
+ *   (dataSource.terms.endpointConfig.apiKey), which is what the processor sends
  * - Returns static list of 6 terms (2 current, 2 past, 2 future)
  * - No pagination (terms are small dataset)
  * - Matches real API response structure: `{ response: [terms] }`
@@ -88,6 +91,7 @@ interface Term {
 export const FUNCTION_BASE_NAME = 'source-simulator';
 export const SIMULATOR_COUNTER_NAME = 'simulator-offset-counter';
 export const PERSON_PATH = '/person';
+export const TERMS_PATH = '/terms';
 const BUID_PATTERN = /^U(\d+)$/;
 
 /**
@@ -134,12 +138,12 @@ export enum ENVIRONMENT_VARIABLES_NAMES {
 }
 
 // Cache the API key between Lambda invocations (Lambda reuses execution environments)
-let cachedApiKey: string | null = null;
+let cachedApiKeys: ApiKeys | null = null;
 let cachedCounter: AbstractAtomicCounter | null = null;
 let inMemoryNextIndex = 0;
 
 export function resetSourceSimulatorState(): void {
-  cachedApiKey = null;
+  cachedApiKeys = null;
   cachedCounter = null;
   inMemoryNextIndex = 0;
 }
@@ -306,21 +310,29 @@ function generateMockPerson(index: number, options?: { nonCurrentTermRate?: numb
 }
 
 /**
- * Retrieve API key from Secrets Manager using ConfigManager.
+ * The API keys the simulator expects, from the integration config secret: the people key (for the
+ * people and single person endpoints) and the terms key (for the terms endpoint - the processor
+ * sends dataSource.terms.endpointConfig.apiKey when it fetches terms from the simulator).
+ * A null key means that endpoint's requests are not validated.
+ */
+type ApiKeys = { people: string | null; terms: string | null };
+
+/**
+ * Retrieve the API keys from Secrets Manager using ConfigManager.
  * Uses caching to avoid repeated calls to Secrets Manager.
  * 
- * @returns API key from Secrets Manager, or null if SECRET_ARN not configured
+ * @returns API keys from Secrets Manager (null keys if SECRET_ARN is not configured)
  */
-async function getApiKey(): Promise<string | null> {
+async function getApiKeys(): Promise<ApiKeys> {
   // Return cached value if available
-  if (cachedApiKey !== null) {
-    return cachedApiKey;
+  if (cachedApiKeys !== null) {
+    return cachedApiKeys;
   }
 
   const secretArn = process.env.SECRET_ARN;
   if (!secretArn) {
     console.warn('SECRET_ARN not configured, skipping API key validation');
-    return null;
+    return { people: null, terms: null };
   }
 
   try {
@@ -334,20 +346,23 @@ async function getApiKey(): Promise<string | null> {
     
     // Extract API key from config (cast to DataSourceConfig since S3DataSourceConfig doesn't have endpointConfig)
     const peopleConfig = config?.dataSource?.people as DataSourceConfig;
-    const apiKey = peopleConfig?.endpointConfig?.apiKey;
+    const people = peopleConfig?.endpointConfig?.apiKey || null;
+    const terms = config?.dataSource?.terms?.endpointConfig?.apiKey || null;
     
-    if (!apiKey) {
+    if (!people) {
       console.error('API key not found in secret at dataSource.people.endpointConfig.apiKey');
-      return null;
+    }
+    if (!terms) {
+      console.error('API key not found in secret at dataSource.terms.endpointConfig.apiKey');
     }
 
-    // Cache the API key for subsequent invocations
-    cachedApiKey = apiKey;
-    console.log('Successfully retrieved and cached API key from Secrets Manager');
-    return apiKey;
+    // Cache the API keys for subsequent invocations
+    cachedApiKeys = { people, terms };
+    console.log('Successfully retrieved and cached API keys from Secrets Manager');
+    return cachedApiKeys;
   } catch (error) {
-    console.error('Error retrieving API key from Secrets Manager via ConfigManager:', error);
-    return null;
+    console.error('Error retrieving API keys from Secrets Manager via ConfigManager:', error);
+    return { people: null, terms: null };
   }
 }
 
@@ -608,8 +623,13 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
     };
   }
 
-  // Retrieve API key from Secrets Manager
-  const expectedApiKey = await getApiKey();
+  // Determine which endpoint is being requested
+  const endpointType = getEndpointType(event.rawPath || '/');
+
+  // Retrieve API keys from Secrets Manager. Each endpoint expects the key its real counterpart's
+  // client sends: the terms key for terms, the people key otherwise.
+  const apiKeys = await getApiKeys();
+  const expectedApiKey = endpointType === 'terms' ? apiKeys.terms : apiKeys.people;
 
   // Validate API key (for non-health endpoints)
   if (validateApiKey(event, expectedApiKey)) {
@@ -623,9 +643,6 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
       body: JSON.stringify({ error: 'Unauthorized: Invalid API key' }),
     };
   }
-
-  // Determine which endpoint is being requested
-  const endpointType = getEndpointType(event.rawPath || '/');
 
   // Route to terms endpoint if requested
   if (endpointType === 'terms') {

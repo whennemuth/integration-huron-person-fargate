@@ -524,6 +524,42 @@ describe('SourceSimulator Lambda Handler', () => {
     });
   });
 
+  describe('Terms Endpoint API Key', () => {
+    const termsApiKey = 'test-terms-api-key-67890';
+
+    beforeEach(() => {
+      (ConfigManager.getInstance as jest.Mock) = jest.fn().mockReturnValue({
+        reset: jest.fn().mockReturnThis(),
+        fromSecretManager: jest.fn().mockReturnThis(),
+        getConfigAsync: jest.fn().mockResolvedValue({
+          dataSource: {
+            people: { endpointConfig: { apiKey: testApiKey } },
+            terms: { endpointConfig: { apiKey: termsApiKey } },
+          },
+        }),
+      });
+      resetSourceSimulatorState();
+    });
+
+    const call = async (path: string, apiKey: string) =>
+      assertProxyResult(await handler(createEvent({ buid: 'U0000001' }, { 'x-api-key': apiKey }, path), mockContext));
+
+    it('should accept the terms API key on /terms (what the processor sends)', async () => {
+      const response = await call('/terms', termsApiKey);
+      expect(response.statusCode).toBe(200);
+      expect(parseResponseBody(response).response).toHaveLength(6);
+    });
+
+    it('should reject the people API key on /terms', async () => {
+      expect((await call('/terms', testApiKey)).statusCode).toBe(401);
+    });
+
+    it.each(['/', '/person'])('should accept the people API key, and reject the terms API key, on %s', async (path) => {
+      expect((await call(path, testApiKey)).statusCode).toBe(200);
+      expect((await call(path, termsApiKey)).statusCode).toBe(401);
+    });
+  });
+
   describe('Health Check Endpoint', () => {
     it('should return health status on /health path', async () => {
       const event = createEvent(undefined, undefined, '/health');

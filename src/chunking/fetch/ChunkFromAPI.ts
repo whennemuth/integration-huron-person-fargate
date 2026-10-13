@@ -2,7 +2,7 @@ import { Message } from '@aws-sdk/client-sqs/dist-types/models/models_0';
 import { TestEnvironment } from 'integration-core';
 import { AxiosResponseStreamFilter, Config, ConfigManager, DataSourceConfig, error, ResponseProcessor } from "integration-huron-person";
 import { IContext } from "../../../context/IContext";
-import { SyncPopulation, ChunkFromParams, IChunkFromSource, DEFAULT_MAX_TOTAL_RECORDS } from "../../../docker/chunkTypes";
+import { SyncPopulation, ChunkFromParams, IChunkFromSource, DEFAULT_MAX_TOTAL_RECORDS, SourceEndpoint } from "../../../docker/chunkTypes";
 import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { getRetryStrategy } from '../../ApiErrorRetryStrategy';
@@ -26,6 +26,8 @@ export type TaskParameters = {
   chunkDirectory?: string;
   /** Comma-delimited list of personRecordProcessor Customization enum keys to activate for this run */
   personRecordProcessorCustomizations?: string;
+  /** Terms endpoint override for this run's processor tasks (see Flags.termsEndpoint) */
+  termsEndpoint?: SourceEndpoint;
 };
 
 /**
@@ -239,6 +241,7 @@ export class ChunkFromAPI implements IChunkFromSource {
     const bulkReset = messageBody.bulkReset;
     const trustPreviousStorage = messageBody.trustPreviousStorage;
     const personRecordProcessorCustomizations = messageBody.personRecordProcessorCustomizations;
+    const termsEndpoint = messageBody.termsEndpoint;
 
     this.taskParameters = { 
       baseUrl, 
@@ -251,7 +254,8 @@ export class ChunkFromAPI implements IChunkFromSource {
       trustPreviousStorage: typeof trustPreviousStorage === 'boolean'
         ? trustPreviousStorage
         : trustPreviousStorage === 'true',
-      personRecordProcessorCustomizations
+      personRecordProcessorCustomizations,
+      termsEndpoint
     };
 
     if (this.taskParameters.chunkDirectory) {
@@ -405,6 +409,13 @@ export class ChunkFromAPI implements IChunkFromSource {
    */
   public getPersonRecordProcessorCustomizations = (): string | undefined => {
     return this.taskParameters?.personRecordProcessorCustomizations;
+  }
+
+  /**
+   * Get the terms endpoint override from task parameters, if any (see Flags.termsEndpoint).
+   */
+  public getTermsEndpoint = (): SourceEndpoint | undefined => {
+    return this.taskParameters?.termsEndpoint;
   }
 
   /**

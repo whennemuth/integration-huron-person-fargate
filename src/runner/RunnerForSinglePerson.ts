@@ -66,6 +66,7 @@ export class SinglePersonRunner extends ChunkingServiceRunner {
       iterationLimit: iterationLimit ? iterationLimit : 0,
       offset: 0,
       personRecordProcessorCustomizations,
+      termsEndpoint: sourceEndpoint.termsEndpoint,
       processingMetadata: {
         processedAt: new Date().toISOString(),
         processorVersion: '1.0.0'

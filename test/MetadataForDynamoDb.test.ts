@@ -171,6 +171,17 @@ describe('MetadataForDynamoDb', () => {
       const call = mockStatisticsTable.writeFlags.mock.calls[0][1];
       expect(call.personRecordProcessorCustomizations).toBe('ORG_COMPARISON_LOGGING');
     });
+
+    it('should include termsEndpoint when present, and omit it otherwise', async () => {
+      const termsEndpoint = { baseUrl: 'https://sim.example.com', fetchPath: '/terms' };
+      const params = { chunkDirectory, bulkReset: true, trustPreviousStorage: false, syncPopulation: SyncPopulation.PersonFull };
+
+      await metadata.writeFlags({ ...params, termsEndpoint });
+      await metadata.writeFlags({ ...params, replace: true });
+
+      expect(mockStatisticsTable.writeFlags.mock.calls[0][1].termsEndpoint).toEqual(termsEndpoint);
+      expect(mockStatisticsTable.writeFlags.mock.calls[1][1]).not.toHaveProperty('termsEndpoint');
+    });
   });
 
   describe('read', () => {

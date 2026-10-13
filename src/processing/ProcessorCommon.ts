@@ -8,7 +8,7 @@
  */
 
 import { humanReadableFromMilliseconds, IntegrationResult } from 'integration-core';
-import { PersonRecordProcessor, TargetApiErrorEventProcessor } from 'integration-huron-person';
+import { Config, PersonRecordProcessor, TargetApiErrorEventProcessor } from 'integration-huron-person';
 import { SyncPopulation } from '../../docker/chunkTypes';
 import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../ApiErrorTracking';
 import { NextChunk, QueueReader } from '../Queue';
@@ -68,6 +68,27 @@ export function resolveCommonFlags(flags: Partial<Flags>, bulkResetEnvVar?: stri
   console.log(`Sync Population: ${syncPopulation}${flags.syncPopulation !== undefined ? ' (from flags)' : ' (defaulted)'}`);
 
   return { bulkReset, trustPreviousStorage, syncPopulation };
+}
+
+/**
+ * Applies this run's terms endpoint override (flags.termsEndpoint, set only for simulated-source
+ * runs) to the config: only baseUrl and fetchPath change, the apiKey and timeout stay as configured.
+ * Returns a copy; the config is returned as-is if there is no override or no terms data source.
+ */
+export function applyTermsEndpoint(config: Config, termsEndpoint?: Flags['termsEndpoint']): Config {
+  const { terms } = config.dataSource ?? {};
+  if (!termsEndpoint || !terms) {
+    return config;
+  }
+  const { baseUrl, fetchPath } = termsEndpoint;
+  console.log(`Terms endpoint: ${baseUrl}${fetchPath} (from flags)`);
+  return {
+    ...config,
+    dataSource: {
+      ...config.dataSource,
+      terms: { ...terms, fetchPath, endpointConfig: { ...terms.endpointConfig, baseUrl } }
+    }
+  };
 }
 
 /**

@@ -1,5 +1,5 @@
 import { Config, DataSourceConfig } from "integration-huron-person";
-import { ENVIRONMENT_VARIABLES_NAMES, PERSON_PATH, SourceSimulatorFunctionURL, getSimulatorCounter, personIndexFromBuid, FUNCTION_BASE_NAME as sourceSimulatorFunctionBaseName } from "../../chunking/fetch/SourceSimulator";
+import { ENVIRONMENT_VARIABLES_NAMES, PERSON_PATH, TERMS_PATH, SourceSimulatorFunctionURL, getSimulatorCounter, personIndexFromBuid, FUNCTION_BASE_NAME as sourceSimulatorFunctionBaseName } from "../../chunking/fetch/SourceSimulator";
 import { ChunkingServiceRunner } from "../AbstractRunner";
 import { LambdaFunctionEnvironmentVariable } from "../LambdaFunctionEnvironmentVariable";
 import { Endpoint, NormalizedPopulationType, TargetConfig } from "../RunnerTypes";
@@ -10,6 +10,9 @@ import { Endpoint, NormalizedPopulationType, TargetConfig } from "../RunnerTypes
  * 
  * The decorator overrides both the people and terms data source endpoints to point to the
  * source simulator Lambda Function URL, which simulates responses from the real BU CDM APIs.
+ * The terms endpoint is returned as the source endpoint's termsEndpoint, which travels with the
+ * chunker message into the run's Flags, where the processor tasks pick it up. (Changing this
+ * runner's config object would not reach them: they load their own config from the secret.)
  * In single person mode (SINGLE_PERSON_BUID) the source is the simulator's single person endpoint
  * (`/person?buid=...`) instead, which returns the same payload the people endpoint produces for
  * that person.
@@ -143,17 +146,14 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
     
     console.log(`Using source simulator for ${buid ? 'single person' : 'people'} endpoint: ${JSON.stringify({ baseUrl, fetchPath }, null, 2)}`);
 
-    // Also override terms data source to use source simulator
-    if (config.dataSource?.terms) {
-      const termsFetchPath = '/terms';
-      config.dataSource.terms.endpointConfig.baseUrl = baseUrl;
-      config.dataSource.terms.fetchPath = termsFetchPath;
-      console.log(`Using source simulator for terms endpoint: ${JSON.stringify({ baseUrl, fetchPath: termsFetchPath }, null, 2)}`);
-    }
+    // Simulated source data gets simulated terms too (hybrid runs never get here, so they keep the
+    // configured terms endpoint).
+    const termsEndpoint = { baseUrl: baseUrl!, fetchPath: TERMS_PATH };
+    console.log(`Using source simulator for terms endpoint: ${JSON.stringify(termsEndpoint, null, 2)}`);
 
     if (buid) {
       // The single person endpoint is stateless: no predictions to log, no depletion counter to reset.
-      return { baseUrl: baseUrl!, fetchPath: fetchPath! };
+      return { baseUrl: baseUrl!, fetchPath: fetchPath!, termsEndpoint };
     }
 
     await this.logSourceSimulatorPredictions(total);
@@ -166,7 +166,7 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
     }
     await atomicCounter.reset();
 
-    return { baseUrl: baseUrl!, fetchPath: fetchPath! };
+    return { baseUrl: baseUrl!, fetchPath: fetchPath!, termsEndpoint };
   }
 
   public async resolveDataTarget(config: Config): Promise<TargetConfig> {

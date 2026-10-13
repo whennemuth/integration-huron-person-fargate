@@ -64,3 +64,26 @@ describe('ChunkerQueue.sendNextChunkingMessage partialOrEmptyChunkEncountered sh
     expect(handleApiEvent).not.toHaveBeenCalled();
   });
 });
+
+describe('ChunkerQueue.sendNextChunkingMessage run parameter forwarding', () => {
+  beforeEach(() => {
+    delete process.env.DYNAMODB_ATOMIC_COUNTER_TABLE_NAME;
+    delete process.env.STACK_ID;
+    jest.clearAllMocks();
+  });
+
+  it('forwards the terms endpoint override to the next message', async () => {
+    const termsEndpoint = { baseUrl: 'https://sim.example.com', fetchPath: '/terms' };
+    const chunkerQueue = new ChunkerQueue({ isEcsTask: false, QueueUrl: 'https://sqs.example.com/queue', region: 'us-east-2', landscape: 'mock' });
+
+    await chunkerQueue.sendNextChunkingMessage({
+      iterationLimit: 10, offset: 0, chunkDirectory: 'chunks/person-full/2026-01-01T00:00:00.000Z',
+      taskParameters: {
+        baseUrl: 'https://sim.example.com', fetchPath: '/', populationType: SyncPopulation.PersonFull,
+        bulkReset: false, trustPreviousStorage: true, termsEndpoint
+      }
+    });
+
+    expect((handleApiEvent as jest.Mock).mock.calls[0][0].termsEndpoint).toEqual(termsEndpoint);
+  });
+});

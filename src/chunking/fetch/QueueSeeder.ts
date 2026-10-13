@@ -2,7 +2,7 @@
 import { TestEnvironment } from 'integration-core';
 import { handleApiEvent } from './ChunkerApiSubscriber';
 import { ApiChunkerEvent } from '../ChunkerSubscriber';
-import { SyncPopulation } from '../../../docker/chunkTypes';
+import { SourceEndpoint, SyncPopulation } from '../../../docker/chunkTypes';
 import { extractChunkDirectory } from '../filedrop/ChunkPathUtils';
 import { AbstractAtomicCounter } from '../../dynamodb/AtomicCounter';
 import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from '../ChunkerQueue';
@@ -21,6 +21,8 @@ export type QueueSeederParams = {
   queueUrl: string;
   dryRun?: boolean;
   personRecordProcessorCustomizations?: string;
+  /** Terms endpoint override for this run's processor tasks (see Flags.termsEndpoint) */
+  termsEndpoint?: SourceEndpoint;
 };
 
 /**
@@ -206,6 +208,7 @@ export class QueueSeeder {
         offset,
         chunkDirectory: this.chunkDirectory,
         personRecordProcessorCustomizations: this.personRecordProcessorCustomizations,
+        termsEndpoint: this.params.termsEndpoint,
         processingMetadata: {
           processedAt: new Date().toISOString(),
           processorVersion: '1.0.0'

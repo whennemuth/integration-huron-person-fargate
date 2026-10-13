@@ -40,6 +40,12 @@ export interface RunnerEnv {
 export interface Endpoint {
   baseUrl: string;
   fetchPath: string;
+  /**
+   * Source endpoints only: the terms endpoint the processor tasks should use for this run instead
+   * of the configured one. Set by SourceSimulatorRunnerDecorator, so that a simulated-source run
+   * also gets simulated terms (see Flags.termsEndpoint).
+   */
+  termsEndpoint?: Endpoint;
 }
 
 /**

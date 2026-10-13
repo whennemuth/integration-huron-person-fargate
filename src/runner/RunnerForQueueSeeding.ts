@@ -199,7 +199,8 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
       messagesToSeed: seedNumber,
       queueUrl: env.queueUrl!,
       dryRun: false,
-      personRecordProcessorCustomizations: env.personRecordProcessorCustomizations
+      personRecordProcessorCustomizations: env.personRecordProcessorCustomizations,
+      termsEndpoint: endpoint.termsEndpoint
     });
     
     // Reset the atomic counters to ensure a clean slate for seeded messages and chunk ordinals

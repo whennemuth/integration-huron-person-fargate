@@ -107,6 +107,7 @@ Design intent: avoid immediate desired-count reversal due to stale scale-in alar
   - Validates source simulator URL exists.
   - Applies simulator Lambda env overrides in one batched update.
   - Uses simulator endpoint instead of configured upstream endpoint: `/` (people), or `/person?buid=<SINGLE_PERSON_BUID>` in single person mode, which returns the same payload `/` produces for that person (so no population-of-1 workaround is needed). Single person mode skips the predictions and the counter reset (the endpoint is stateless), fails prerequisites for a BUID the simulator does not generate (`U` + digits), and warns for one beyond its population.
+  - Returns the simulator's `/terms` as the source endpoint's `termsEndpoint`, which travels via the chunker message and the run's Flags to the processor tasks (`Flags.termsEndpoint`, applied by `applyTermsEndpoint()`), so simulated runs get simulated terms. It does NOT change `config.dataSource.terms`: this runner's config never reaches the tasks (see the `preLoadedMaps` lesson in the project CLAUDE.md). Hybrid runs don't use this decorator, so they keep the real terms endpoint.
   - Resets simulator atomic counter.
   - Warns about potential overseeding relative to simulated population.
 

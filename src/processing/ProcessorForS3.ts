@@ -60,6 +60,7 @@ import { MetadataFactoryForBootstrap } from '../chunking/metadata/MetadataFactor
 import { StandardMetadataUtils } from '../chunking/metadata/MetadataUtils';
 import { PersonCacheLookup } from '../person-cache/PersonCacheLookup';
 import {
+  applyTermsEndpoint,
   buildErrorTracker,
   computeExitCode,
   logIntegrationResult,
@@ -303,12 +304,12 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     errorTracker = buildErrorTracker({ tableName: dynamoDbStatisticsTableName, integrationTimestamp, region });
 
     // Build config with S3 data source pointing to this chunk
-    const config = await buildChunkConfig({
+    const config = applyTermsEndpoint(await buildChunkConfig({
       bucketName: bucketName!,
       s3Key: s3Key!,
       integratedDeltaStoragePath: SHARED_DELTA_STORAGE_DIR,
       region
-    });
+    }), flags.termsEndpoint);
 
     // Create shared cache instance for JWT tokens to avoid repeated authentication
     // This cache will be shared across all API client instances (organizations, person lookups, person updates)

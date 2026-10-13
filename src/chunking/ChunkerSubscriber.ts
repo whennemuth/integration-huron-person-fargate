@@ -35,7 +35,7 @@
 
 import { handleS3Event } from './filedrop/ChunkerS3Subscriber';
 import { handleApiEvent } from './fetch/ChunkerApiSubscriber';
-import { SyncPopulation } from '../../docker/chunkTypes';
+import { SourceEndpoint, SyncPopulation } from '../../docker/chunkTypes';
 
 /**
  * S3-based event structure
@@ -67,6 +67,13 @@ export interface ApiChunkerEvent {
    * src/processing/custom/AbstractCustomPersonProcessor.ts) to activate for this run.
    */
   personRecordProcessorCustomizations?: string;
+  /**
+   * Terms data source endpoint for this run, overriding the config's dataSource.terms baseUrl and
+   * fetchPath (not its apiKey) in the processor tasks. Set only when the source is the source
+   * simulator, so a simulated run also gets simulated terms. Absent otherwise, including hybrid runs
+   * (real source -> mock target), which use the configured terms endpoint.
+   */
+  termsEndpoint?: SourceEndpoint;
   processingMetadata?: {
     processedAt?: string;
     processorVersion?: string;

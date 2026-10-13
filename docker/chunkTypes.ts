@@ -15,6 +15,14 @@ export const DEFAULT_MAX_TOTAL_RECORDS = 500_000;
  * sources) - kept out of docker/chunker.ts itself since that module imports both of those
  * classes, which would otherwise need to import these types back from docker/chunker.ts.
  */
+/**
+ * An API endpoint for a source data set other than the people being chunked, e.g. current terms.
+ */
+export type SourceEndpoint = {
+  baseUrl: string;
+  fetchPath: string;
+};
+
 export type IChunkFromSource = {
   runChunking: (params: ChunkFromParams) => Promise<void>
   noMessagesFromQueue?: boolean
@@ -24,6 +32,7 @@ export type IChunkFromSource = {
   getTrustPreviousStorageFlag?: () => boolean  // Optional getter for trustPreviousStorage flag from task parameters
   getSyncPopulation?: () => SyncPopulation  // Optional getter for syncPopulation from task parameters
   getPersonRecordProcessorCustomizations?: () => string | undefined  // Optional getter for personRecordProcessorCustomizations from task parameters
+  getTermsEndpoint?: () => SourceEndpoint | undefined  // Optional getter for termsEndpoint from task parameters
 }
 
 export type ChunkFromParams = {

@@ -73,6 +73,7 @@ import { StandardMetadataUtils } from '../chunking/metadata/MetadataUtils';
 import { StatisticsTable } from '../dynamodb/StatisticsTable';
 import { PersonCacheLookup } from '../person-cache/PersonCacheLookup';
 import {
+  applyTermsEndpoint,
   buildErrorTracker,
   computeExitCode,
   logIntegrationResult,
@@ -287,14 +288,14 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     errorTracker = buildErrorTracker({ tableName: errorTrackingStatisticsTableName, integrationTimestamp, region });
 
     // Build config with DynamoDB delta storage
-    const config = await buildChunkConfig({
+    const config = applyTermsEndpoint(await buildChunkConfig({
       bucketName: bucketName!,
       s3Key: s3Key!,
       personCurrentStateTableName: currentStateTableName,
       personHistoryTableName: historyTableName,
       region,
       integrationTimestamp
-    });
+    }), flags.termsEndpoint);
 
     // Create shared cache for JWT tokens
     const cache = BasicCache.getInstance(config);

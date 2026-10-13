@@ -8,7 +8,7 @@ jest.mock('../src/chunking/fetch/SourceSimulator', () => ({
   getSimulatorCounter: jest.fn(),
 }));
 
-describe('SourceSimulatorRunnerDecorator (single person mode)', () => {
+describe('SourceSimulatorRunnerDecorator', () => {
   const functionUrl = 'https://abc123.lambda-url.us-east-2.on.aws/';
 
   beforeEach(() => {
@@ -34,7 +34,11 @@ describe('SourceSimulatorRunnerDecorator (single person mode)', () => {
 
     const endpoint = await decorator.resolveDataSource({ dataSource: {} } as any);
 
-    expect(endpoint).toEqual({ baseUrl: 'https://abc123.lambda-url.us-east-2.on.aws', fetchPath: '/person?buid=U0000042' });
+    expect(endpoint).toEqual({
+      baseUrl: 'https://abc123.lambda-url.us-east-2.on.aws',
+      fetchPath: '/person?buid=U0000042',
+      termsEndpoint: { baseUrl: 'https://abc123.lambda-url.us-east-2.on.aws', fetchPath: '/terms' }
+    });
     // The buid query parameter is what makes the chunker do a single, non-paged request
     expect(new URL(`${endpoint.baseUrl}${endpoint.fetchPath}`).searchParams.get('buid')).toBe('U0000042');
     expect(getSimulatorCounter).not.toHaveBeenCalled();
@@ -51,6 +55,19 @@ describe('SourceSimulatorRunnerDecorator (single person mode)', () => {
 
     expect(endpoint.fetchPath).toBe('/');
     expect(reset).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends simulated terms via the endpoint, not by changing the runner config (which never reaches the tasks)', async () => {
+    (getSimulatorCounter as jest.Mock).mockReturnValue({ reset: jest.fn().mockResolvedValue(undefined) });
+    const { decorator } = decoratorFor({});
+    jest.spyOn(decorator as any, 'logSourceSimulatorPredictions').mockResolvedValue(undefined);
+    const terms = { endpointConfig: { baseUrl: 'https://real.example.com', apiKey: 'k' }, fetchPath: '/real/terms' };
+    const config = { dataSource: { terms: JSON.parse(JSON.stringify(terms)) } } as any;
+
+    const endpoint = await decorator.resolveDataSource(config);
+
+    expect(endpoint.termsEndpoint).toEqual({ baseUrl: 'https://abc123.lambda-url.us-east-2.on.aws', fetchPath: '/terms' });
+    expect(config.dataSource.terms).toEqual(terms);
   });
 
   it('fails prerequisites for a BUID the simulator does not generate', async () => {

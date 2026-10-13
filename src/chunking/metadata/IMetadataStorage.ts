@@ -1,4 +1,4 @@
-import { SyncPopulation } from '../../../docker/chunkTypes';
+import { SourceEndpoint, SyncPopulation } from '../../../docker/chunkTypes';
 
 /**
  * Flags configuration for chunking pipeline.
@@ -22,6 +22,13 @@ export type Flags = {
    * without a stack redeploy.
    */
   personRecordProcessorCustomizations?: string;
+  /**
+   * Terms data source endpoint for this run, overriding the config's dataSource.terms baseUrl and
+   * fetchPath (not its apiKey) in the processor tasks. Set only when the source is the source
+   * simulator, so a simulated run also gets simulated terms. Absent otherwise, including hybrid runs
+   * (real source -> mock target), which use the configured terms endpoint.
+   */
+  termsEndpoint?: SourceEndpoint;
   [key: string]: any; // Allow additional fields for flexibility
 }
 
