@@ -25,7 +25,7 @@ AbstractPersonTarget (interface)
 ```
 
 In a mock landscape, config.dataTarget points at the target simulator (an HTTP stand-in for the
-Huron API - see src/target-simulator/TargetSimulator.ts), so PersonTargetReal works unchanged there.
+Huron API - see src/processing/TargetSimulator.ts), so PersonTargetReal works unchanged there.
 
 **Benefits**:
 - **Single Responsibility**: PersonTargetReal handles the target API; cache classes handle storage

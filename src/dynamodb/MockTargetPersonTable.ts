@@ -5,7 +5,7 @@ import { DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, ScanComm
 /**
  * Mock Target Person Table
  *
- * Purpose: The storage behind the target simulator (src/target-simulator/TargetSimulator.ts) - the
+ * Purpose: The storage behind the target simulator (src/processing/TargetSimulator.ts) - the
  * HTTP stand-in for the Huron person API that a mock landscape's ECS tasks call, unknowingly, in
  * place of the real target system. Exists only in a mock landscape (see isMockLandscape in
  * src/Utils.ts).

@@ -382,7 +382,7 @@ export class DynamoDbTables extends Construct {
 
   /**
    * DynamoDB table backing the target simulator (mock landscapes only) - see
-   * src/target-simulator/TargetSimulator.ts and src/dynamodb/MockTargetPersonTable.ts.
+   * src/processing/TargetSimulator.ts and src/dynamodb/MockTargetPersonTable.ts.
    * 
    * Table Design:
    * - Partition Key (PK): `personId` - the person's sourceIdentifier (BUID)

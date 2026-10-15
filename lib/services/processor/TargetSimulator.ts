@@ -8,7 +8,7 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
-import { ENVIRONMENT_VARIABLES_NAMES, FUNCTION_BASE_NAME } from '../../../src/target-simulator/TargetSimulator';
+import { ENVIRONMENT_VARIABLES_NAMES, FUNCTION_BASE_NAME } from '../../../src/processing/TargetSimulator';
 
 export interface TargetSimulatorProps {
   landscape: string;
@@ -27,7 +27,7 @@ export interface TargetSimulatorProps {
 /**
  * Creates the target simulator (mock landscapes only): a Lambda behind an API Gateway HTTP API that
  * impersonates the Huron person API, backed by the mock target table. See
- * src/target-simulator/TargetSimulator.ts.
+ * src/processing/TargetSimulator.ts.
  *
  * Why an HTTP API rather than a (simpler) Lambda Function URL: the Huron client deliberately sends
  * UNENCODED square brackets in query strings (e.g. pagination[offset]=0 - see integration-huron-person
@@ -85,7 +85,7 @@ export class TargetSimulator extends Construct {
       runtime: Runtime.NODEJS_20_X,
       architecture: Architecture.ARM_64,
       handler: 'handler',
-      entry: 'src/target-simulator/TargetSimulator.ts',
+      entry: 'src/processing/TargetSimulator.ts',
       timeout: Duration.seconds(timeoutSeconds),
       memorySize: memorySizeMb,
       role: lambdaRole,

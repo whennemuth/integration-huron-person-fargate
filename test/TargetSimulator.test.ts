@@ -1,5 +1,5 @@
 /**
- * Contract tests for the target simulator (src/target-simulator/TargetSimulator.ts).
+ * Contract tests for the target simulator (src/processing/TargetSimulator.ts).
  *
  * The simulator only earns its keep if the pipeline's REAL Huron client code - unchanged - works
  * against it. So rather than asserting on hand-built requests, these tests run the simulator behind
@@ -16,7 +16,7 @@ import { AddressInfo } from 'net';
 import { CrudOperation, FieldSet, Status } from 'integration-core';
 import { HuronPersonDataTarget, ListPeople, ReadPerson, TargetPersonDeleteType } from 'integration-huron-person';
 import { MockTargetPersonRecord, MockTargetPersonStore } from '../src/dynamodb/MockTargetPersonTable';
-import { hrnFor, signJwt, TargetSimulator, toSimulatorRequest } from '../src/target-simulator/TargetSimulator';
+import { hrnFor, signJwt, TargetSimulator, toSimulatorRequest } from '../src/processing/TargetSimulator';
 
 const EXTERNAL_TOKEN = 'test-external-token';
 const API_USER = 'bu-sso_api-user@bu.edu';

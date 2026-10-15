@@ -305,7 +305,7 @@ bucket, the stack itself), so a dedicated mock stack isolates everything by cons
 the S3 delta storage and the chunker's baseline scan, which the old per-run isolation tables never
 covered. A mock stack uses the **standard** tables; they simply never hold real data.
 
-**The target simulator** (`src/target-simulator/TargetSimulator.ts`, CDK:
+**The target simulator** (`src/processing/TargetSimulator.ts`, CDK:
 `lib/services/processor/TargetSimulator.ts`): a Lambda behind an API Gateway HTTP API that impersonates
 the subset of the Huron person API the pipeline uses - token request, `POST`/`PATCH`/`GET /api/v2/persons[/{hrn}]`
 with filters/paging - storing persons in the mock target table. CDK injects its endpoint (and a generated
