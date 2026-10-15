@@ -5,7 +5,7 @@
   "TAGS": {
     "Service": "research-administration",
     "Function": "kuali",
-    "Landscape": "preview",
+    "Landscape": "mock",
     "CostCenter": "AWS Kuali",
     "Ticket": "PRJ2017653"
   },
@@ -74,7 +74,7 @@
       "pollIntervalMinutes": 2
     },
     "sourceSimulator": {
-      "enabled": false,
+      "enabled": true,
       "timeoutSeconds": 60,
       "memorySizeMb": 256,
       "mockTotalPopulation": 1950,
@@ -82,7 +82,7 @@
     }
   },
   "HURON_PERSON_CONFIG": {
-    "configPath": "../integration-huron-person/config/config.preview.json"
+    "configPath": "../integration-huron-person/config/config.mock.json"
   },
   "BULK_RESET": true,
   "PREVIOUS_STORAGE_TYPE": "dynamodb",

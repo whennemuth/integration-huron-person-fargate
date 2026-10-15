@@ -524,7 +524,8 @@ describe('SourceSimulator Lambda Handler', () => {
     });
   });
 
-  describe('Terms Endpoint API Key', () => {
+  describe('API keys: any of the people, person and terms keys, on any endpoint', () => {
+    const personApiKey = 'test-person-api-key-24680';
     const termsApiKey = 'test-terms-api-key-67890';
 
     beforeEach(() => {
@@ -534,6 +535,7 @@ describe('SourceSimulator Lambda Handler', () => {
         getConfigAsync: jest.fn().mockResolvedValue({
           dataSource: {
             people: { endpointConfig: { apiKey: testApiKey } },
+            person: { endpointConfig: { apiKey: personApiKey } },
             terms: { endpointConfig: { apiKey: termsApiKey } },
           },
         }),
@@ -541,22 +543,23 @@ describe('SourceSimulator Lambda Handler', () => {
       resetSourceSimulatorState();
     });
 
-    const call = async (path: string, apiKey: string) =>
-      assertProxyResult(await handler(createEvent({ buid: 'U0000001' }, { 'x-api-key': apiKey }, path), mockContext));
+    const call = async (path: string, headers: Record<string, string>) =>
+      assertProxyResult(await handler(createEvent({ buid: 'U0000001' }, headers, path), mockContext));
 
-    it('should accept the terms API key on /terms (what the processor sends)', async () => {
-      const response = await call('/terms', termsApiKey);
-      expect(response.statusCode).toBe(200);
-      expect(parseResponseBody(response).response).toHaveLength(6);
-    });
+    // e.g. the chunker sends the people key to /person (it never matches the simulator's URL to the
+    // configured person URL), while SyncPerson.ts sends the person key, and the processor the terms key.
+    const paths = ['/', '/person', '/terms'];
+    const keys = [['people', testApiKey], ['person', personApiKey], ['terms', termsApiKey]];
+    it.each(paths.flatMap(path => keys.map(([name, key]) => [path, name, key])))(
+      'should accept on %s the %s API key', async (path, _name, key) => {
+        expect((await call(path, { 'x-api-key': key })).statusCode).toBe(200);
+        expect((await call(path, { authorization: `Bearer ${key}` })).statusCode).toBe(200);
+      }
+    );
 
-    it('should reject the people API key on /terms', async () => {
-      expect((await call('/terms', testApiKey)).statusCode).toBe(401);
-    });
-
-    it.each(['/', '/person'])('should accept the people API key, and reject the terms API key, on %s', async (path) => {
-      expect((await call(path, testApiKey)).statusCode).toBe(200);
-      expect((await call(path, termsApiKey)).statusCode).toBe(401);
+    it.each(paths)('should still reject any other key on %s', async (path) => {
+      expect((await call(path, { 'x-api-key': 'not-a-configured-key' })).statusCode).toBe(401);
+      expect((await call(path, {})).statusCode).toBe(401);
     });
   });
 

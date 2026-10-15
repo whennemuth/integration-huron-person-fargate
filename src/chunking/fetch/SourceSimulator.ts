@@ -12,7 +12,7 @@
  * **Design (People Endpoint):**
  * - Stateful depletion model: Every request claims the next contiguous slice of available records
  * - Non-deterministic by request params: `offset` is accepted for compatibility but does not drive allocation
- * - Validates the people API key from Secrets Manager against incoming requests
+ * - Validates the API key against the source keys in the config secret (see "API keys" below)
  * - Returns minimal field set (only fields DataMapper uses)
  * - Matches real API response structure: `{ response: [persons] }`
  * - Simulates slow API: Optional delay before responding via MOCK_SIMULATED_DELAY_SECONDS
@@ -29,8 +29,7 @@
  *
  * **Design (Terms Endpoint):**
  * - Called by the processor tasks for simulated-source runs (the Runner sends the terms endpoint
- *   along with the run, see Flags.termsEndpoint), so validates the terms API key
- *   (dataSource.terms.endpointConfig.apiKey), which is what the processor sends
+ *   along with the run, see Flags.termsEndpoint)
  * - Returns static list of 6 terms (2 current, 2 past, 2 future)
  * - No pagination (terms are small dataset)
  * - Matches real API response structure: `{ response: [terms] }`
@@ -51,11 +50,27 @@
  *   OR
  * - `X-API-Key`: Direct API key header
  * 
+ * **API keys:** every endpoint accepts ANY of the three source API keys in the integration config
+ * secret (people, person and terms - dataSource.<people|person|terms>.endpointConfig.apiKey), not
+ * just the key of the real API it stands in for. A request without one of them is still rejected.
+ * The reason: callers choose the key by URL, and the simulator's URLs cannot satisfy all of them at
+ * once while mock landscapes keep supporting hybrid runs (real source -> mock target):
+ * - Hybrid runs need the config secret's source URLs to be the REAL ones. So the chunker, which
+ *   picks the person key only when a request's URL matches the configured person URL
+ *   (ChunkConfigOverride.getOverriddenApiKey()), never recognizes the simulator's `/person` and
+ *   sends it the people key in a simulated single-person run from the Runner.
+ * - A client given the simulator's URLs directly (e.g. integration-huron-person's SyncPerson.ts with
+ *   a mock .env) sends each endpoint its own key: the person key to `/person`.
+ * - The processor always sends the terms key, whichever URL it fetches terms from.
+ * So `/person` must accept both the people and the person key, and the same reasoning applies to
+ * the other endpoints. Matching each endpoint to one key would instead require the simulator to use
+ * the real paths and the chunker to match keys on path alone.
+ * 
  * **Environment Variables:**
  * - MOCK_TOTAL_POPULATION: Total persons available (e.g., 10000)
  * - MOCK_ERROR_RATE: Probability of simulated errors (0.0-1.0)
  * - MOCK_SIMULATED_DELAY_SECONDS: Delay in seconds before responding (simulates slow API)
- * - SECRET_ARN: ARN of Secrets Manager secret containing the API key
+ * - SECRET_ARN: ARN of Secrets Manager secret containing the API keys
  * 
  * **Response Format:**
  * ```json
@@ -138,7 +153,7 @@ export enum ENVIRONMENT_VARIABLES_NAMES {
 }
 
 // Cache the API key between Lambda invocations (Lambda reuses execution environments)
-let cachedApiKeys: ApiKeys | null = null;
+let cachedApiKeys: string[] | null = null;
 let cachedCounter: AbstractAtomicCounter | null = null;
 let inMemoryNextIndex = 0;
 
@@ -310,20 +325,14 @@ function generateMockPerson(index: number, options?: { nonCurrentTermRate?: numb
 }
 
 /**
- * The API keys the simulator expects, from the integration config secret: the people key (for the
- * people and single person endpoints) and the terms key (for the terms endpoint - the processor
- * sends dataSource.terms.endpointConfig.apiKey when it fetches terms from the simulator).
- * A null key means that endpoint's requests are not validated.
- */
-type ApiKeys = { people: string | null; terms: string | null };
-
-/**
- * Retrieve the API keys from Secrets Manager using ConfigManager.
+ * Retrieve the source API keys (people, person and terms) from the integration config secret using
+ * ConfigManager. Any of them is accepted on any endpoint - see "API keys" in the header comment.
  * Uses caching to avoid repeated calls to Secrets Manager.
  * 
- * @returns API keys from Secrets Manager (null keys if SECRET_ARN is not configured)
+ * @returns The distinct keys configured, or an empty list (no validation) if SECRET_ARN is not
+ * configured, the secret cannot be read, or it holds no keys
  */
-async function getApiKeys(): Promise<ApiKeys> {
+async function getApiKeys(): Promise<string[]> {
   // Return cached value if available
   if (cachedApiKeys !== null) {
     return cachedApiKeys;
@@ -332,7 +341,7 @@ async function getApiKeys(): Promise<ApiKeys> {
   const secretArn = process.env.SECRET_ARN;
   if (!secretArn) {
     console.warn('SECRET_ARN not configured, skipping API key validation');
-    return { people: null, terms: null };
+    return [];
   }
 
   try {
@@ -344,25 +353,25 @@ async function getApiKeys(): Promise<ApiKeys> {
       .fromSecretManager(secretArn)
       .getConfigAsync('people');
     
-    // Extract API key from config (cast to DataSourceConfig since S3DataSourceConfig doesn't have endpointConfig)
-    const peopleConfig = config?.dataSource?.people as DataSourceConfig;
-    const people = peopleConfig?.endpointConfig?.apiKey || null;
-    const terms = config?.dataSource?.terms?.endpointConfig?.apiKey || null;
-    
-    if (!people) {
-      console.error('API key not found in secret at dataSource.people.endpointConfig.apiKey');
-    }
-    if (!terms) {
-      console.error('API key not found in secret at dataSource.terms.endpointConfig.apiKey');
+    // Extract the API keys from config (cast to DataSourceConfig since S3DataSourceConfig doesn't have endpointConfig)
+    const { people, person, terms } = config?.dataSource ?? {};
+    const keys: string[] = [];
+    for (const [name, source] of Object.entries({ people, person, terms })) {
+      const apiKey = (source as DataSourceConfig | undefined)?.endpointConfig?.apiKey;
+      if (apiKey) {
+        keys.push(apiKey);
+      } else {
+        console.error(`API key not found in secret at dataSource.${name}.endpointConfig.apiKey`);
+      }
     }
 
     // Cache the API keys for subsequent invocations
-    cachedApiKeys = { people, terms };
-    console.log('Successfully retrieved and cached API keys from Secrets Manager');
+    cachedApiKeys = [...new Set(keys)];
+    console.log(`Successfully retrieved and cached ${cachedApiKeys.length} distinct API key(s) from Secrets Manager`);
     return cachedApiKeys;
   } catch (error) {
     console.error('Error retrieving API keys from Secrets Manager via ConfigManager:', error);
-    return { people: null, terms: null };
+    return [];
   }
 }
 
@@ -418,11 +427,11 @@ async function allocateStatefulRange(recordCount: number, totalPopulation: numbe
  * Validate API key from request headers.
  * 
  * @param event - Lambda event with headers
- * @param expectedApiKey - Expected API key from Secrets Manager
+ * @param acceptedApiKeys - The API keys from Secrets Manager, any one of which is accepted
  * @returns true if API key is valid, false otherwise
  */
-function validateApiKey(event: APIGatewayProxyEventV2, expectedApiKey: string | null): boolean {
-  if (!expectedApiKey) {
+function validateApiKey(event: APIGatewayProxyEventV2, acceptedApiKeys: string[]): boolean {
+  if (acceptedApiKeys.length === 0) {
     // If no API key configured, allow all requests
     return true;
   }
@@ -433,14 +442,14 @@ function validateApiKey(event: APIGatewayProxyEventV2, expectedApiKey: string | 
   const authHeader = headers['authorization'] || headers['Authorization'];
   if (authHeader) {
     const match = authHeader.match(/^Bearer\s+(.+)$/i);
-    if (match && match[1] === expectedApiKey) {
+    if (match && acceptedApiKeys.includes(match[1])) {
       return true;
     }
   }
 
   // Check X-API-Key header
   const apiKeyHeader = headers['x-api-key'] || headers['X-API-Key'];
-  if (apiKeyHeader === expectedApiKey) {
+  if (apiKeyHeader && acceptedApiKeys.includes(apiKeyHeader)) {
     return true;
   }
 
@@ -626,13 +635,9 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
   // Determine which endpoint is being requested
   const endpointType = getEndpointType(event.rawPath || '/');
 
-  // Retrieve API keys from Secrets Manager. Each endpoint expects the key its real counterpart's
-  // client sends: the terms key for terms, the people key otherwise.
-  const apiKeys = await getApiKeys();
-  const expectedApiKey = endpointType === 'terms' ? apiKeys.terms : apiKeys.people;
-
-  // Validate API key (for non-health endpoints)
-  if (validateApiKey(event, expectedApiKey)) {
+  // Validate API key (for non-health endpoints). Any of the people, person and terms keys is
+  // accepted on any endpoint - see "API keys" in the header comment for why.
+  if (validateApiKey(event, await getApiKeys())) {
     console.log('Valid API key provided');
   }
   else {
