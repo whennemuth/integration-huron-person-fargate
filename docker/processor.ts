@@ -15,12 +15,12 @@
  * ### S3 Mode (processor-s3.ts)
  * - Writes mini-deltas to S3 for each chunk
  * - Maintains coordination via marker files
- * - Merger consolidates all chunk deltas into single previous-input.ndjson
+ * - Post-processor consolidates all chunk deltas into single previous-input.ndjson
  * 
  * ### DynamoDB Mode (processor-dynamodb.ts)
  * - Writes directly to PersonCurrentState and PersonHistory tables
  * - No mini-deltas or marker files needed
- * - Merger only handles deletion detection
+ * - Post-processor only handles deletion detection
  * 
  * ## Deployment
  * 

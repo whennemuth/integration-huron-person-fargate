@@ -1,8 +1,8 @@
 /**
- * Abstract base class for merger implementations.
+ * Abstract base class for post-processor implementations.
  * 
  * Implements the Template Method pattern to share common logic between
- * S3-based and DynamoDB-based mergers while allowing mode-specific implementations.
+ * S3-based and DynamoDB-based post-processors while allowing mode-specific implementations.
  * 
  * ## Common Responsibilities (Implemented Here)
  * - Reading task parameters from SQS or environment variables
@@ -31,17 +31,17 @@ export type TaskParameters = {
 
 export type MergeResult = { }
 
-export type MergeContext = {
+export type PostProcessorContext = {
   region?: string;
   dryRun: boolean;
 }
 
 /**
- * Abstract merger base class implementing Template Method pattern.
+ * Abstract post-processor base class implementing Template Method pattern.
  */
-export abstract class AbstractMerger {
+export abstract class AbstractPostProcessor {
   protected taskParameters: TaskParameters | null = null;
-  protected mergeContext: MergeContext | null = null;
+  protected postProcessorContext: PostProcessorContext | null = null;
 
   /**
    * Read a message from the SQS queue and delete it after retrieval.
@@ -112,7 +112,7 @@ export abstract class AbstractMerger {
    */  
   public abstract getTaskParameters(): Promise<TaskParameters | null>;
 
-  public abstract getMergeContext(): Promise<MergeContext | null>;
+  public abstract getPostProcessorContext(): Promise<PostProcessorContext | null>;
 
   /**
    * Mode-specific merge implementation.
@@ -191,21 +191,21 @@ export abstract class AbstractMerger {
       exitCode = 0;
 
     } catch (error: any) {
-      console.error('\n✗ Merge failed:', error.message);
+      console.error('\n✗ Post-processing failed:', error.message);
       console.error(error.stack);
       exitCode = 1;
     } finally {
       timer.stop();
 
       if (exitCode === 0) {
-        timer.logElapsed('\n✓ Merge phase duration');
+        timer.logElapsed('\n✓ Post-processing phase duration');
 
-        // Calculate and log full sync duration from chunking start to merge end
+        // Calculate and log full sync duration from chunking start to post-processing end
         const chunkingStartTime = await this.getChunkingStartTime();
         if (chunkingStartTime) {
           const fullDurationMs = Date.now() - chunkingStartTime.getTime();
           const fullDuration = timer.getDuration(fullDurationMs);
-          console.log(`✓ Full sync duration (chunking → processing → merging): ${fullDuration}`);
+          console.log(`✓ Full sync duration (chunking → processing → post-processing): ${fullDuration}`);
         } else {
           console.log('  (Full sync duration unavailable - createdAt timestamp not provided)');
         }

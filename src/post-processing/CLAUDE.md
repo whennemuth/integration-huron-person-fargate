@@ -1,7 +1,7 @@
-# integration-huron-person-fargate/src/merging: Delta Consolidation & Storage
+# integration-huron-person-fargate/src/post-processing: Delta Consolidation & Storage
 
 ## Purpose
-Implements Phase 3 merging logic that consolidates processed chunks into final delta records and manages soft deletes.
+Implements Phase 3 post-processing logic that consolidates processed chunks into final delta records and manages soft deletes.
 
 ## Components
 
@@ -147,12 +147,12 @@ class StatisticsTable {
 }
 ```
 
-## Merging Workflow
+## Post-processing Workflow
 
 ```
 Phase 2 Complete (all chunks processed)
   ↓
-Merger starts
+Post-processor starts
   ↓
 1. Load all processed chunks from S3
    processed/chunk-0001.ndjson
@@ -238,10 +238,10 @@ Sync complete
 }
 ```
 
-## Merger Service Implementation
+## Post-Processor Service Implementation
 
 ```typescript
-export class MergerService {
+export class PostProcessorService {
   constructor(
     private s3Client: S3Client,
     private dataTarget: PersonDataTarget,
@@ -261,7 +261,7 @@ export class MergerService {
     };
 
     try {
-      console.log('Merger starting...');
+      console.log('Post-processor starting...');
 
       // 1. Load all processed chunks
       console.log('Loading processed chunks...');
@@ -310,10 +310,10 @@ export class MergerService {
         successRate: (stats.processedCount - stats.errorCount) / stats.processedCount
       });
 
-      console.log('Merger complete:', stats);
+      console.log('Post-processor complete:', stats);
 
     } catch (error) {
-      console.error('Merger failed:', error);
+      console.error('Post-processor failed:', error);
       throw error;
     }
   }
@@ -367,13 +367,13 @@ export class MergerService {
 }
 ```
 
-## Testing Merging Logic
+## Testing Post-processing Logic
 
 ### Harnesses
 ```bash
-npx ts-node src/merging/DeferredDeleteHandler.ts
-npx ts-node src/merging/PersonCache.ts
-npx ts-node src/merging/StatisticsTable.ts
+npx ts-node src/post-processing/DeferredDeleteHandler.ts
+npx ts-node src/post-processing/PersonCache.ts
+npx ts-node src/post-processing/StatisticsTable.ts
 ```
 
 ### Validation Checklist
@@ -389,7 +389,7 @@ npx ts-node src/merging/StatisticsTable.ts
 **Environment Variables** (Phase 3):
 ```bash
 DATATARGET_BASE_URL=...              # Shared
-DOCKER_MERGER_TIMEOUT=600000         # Long timeout (merge takes time)
+DOCKER_POST_PROCESSOR_TIMEOUT=600000         # Long timeout (merge takes time)
 DEFERRED_DELETE_HANDLER_BATCH_SIZE=100  # Delete batch size
 STATISTICS_TABLE_UPDATE_INTERVAL=5000   # Metrics update frequency
 ```

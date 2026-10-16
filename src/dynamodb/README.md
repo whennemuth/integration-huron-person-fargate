@@ -59,7 +59,7 @@ Tracks integration run statistics, error events, and sync run metadata.
 
 ### Table Schema
 - **PK**: `integrationTimestamp` (ISO timestamp)
-- **SK**: `eventType` (STATISTICS | STATISTICS-chunk-XXXX | ERROR | FLAGS | METADATA | TERMINAL_ERROR | CHUNK_STATUS_nnnn | PROCESSOR_BOOST_CLAIM | MERGER_TRIGGER_CLAIM)
+- **SK**: `eventType` (STATISTICS | STATISTICS-chunk-XXXX | ERROR | FLAGS | METADATA | TERMINAL_ERROR | CHUNK_STATUS_nnnn | PROCESSOR_BOOST_CLAIM | POST_PROCESSOR_TRIGGER_CLAIM)
 - **GSI**: `errorType-timestamp-index` (for querying errors)
 
 ### Record Types
@@ -67,7 +67,7 @@ Tracks integration run statistics, error events, and sync run metadata.
 **1. STATISTICS** (Aggregated)
 - SK: "STATISTICS"
 - Contains: Total counts, success/failure metrics, execution time
-- Written by: Merger phase
+- Written by: Post-processor phase
 
 **2. STATISTICS-chunk-XXXX** (Per-Chunk)
 - SK: "STATISTICS-chunk-0009"
@@ -83,25 +83,25 @@ Tracks integration run statistics, error events, and sync run metadata.
 - SK: "FLAGS"
 - Contains: bulkReset, trustPreviousStorage, ignoreRemovals
 - Written by: Chunker phase
-- Read by: Processor and Merger phases
+- Read by: Processor and Post-processor phases
 
 **5. METADATA**
 - SK: "METADATA"
 - Contains: startTime, endTime, totalChunks, clientId
-- Written by: Chunker and Merger phases
+- Written by: Chunker and Post-processor phases
 - Read by: Dashboard, reporting tools
 
 **6. CHUNK_STATUS_nnnn**
 - SK: "CHUNK_STATUS_0009"
 - Contains: status (PENDING|PROCESSING|COMPLETED|FAILED), startTime, endTime, error
 - Written by: Processor tasks
-- Read by: Merger for resumption logic
+- Read by: Post-processor for resumption logic
 
 **7. TERMINAL_ERROR**
 - SK: "TERMINAL_ERROR"
 - Contains: timestamp, errorMessage, errorStack, phase, chunkDirectory
 - Written by: Any phase that hits a pipeline-halting failure (`writeTerminalError()`)
-- Read by: Processor (before triggering the merger) and Merger (`readTerminalError()`)
+- Read by: Processor (before triggering the post-processor) and Post-Processor (`readTerminalError()`)
 
 **8. PROCESSOR_BOOST_CLAIM**
 - SK: "PROCESSOR_BOOST_CLAIM"
@@ -113,13 +113,13 @@ Tracks integration run statistics, error events, and sync run metadata.
 - Staleness: a claim older than 10 minutes (`PROCESSOR_BOOST_CLAIM_STALE_AFTER_MS`) is treated as
   abandoned (winner killed before releasing it), cleared, and retried
 
-**9. MERGER_TRIGGER_CLAIM**
-- SK: "MERGER_TRIGGER_CLAIM"
+**9. POST_PROCESSOR_TRIGGER_CLAIM**
+- SK: "POST_PROCESSOR_TRIGGER_CLAIM"
 - Contains: claimedAt, claimedByChunk (optional - identifies the winning processor task/chunk)
-- Written by: Processor tasks via `claimMergerTrigger()` once the completion condition is met and
+- Written by: Processor tasks via `claimPostProcessorTrigger()` once the completion condition is met and
   no TERMINAL_ERROR exists - an `OCCFlag` (first-writer-wins) ensures exactly one processor ever
-  sends the merger-trigger SQS message
-- Never released or treated as stale: once the merger has been triggered it must never be
+  sends the post-processor-trigger SQS message
+- Never released or treated as stale: once the post-processor has been triggered it must never be
   triggered again (see `docs/CONCURRENCY_CONTROL.md`)
 
 ### Usage
@@ -166,8 +166,8 @@ if (await statsTable.claimProcessorBoost('2026-03-03T19:58:41.277Z', '1000')) {
   }
 }
 
-// Claim the merger trigger (processor tasks) - true only for the single winner, never released
-const shouldTriggerMerger = await statsTable.claimMergerTrigger('2026-03-03T19:58:41.277Z', '0009');
+// Claim the post-processor trigger (processor tasks) - true only for the single winner, never released
+const shouldTriggerPostProcessor = await statsTable.claimPostProcessorTrigger('2026-03-03T19:58:41.277Z', '0009');
 ```
 
 ### Harness Execution
@@ -226,7 +226,7 @@ const updatedStates = [
 ];
 await stateTable.batchWritePersonState(updatedStates);
 
-// Merger: Find all persons in sync run (for deletion detection)
+// Post-processor: Find all persons in sync run (for deletion detection)
 const personsInRun = await stateTable.getPersonsInSyncRun('2026-03-03T19:58:41.277Z');
 ```
 
@@ -256,7 +256,7 @@ Append-only audit trail of person state changes.
 ### Change Types
 - **NEW**: First time person appears in source
 - **UPDATED**: Hash changed from previous sync
-- **DELETED**: Person removed from source (detected by merger)
+- **DELETED**: Person removed from source (detected by post-processor)
 - **UNCHANGED**: NOT WRITTEN (skipped entirely to reduce costs)
 
 ### Usage
@@ -271,7 +271,7 @@ await historyTable.writeHistory({
   changeType: 'NEW'
 });
 
-// Merger: Write DELETED person
+// Post-processor: Write DELETED person
 await historyTable.writeHistory({
   personId: 'U22222',
   syncRunId: '2026-03-03T19:58:41.277Z',
@@ -348,7 +348,7 @@ All three table classes provide deletion methods for removing records associated
 
 ### StatisticsTable.deleteByPartitionKey()
 
-Deletes all records (STATISTICS, FLAGS, METADATA, TERMINAL_ERROR, CHUNK_STATUS, ERROR, PROCESSOR_BOOST_CLAIM, MERGER_TRIGGER_CLAIM records) for a specific integration run:
+Deletes all records (STATISTICS, FLAGS, METADATA, TERMINAL_ERROR, CHUNK_STATUS, ERROR, PROCESSOR_BOOST_CLAIM, POST_PROCESSOR_TRIGGER_CLAIM records) for a specific integration run:
 
 ```typescript
 const statsTable = new StatisticsTable(context);
@@ -481,7 +481,7 @@ The IntegrationRunPruner requires additional DynamoDB permissions beyond normal 
 - `dynamodb:DeleteItem` - To delete individual items
 - `dynamodb:PutItem` - To restore PersonCurrentState records
 
-**Note**: Normal ECS tasks (Processor, Merger, Chunker) do NOT have these delete permissions by design, as deletion is not part of standard pipeline operations.
+**Note**: Normal ECS tasks (Processor, Post-processor, Chunker) do NOT have these delete permissions by design, as deletion is not part of standard pipeline operations.
 
 **Deployment Options**:
 

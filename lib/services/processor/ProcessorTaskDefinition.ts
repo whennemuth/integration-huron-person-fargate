@@ -178,8 +178,8 @@ export class ProcessorTaskDefinition extends Construct {
       })
     );
 
-    // Grant SQS permissions for reading and deleting messages, and sending the merger-trigger
-    // message (DynamoDB mode: last processor notifies the merger queue directly).
+    // Grant SQS permissions for reading and deleting messages, and sending the post-processor-trigger
+    // message (DynamoDB mode: last processor notifies the post-processor queue directly).
     this.taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,

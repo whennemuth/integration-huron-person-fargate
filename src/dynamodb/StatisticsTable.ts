@@ -40,7 +40,7 @@ export class StatisticsTable {
 
   /**
    * Build a StatisticsTable from an explicit table name instead of an IContext, for runtime
-   * paths (chunker/processor/merger Docker entry points) where a full IContext isn't available.
+   * paths (chunker/processor/post-processor Docker entry points) where a full IContext isn't available.
    */
   public static fromTableName(tableName: string, region?: string): StatisticsTable {
     const resolvedRegion = region || process.env.REGION || 'us-east-1';
@@ -251,9 +251,9 @@ export class StatisticsTable {
    * Merges new fields into existing METADATA record without overwriting other fields.
    * 
    * This is useful for marking completion milestones such as:
-   * - mergerTriggered: true
-   * - mergerTriggeredAt: ISO timestamp
-   * - mergerTriggeredBy: chunkId
+   * - postProcessorTriggered: true
+   * - postProcessorTriggeredAt: ISO timestamp
+   * - postProcessorTriggeredBy: chunkId
    * 
    * @param syncRunId - ISO timestamp identifying the sync run
    * @param updates - Object containing fields to add/update in metadata
@@ -497,10 +497,10 @@ export class StatisticsTable {
   }
 
   /**
-   * Attempt to claim the exclusive right to trigger the merger for this sync run. Uses OCCFlag
-   * (first-writer-wins) so exactly one processor task ever sends the merger-trigger SQS message,
+   * Attempt to claim the exclusive right to trigger the post-processor for this sync run. Uses OCCFlag
+   * (first-writer-wins) so exactly one processor task ever sends the post-processor-trigger SQS message,
    * regardless of how many processor tasks independently observe the completion condition as
-   * true. Unlike claimProcessorBoost, there is no staleness/retry recovery here - once the merger
+   * true. Unlike claimProcessorBoost, there is no staleness/retry recovery here - once the post-processor
    * has been triggered, it must never be triggered again, so an unclaimed-looking record should
    * never be treated as abandoned and cleared.
    *
@@ -508,12 +508,12 @@ export class StatisticsTable {
    * can be found later
    * @returns true if this call won the claim, false if another processor already triggered
    */
-  public async claimMergerTrigger(syncRunId: string, claimedByChunk?: string): Promise<boolean> {
+  public async claimPostProcessorTrigger(syncRunId: string, claimedByChunk?: string): Promise<boolean> {
     const { tableName, region } = this;
     const claimFlag = new OCCFlag({
       tableName, region,
       partitionKeyName: DYNAMODB_PARTITION_KEY, partitionKeyValue: syncRunId,
-      sortKeyName: DYNAMODB_SORT_KEY, sortKeyValue: 'MERGER_TRIGGER_CLAIM',
+      sortKeyName: DYNAMODB_SORT_KEY, sortKeyValue: 'POST_PROCESSOR_TRIGGER_CLAIM',
       attributeName: 'claimedAt'
     });
 
@@ -527,7 +527,7 @@ export class StatisticsTable {
     if (won && claimedByChunk !== undefined) {
       await this.table.putItem({
         [DYNAMODB_PARTITION_KEY]: syncRunId,
-        [DYNAMODB_SORT_KEY]: 'MERGER_TRIGGER_CLAIM',
+        [DYNAMODB_SORT_KEY]: 'POST_PROCESSOR_TRIGGER_CLAIM',
         claimedAt,
         claimedByChunk
       });
@@ -551,7 +551,7 @@ export class StatisticsTable {
   /**
    * Delete all records for a specific integration run.
    * Removes all records (STATISTICS, FLAGS, METADATA, TERMINAL_ERROR, CHUNK_STATUS, ERROR,
-   * PROCESSOR_BOOST_CLAIM, MERGER_TRIGGER_CLAIM records)
+   * PROCESSOR_BOOST_CLAIM, POST_PROCESSOR_TRIGGER_CLAIM records)
    * associated with the given syncRunId.
    * 
    * This is useful for:

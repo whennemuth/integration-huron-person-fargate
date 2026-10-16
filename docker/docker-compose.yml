@@ -54,18 +54,18 @@ services:
     depends_on:
       - chunker
 
-  # Phase 3: Merger service
-  merger:
+  # Phase 3: Post-processor service
+  post-processor:
     build:
       context: ..
       dockerfile: docker/Dockerfile
       platforms:
         - linux/arm64
     image: huron-person-integration:latest
-    container_name: huron-merger
-    command: node dist/docker/merger.js
+    container_name: huron-post-processor
+    command: node dist/docker/post-processor.js
     env_file:
-      - ./merger.env
+      - ./post-processor.env
     volumes:
       # Mount AWS credentials/config directory (read-only)
       - ~/.aws:/root/.aws:ro

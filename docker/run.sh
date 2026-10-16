@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Run Huron Person Processor Docker container using Docker Compose
-# Usage: ./run.sh [chunker|processor|merger] [--manual]
+# Usage: ./run.sh [chunker|processor|post-processor] [--manual]
 #
 # AWS Credentials:
 #   Uses AWS_PROFILE environment variable (defaults to 'default')
@@ -10,7 +10,7 @@
 # Examples:
 #   AWS_PROFILE=infnprd INPUT_BUCKET=input-bucket INPUT_KEY=file.json CHUNKS_BUCKET=chunks-bucket ./run.sh chunker
 #   AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket CHUNK_KEY=client/chunks/chunk-0001.ndjson ./run.sh processor
-#   AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket INPUT_BUCKET=input-bucket ./run.sh merger
+#   AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket INPUT_BUCKET=input-bucket ./run.sh post-processor
 #   AWS_PROFILE=dev ./run.sh processor --manual
 #
 
@@ -29,7 +29,7 @@ for arg in "$@"; do
       MANUAL_MODE=true
       shift
       ;;
-    chunker|processor|merger)
+    chunker|processor|post-processor)
       MODE="$arg"
       shift
       ;;
@@ -42,9 +42,9 @@ done
 # Default to chunker if not specified
 MODE="${MODE:-chunker}"
 
-if [[ "$MODE" != "chunker" && "$MODE" != "processor" && "$MODE" != "merger" ]]; then
-  echo "Error: Invalid mode. Use 'chunker', 'processor', or 'merger'"
-  echo "Usage: $0 [chunker|processor|merger] [--manual]"
+if [[ "$MODE" != "chunker" && "$MODE" != "processor" && "$MODE" != "post-processor" ]]; then
+  echo "Error: Invalid mode. Use 'chunker', 'processor', or 'post-processor'"
+  echo "Usage: $0 [chunker|processor|post-processor] [--manual]"
   exit 1
 fi
 
@@ -100,17 +100,17 @@ if ! $MANUAL_MODE; then
     fi
     
     echo "Processing chunk: s3://${CHUNKS_BUCKET}/${CHUNK_KEY}"
-  elif [[ "$MODE" == "merger" ]]; then
-    # Merger needs CHUNKS_BUCKET and INPUT_BUCKET
+  elif [[ "$MODE" == "post-processor" ]]; then
+    # Post-processor needs CHUNKS_BUCKET and INPUT_BUCKET
     if [[ -z "${CHUNKS_BUCKET}" ]]; then
-      echo "Error: CHUNKS_BUCKET environment variable is required for merger mode"
-      echo "Example: AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket INPUT_BUCKET=input-bucket $0 merger"
+      echo "Error: CHUNKS_BUCKET environment variable is required for post-processor mode"
+      echo "Example: AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket INPUT_BUCKET=input-bucket $0 post-processor"
       exit 1
     fi
     
     if [[ -z "${INPUT_BUCKET}" ]]; then
-      echo "Error: INPUT_BUCKET environment variable is required for merger mode"
-      echo "Example: AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket INPUT_BUCKET=input-bucket $0 merger"
+      echo "Error: INPUT_BUCKET environment variable is required for post-processor mode"
+      echo "Example: AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket INPUT_BUCKET=input-bucket $0 post-processor"
       exit 1
     fi
     

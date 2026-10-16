@@ -2,7 +2,7 @@
  * Chunk Path Utilities
  * 
  * Shared utilities for deriving chunk directory paths from input S3 keys.
- * Used by both the chunker (Phase 1) and merger (Phase 3) to ensure
+ * Used by both the chunker (Phase 1) and post-processor (Phase 3) to ensure
  * consistent path generation.
  */
 

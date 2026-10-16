@@ -24,7 +24,7 @@ interface MergeResult {
  * This completes the three-phase pipeline:
  * - Phase 1 (Chunker): Splits large input files into processable chunks
  * - Phase 2 (Processor): Processes each chunk independently, producing delta files
- * - Phase 3 (Merger): Concatenates chunk deltas and writes to shared baseline location
+ * - Phase 3 (Post-processor): Concatenates chunk deltas and writes to shared baseline location
  * 
  * Workflow:
  * 1. Lists chunk files: `deltas/{key-path}/{timestamp}/chunk-*.ndjson`
@@ -249,7 +249,7 @@ class MergeEngine {
   /**
    * Cleanup delta files after successful merge.
    * 
-   * Why cleanup in merger task instead of processor:
+   * Why cleanup in post-processor task instead of processor:
    * ================================================
    * Delta files created and deleted within 6-15 seconds can cause S3 event notifications
    * to be cancelled or never sent. S3 needs time to process the ObjectCreated event internally.
@@ -260,7 +260,7 @@ class MergeEngine {
    * - Lambda never invokes (no log stream)
    * - Delta files never merged = data loss
    * 
-   * Solution: Keep delta files until merger completes successfully, then cleanup.
+   * Solution: Keep delta files until post-processor completes successfully, then cleanup.
    * This ensures:
    * - Delta files persist long enough for S3 events to process
    * - Cleanup only happens after proven merge success
@@ -312,7 +312,7 @@ class MergeEngine {
 
     } catch (error: any) {
       console.error(`Failed to cleanup delta files: ${error.message}`);
-      // Don't throw - cleanup failure shouldn't block merger task completion
+      // Don't throw - cleanup failure shouldn't block post-processor task completion
     }
   }
 
@@ -320,7 +320,7 @@ class MergeEngine {
    * Execute the merge operation
    */
   async merge(): Promise<MergeResult> {
-    console.log('=== Phase 3: Merger ===\n');
+    console.log('=== Phase 3: Post-processor ===\n');
     console.log(`Bucket: ${this.config.bucketName}`);
     console.log(`Delta directory: ${this.config.deltaDir}`);
     console.log(`Shared delta directory: ${this.config.sharedDeltaDir}`);

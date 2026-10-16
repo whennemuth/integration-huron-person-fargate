@@ -156,7 +156,7 @@ From current synthesized behavior in this session:
 - Chunker:
   - lower (scale-in) alarm uses composite metric `visible + notVisible`
   - upper (scale-out) alarm uses visible-only metric
-- Processor and Merger:
+- Processor and Post-processor:
   - lower and upper alarms remain visible-only by default
 
 This split matters when reading runner outcomes, because only chunker scale-in is currently protected against in-flight-only visibility artifacts.

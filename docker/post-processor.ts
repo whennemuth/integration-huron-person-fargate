@@ -1,7 +1,7 @@
 /**
- * Merger Entry Point Router (Phase 3)
+ * Post-Processor Entry Point Router (Phase 3)
  * 
- * This module acts as a switchboard that routes to the appropriate merger
+ * This module acts as a switchboard that routes to the appropriate post-processor
  * implementation based on storage mode detected from environment variables.
  * 
  * ## Storage Mode Detection
@@ -12,31 +12,31 @@
  * 
  * ## Architecture
  * 
- * ### S3 Mode (MergerForS3)
+ * ### S3 Mode (PostProcessorForS3)
  * - Consolidates delta chunk files from deltas/{population}/{timestamp}/
  * - Merges with existing baseline (previous-input.ndjson)
  * - Writes merged result to delta-storage/previous-input.ndjson
  * - Cleans up temporary delta chunk files
  * 
- * ### DynamoDB Mode (MergerForDynamoDB)
+ * ### DynamoDB Mode (PostProcessorForDynamoDB)
  * - No file consolidation needed (processors wrote directly to DynamoDB tables)
  * - No baseline merging needed (state already in PersonCurrentStateTable)
  * - Still runs DeferredDeleteHandler for soft-deletion of removed records
  * 
  * ## Critical Design Note
  * 
- * BOTH modes need the merger service:
+ * BOTH modes need the post-processor service:
  * - S3 mode: File consolidation + deletion handling
  * - DynamoDB mode: Deletion handling only
  * 
- * The comment in lib/AppConstruct.ts stating "Only create merger service for file-based
- * delta storage" is INCORRECT. DynamoDB mode also needs merger for DeferredDeleteHandler.
+ * The comment in lib/AppConstruct.ts stating "Only create post-processor service for file-based
+ * delta storage" is INCORRECT. DynamoDB mode also needs post-processor for DeferredDeleteHandler.
  * 
  * ## Deployment
  * 
  * This single entry point is used for both modes:
  * - Docker image: Built once, contains both implementations
- * - ECS task: CMD="node dist/docker/merger.js"
+ * - ECS task: CMD="node dist/docker/post-processor.js"
  * - Environment variables determine which implementation runs
  * 
  * ## Environment Variables
@@ -68,11 +68,11 @@
 
 import { TestEnvironment } from 'integration-core';
 import { IContext } from '../context/IContext';
-import { MergerForDynamoDB } from '../src/merging/MergerForDynamoDB';
-import { MergerForS3 } from '../src/merging/MergerForS3';
+import { PostProcessorForDynamoDB } from '../src/post-processing/PostProcessorForDynamoDB';
+import { PostProcessorForS3 } from '../src/post-processing/PostProcessorForS3';
 
 /**
- * Route to appropriate merger based on storage mode.
+ * Route to appropriate post-processor based on storage mode.
  * 
  * Detection logic matches processor.ts router:
  * - Checks for DynamoDB-mode-specific table names
@@ -94,16 +94,16 @@ async function main() {
   switch(previousStorageType) {
     case 's3':
       console.log('🔀 Router: Detected S3 mode (no DynamoDB tables configured)');
-      console.log('   Routing to MergerForS3\n');
-      await new MergerForS3().main();
+      console.log('   Routing to PostProcessorForS3\n');
+      await new PostProcessorForS3().main();
       break;
     case 'dynamodb':
       if (!DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || !DYNAMODB_PERSON_HISTORY_TABLE_NAME) {
         throw new Error('DynamoDB mode requires both DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME and DYNAMODB_PERSON_HISTORY_TABLE_NAME to be set.');
       }
       console.log('🔀 Router: Detected DynamoDB mode (DynamoDB-mode-specific tables present)');
-      console.log('   Routing to MergerForDynamoDB\n');
-      await new MergerForDynamoDB().main();
+      console.log('   Routing to PostProcessorForDynamoDB\n');
+      await new PostProcessorForDynamoDB().main();
       break;
     default:
       throw new Error(`Unsupported storage type: ${previousStorageType}`);
@@ -112,9 +112,9 @@ async function main() {
 
 // Run if executed directly
 if (require.main === module) {
-  const testEnvironment = TestEnvironment('DOCKER_MERGER');
+  const testEnvironment = TestEnvironment('DOCKER_POST_PROCESSOR');
 
-  // Declare all environment variables needed by either merger implementation
+  // Declare all environment variables needed by either post-processor implementation
   [
     // Common variables (both modes)
     'SQS_QUEUE_URL',
@@ -143,7 +143,7 @@ if (require.main === module) {
   ].forEach(testEnvironment.getVar);
 
   main().catch(error => {
-    console.error('Fatal error in merger router:', error);
+    console.error('Fatal error in post-processor router:', error);
     process.exit(1);
   });
 }

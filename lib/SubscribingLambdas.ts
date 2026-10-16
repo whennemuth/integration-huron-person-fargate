@@ -3,7 +3,7 @@ import { IBucket } from 'aws-cdk-lib/aws-s3';
 import { ChunkerSubscribingLambda } from './services/chunker/ChunkerSubscribingLambda';
 import { EcsInfrastructure } from './EcsInfrastructure';
 import { IContext } from '../context/IContext';
-import { MergerSubscribingLambda } from './services/merger/MergerSubscribingLambda';
+import { PostProcessorSubscribingLambda } from './services/post-processor/PostProcessorSubscribingLambda';
 import { ProcessorSubscribingLambda } from './services/processor/ProcessorSubscribingLambda';
 
 /**
@@ -25,13 +25,13 @@ import { ProcessorSubscribingLambda } from './services/processor/ProcessorSubscr
  *      4) QueueProcessingFargateService detects queue depth increase and auto-scales up,
  *         launching processor Fargate task(s).
  * 
- * - Merger
+ * - Post-processor
  *      1) Small delta "chunk" NDJSON appears in the chunks bucket at "/deltas/..."
- *      2) S3 event notification of chunks bucket triggers MergerSubscribingLambda created below.
- *      3) MergerSubscribingLambda checks if all expected delta chunks are present. If so, sends 
+ *      2) S3 event notification of chunks bucket triggers PostProcessorSubscribingLambda created below.
+ *      3) PostProcessorSubscribingLambda checks if all expected delta chunks are present. If so, sends 
  *         message to SQS queue.
  *      4) QueueProcessingFargateService detects queue depth increase and auto-scales up,
- *         launching merger Fargate task(s).
+ *         launching post-processor Fargate task(s).
  * 
  * This construct groups these related Lambda functions together for better organization in the CDK app.
  */
@@ -41,7 +41,7 @@ export interface SubscribingLambdasProps {
   chunkerQueueUrl: string;
   processorQueueUrl: string;
   processorQueueArn: string;
-  mergerQueueUrl: string;
+  postProcessorQueueUrl: string;
   stackScope: Construct;
   context: IContext;
   tags?: { [key: string]: string };
@@ -49,12 +49,12 @@ export interface SubscribingLambdasProps {
 
 /**
  * Wrapper construct for subscribing Lambda functions
- * Groups Chunker, Processor and Merger subscribing lambdas
+ * Groups Chunker, Processor and Post-processor subscribing lambdas
  */
 export class SubscribingLambdas extends Construct {
   public readonly chunker: ChunkerSubscribingLambda;
   public readonly processor: ProcessorSubscribingLambda;
-  public readonly merger: MergerSubscribingLambda;
+  public readonly postProcessor: PostProcessorSubscribingLambda;
 
   constructor(scope: Construct, id: string, props: SubscribingLambdasProps) {
     super(scope, id);
@@ -65,7 +65,7 @@ export class SubscribingLambdas extends Construct {
       chunkerQueueUrl,
       processorQueueUrl,
       processorQueueArn,
-      mergerQueueUrl,
+      postProcessorQueueUrl,
       stackScope,
       context: ctx,
       tags
@@ -99,17 +99,17 @@ export class SubscribingLambdas extends Construct {
       tags,
     });
 
-    // Merger Subscribing Lambda (Phase 3) - S3 event-driven
-    this.merger = new MergerSubscribingLambda(this, 'Merger', {
+    // Post-Processor Subscribing Lambda (Phase 3) - S3 event-driven
+    this.postProcessor = new PostProcessorSubscribingLambda(this, 'PostProcessor', {
       vpc: ecsInfra.vpc,
-      mergerQueueUrl,
+      postProcessorQueueUrl,
       chunksBucket,
       chunksBucketName: chunksBucket.bucketName,
       region: ctx.REGION,
       landscape: ctx.TAGS.Landscape.toLowerCase(),
-      timeoutSeconds: ctx.LAMBDA.mergerSubscriber.timeoutSeconds,
-      memorySizeMb: ctx.LAMBDA.mergerSubscriber.memorySizeMb,
-      dryRun: ctx.DRY_RUN?.lambda?.merger,
+      timeoutSeconds: ctx.LAMBDA.postProcessorSubscriber.timeoutSeconds,
+      memorySizeMb: ctx.LAMBDA.postProcessorSubscriber.memorySizeMb,
+      dryRun: ctx.DRY_RUN?.lambda?.postProcessor,
       context: ctx,
       tags,
     });

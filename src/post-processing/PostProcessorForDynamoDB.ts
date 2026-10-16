@@ -1,7 +1,7 @@
 /**
- * DynamoDB-based Merger Implementation
+ * DynamoDB-based Post-Processor Implementation
  * 
- * Extends AbstractMerger to implement DynamoDB-specific merge logic.
+ * Extends AbstractPostProcessor to implement DynamoDB-specific merge logic.
  * 
  * In DynamoDB mode, processors write directly to shared PersonCurrentStateTable
  * and PersonHistoryTable using atomic DynamoDB operations. This means:
@@ -9,12 +9,12 @@
  * - No baseline merging is needed (state is already in DynamoDB)
  * - No cleanup of chunk files is needed
  * 
- * However, the merger service is still needed for:
+ * However, the post-processor service is still needed for:
  * - DeferredDeleteHandler invocation (soft-deleting removed records)
  * - Consistent pipeline completion signaling
  * - Error handling and logging
  * 
- * merge() still returns a (non-null) result so AbstractMerger.main()'s Step 4 gate
+ * merge() still returns a (non-null) result so AbstractPostProcessor.main()'s Step 4 gate
  * (`if (result)`) runs runDeferredDeletes() - returning null here would silently skip deletion
  * handling entirely, which is the original bug this class exists to fix.
  */
@@ -23,7 +23,7 @@ import { FieldDefinitions } from 'integration-huron-person';
 import { extractChunkDirectory } from '../chunking/filedrop/ChunkPathUtils';
 import { MetadataFactoryForBootstrap, StandardMetadataUtils } from '../chunking/metadata';
 import { SyncPopulation } from '../../docker/chunkTypes';
-import { AbstractMerger, MergeContext, MergeResult, TaskParameters } from './AbstractMerger';
+import { AbstractPostProcessor, PostProcessorContext, MergeResult, TaskParameters } from './AbstractPostProcessor';
 import { DeferredDeleteHandlerForDynamoDB, DeferredDeleteHandlerForDynamoDBParams } from './DeferredDeleteHandlerForDynamoDB';
 
 export type TaskParametersForDynamoDB = TaskParameters & {
@@ -31,7 +31,7 @@ export type TaskParametersForDynamoDB = TaskParameters & {
   chunkDirectory: string | null;
 };
 
-export type MergeContextForDynamoDB = MergeContext & {
+export type PostProcessorContextForDynamoDB = PostProcessorContext & {
   bucketName: string;
   chunkDir: string;
   syncRunId: string;
@@ -44,7 +44,7 @@ export type MergeResultForDynamoDB = MergeResult & {
 };
 
 
-export class MergerForDynamoDB extends AbstractMerger {
+export class PostProcessorForDynamoDB extends AbstractPostProcessor {
 
   public async getTaskParameters(): Promise<TaskParametersForDynamoDB | null> {
     if (this.taskParameters) {
@@ -83,9 +83,9 @@ export class MergerForDynamoDB extends AbstractMerger {
     return null;
   }
 
-  public async getMergeContext(taskParams?: TaskParametersForDynamoDB): Promise<MergeContextForDynamoDB | null> {
-    if (this.mergeContext) {
-      return this.mergeContext as MergeContextForDynamoDB;
+  public async getPostProcessorContext(taskParams?: TaskParametersForDynamoDB): Promise<PostProcessorContextForDynamoDB | null> {
+    if (this.postProcessorContext) {
+      return this.postProcessorContext as PostProcessorContextForDynamoDB;
     }
 
     if (!taskParams) {
@@ -99,16 +99,16 @@ export class MergerForDynamoDB extends AbstractMerger {
     const syncRunId = new StandardMetadataUtils({ chunkDirectory: chunkDir! }).extractSyncRunId();
     const primaryKeyFieldNames = FieldDefinitions.filter(fd => fd.isPrimaryKey).map(fd => fd.name);
 
-    this.mergeContext = {
+    this.postProcessorContext = {
       bucketName,
       chunkDir: chunkDir!,
       region,
       dryRun,
       syncRunId,
       primaryKeyFieldNames,
-    } as MergeContextForDynamoDB;
+    } as PostProcessorContextForDynamoDB;
 
-    return this.mergeContext as MergeContextForDynamoDB;
+    return this.postProcessorContext as PostProcessorContextForDynamoDB;
   }
 
   /**
@@ -121,8 +121,8 @@ export class MergerForDynamoDB extends AbstractMerger {
    * @returns A non-null marker result so main()'s deferred-deletes step still runs
    */
   protected async merge(taskParams?: TaskParametersForDynamoDB): Promise<MergeResultForDynamoDB | null> {
-    const mergeContext = await this.getMergeContext(taskParams) as MergeContextForDynamoDB;
-    const { chunkDir, syncRunId } = mergeContext;
+    const postProcessorContext = await this.getPostProcessorContext(taskParams) as PostProcessorContextForDynamoDB;
+    const { chunkDir, syncRunId } = postProcessorContext;
 
     console.log(`\nDynamoDB Merge Mode:`);
     console.log(`  Storage type: DynamoDB`);
@@ -139,8 +139,8 @@ export class MergerForDynamoDB extends AbstractMerger {
   }
 
   protected async runDeferredDeletes(result: MergeResultForDynamoDB): Promise<void> {
-    const mergeContext = await this.getMergeContext() as MergeContextForDynamoDB;
-    const { bucketName, chunkDir, region, syncRunId, primaryKeyFieldNames } = mergeContext;
+    const postProcessorContext = await this.getPostProcessorContext() as PostProcessorContextForDynamoDB;
+    const { bucketName, chunkDir, region, syncRunId, primaryKeyFieldNames } = postProcessorContext;
 
     // First check if the population type for this sync is compatible with deletion processing.
     const { metadata, flags } = await new MetadataFactoryForBootstrap().readFlagsForBootstrap({

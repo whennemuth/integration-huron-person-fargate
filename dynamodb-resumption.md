@@ -12,7 +12,7 @@ That is, the only artifacts that should be added to the s3 bucket should be the 
 This entails a few things that the following s3 content would no longer be needed:
 The deltas directory in the chunks bucket would become unnecessary.
 
-   - A) This would include the deltas/person-full/[ISO timestamp]/chunk-[xxxx]_processing_complete.json files that signal that a processor task successfully processed the correspondingly named chunk json file (the merger phase inventories these files and "waits" for when all are accounted for, marking the official end of the processing phase, and the goahead to start computing and carrying out deactivations). Example content of such a file:
+   - A) This would include the deltas/person-full/[ISO timestamp]/chunk-[xxxx]_processing_complete.json files that signal that a processor task successfully processed the correspondingly named chunk json file (the post-processor phase inventories these files and "waits" for when all are accounted for, marking the official end of the processing phase, and the goahead to start computing and carrying out deactivations). Example content of such a file:
       ```json
       {
         "chunkId": "0005",

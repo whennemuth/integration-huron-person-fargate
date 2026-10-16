@@ -28,7 +28,7 @@ services:
     stdin_open: true
     tty: true
 
-  merger:
+  post-processor:
     # Override command to keep container alive
     command: tail -f /dev/null
     # Enable interactive terminal

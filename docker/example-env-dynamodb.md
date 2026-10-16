@@ -217,7 +217,7 @@ DRY_RUN=false                                      # Set to true to avoid target
 
 ---
 
-## merger.env (DynamoDB Mode)
+## post-processor.env (DynamoDB Mode)
 
 ```bash
 # ============================================================================
@@ -257,8 +257,8 @@ SHARED_DELTA_STORAGE_DIR=delta-storage             # S3 prefix for baseline delt
 # Required for statistics tracking and metadata (used by all storage modes)
 DYNAMODB_STATISTICS_TABLE_NAME={STACK_ID}-statistics-{landscape}
 
-# Note: Merger does NOT use person state tables in any mode.
-# Merger consolidates results but doesn't track individual person changes.
+# Note: Post-processor does NOT use person state tables in any mode.
+# Post-processor consolidates results but doesn't track individual person changes.
 
 # ============================================================================
 # Deletion Handling
@@ -286,7 +286,7 @@ IS_ECS_TASK=false                                  # Auto-set by ECS, override f
 # ============================================================================
 # SQS Queue (ECS Fargate mode)
 # ============================================================================
-# SQS_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/770203350335/{STACK_ID}-merger-queue-{landscape}
+# SQS_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/770203350335/{STACK_ID}-post-processor-queue-{landscape}
 
 # ============================================================================
 # Local Mode (explicit chunk directory)
@@ -299,7 +299,7 @@ IS_ECS_TASK=false                                  # Auto-set by ECS, override f
 DRY_RUN=true                                       # Set to true to avoid S3 writes and deletes
 ```
 
-**Note:** merger.env is identical in both S3 and DynamoDB modes. Merger does not use person state tables.
+**Note:** post-processor.env is identical in both S3 and DynamoDB modes. Post-processor does not use person state tables.
 
 ---
 
@@ -322,9 +322,9 @@ DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME={STACK_ID}-person-current-state-{landsc
 DYNAMODB_PERSON_HISTORY_TABLE_NAME={STACK_ID}-person-history-{landscape}
 ```
 
-### chunker.env and merger.env
+### chunker.env and post-processor.env
 
-**Identical in both modes.** Neither chunker nor merger use person state tables.
+**Identical in both modes.** Neither chunker nor post-processor use person state tables.
 
 ## Placeholder Patterns
 

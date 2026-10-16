@@ -145,7 +145,7 @@ export class DynamoDBTable implements AbstractDynamoDbTable {
    * Non-destructive full table scan. Handles pagination and returns every item.
    * 
    * Use sparingly - a full scan reads the entire table regardless of size. Intended for
-   * once-per-run operations (e.g. merger-phase deletion detection), not per-chunk/per-record use.
+   * once-per-run operations (e.g. post-processor-phase deletion detection), not per-chunk/per-record use.
    * 
    * @returns All items currently in the table
    */

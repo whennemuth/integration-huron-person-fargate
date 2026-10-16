@@ -35,7 +35,7 @@
         "retryStrategyType": "THROTTLING_ONLY"
       }
     },
-    "mergerTaskDefinition": {
+    "postProcessorTaskDefinition": {
       "cpu": 1024,
       "memoryLimitMiB": 2048,
       "memoryReservationMiB": 1024,
@@ -63,7 +63,7 @@
       "timeoutSeconds": 60,
       "memorySizeMb": 256
     },
-    "mergerSubscriber": {
+    "postProcessorSubscriber": {
       "timeoutSeconds": 60,
       "memorySizeMb": 256,
       "pollIntervalMinutes": 2
@@ -86,12 +86,12 @@
     "lambda": {
       "chunker": false,
       "processor": false,
-      "merger": false
+      "postProcessor": false
     },
     "taskdef": {
       "chunker": false,
       "processor": false,
-      "merger": false
+      "postProcessor": false
     }
   }
 }

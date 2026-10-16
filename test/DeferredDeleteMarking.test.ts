@@ -1,5 +1,5 @@
 /**
- * Tests that persons soft-deleted by the merger's deferred delete handling are recorded as such
+ * Tests that persons soft-deleted by the post-processor's deferred delete handling are recorded as such
  * in the baseline (PersonCurrentStateTable in DynamoDB mode, previous-input.ndjson in S3 mode),
  * so that subsequent full syncs don't select them for deletion again.
  */
@@ -11,10 +11,10 @@ import { S3, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { DynamoDBDocumentClient, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { sdkStreamMixin } from '@smithy/util-stream';
 import { Readable } from 'stream';
-import { DELETED_HASH_PREFIX, isDeletedHash, toDeletedHash } from '../src/merging/DeletedHashMarker';
-import { DeferredDeleteHandlerForDynamoDB } from '../src/merging/DeferredDeleteHandlerForDynamoDB';
-import { DeferredDeleteHandlerForS3 } from '../src/merging/DeferredDeleteHandlerForS3';
-import { ChunkPopulationReader } from '../src/merging/ChunkPopulationReader';
+import { DELETED_HASH_PREFIX, isDeletedHash, toDeletedHash } from '../src/post-processing/DeletedHashMarker';
+import { DeferredDeleteHandlerForDynamoDB } from '../src/post-processing/DeferredDeleteHandlerForDynamoDB';
+import { DeferredDeleteHandlerForS3 } from '../src/post-processing/DeferredDeleteHandlerForS3';
+import { ChunkPopulationReader } from '../src/post-processing/ChunkPopulationReader';
 import { PersonCurrentStateTable } from '../src/dynamodb/PersonCurrentStateTable';
 import { PersonHistoryTable } from '../src/dynamodb/PersonHistoryTable';
 

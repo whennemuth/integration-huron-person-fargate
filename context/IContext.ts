@@ -32,7 +32,7 @@ export interface IContext {
     chunksBucket: string;
     /** Expiration for chunk files in days (temporary, processed immediately) */
     chunkExpirationDays: number;
-    /** Expiration for delta files in days (merged by merger, but need failsafe cleanup) */
+    /** Expiration for delta files in days (merged by post-processor, but need failsafe cleanup) */
     deltaExpirationDays: number;
   };
 
@@ -61,8 +61,8 @@ export interface IContext {
       logRetentionDays: number;
       retries?: RetryStrategyConfig;
     };
-    /** Merger task definition configuration */
-    mergerTaskDefinition: {
+    /** Post-processor task definition configuration */
+    postProcessorTaskDefinition: {
       cpu: number;
       memoryLimitMiB: number;
       memoryReservationMiB: number;
@@ -106,8 +106,8 @@ export interface IContext {
       timeoutSeconds: number;
       memorySizeMb: number;
     };
-    /** Merger subscriber Lambda configuration */
-    mergerSubscriber: {
+    /** Post-processor subscriber Lambda configuration */
+    postProcessorSubscriber: {
       timeoutSeconds: number;
       memorySizeMb: number;
       /** How often to poll for chunk completion (in minutes) */
@@ -181,14 +181,14 @@ export interface IContext {
    * 
    * Values:
    * - 'dynamodb' (default): Database-backed storage using PersonCurrentStateTable and PersonHistoryTable.
-   *   Processors write directly to DynamoDB tables. Merger performs deletion detection only.
+   *   Processors write directly to DynamoDB tables. Post-processor performs deletion detection only.
    * 
    * - 'database': Database-backed storage using PostgreSQL/MySQL tables with SQL transactions.
    *   Similar to 'dynamodb' but uses relational database instead of DynamoDB.
    * 
    * - 's3'|'file': File-based delta storage using NDJSON files.
    *   Processors write chunk-specific mini-deltas (if parallel processing is enabled). 
-   *   Merger consolidates mini-deltas into final delta.
+   *   Post-processor consolidates mini-deltas into final delta.
    * 
    * See fargate CLAUDE.md "Storage Modes" section and integration-core delta-strategy/dynamodb/README.md comparison table.
    * 
@@ -219,8 +219,8 @@ export interface IContext {
       chunker?: boolean;
       /** Processor subscriber lambda - if true, sends no messages to processor queue */
       processor?: boolean;
-      /** Merger subscriber lambda - if true, sends messages to SQS without actually triggering tasks */
-      merger?: boolean;
+      /** Post-processor subscriber lambda - if true, sends messages to SQS without actually triggering tasks */
+      postProcessor?: boolean;
     };
     /** Task definition dry-run settings */
     taskdef?: {
@@ -228,8 +228,8 @@ export interface IContext {
       chunker?: boolean;
       /** Processor task - if true, simulates person sync without making API calls or updating deltas */
       processor?: boolean;
-      /** Merger task - if true, simulates merging without writing previous-input.ndjson or deleting chunks */
-      merger?: boolean;
+      /** Post-processor task - if true, simulates merging without writing previous-input.ndjson or deleting chunks */
+      postProcessor?: boolean;
     };
   };
 

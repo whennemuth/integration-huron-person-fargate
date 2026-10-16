@@ -167,8 +167,8 @@ Harness configuration is documented in [example-env.md](./example-env.md). The f
 
 - **Orchestration**: `Runner` (Manual chunking service invocation, queue seeding)
 - **Chunking Pipeline**: `ChunkFromAPI`, `ChunkFromS3`, `BigJsonFetch`, `BigJsonFile`, `PersonArrayWrapper`
-- **Merging Pipeline**: `DeferredDeleteHandler`, `PersonCache`, `StatisticsTable`
-- **Docker Entry Points**: `chunker.ts`, `processor.ts`, `merger.ts`
+- **Post-processing Pipeline**: `DeferredDeleteHandler`, `PersonCache`, `StatisticsTable`
+- **Docker Entry Points**: `chunker.ts`, `processor.ts`, `post-processor.ts`
 - **Storage & Error Handling**: `S3StorageAdapter`, `ApiErrorTracking`, `EcrChecker`
 
 ### Running Test Harnesses

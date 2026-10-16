@@ -114,15 +114,15 @@ export class AppConstruct extends Construct {
       'SQS_QUEUE_URL',
       this.queue.processorQueue.queueUrl
     );
-    this.ecs.taskDefinitions.merger.taskDefinition.defaultContainer!.addEnvironment(
+    this.ecs.taskDefinitions.postProcessor.taskDefinition.defaultContainer!.addEnvironment(
       'SQS_QUEUE_URL',
-      this.queue.mergerQueue.queueUrl
+      this.queue.postProcessorQueue.queueUrl
     );
-    // DynamoDB mode: the last processor to finish sends the merger-trigger message itself
-    // (no S3 metadata write to fire the MergerSubscriber Lambda), so it needs the merger queue's URL too.
+    // DynamoDB mode: the last processor to finish sends the post-processor-trigger message itself
+    // (no S3 metadata write to fire the PostProcessorSubscriber Lambda), so it needs the post-processor queue's URL too.
     this.ecs.taskDefinitions.processor.taskDefinition.defaultContainer!.addEnvironment(
-      'MERGER_QUEUE_URL',
-      this.queue.mergerQueue.queueUrl
+      'POST_PROCESSOR_QUEUE_URL',
+      this.queue.postProcessorQueue.queueUrl
     );
 
     // ========================================
@@ -132,9 +132,9 @@ export class AppConstruct extends Construct {
       bucketName: `${chunksBucket}-${Landscape.toLowerCase()}`,
       // Lifecycle rules:
       // 1. Temporary chunk files (processed immediately) → configured expiration
-      // 2. Delta files (merged by merger, but need failsafe) → longer expiration
+      // 2. Delta files (merged by post-processor, but need failsafe) → longer expiration
       //    - Protects frequently-updated shared files (previous-input.ndjson)
-      //    - Cleans up orphaned delta chunks from failed mergers
+      //    - Cleans up orphaned delta chunks from failed post-processors
       lifecycleRules: [
         {
           id: 'expire-chunks',
@@ -161,7 +161,7 @@ export class AppConstruct extends Construct {
     }
 
     // ========================================
-    // 6. Subscribing Lambdas (Chunker & Merger)
+    // 6. Subscribing Lambdas (Chunker & Post-processor)
     // ========================================
     // Create subscribing lambdas before services so chunker lambda can be
     // passed to ChunkerService for EventBridge schedule configuration
@@ -171,7 +171,7 @@ export class AppConstruct extends Construct {
       chunkerQueueUrl: this.queue.chunkerQueue.queueUrl,
       processorQueueUrl: this.queue.processorQueue.queueUrl,
       processorQueueArn: this.queue.processorQueue.queueArn,
-      mergerQueueUrl: this.queue.mergerQueue.queueUrl,
+      postProcessorQueueUrl: this.queue.postProcessorQueue.queueUrl,
       stackScope: scope,
       context: ctx,
       tags,
@@ -197,18 +197,18 @@ export class AppConstruct extends Construct {
     );
 
     // ========================================
-    // 9. Merger Service (Phase 3)
+    // 9. Post-Processor Service (Phase 3)
     // ========================================
-    // Merger service is ALWAYS needed for both S3 and DynamoDB modes:
+    // Post-processor service is ALWAYS needed for both S3 and DynamoDB modes:
     // - S3 mode: File consolidation + deferred deletion handling
     // - DynamoDB mode: Deferred deletion handling (no file consolidation)
     // 
     // Both modes require DeferredDeleteHandler to soft-delete records removed from source.
-    this.ecs.createMergerService(
-      this.queue.mergerQueue,
-      this.queue.mergerDeadLetterQueue
+    this.ecs.createPostProcessorService(
+      this.queue.postProcessorQueue,
+      this.queue.postProcessorDeadLetterQueue
     );
-    console.log('[MergerService] Created (both S3 and DynamoDB modes require merger for deletion handling)');
+    console.log('[PostProcessorService] Created (both S3 and DynamoDB modes require post-processor for deletion handling)');
 
     
     // Source simulator (optional, mock landscapes only): mock API for testing without the 30-minute cooldown.

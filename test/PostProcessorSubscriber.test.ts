@@ -1,5 +1,5 @@
 /**
- * Integration tests for MergerSubscriber.ts (Phase 2 trigger logic)
+ * Integration tests for PostProcessorSubscriber.ts (Phase 2 trigger logic)
  * 
  * Tests the marker-based completion gating that replaces metadata.chunkCount
  * 
@@ -8,7 +8,7 @@
  * to make the client instances injectable for testing.
  */
 
-describe('MergerSubscriber (Phase 2 Merger Trigger)', () => {
+describe('PostProcessorSubscriber (Phase 2 Post-Processor Trigger)', () => {
   describe('Contiguous Marker Validation Logic', () => {
     // Test the core validation logic by simulating marker sets
     
@@ -127,8 +127,8 @@ describe('MergerSubscriber (Phase 2 Merger Trigger)', () => {
     });
   });
 
-  describe('Merger Completion Conditions', () => {
-    it('should trigger merger when markers 0..N present', () => {
+  describe('Post-Processor Completion Conditions', () => {
+    it('should trigger post-processor when markers 0..N present', () => {
       // Simulate: 5 markers (0, 1, 2, 3, 4)
       const markerOrdinals = new Set([0, 1, 2, 3, 4]);
       

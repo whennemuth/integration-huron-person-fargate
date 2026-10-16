@@ -63,7 +63,7 @@ sequenceDiagram
     participant SQS as SQS Queue
     participant Processor as Processor<br/>(Phase 2)
     participant S3Delta as S3 Delta<br/>Bucket
-    participant Merger as Merger<br/>(Phase 3)
+    participant PostProcessor as PostProcessor<br/>(Phase 3)
     
     rect rgb(200, 230, 255)
     Note over API,SQS: Phase 1: Chunking
@@ -85,13 +85,13 @@ sequenceDiagram
     end
     
     rect rgb(230, 255, 230)
-    Note over SQS,Merger: Phase 3: Consolidation & Merging
-    SQS->>Merger: All chunks complete
-    Merger->>S3Delta: Read & consolidate all chunk deltas
-    Merger->>S3Delta: Read existing integrated baseline
-    Merger->>Merger: HashMapMerger:<br/>4-way merge logic
-    Merger->>S3Delta: Write new integrated baseline
-    Merger->>S3Delta: Cleanup chunk deltas
+    Note over SQS,PostProcessor: Phase 3: Consolidation & Merging
+    SQS->>PostProcessor: All chunks complete
+    PostProcessor->>S3Delta: Read & consolidate all chunk deltas
+    PostProcessor->>S3Delta: Read existing integrated baseline
+    PostProcessor->>PostProcessor: HashMapMerger:<br/>4-way merge logic
+    PostProcessor->>S3Delta: Write new integrated baseline
+    PostProcessor->>S3Delta: Cleanup chunk deltas
     end
 ```
 
@@ -148,7 +148,7 @@ sequenceDiagram
         P1->>P1: DataMapper:<br/>Transform records
         P1->>P1: Sync to Huron API<br/>(chunk subset)
         P1->>S3Delta: Write deltas/.../timestamp/<br/>chunk-0000.ndjson<br/>(chunk-specific delta)
-        Note over P1,S3Delta: S3 PutObject event triggers<br/>MergerSubscriber lambda<br/>("Are we there yet?" check)
+        Note over P1,S3Delta: S3 PutObject event triggers<br/>PostProcessorSubscriber lambda<br/>("Are we there yet?" check)
     and
         SQS->>P2: Chunk 1 message
         P2->>P2: Read chunk-0001.ndjson<br/>from S3 Chunks
@@ -157,7 +157,7 @@ sequenceDiagram
         P2->>P2: DataMapper:<br/>Transform records
         P2->>P2: Sync to Huron API<br/>(chunk subset)
         P2->>S3Delta: Write deltas/.../timestamp/<br/>chunk-0001.ndjson
-        Note over P2,S3Delta: S3 PutObject event triggers<br/>MergerSubscriber lambda<br/>("Are we there yet?" check)
+        Note over P2,S3Delta: S3 PutObject event triggers<br/>PostProcessorSubscriber lambda<br/>("Are we there yet?" check)
     and
         SQS->>PN: Chunk N message
         PN->>PN: Read chunk-NNNN.ndjson<br/>from S3 Chunks
@@ -166,10 +166,10 @@ sequenceDiagram
         PN->>PN: DataMapper:<br/>Transform records
         PN->>PN: Sync to Huron API<br/>(chunk subset)
         PN->>S3Delta: Write deltas/.../timestamp/<br/>chunk-NNNN.ndjson<br/>(Last chunk!)
-        Note over PN,S3Delta: S3 PutObject event triggers<br/>MergerSubscriber lambda<br/>Check: N chunks == total?<br/>YES → Send merge message to SQS
+        Note over PN,S3Delta: S3 PutObject event triggers<br/>PostProcessorSubscriber lambda<br/>Check: N chunks == total?<br/>YES → Send post-processor message to SQS
     end
     
-    Note over SQS,S3Delta: MergerSubscriber lambda monitors chunk completion<br/>When last chunk detected, triggers Phase 3
+    Note over SQS,S3Delta: PostProcessorSubscriber lambda monitors chunk completion<br/>When last chunk detected, triggers Phase 3
     end
 ```
 
@@ -178,7 +178,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant SQS as SQS Queue
-    participant Merger as Merger<br/>(Phase 3)
+    participant PostProcessor as PostProcessor<br/>(Phase 3)
     participant HM as HashMap<br/>Merger
     participant S3Temp as S3 Delta Bucket:<br/>Timestamped Deltas<br/>(deltas/.../timestamp/)
     participant S3Base as S3 Delta Bucket:<br/>Integrated Baseline<br/>(delta-storage/.../)
@@ -186,35 +186,35 @@ sequenceDiagram
     rect rgb(230, 255, 230)
     Note over SQS,S3Base: Phase 3: Consolidation & Merging - Combine chunks and merge with baseline
     
-    SQS->>Merger: Merge trigger message<br/>(all chunks complete)
+    SQS->>PostProcessor: Post-processor trigger message<br/>(all chunks complete)
     
-    Note over Merger,S3Temp: Step 1: Consolidate chunk deltas
-    Merger->>S3Temp: Read chunk-0000.ndjson
-    Merger->>S3Temp: Read chunk-0001.ndjson
-    Merger->>S3Temp: ...
-    Merger->>S3Temp: Read chunk-NNNN.ndjson
+    Note over PostProcessor,S3Temp: Step 1: Consolidate chunk deltas
+    PostProcessor->>S3Temp: Read chunk-0000.ndjson
+    PostProcessor->>S3Temp: Read chunk-0001.ndjson
+    PostProcessor->>S3Temp: ...
+    PostProcessor->>S3Temp: Read chunk-NNNN.ndjson
     
-    Note over Merger: Concatenate all chunk deltas<br/>into single dataset
+    Note over PostProcessor: Concatenate all chunk deltas<br/>into single dataset
     
-    Merger->>S3Temp: Write previous-input.ndjson<br/>(timestamped consolidated)
+    PostProcessor->>S3Temp: Write previous-input.ndjson<br/>(timestamped consolidated)
     
-    Note over Merger,S3Base: Step 2: Merge with existing baseline
-    Merger->>S3Base: Read previous-input.ndjson<br/>(existing integrated baseline)
+    Note over PostProcessor,S3Base: Step 2: Merge with existing baseline
+    PostProcessor->>S3Base: Read previous-input.ndjson<br/>(existing integrated baseline)
     
-    Merger->>HM: merge(existingBaseline,<br/>consolidatedChunks)
+    PostProcessor->>HM: merge(existingBaseline,<br/>consolidatedChunks)
     
     Note over HM: HashMapMerger.merge()<br/>4-way merge logic:<br/>• Retained (baseline only)<br/>• Added (chunks only)<br/>• Updated (hash changed)<br/>• Unchanged (same hash)
     
-    HM-->>Merger: Merged FieldSets<br/>+ statistics
+    HM-->>PostProcessor: Merged FieldSets<br/>+ statistics
     
-    Merger->>S3Base: MERGE & OVERWRITE<br/>previous-input.ndjson
+    PostProcessor->>S3Base: MERGE & OVERWRITE<br/>previous-input.ndjson
     
     Note over S3Base: New integrated baseline =<br/>merged(old baseline,<br/>consolidated chunks)
     
-    Note over Merger,S3Temp: Step 3: Cleanup
-    Merger->>S3Temp: Delete chunk-*.ndjson<br/>(cleanup chunk-specific deltas)
+    Note over PostProcessor,S3Temp: Step 3: Cleanup
+    PostProcessor->>S3Temp: Delete chunk-*.ndjson<br/>(cleanup chunk-specific deltas)
     
-    Merger-->>SQS: Complete
+    PostProcessor-->>SQS: Complete
     end
 ```
 
@@ -233,5 +233,5 @@ sequenceDiagram
 - **Two-stage delta**: 
   1. Chunk-specific deltas (intermediate, timestamped)
   2. Integrated baseline (final, shared across all syncs)
-- **Consolidation phase**: Merger (Phase 3) combines all chunk outputs before merging with baseline
-- **Concurrent completion detection**: MergerSubscriber lambda monitors S3 PutObject events during processing to detect when all chunks are complete
+- **Consolidation phase**: Post-Processor (Phase 3) combines all chunk outputs before merging with baseline
+- **Concurrent completion detection**: PostProcessorSubscriber lambda monitors S3 PutObject events during processing to detect when all chunks are complete

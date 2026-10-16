@@ -71,12 +71,12 @@ lib/
 docker/                 (container images)
   ├─ chunker.ts         (Phase 1 container entry)
   ├─ processor.ts       (Phase 2 container entry)
-  └─ merger.ts          (Phase 3 container entry)
+  └─ post-processor.ts          (Phase 3 container entry)
 
 src/
   ├─ chunking/          (Phase 1 logic)
   ├─ processing/        (Phase 2 logic)
-  └─ merging/           (Phase 3 logic)
+  └─ post-processing/   (Phase 3 logic)
 ```
 
 ### Context Configuration
@@ -254,9 +254,9 @@ const taskDefinition = new ecs.FargateTaskDefinition(
 - S3 access (read chunks, write processed)
 - SQS consumer
 
-### Phase 3 (Merging)
+### Phase 3 (Post-processing)
 - ECS task definition
-- ECR image for merger
+- ECR image for post-processor
 - S3 access (read all processed chunks)
 - Output bucket (write delta storage)
 

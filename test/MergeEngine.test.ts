@@ -4,7 +4,7 @@
  * Tests the core merge engine that concatenates chunk delta outputs
  */
 
-import { MergeEngine, MergerConfig, MergeResult } from '../src/merging/MergeEngine';
+import { MergeEngine, MergerConfig, MergeResult } from '../src/post-processing/MergeEngine';
 import { S3 } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 

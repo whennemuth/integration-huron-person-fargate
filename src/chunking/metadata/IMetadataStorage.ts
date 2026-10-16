@@ -48,9 +48,9 @@ type CoreMetadataFields = Flags & {
  * This is the canonical definition used throughout the codebase.
  * 
  * Aggregate fields usage:
- * - chunkCount: REQUIRED by merger for completion validation (ensures all expected chunks are processed)
+ * - chunkCount: REQUIRED by post-processor for completion validation (ensures all expected chunks are processed)
  * - totalRecords: Used for statistics and audit trail
- * - chunkKeys: Used for debugging and audit trail (not used by merger for validation)
+ * - chunkKeys: Used for debugging and audit trail (not used by post-processor for validation)
  */
 export type ChunkMetadata = CoreMetadataFields & {
   deltaStoragePath: string;
@@ -58,7 +58,7 @@ export type ChunkMetadata = CoreMetadataFields & {
   chunkCount?: number;
   totalRecords?: number;
   chunkKeys?: string[];
-  /** True once any parallel chunker task has detected the end of the source records - an empty batch, or (only if STOP_AT_FIRST_PARTIAL=true) a smaller-than-requested batch (the name predates that distinction). The source queue only depletes, never refills, so this is a reliable "nothing meaningful left" signal for later/other tasks, regardless of which task set it. The sole completion signal (isAlreadyFinished(), merger-trigger gate, chain-stop). */
+  /** True once any parallel chunker task has detected the end of the source records - an empty batch, or (only if STOP_AT_FIRST_PARTIAL=true) a smaller-than-requested batch (the name predates that distinction). The source queue only depletes, never refills, so this is a reliable "nothing meaningful left" signal for later/other tasks, regardless of which task set it. The sole completion signal (isAlreadyFinished(), post-processor-trigger gate, chain-stop). */
   partialOrEmptyChunkEncountered?: boolean;
 };
 
@@ -67,7 +67,7 @@ export type ChunkMetadata = CoreMetadataFields & {
  * Extends core fields with write-specific operational parameters.
  * 
  * Aggregate values usage:
- * - chunkCount: Should be provided for merger completion validation
+ * - chunkCount: Should be provided for post-processor completion validation
  * - totalRecords: Optional, used for statistics and audit trail
  * - chunkKeys: Optional, used for debugging and audit trail
  */
@@ -228,7 +228,7 @@ export interface IMetadataStorage {
 
   /**
    * Mark the chunking run as failed.
-   * This prevents merger orchestration from treating partial chunk output as successful completion.
+   * This prevents post-processor orchestration from treating partial chunk output as successful completion.
    */
   markRunFailed(params: MarkRunFailedParams): Promise<void>;
 

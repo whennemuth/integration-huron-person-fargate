@@ -30,7 +30,7 @@ export type DeferredDeleteResult = {
  * Problem: ChunkedDeltaStrategy filters out removals during chunk processing because missing records
  * are just in other chunks, not actually removed from source. But this also prevents VALID deletions.
  * 
- * Solution: After merger consolidates all chunks, compare consolidated vs baseline:
+ * Solution: After post-processor consolidates all chunks, compare consolidated vs baseline:
  * - Consolidated: Represents current state of source system (all chunks merged)
  * - Baseline: Represents previous run state (delta-storage/previous-input.ndjson)
  * - Removals: Records in baseline but NOT in consolidated = truly removed from source

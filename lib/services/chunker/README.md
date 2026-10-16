@@ -502,5 +502,5 @@ BigJsonFetch
 
 - [IContext Configuration](../../../context/IContext.ts)
 - [Processor Service (Phase 2)](../processor/)
-- [Merger Service (Phase 3)](../merger/)
+- [Post-Processor Service (Phase 3)](../post-processor/)
 - [EventBridge Cron Expressions](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-create-rule-schedule.html)

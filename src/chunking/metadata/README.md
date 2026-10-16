@@ -11,12 +11,12 @@ Manages critical metadata types used in the 3-phase ECS Fargate chunking pipelin
 
 2. **METADATA**: Run manifest and configuration for post-run diagnostics (written after chunking completes)
    - **Why Created**: Records run manifest (itemsPerChunk, source, target, chunkDirectory, sync configuration) for post-run diagnostics, monitoring, and audit trails.
-   - **What Waits**: EventBridge rules poll for metadata existence to detect chunking completion and trigger Phase 3 (Merger). Merger uses metadata's createdAt timestamp to calculate full sync duration.
+   - **What Waits**: EventBridge rules poll for metadata existence to detect chunking completion and trigger Phase 3 (Post-processor). Post-processor uses metadata's createdAt timestamp to calculate full sync duration.
    - **Key Point**: Written AFTER chunking completes successfully. Processors do NOT wait for metadata—they start immediately when chunks appear (via S3 event notifications).
 
 3. **Error Records (TERMINAL_ERROR | ERROR:{type})**: Logs catastrophic failures and individual record issues
    - **Why Created**: Tracks both pipeline-halting failures (TERMINAL_ERROR) and individual record errors (ERROR:VALIDATION, ERROR:API_CALL, ERROR:THROTTLING, ERROR:NETWORK) for diagnostics and monitoring.
-   - **What Waits**: Merger checks for TERMINAL_ERROR before proceeding. If detected, merger skips the run. Non-terminal ERROR:{type} records are logged for diagnostics but don't block pipeline progression.
+   - **What Waits**: Post-processor checks for TERMINAL_ERROR before proceeding. If detected, post-processor skips the run. Non-terminal ERROR:{type} records are logged for diagnostics but don't block pipeline progression.
    - **Key Point**: TERMINAL_ERROR halts the pipeline (source fetch failure, S3 write failure). ERROR:{type} logs individual failures but allows integration to continue.
 
 ## Pipeline Flow: Metadata & Storage Interactions
@@ -29,7 +29,7 @@ sequenceDiagram
     participant CN as Subsequent Chunker<br/>Tasks (Phase 1)
     participant S as Storage<br/>(S3 or DynamoDB)
     participant P as Processor Tasks<br/>(Phase 2)
-    participant M as Merger Task<br/>(Phase 3)
+    participant M as Post-Processor Task<br/>(Phase 3)
 
     Note over C1,S: === NORMAL SUCCESS PATH ===
     
@@ -83,10 +83,10 @@ sequenceDiagram
 
 1. **FLAGS are written FIRST** (before any chunks) to prevent processor race conditions
 2. **Subsequent chunker tasks** check for terminal errors before starting work
-3. **Processor tasks** read FLAGS but NOT terminal error markers while processing - they process whatever chunks exist. (The DynamoDB-mode "last processor" DOES check TERMINAL_ERROR before triggering the merger - see below.)
+3. **Processor tasks** read FLAGS but NOT terminal error markers while processing - they process whatever chunks exist. (The DynamoDB-mode "last processor" DOES check TERMINAL_ERROR before triggering the post-processor - see below.)
 4. **METADATA is written LAST** (after chunking completes successfully)
-5. **Merger tasks** read both FLAGS and METADATA for orchestration context
-6. **Failure markers** (TERMINAL_ERROR + FLAGS update) stop subsequent chunkers and block the merger's deactivations, but not chunk processing
+5. **Post-processor tasks** read both FLAGS and METADATA for orchestration context
+6. **Failure markers** (TERMINAL_ERROR + FLAGS update) stop subsequent chunkers and block the post-processor's deactivations, but not chunk processing
 
 ## Failure Handling Mechanism
 
@@ -123,15 +123,15 @@ When a chunking task encounters a catastrophic failure (network timeout, S3 writ
 - Continue processing whatever chunks were created before failure
 - This is intentional: partial chunks may still be valuable for diagnostics
 - **Exception (DynamoDB mode)**: the processor that finds all chunks complete checks the
-  TERMINAL_ERROR record (`StatisticsTable.readTerminalError()`) before claiming the merger
-  trigger, and does NOT trigger the merger for a failed run
+  TERMINAL_ERROR record (`StatisticsTable.readTerminalError()`) before claiming the post-processor
+  trigger, and does NOT trigger the post-processor for a failed run
 
-**Merger Tasks (Phase 3):**
-- S3 mode: `MergerSubscriber` blocks the merger entirely if a terminal error marker exists
-- Both modes: `MergerForS3`/`MergerForDynamoDB.runDeferredDeletes()` check
+**Post-Processor Tasks (Phase 3):**
+- S3 mode: `PostProcessorSubscriber` blocks the post-processor entirely if a terminal error marker exists
+- Both modes: `PostProcessorForS3`/`PostProcessorForDynamoDB.runDeferredDeletes()` check
   `terminalErrorExists()` and skip deletion handling (deactivations) for a failed run - a
   failed run's population is incomplete, so "missing" people must never be deactivated
-- Incomplete runs naturally don't trigger merger due to missing chunk markers
+- Incomplete runs naturally don't trigger post-processor due to missing chunk markers
 
 ### When Are Failure Markers Written?
 
@@ -336,16 +336,16 @@ Attributes: {
 ```
 Written by the one chunker task that wins `claimProcessorBoost()` (ProcessorServiceBooster); deleted by `releaseProcessorBoostClaim()`. Claims older than 10 minutes are treated as abandoned and cleared. In S3 mode, `MetadataForS3` writes this same record to the statistics table.
 
-**Merger Trigger Claim Record** (eventType = "MERGER_TRIGGER_CLAIM"):
+**Post-Processor Trigger Claim Record** (eventType = "POST_PROCESSOR_TRIGGER_CLAIM"):
 ```
 PK: "2024-01-15T10:30:00.000Z"
-SK: "MERGER_TRIGGER_CLAIM"
+SK: "POST_PROCESSOR_TRIGGER_CLAIM"
 Attributes: {
   claimedAt: "2024-01-15T10:45:00.000Z",  // OCCFlag-guarded - first writer wins
   claimedByChunk: "0042"                  // Optional - which processor task won
 }
 ```
-Written directly via `StatisticsTable.claimMergerTrigger()` (not through the metadata classes) by the one processor task (`ProcessorForDynamoDb`) that wins the right to send the merger-trigger SQS message. Never released - the merger must be triggered at most once per run.
+Written directly via `StatisticsTable.claimPostProcessorTrigger()` (not through the metadata classes) by the one processor task (`ProcessorForDynamoDb`) that wins the right to send the post-processor-trigger SQS message. Never released - the post-processor must be triggered at most once per run.
 
 **Non-Terminal Error Records** (eventType = "ERROR:{category}"):
 
@@ -453,7 +453,7 @@ const metadata = MetadataFactory.create(config);
 
 ### Consumer Pattern
 
-Consumers (chunker.ts, processor.ts, merger.ts) use backward compatibility aliasing:
+Consumers (chunker.ts, processor.ts, post-processor.ts) use backward compatibility aliasing:
 
 ```typescript
 import { MetadataForS3 } from '../src/chunking/metadata';
@@ -512,7 +512,7 @@ const flags = await MetadataManager.readFlags({ bucketName, chunkDirectory });
 
 3. **Write Results** (to S3 or DynamoDB depending on storage mode)
 
-### Phase 3: Merger (docker/merger.ts)
+### Phase 3: Post-Processor (docker/post-processor.ts)
 
 1. **Read Metadata** (to get run context):
    ```typescript

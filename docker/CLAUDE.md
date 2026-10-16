@@ -10,7 +10,7 @@ docker/
   ├─ Dockerfile              (base image configuration)
   ├─ chunker.ts              (Phase 1: streaming chunking)
   ├─ processor.ts             (Phase 2: parallel transformation)
-  └─ merger.ts                (Phase 3: consolidation)
+  └─ post-processor.ts                (Phase 3: consolidation)
 ```
 
 ## Dockerfile Pattern
@@ -176,9 +176,9 @@ return MetadataForS3;  // S3 mode (file-based)
 - `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` - Optional (enables DynamoDB mode)
 - `DYNAMODB_PERSON_HISTORY_TABLE_NAME` - Optional (enables DynamoDB mode)
 
-**Merger Only:**
+**Post-Processor Only:**
 - `DYNAMODB_STATISTICS_TABLE_NAME` - Required for statistics tracking
-- No person state tables needed (merger consolidates, doesn't track individuals)
+- No person state tables needed (post-processor consolidates, doesn't track individuals)
 
 ## Phase 1: Chunker Container
 
@@ -230,11 +230,11 @@ ECS Task 3 → processes chunk-0003
 ECS Task N → processes chunk-NNNN
 ```
 
-## Phase 3: Merger Container
+## Phase 3: Post-Processor Container
 
-**File**: `docker/merger.ts`
+**File**: `docker/post-processor.ts`
 
-**Environment Prefix**: DOCKER_MERGER
+**Environment Prefix**: DOCKER_POST_PROCESSOR
 
 **Responsibilities**:
 1. Wait for all processor tasks to complete
@@ -372,7 +372,7 @@ const taskDef = new ecs.FargateTaskDefinition(this, 'Processor', {
 **Sizing Guidance**:
 - **Chunker** (simple streaming): 512 CPU, 1024 MB memory
 - **Processor** (data transformation): 1024 CPU, 2048 MB memory
-- **Merger** (consolidation): 1024 CPU, 2048 MB memory
+- **Post-processor** (consolidation): 1024 CPU, 2048 MB memory
 
 ## Container Security Best Practices
 

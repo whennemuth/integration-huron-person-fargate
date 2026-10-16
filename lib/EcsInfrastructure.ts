@@ -7,7 +7,7 @@ import { IQueue } from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import { IContext } from '../context/IContext';
 import { ChunkerService } from './services/chunker/ChunkerService';
-import { MergerService } from './services/merger/MergerService';
+import { PostProcessorService } from './services/post-processor/PostProcessorService';
 import { ProcessorService } from './services/processor/ProcessorService';
 import { TaskDefinitions } from './TaskDefinitions';
 import { Config } from 'integration-huron-person';
@@ -38,7 +38,7 @@ export class EcsInfrastructure extends Construct {
   
   public chunkerService?: ChunkerService;
   public processorService?: ProcessorService;
-  public mergerService?: MergerService;
+  public postProcessorService?: PostProcessorService;
   private context: IContext;
   private stackScope: Construct;
   private tags?: { [key: string]: string };
@@ -193,25 +193,25 @@ export class EcsInfrastructure extends Construct {
   }
 
   /**
-   * Creates the MergerService (QueueProcessingFargateService)
-   * Must be called after merger queue is created
+   * Creates the PostProcessorService (QueueProcessingFargateService)
+   * Must be called after post-processor queue is created
    */
-  public createMergerService(
+  public createPostProcessorService(
     queue: IQueue,
     deadLetterQueue: IQueue
-  ): MergerService {
-    this.mergerService = new MergerService(this.servicesConstruct, {
+  ): PostProcessorService {
+    this.postProcessorService = new PostProcessorService(this.servicesConstruct, {
       cluster: this.cluster,
-      taskDefinition: this.taskDefinitions.merger.taskDefinition,
+      taskDefinition: this.taskDefinitions.postProcessor.taskDefinition,
       vpc: this.vpc,
       queue,
       deadLetterQueue,
-      maxScalingCapacity: 1, // Merging is less frequent, lower max
+      maxScalingCapacity: 1, // Post-processing is less frequent, lower max
       stackScope: this.stackScope,  // Pass stack reference for escape hatches
       context: this.context,  // Required for AbstractService (landscape suffix)
       tags: this.tags,
     });
 
-    return this.mergerService;
+    return this.postProcessorService;
   }
 }

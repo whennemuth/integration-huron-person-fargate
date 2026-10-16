@@ -2,7 +2,7 @@
  * Shared logic between ProcessorForS3.ts and ProcessorForDynamoDb.ts.
  *
  * Both processors run the same chunk-processing lifecycle around HuronPersonIntegration -
- * only how each stores delta state and signals merger completion differs (S3 marker files vs
+ * only how each stores delta state and signals post-processor completion differs (S3 marker files vs
  * DynamoDB CHUNK_STATUS/SQS). This module holds the parts that are identical between them, so
  * fixes/changes to shared behavior only need to be made once.
  */

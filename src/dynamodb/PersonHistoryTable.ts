@@ -19,7 +19,7 @@ import { AbstractDynamoDbTable, DynamoDBTable } from './DynamoDBTable';
  * Write Policy:
  * - NEW: First time person appears in source
  * - UPDATED: Hash changed from previous sync
- * - DELETED: Person removed from source (detected by merger)
+ * - DELETED: Person removed from source (detected by post-processor)
  * - UNCHANGED: DO NOT WRITE (skipped entirely)
  * 
  * Access Patterns:
@@ -30,7 +30,7 @@ import { AbstractDynamoDbTable, DynamoDBTable } from './DynamoDBTable';
  * 
  * Usage:
  * - Processors: PutItem for NEW and UPDATED persons
- * - Merger: PutItem for DELETED persons
+ * - Post-processor: PutItem for DELETED persons
  * - Reporting: Query for audit trails and analytics
  */
 
@@ -91,7 +91,7 @@ export interface PersonHistoryRecord {
  * PersonHistoryTable utility class
  * 
  * Wraps DynamoDBTable with domain-specific operations for person history tracking.
- * Provides high-level methods for processor, merger, and reporting operations.
+ * Provides high-level methods for processor, post-processor, and reporting operations.
  * 
  * Usage:
  * ```typescript
@@ -105,7 +105,7 @@ export interface PersonHistoryRecord {
  *   changeType: 'NEW'
  * });
  * 
- * // Merger: Write DELETED person
+ * // Post-processor: Write DELETED person
  * await historyTable.writeHistory({
  *   personId: 'U22222',
  *   syncRunId: '2026-03-03T19:58:41.277Z',
@@ -151,7 +151,7 @@ export class PersonHistoryTable {
 
   /**
    * Write a history record for a person.
-   * Used by processors (NEW/UPDATED) and merger (DELETED).
+   * Used by processors (NEW/UPDATED) and post-processor (DELETED).
    * 
    * @param record - PersonHistoryRecord to write
    */

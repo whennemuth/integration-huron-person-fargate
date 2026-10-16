@@ -9,7 +9,7 @@ import { HuronPersonSecrets } from '../../Secrets';
 import { StorageParams } from '../../TaskDefinitions';
 
 
-export interface MergerTaskDefinitionProps {
+export interface PostProcessorTaskDefinitionProps {
   repository: IRepository;
   imageTag?: string;
   cpu: number;
@@ -28,13 +28,13 @@ export interface MergerTaskDefinitionProps {
 }
 
 /**
- * Creates a Fargate task definition for the merger (Phase 3)
+ * Creates a Fargate task definition for the post-processor (Phase 3)
  * Concatenates all NDJSON chunks into previous-input.ndjson
  */
-export class MergerTaskDefinition extends Construct {
+export class PostProcessorTaskDefinition extends Construct {
   public readonly taskDefinition: FargateTaskDefinition;
 
-  constructor(scope: Construct, id: string, props: MergerTaskDefinitionProps) {
+  constructor(scope: Construct, id: string, props: PostProcessorTaskDefinitionProps) {
     super(scope, id);
 
     const { 
@@ -46,14 +46,14 @@ export class MergerTaskDefinition extends Construct {
 
     // Create CloudWatch log group
     const logGroup = new LogGroup(this, 'LogGroup', {
-      logGroupName: `/ecs/huron-person-merger-${landscape}`,
+      logGroupName: `/ecs/huron-person-post-processor-${landscape}`,
       retention: logRetentionDays as RetentionDays,
       removalPolicy: RemovalPolicy.DESTROY,
     });
 
     // Create task definition
     this.taskDefinition = new FargateTaskDefinition(this, 'TaskDefinition', {
-      family: `Merger-${landscape}`,
+      family: `PostProcessor-${landscape}`,
       cpu,
       memoryLimitMiB,
       // Use ARM64 for Graviton2 (20% cost savings)
@@ -89,7 +89,7 @@ export class MergerTaskDefinition extends Construct {
         `It checks the completeness of the delta chunks by referencing a metadata file created 
         by the chunker. If all expected delta chunks are present in the ${chunksBucketName}`,
       DESCRIPTION3:
-        `bucket, it triggers the merger task to concatenate all NDJSON chunk files into a single file named previous-input.ndjson 
+        `bucket, it triggers the post-processor task to concatenate all NDJSON chunk files into a single file named previous-input.ndjson 
         in the same bucket, and then deletes the chunk files.`
     };
 
@@ -121,13 +121,13 @@ export class MergerTaskDefinition extends Construct {
     }
 
     // Add container
-    const container = this.taskDefinition.addContainer('MergerContainer', {
-      containerName: 'merger',
+    const container = this.taskDefinition.addContainer('PostProcessorContainer', {
+      containerName: 'post-processor',
       image: ContainerImage.fromEcrRepository(repository,imageTag || 'latest'),
-      // Override CMD in Dockerfile to run merger
-      command: ['node', 'dist/docker/merger.js'],
+      // Override CMD in Dockerfile to run post-processor
+      command: ['node', 'dist/docker/post-processor.js'],
       logging: LogDriver.awsLogs({
-        streamPrefix: 'merger',
+        streamPrefix: 'post-processor',
         logGroup,
       }),
       memoryLimitMiB, // Hard limit for container memory - if the container exceeds this, it will be killed. This is required to prevent runaway memory usage in case of issues.

@@ -1,7 +1,7 @@
 # integration-huron-person-fargate: Serverless Pipeline & Infrastructure
 
 ## Project Purpose
-AWS CDK infrastructure and serverless implementation of the three-phase streaming delta synchronization pipeline. Implements chunking, processing, and merging phases using Lambda, ECS Fargate, S3, and SQS.
+AWS CDK infrastructure and serverless implementation of the three-phase streaming delta synchronization pipeline. Implements chunking, processing, and post-processing phases using Lambda, ECS Fargate, S3, and SQS.
 
 ## Repository Relationship Model
 
@@ -128,7 +128,7 @@ stop-at-first-partial behavior. Consequences:
 - `ChunkResult.endOfRecordsDetected` (renamed from `partialChunkEncountered`) / metadata
   `partialOrEmptyChunkEncountered` (persisted, so NOT renamed) mean "end of source records
   detected" (empty batch, or partial only if `stopAtFirstPartial`). All consumers (chain-stop,
-  `isAlreadyFinished()`, merger-trigger gate, `ProcessorServiceBooster` final check) need exactly
+  `isAlreadyFinished()`, post-processor-trigger gate, `ProcessorServiceBooster` final check) need exactly
   that signal, so they are unchanged.
 - Counts are never inferred from `recordCount`: `totalRecords` = sum of actual response lengths,
   `chunkCount` = chunk files actually written.
@@ -149,15 +149,15 @@ env `MAX_TOTAL_RECORDS` -> `ChunkFromAPI.runChunking()` (also reads the run's ac
 / `runTotalRecordsAtStart` -> `BigJsonFetch.enforceMaxTotalRecords()`, checked before the first
 fetch (fail fast) and on every batch before it is written. Exceeding it throws, surfacing through
 the existing terminal-error path (`runFailed` metadata + `markRunFailed`), so later chained tasks
-bail on `isTerminalErrorEncountered()` and the S3-mode merger is blocked. Precision caveat:
+bail on `isTerminalErrorEncountered()` and the S3-mode post-processor is blocked. Precision caveat:
 `totalRecords` only includes tasks that have finished, so the cutoff can be overshot by up to
 the in-flight records of concurrently running tasks.
 
 **Failed runs never reach deactivations**: A run is "failed" when its TERMINAL_ERROR record exists
 (DynamoDB: PK=syncRunId, SK=`TERMINAL_ERROR` in the statistics table;
-S3: `_terminal_error.json`). Gates: `MergerSubscriber` (S3 mode, blocks merger),
-`ProcessorForDynamoDb`'s last-processor check (does not trigger the merger), and
-`MergerForS3`/`MergerForDynamoDB.runDeferredDeletes()` (skip deletion handling, both modes).
+S3: `_terminal_error.json`). Gates: `PostProcessorSubscriber` (S3 mode, blocks post-processor),
+`ProcessorForDynamoDb`'s last-processor check (does not trigger the post-processor), and
+`PostProcessorForS3`/`PostProcessorForDynamoDB.runDeferredDeletes()` (skip deletion handling, both modes).
 Note: until this was fixed, `MetadataForDynamoDb.readTerminalError()` read the METADATA record
 (and `StatisticsTable.readMetadata()` strips `eventType`), so `terminalErrorExists()` was always
 `false` in DynamoDB mode - chunker fast-fail on a failed run silently never happened there. Unit
@@ -174,26 +174,26 @@ dedicated `StatisticsTable.writeTerminalError()`/`readTerminalError()`.
 
 **Harness Prefix**: DOCKER_PROCESSOR_*
 
-### Phase 3: Merging  
+### Phase 3: Post-processing  
 **Purpose**: Consolidate processing results and write final delta storage
 
 **Components**:
 - DeferredDeleteHandler (soft delete coordination)
 - StatisticsTable (merge metrics)
-- Implementation classes: `src/merging/AbstractMerger.ts` (base class), `src/merging/MergerForS3.ts`, `src/merging/MergerForDynamoDB.ts`
-- Docker entrypoint: `docker/merger.ts` (router)
+- Implementation classes: `src/post-processing/AbstractPostProcessor.ts` (base class), `src/post-processing/PostProcessorForS3.ts`, `src/post-processing/PostProcessorForDynamoDB.ts`
+- Docker entrypoint: `docker/post-processor.ts` (router)
 
 **Architecture**: Template Method pattern with abstract base class
-- `AbstractMerger` (src/merging/): Base class with shared logic (getTaskParameters, processDeferredDeletes, main template method)
-- `MergerForS3` (src/merging/): S3-specific implementation (file consolidation, baseline merging)
-- `MergerForDynamoDB` (src/merging/): DynamoDB-specific implementation (minimal/no-op merge, state already in tables)
-- `merger.ts` (docker/): Router that detects storage mode and delegates to appropriate implementation
+- `AbstractPostProcessor` (src/post-processing/): Base class with shared logic (getTaskParameters, processDeferredDeletes, main template method)
+- `PostProcessorForS3` (src/post-processing/): S3-specific implementation (file consolidation, baseline merging)
+- `PostProcessorForDynamoDB` (src/post-processing/): DynamoDB-specific implementation (minimal/no-op merge, state already in tables)
+- `post-processor.ts` (docker/): Router that detects storage mode and delegates to appropriate implementation
 
-**Critical Design Note**: BOTH storage modes require the merger service
+**Critical Design Note**: BOTH storage modes require the post-processor service
 - S3 mode: File consolidation + deletion handling
 - DynamoDB mode: Deletion handling only (no file consolidation needed)
 
-**Soft-deleted persons are marked in the baseline** (`src/merging/DeletedHashMarker.ts`): both
+**Soft-deleted persons are marked in the baseline** (`src/post-processing/DeletedHashMarker.ts`): both
 baselines (PersonCurrentStateTable, `previous-input.ndjson`) retain every person ever seen, so a
 person absent from the source would otherwise be selected for deletion on every full sync. After a
 successful soft-delete, `onSoftDeleteSuccess` rewrites that person's baseline hash with a
@@ -203,7 +203,7 @@ UPDATED and reactivated (via `__active`); the processor's write then clears the 
 
 **Harness Prefixes**:
 - DEFERRED_DELETE_HANDLER_*, STATISTICS_TABLE_*
-- DOCKER_MERGER_*
+- DOCKER_POST_PROCESSOR_*
 
 ## Storage Modes: DynamoDB vs S3
 
@@ -246,9 +246,9 @@ The pipeline supports two storage modes for delta state and metadata, controlled
 3. **StatisticsTable** - Metadata, flags, and error events
    - PK: `integrationTimestamp` (syncRunId), SK: `eventType`
    - Event types: `METADATA`, `FLAGS`, `TERMINAL_ERROR`, `STATISTICS`, `STATISTICS-chunk-*`, `ERROR:*`,
-     `CHUNK_STATUS_*`, `PROCESSOR_BOOST_CLAIM`, `MERGER_TRIGGER_CLAIM`
-   - `PROCESSOR_BOOST_CLAIM` / `MERGER_TRIGGER_CLAIM` are `OCCFlag`-guarded claim records ensuring exactly
-     one chunker task runs the processor scaling check, and exactly one processor task triggers the merger
+     `CHUNK_STATUS_*`, `PROCESSOR_BOOST_CLAIM`, `POST_PROCESSOR_TRIGGER_CLAIM`
+   - `PROCESSOR_BOOST_CLAIM` / `POST_PROCESSOR_TRIGGER_CLAIM` are `OCCFlag`-guarded claim records ensuring exactly
+     one chunker task runs the processor scaling check, and exactly one processor task triggers the post-processor
      (see `docs/CONCURRENCY_CONTROL.md`); the boost claim is written in S3 storage mode too
    - Replaces `_metadata.json` and `_flags.json` files from S3 mode
 
@@ -297,7 +297,7 @@ The pipeline supports two storage modes for delta state and metadata, controlled
 **The signal**: any landscape whose name matches `^mock\d*$` (`mock`, `mock1`, `mock2`, ...) is a
 *mock landscape* - a stack dedicated to mocked runs. `isMockLandscape()` (src/Utils.ts) is the single
 test for it, used only by CDK (with the lower-cased `TAGS.Landscape`), the Runner and `BulkPurger`.
-There is no per-run "mock" flag, and **the pipeline's runtime code (chunker, processor, merger) has
+There is no per-run "mock" flag, and **the pipeline's runtime code (chunker, processor, post-processor) has
 no mock awareness at all**: mock-ness is a deploy-time property of the stack.
 
 **Why a landscape, not isolation tables**: nearly every resource name already carries the
@@ -399,9 +399,9 @@ then `cdk deploy`. Add `context.mock1.json` etc. for more mock stacks.
 **Solution**: Migrated all 14 harness modules to import TestEnvironment directly from `integration-core` package.
 
 **Files Migrated** (14 total):
-- Docker entries: chunker.ts, processor.ts, merger.ts
+- Docker entries: chunker.ts, processor.ts, post-processor.ts
 - Chunking: BigJsonFile.ts, BigJsonFetch.ts, ChunkFromAPI.ts, ChunkFromS3.ts, PersonArrayWrapper.ts
-- Merging: DeferredDeleteHandler.ts, StatisticsTable.ts, PersonCache.ts
+- Post-processing: DeferredDeleteHandler.ts, StatisticsTable.ts, PersonCache.ts
 - Error handling: ApiErrorTracking.ts
 - Orchestration: Runner.ts (extracted from lib/services/chunker/ChunkerService.ts)
 - Utilities: scrap/EcrChecker.ts
@@ -480,28 +480,28 @@ CHUNK_FROM_API_BASE_URL=...
 
 **Harness Prefix**: DOCKER_PROCESSOR
 
-### merger.ts
+### post-processor.ts
 **Purpose**: Router entry point for result consolidation
 
 **Architecture**: Template Method pattern with mode-specific implementations
-- AbstractMerger (src/merging/): Base class with shared logic (getTaskParameters, processDeferredDeletes, main)
-- MergerForS3 (src/merging/): S3-specific file consolidation and baseline merging
-- MergerForDynamoDB (src/merging/): Minimal/no-op merge (state already in DynamoDB tables)
-- merger.ts (docker/): Router that detects storage mode and delegates
+- AbstractPostProcessor (src/post-processing/): Base class with shared logic (getTaskParameters, processDeferredDeletes, main)
+- PostProcessorForS3 (src/post-processing/): S3-specific file consolidation and baseline merging
+- PostProcessorForDynamoDB (src/post-processing/): Minimal/no-op merge (state already in DynamoDB tables)
+- post-processor.ts (docker/): Router that detects storage mode and delegates
 
-**Critical**: Both modes require merger service for DeferredDeleteHandler
+**Critical**: Both modes require post-processor service for DeferredDeleteHandler
 
 **Mode Detection**: Checks for DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME or DYNAMODB_PERSON_HISTORY_TABLE_NAME
 
-**Harness Prefix**: DOCKER_MERGER
+**Harness Prefix**: DOCKER_POST_PROCESSOR
 
 ## Test Harnesses (14+ total)
 
 **Categories**:
 - **Orchestration** (1): Runner (Manual chunking service invocation)
 - **Chunking Pipeline** (5): ChunkFromAPI, ChunkFromS3, BigJsonFetch, BigJsonFile, PersonArrayWrapper
-- **Merging Pipeline** (3): DeferredDeleteHandler, PersonCache, StatisticsTable
-- **Docker Entry Points** (3): chunker.ts, processor.ts, merger.ts
+- **Post-processing Pipeline** (3): DeferredDeleteHandler, PersonCache, StatisticsTable
+- **Docker Entry Points** (3): chunker.ts, processor.ts, post-processor.ts
 - **Error Handling** (1): ApiErrorTracking
 - **Utilities** (1): EcrChecker
 

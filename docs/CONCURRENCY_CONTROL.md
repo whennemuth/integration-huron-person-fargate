@@ -156,11 +156,11 @@ DynamoDB's conditional write ensures:
 
 ### Use Cases
 
-1. **Merger Trigger Guard** (current production use: `StatisticsTable.claimMergerTrigger()`,
-   guarding the `MERGER_TRIGGER_CLAIM` record's `claimedAt` attribute)
+1. **Post-Processor Trigger Guard** (current production use: `StatisticsTable.claimPostProcessorTrigger()`,
+   guarding the `POST_PROCESSOR_TRIGGER_CLAIM` record's `claimedAt` attribute)
    - Multiple processor tasks may each independently observe the completion condition
-   - Only the first to claim triggers the merger; others see it already claimed and skip
-   - Prevents duplicate merger execution
+   - Only the first to claim triggers the post-processor; others see it already claimed and skip
+   - Prevents duplicate post-processor execution
 
 2. **Leader Election**
    - Multiple processes compete for leadership
@@ -173,13 +173,13 @@ DynamoDB's conditional write ensures:
 ### Usage: Any Existing Table, No Dedicated Schema
 
 OCCFlag targets a caller-supplied partition key (and optional sort key) plus attribute name on
-whatever table is passed in - e.g. a run's dedicated `MERGER_TRIGGER_CLAIM` record in the
+whatever table is passed in - e.g. a run's dedicated `POST_PROCESSOR_TRIGGER_CLAIM` record in the
 statistics table, guarding its `claimedAt` attribute:
 
 ```json
 {
   "integrationTimestamp": "2026-08-28T12:00:00.000Z",
-  "eventType": "MERGER_TRIGGER_CLAIM",
+  "eventType": "POST_PROCESSOR_TRIGGER_CLAIM",
   "claimedAt": "2026-08-28T12:34:56.789Z"
 }
 ```
@@ -195,16 +195,16 @@ const claim = new OCCFlag({
   partitionKeyName: 'integrationTimestamp',
   partitionKeyValue: syncRunId,
   sortKeyName: 'eventType',
-  sortKeyValue: 'MERGER_TRIGGER_CLAIM',
+  sortKeyValue: 'POST_PROCESSOR_TRIGGER_CLAIM',
   attributeName: 'claimedAt'
 });
 
 await claim.update(new Date().toISOString(),
   async () => {
-    console.log('Won the claim - proceed with triggering the merger');
+    console.log('Won the claim - proceed with triggering the post-processor');
   },
   async () => {
-    console.log('Lost the claim - another processor already triggered the merger');
+    console.log('Lost the claim - another processor already triggered the post-processor');
   }
 );
 ```
@@ -215,25 +215,25 @@ await claim.update(new Date().toISOString(),
 # Attempt to claim (set) the guarded attribute
 TASK=update TABLE_NAME=my-stack-statistics-preview REGION=us-east-2 \
   PARTITION_KEY_NAME=integrationTimestamp PARTITION_KEY_VALUE=2026-08-28T12:00:00.000Z \
-  SORT_KEY_NAME=eventType SORT_KEY_VALUE=MERGER_TRIGGER_CLAIM ATTRIBUTE_NAME=claimedAt VALUE=2026-08-28T12:34:56.789Z \
+  SORT_KEY_NAME=eventType SORT_KEY_VALUE=POST_PROCESSOR_TRIGGER_CLAIM ATTRIBUTE_NAME=claimedAt VALUE=2026-08-28T12:34:56.789Z \
   npx ts-node src/dynamodb/OCCFlag.ts
 
 # Remove the guarded attribute (allows it to be claimed again)
 TASK=unset TABLE_NAME=my-stack-statistics-preview REGION=us-east-2 \
   PARTITION_KEY_NAME=integrationTimestamp PARTITION_KEY_VALUE=2026-08-28T12:00:00.000Z \
-  SORT_KEY_NAME=eventType SORT_KEY_VALUE=MERGER_TRIGGER_CLAIM ATTRIBUTE_NAME=claimedAt \
+  SORT_KEY_NAME=eventType SORT_KEY_VALUE=POST_PROCESSOR_TRIGGER_CLAIM ATTRIBUTE_NAME=claimedAt \
   npx ts-node src/dynamodb/OCCFlag.ts
 
 # Get current value
 TASK=get-value TABLE_NAME=my-stack-statistics-preview REGION=us-east-2 \
   PARTITION_KEY_NAME=integrationTimestamp PARTITION_KEY_VALUE=2026-08-28T12:00:00.000Z \
-  SORT_KEY_NAME=eventType SORT_KEY_VALUE=MERGER_TRIGGER_CLAIM ATTRIBUTE_NAME=claimedAt \
+  SORT_KEY_NAME=eventType SORT_KEY_VALUE=POST_PROCESSOR_TRIGGER_CLAIM ATTRIBUTE_NAME=claimedAt \
   npx ts-node src/dynamodb/OCCFlag.ts
 
 # Test race condition with 5 concurrent clients
 TASK=test-race TABLE_NAME=my-stack-statistics-preview REGION=us-east-2 \
   PARTITION_KEY_NAME=integrationTimestamp PARTITION_KEY_VALUE=2026-08-28T12:00:00.000Z \
-  SORT_KEY_NAME=eventType SORT_KEY_VALUE=MERGER_TRIGGER_CLAIM ATTRIBUTE_NAME=claimedAt \
+  SORT_KEY_NAME=eventType SORT_KEY_VALUE=POST_PROCESSOR_TRIGGER_CLAIM ATTRIBUTE_NAME=claimedAt \
   npx ts-node src/dynamodb/OCCFlag.ts
 ```
 
@@ -297,7 +297,7 @@ export class OCCFlag {
 - ✅ You need **leader election** in a distributed system
 - ✅ You need **one-time initialization** guarantees
 - ✅ You need **idempotency** for critical operations
-- ✅ You need to **prevent duplicate triggers** (e.g. merger trigger, true-end-of-data claims)
+- ✅ You need to **prevent duplicate triggers** (e.g. post-processor trigger, true-end-of-data claims)
 - ✅ The guarded attribute lives on an **existing** table you don't want to duplicate schema for
 
 ---

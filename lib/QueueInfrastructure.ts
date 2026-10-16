@@ -15,7 +15,7 @@ export interface QueueInfrastructureProps {
  * Creates 3 queue pairs (main + DLQ) for the 3 QueueProcessingFargateService tasks:
  * 1. Chunker - breaks large JSON files into chunks
  * 2. Processor - processes each chunk (delta computation)
- * 3. Merger - merges delta chunks into final output
+ * 3. Post-processor - merges delta chunks into final output
  */
 export class QueueInfrastructure extends Construct {
   // Chunker queues
@@ -26,9 +26,9 @@ export class QueueInfrastructure extends Construct {
   public readonly processorQueue: Queue;
   public readonly processorDeadLetterQueue: Queue;
   
-  // Merger queues
-  public readonly mergerQueue: Queue;
-  public readonly mergerDeadLetterQueue: Queue;
+  // Post-processor queues
+  public readonly postProcessorQueue: Queue;
+  public readonly postProcessorDeadLetterQueue: Queue;
 
   constructor(scope: Construct, id: string, props: QueueInfrastructureProps) {
     super(scope, id);
@@ -80,19 +80,19 @@ export class QueueInfrastructure extends Construct {
     });
 
     // ========================================
-    // 3. Merger Queues
+    // 3. Post-Processor Queues
     // ========================================
-    this.mergerDeadLetterQueue = new Queue(this, 'MergerDeadLetterQueue', {
-      queueName: `${Landscape.toLowerCase()}-${QUEUE_BASE_NAME}-merger-queue-dlq`,
+    this.postProcessorDeadLetterQueue = new Queue(this, 'PostProcessorDeadLetterQueue', {
+      queueName: `${Landscape.toLowerCase()}-${QUEUE_BASE_NAME}-post-processor-queue-dlq`,
       retentionPeriod: Duration.days(14),
     });
 
-    this.mergerQueue = new Queue(this, 'MergerQueue', {
-      queueName: `${Landscape.toLowerCase()}-${QUEUE_BASE_NAME}-merger-queue`,
+    this.postProcessorQueue = new Queue(this, 'PostProcessorQueue', {
+      queueName: `${Landscape.toLowerCase()}-${QUEUE_BASE_NAME}-post-processor-queue`,
       visibilityTimeout: Duration.seconds(ctx.SQS.visibilityTimeoutSeconds),
       retentionPeriod: Duration.days(ctx.SQS.retentionPeriodDays),
       deadLetterQueue: {
-        queue: this.mergerDeadLetterQueue,
+        queue: this.postProcessorDeadLetterQueue,
         maxReceiveCount: ctx.SQS.deadLetterQueueMaxReceiveCount,
       },
     });
@@ -106,8 +106,8 @@ export class QueueInfrastructure extends Construct {
         Tags.of(this.chunkerDeadLetterQueue).add(key, value);
         Tags.of(this.processorQueue).add(key, value);
         Tags.of(this.processorDeadLetterQueue).add(key, value);
-        Tags.of(this.mergerQueue).add(key, value);
-        Tags.of(this.mergerDeadLetterQueue).add(key, value);
+        Tags.of(this.postProcessorQueue).add(key, value);
+        Tags.of(this.postProcessorDeadLetterQueue).add(key, value);
       });
     }
   }

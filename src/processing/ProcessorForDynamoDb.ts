@@ -15,7 +15,7 @@
  * - Reuses HuronPersonIntegration.run() completely
  * - Each chunk writes directly to PersonCurrentState + PersonHistory tables
  * - All processors share the same tables (atomic BatchWriteItem operations)
- * - Merger simplified to deletion detection only (no file consolidation)
+ * - Post-processor simplified to deletion detection only (no file consolidation)
  * 
  * Environment Variables:
  * - REGION: AWS region (e.g., 'us-east-2')
@@ -86,29 +86,29 @@ import {
 const metadataUtils = new StandardMetadataUtils({});
 
 /**
- * Triggers the merger Fargate task by sending a message to SQS.
+ * Triggers the post-processor Fargate task by sending a message to SQS.
  * Used in DynamoDB mode when the last processor detects all chunks are complete.
  * 
- * @param chunkDirectory - The chunk directory path to pass to merger
+ * @param chunkDirectory - The chunk directory path to pass to post-processor
  * @param createdAt - ISO timestamp when chunking started
- * @param mergerQueueUrl - URL of the merger SQS queue
+ * @param postProcessorQueueUrl - URL of the post-processor SQS queue
  * @param bucketName - S3 bucket name
  * @param region - AWS region
  * @returns true if message sent successfully, false otherwise
  */
-async function triggerMerger(
+async function triggerPostProcessor(
   chunkDirectory: string, 
   createdAt: string,
-  mergerQueueUrl: string,
+  postProcessorQueueUrl: string,
   bucketName: string,
   region?: string
 ): Promise<boolean> {
-  if (!mergerQueueUrl) {
-    console.error('Missing required MERGER_QUEUE_URL environment variable');
+  if (!postProcessorQueueUrl) {
+    console.error('Missing required POST_PROCESSOR_QUEUE_URL environment variable');
     return false;
   }
 
-  console.log('🚀 Last processor detected completion - triggering merger via SQS queue...');
+  console.log('🚀 Last processor detected completion - triggering post-processor via SQS queue...');
 
   const message = {
     chunksBucket: bucketName,
@@ -118,15 +118,15 @@ async function triggerMerger(
 
   try {
     const sqsClient = new SQSClient({ region });
-    console.log('Sending message to merger queue:', JSON.stringify(message));
+    console.log('Sending message to post-processor queue:', JSON.stringify(message));
     await sqsClient.send(new SendMessageCommand({
-      QueueUrl: mergerQueueUrl,
+      QueueUrl: postProcessorQueueUrl,
       MessageBody: JSON.stringify(message),
     }));
-    console.log('✅ Merger trigger message sent successfully');
+    console.log('✅ Post-processor trigger message sent successfully');
     return true;
   } catch (error: any) {
-    console.error(`❌ Failed to send merger trigger message: ${error.message}`);
+    console.error(`❌ Failed to send post-processor trigger message: ${error.message}`);
     return false;
   }
 }
@@ -203,7 +203,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     BULK_RESET,
     DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbStatisticsTableName,
     RETRY_STRATEGY,
-    MERGER_QUEUE_URL: mergerQueueUrl,
+    POST_PROCESSOR_QUEUE_URL: postProcessorQueueUrl,
     HURON_PERSON_CONFIG_JSON,
   } = process.env;
   
@@ -346,7 +346,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
   } finally {
     // No marker files needed with DynamoDB strategy!
     // DynamoDB handles concurrency atomically via BatchWriteItem
-    // Merger queries DynamoDB directly for deletion detection
+    // Post-processor queries DynamoDB directly for deletion detection
 
     // Write statistics to DynamoDB
     try {
@@ -369,7 +369,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
         console.log('\n✓ Processor task completed successfully');
       }
 
-      // DynamoDB Mode: Write CHUNK_STATUS and check for completion to trigger merger
+      // DynamoDB Mode: Write CHUNK_STATUS and check for completion to trigger post-processor
       if (errorTrackingStatisticsTableName && chunkId && integrationTimestamp) {
         try {
           const statisticsTable = StatisticsTable.fromTableName(errorTrackingStatisticsTableName, region);
@@ -400,32 +400,32 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
             // yet encountered a partial/empty batch, so the total is definitely not final.
             if (metadata?.chunkCount && metadata?.partialOrEmptyChunkEncountered && completedCount >= metadata.chunkCount) {
               const terminalError = await statisticsTable.readTerminalError(integrationTimestamp);
-              // A failed run must never reach the merger (and its deactivations).
-              const wonMergerTriggerClaim = !terminalError && await statisticsTable.claimMergerTrigger(integrationTimestamp, chunkId);
+              // A failed run must never reach the post-processor (and its deactivations).
+              const wonPostProcessorTriggerClaim = !terminalError && await statisticsTable.claimPostProcessorTrigger(integrationTimestamp, chunkId);
               if (terminalError) {
-                console.error(`⛔ Processor (chunk-${chunkId}): completion condition met, but the run is marked failed (${terminalError.errorMessage || 'unknown error'}) - merger NOT triggered.`);
-              } else if (!wonMergerTriggerClaim) {
+                console.error(`⛔ Processor (chunk-${chunkId}): completion condition met, but the run is marked failed (${terminalError.errorMessage || 'unknown error'}) - post-processor NOT triggered.`);
+              } else if (!wonPostProcessorTriggerClaim) {
                 // Step 3: Completion condition met by our own accounting - but several processors
                 // can independently reach this same conclusion, so only the one that wins this
-                // claim actually triggers the merger (exactly once).
-                console.log(`⏳ Processor (chunk-${chunkId}): completion condition met, but another processor already claimed the merger trigger.`);
+                // claim actually triggers the post-processor (exactly once).
+                console.log(`⏳ Processor (chunk-${chunkId}): completion condition met, but another processor already claimed the post-processor trigger.`);
               } else {
-                console.log(`✅ Last processor (chunk-${chunkId}): All ${metadata.chunkCount} chunks complete, triggering merger`);
+                console.log(`✅ Last processor (chunk-${chunkId}): All ${metadata.chunkCount} chunks complete, triggering post-processor`);
 
-                const triggered = await triggerMerger(
+                const triggered = await triggerPostProcessor(
                   chunkDirectory!,
                   metadata.createdAt || integrationTimestamp,
-                  mergerQueueUrl!,
+                  postProcessorQueueUrl!,
                   bucketName!,
                   region
                 );
 
                 if (triggered) {
-                  // Step 4: Mark merger as triggered for audit trail
+                  // Step 4: Mark post-processor as triggered for audit trail
                   await statisticsTable.updateMetadata(integrationTimestamp, {
-                    mergerTriggered: true,
-                    mergerTriggeredAt: new Date().toISOString(),
-                    mergerTriggeredBy: chunkId
+                    postProcessorTriggered: true,
+                    postProcessorTriggeredAt: new Date().toISOString(),
+                    postProcessorTriggeredBy: chunkId
                   });
                 }
               }
@@ -434,8 +434,8 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
             }
           }
         } catch (completionError: any) {
-          console.error('Failed to check/trigger merger completion:', completionError.message);
-          // Don't fail the processor just because merger trigger check failed
+          console.error('Failed to check/trigger post-processor completion:', completionError.message);
+          // Don't fail the processor just because post-processor trigger check failed
         }
       }
     } 
@@ -472,7 +472,7 @@ if (require.main === module) {
     'BULK_RESET',
     'DYNAMODB_STATISTICS_TABLE_NAME',
     'RETRY_STRATEGY',
-    'MERGER_QUEUE_URL',
+    'POST_PROCESSOR_QUEUE_URL',
     'HURON_PERSON_CONFIG_PATH',
     'SECRET_ARN',
     'STACK_ID',

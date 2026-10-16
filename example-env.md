@@ -115,7 +115,7 @@ QUEUE_SEEDER_BULK_RESET=false
 QUEUE_SEEDER_TRUST_PREVIOUS_STORAGE=false
 QUEUE_SEEDER_DRY_RUN=true
 
-# ------- Harness Groups for src\merging\DeferredDeleteHandler.ts ------- #
+# ------- Harness Groups for src\post-processing\DeferredDeleteHandler.ts ------- #
 MERGED_NDJSON_KEY=previous-input-testing.ndjson
 BASELINE_NDJSON_KEY=delta-storage/previous-input.ndjson
 PERSON_DELETE_TYPE=soft
@@ -203,23 +203,23 @@ DOCKER_PROCESSOR_DYNAMODB_HURON_PERSON_CONFIG_JSON=
 DOCKER_PROCESSOR_DYNAMODB_STACK_ID=huron-person-fargate
 DOCKER_PROCESSOR_DYNAMODB_LANDSCAPE=preview
 
-# ------- Harness Groups for docker/merger.ts ------- #
-DOCKER_MERGER_SQS_QUEUE_URL=
-DOCKER_MERGER_CHUNKS_BUCKET=huron-person-chunks-dev
-DOCKER_MERGER_CHUNK_DIRECTORY=chunks/person-full/2026-05-26T15:04:22.699Z
-DOCKER_MERGER_INPUT_KEY=person-full/2026-03-03T19:58:41.277Z-people.json
-DOCKER_MERGER_REGION=us-east-2
-DOCKER_MERGER_SHARED_DELTA_STORAGE_DIR=delta-storage
-DOCKER_MERGER_DRY_RUN=false
-DOCKER_MERGER_IS_ECS_TASK=false
-DOCKER_MERGER_ECS_AGENT_URI=http://169.254.170.2
-DOCKER_MERGER_PERSON_DELETE_TYPE=soft
-DOCKER_MERGER_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config/config.staging.json
-DOCKER_MERGER_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-xug4Og
-DOCKER_MERGER_HURON_PERSON_CONFIG_JSON=
-DOCKER_MERGER_DYNAMODB_STATISTICS_TABLE_NAME=huron-person-fargate-statistics
-DOCKER_MERGER_CACHE_ENABLED=true
-DOCKER_MERGER_CACHE_PATH=.
+# ------- Harness Groups for docker/post-processor.ts ------- #
+DOCKER_POST_PROCESSOR_SQS_QUEUE_URL=
+DOCKER_POST_PROCESSOR_CHUNKS_BUCKET=huron-person-chunks-dev
+DOCKER_POST_PROCESSOR_CHUNK_DIRECTORY=chunks/person-full/2026-05-26T15:04:22.699Z
+DOCKER_POST_PROCESSOR_INPUT_KEY=person-full/2026-03-03T19:58:41.277Z-people.json
+DOCKER_POST_PROCESSOR_REGION=us-east-2
+DOCKER_POST_PROCESSOR_SHARED_DELTA_STORAGE_DIR=delta-storage
+DOCKER_POST_PROCESSOR_DRY_RUN=false
+DOCKER_POST_PROCESSOR_IS_ECS_TASK=false
+DOCKER_POST_PROCESSOR_ECS_AGENT_URI=http://169.254.170.2
+DOCKER_POST_PROCESSOR_PERSON_DELETE_TYPE=soft
+DOCKER_POST_PROCESSOR_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config/config.staging.json
+DOCKER_POST_PROCESSOR_SECRET_ARN=arn:aws:secretsmanager:us-east-2:770203350335:secret:huron-person-fargate-processor/integration/_config/dev-xug4Og
+DOCKER_POST_PROCESSOR_HURON_PERSON_CONFIG_JSON=
+DOCKER_POST_PROCESSOR_DYNAMODB_STATISTICS_TABLE_NAME=huron-person-fargate-statistics
+DOCKER_POST_PROCESSOR_CACHE_ENABLED=true
+DOCKER_POST_PROCESSOR_CACHE_PATH=.
 
 # ------- Harness Groups for src\chunking\filedrop\ChunkFromS3.ts ------- #
 CHUNK_FROM_S3_CHUNKS_BUCKET=huron-person-chunks-dev
@@ -266,7 +266,7 @@ PERSON_ARRAY_WRAPPER_INPUT_BUCKET=huron-person-file-drop-dev
 PERSON_ARRAY_WRAPPER_INPUT_KEY=person-full/2026-03-03T19:58:41.277Z-people.json
 PERSON_ARRAY_WRAPPER_REGION=us-east-2
 
-# ------- Harness Groups for src\merging\DeferredDeleteHandler.ts ------- #
+# ------- Harness Groups for src\post-processing\DeferredDeleteHandler.ts ------- #
 DEFERRED_DELETE_CHUNKS_BUCKET=huron-person-chunks-dev
 DEFERRED_DELETE_REGION=us-east-2
 DEFERRED_DELETE_MERGED_NDJSON_KEY=previous-input-testing.ndjson

@@ -1,4 +1,4 @@
-import { DeferredDeleteHandler, DeferredDeleteHandlerParams } from '../src/merging/DeferredDeleteHandler';
+import { DeferredDeleteHandler, DeferredDeleteHandlerParams } from '../src/post-processing/DeferredDeleteHandler';
 import { TargetPersonDeleteType, Config, HuronPersonDataTarget, ReadPerson } from 'integration-huron-person';
 import { BatchStatus, FieldSet, Status } from 'integration-core';
 import { TrackingTargetApiErrorProcessor } from '../src/ApiErrorTracking';

@@ -7,13 +7,13 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { EventType, IBucket } from 'aws-cdk-lib/aws-s3';
 import { LambdaDestination } from 'aws-cdk-lib/aws-s3-notifications';
 import { Construct } from 'constructs';
-import { FUNCTION_BASE_NAME } from '../../../src/merging/MergerSubscriber';
+import { FUNCTION_BASE_NAME } from '../../../src/post-processing/PostProcessorSubscriber';
 import { IContext } from '../../../context/IContext';
 import { DYNAMODB_TABLE_NAME as STATISTICS_TABLE_NAME } from '../../../src/dynamodb/StatisticsTable';
 
-export interface MergerSubscribingLambdaProps {
+export interface PostProcessorSubscribingLambdaProps {
   vpc: IVpc;
-  mergerQueueUrl: string;
+  postProcessorQueueUrl: string;
   chunksBucket: IBucket;
   chunksBucketName: string;
   region: string;
@@ -26,30 +26,30 @@ export interface MergerSubscribingLambdaProps {
 }
 
 /**
- * Creates a Lambda function that triggers the merger Fargate task by sending messages to SQS.
+ * Creates a Lambda function that triggers the post-processor Fargate task by sending messages to SQS.
  * 
  * Sequence of events:
  * - 1) The chunker Fargate task creates delta chunk files in the chunks S3 bucket.
  * - 2) An S3 event notification for the chunks bucket, responding to the creation of delta chunk 
- *      files, triggers this MergerSubscribingLambda (once per file).
- * - 3) This MergerSubscribingLambda uses the event parameters to identify and inspect the S3 
+ *      files, triggers this PostProcessorSubscribingLambda (once per file).
+ * - 3) This PostProcessorSubscribingLambda uses the event parameters to identify and inspect the S3 
  *      chunks bucket.
  * - 4) If all expected delta chunks are present in the chunks bucket, as per a metadata file it 
- *      reads from the same bucket, this Lambda sends a message to the merger SQS queue with the 
+ *      reads from the same bucket, this Lambda sends a message to the post-processor SQS queue with the 
  *      S3 key of the uploaded chunk file - thus "passing on" the subscription to Fargate as follows: 
- * - 5) The desiredCount of the merger Fargate service is then adjusted upward by the
+ * - 5) The desiredCount of the post-processor Fargate service is then adjusted upward by the
  *      QueueProcessingFargateService construct internals responding to the temporarily heightened
- *      depth of the SQS queue, which in turn causes a new Fargate task for merging to be created.
- * - 6) The merger task polls for a message in the queue that it expects to find with the S3
+ *      depth of the SQS queue, which in turn causes a new Fargate task for post-processing to be created.
+ * - 6) The post-processor task polls for a message in the queue that it expects to find with the S3
  *      bucket details for inspecting content as follows:.
  * - 7) If all expected delta chunks are present in the chunks bucket, it sends a message to the 
- *      merger SQS queue to trigger the merger Fargate task.
- * - 8) The merger task concatenates all NDJSON chunk files into a single "previous-input.ndjson" file, which overwrites the prior version in the same bucket, and then deletes the chunk files.
+ *      post-processor SQS queue to trigger the post-processor Fargate task.
+ * - 8) The post-processor task concatenates all NDJSON chunk files into a single "previous-input.ndjson" file, which overwrites the prior version in the same bucket, and then deletes the chunk files.
  */
-export class MergerSubscribingLambda extends Construct {
+export class PostProcessorSubscribingLambda extends Construct {
   public readonly function: NodejsFunction;
 
-  constructor(scope: Construct, id: string, props: MergerSubscribingLambdaProps) {
+  constructor(scope: Construct, id: string, props: PostProcessorSubscribingLambdaProps) {
     super(scope, id);
 
     // Create Lambda log group
@@ -63,7 +63,7 @@ export class MergerSubscribingLambda extends Construct {
     const lambdaRole = new Role(this, 'FunctionRole', {
       roleName: `${FUNCTION_BASE_NAME}-lambda-role-${props.landscape}`,
       assumedBy: new ServicePrincipal('lambda.amazonaws.com'),
-      description: 'Role for subscribing merger lambda function',
+      description: 'Role for subscribing post-processor lambda function',
       managedPolicies: [
         ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
       ],
@@ -76,14 +76,14 @@ export class MergerSubscribingLambda extends Construct {
         `Subscribes to S3 event where a "chunk" file comprising hashed person delta data lands in 
         ${props.chunksBucketName}. (SEE DESCRIPTION environment variable(s) for task performed)`,      runtime: Runtime.NODEJS_20_X,
       handler: 'handler',
-      entry: 'src/merging/MergerSubscriber.ts',
+      entry: 'src/post-processing/PostProcessorSubscriber.ts',
       timeout: Duration.seconds(props.timeoutSeconds),
       memorySize: props.memorySizeMb,
       role: lambdaRole,
       logGroup,
       environment: {
         REGION: props.region,
-        MERGER_QUEUE_URL: props.mergerQueueUrl,
+        POST_PROCESSOR_QUEUE_URL: props.postProcessorQueueUrl,
         CHUNKS_BUCKET_NAME: props.chunksBucketName,
         DRY_RUN: props.dryRun ? 'true' : 'false',
         PREVIOUS_STORAGE_TYPE: props.context.PREVIOUS_STORAGE_TYPE || 's3',
@@ -92,11 +92,11 @@ export class MergerSubscribingLambda extends Construct {
           DYNAMODB_STATISTICS_TABLE_NAME: STATISTICS_TABLE_NAME(props.context),
         }),
         DESCRIPTION1:
-          `Sends SQS message to merger queue to trigger Fargate task that checks completeness 
+          `Sends SQS message to post-processor queue to trigger Fargate task that checks completeness 
           of the delta chunks by referencing a metadata file created by the chunker.`,
         DESCRIPTION2:
           `If all expected delta chunks are present in the ${props.chunksBucketName} bucket, 
-          it triggers the merger task to concatenate all NDJSON chunk files into a single 
+          it triggers the post-processor task to concatenate all NDJSON chunk files into a single 
           "previous-input.ndjson" file.`,
         DESCRIPTION3:
           `This "previous-input.ndjson" file will overwrite the prior version in the same bucket, 

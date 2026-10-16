@@ -345,34 +345,34 @@ describe('StatisticsTable', () => {
     });
   });
 
-  describe('claimMergerTrigger', () => {
-    it('returns true and writes a MERGER_TRIGGER_CLAIM record when none exists', async () => {
+  describe('claimPostProcessorTrigger', () => {
+    it('returns true and writes a POST_PROCESSOR_TRIGGER_CLAIM record when none exists', async () => {
       dynamoMock.on(UpdateCommand).resolves({});
       dynamoMock.on(BatchWriteCommand).resolves({});
 
-      const won = await statisticsTable.claimMergerTrigger(integrationTimestamp, '0029');
+      const won = await statisticsTable.claimPostProcessorTrigger(integrationTimestamp, '0029');
 
       expect(won).toBe(true);
       expect(dynamoMock.commandCalls(UpdateCommand)).toHaveLength(1);
       const updateCall = dynamoMock.commandCalls(UpdateCommand)[0];
       expect(updateCall.args[0].input.Key).toEqual({
         integrationTimestamp,
-        eventType: 'MERGER_TRIGGER_CLAIM'
+        eventType: 'POST_PROCESSOR_TRIGGER_CLAIM'
       });
       expect(dynamoMock.commandCalls(BatchWriteCommand)).toHaveLength(1);
       const batchCall = dynamoMock.commandCalls(BatchWriteCommand)[0];
       const requestItems = Object.values(batchCall.args[0].input.RequestItems!)[0] as any[];
       expect(requestItems[0].PutRequest.Item).toMatchObject({
         integrationTimestamp,
-        eventType: 'MERGER_TRIGGER_CLAIM',
+        eventType: 'POST_PROCESSOR_TRIGGER_CLAIM',
         claimedByChunk: '0029'
       });
     });
 
-    it('returns false and does not write when the merger has already been triggered - no retry', async () => {
+    it('returns false and does not write when the post-processor has already been triggered - no retry', async () => {
       dynamoMock.on(UpdateCommand).rejects({ name: 'ConditionalCheckFailedException' });
 
-      const won = await statisticsTable.claimMergerTrigger(integrationTimestamp, '0030');
+      const won = await statisticsTable.claimPostProcessorTrigger(integrationTimestamp, '0030');
 
       expect(won).toBe(false);
       expect(dynamoMock.commandCalls(UpdateCommand)).toHaveLength(1);
@@ -382,7 +382,7 @@ describe('StatisticsTable', () => {
     it('does not write claimedByChunk when not provided', async () => {
       dynamoMock.on(UpdateCommand).resolves({});
 
-      const won = await statisticsTable.claimMergerTrigger(integrationTimestamp);
+      const won = await statisticsTable.claimPostProcessorTrigger(integrationTimestamp);
 
       expect(won).toBe(true);
       expect(dynamoMock.commandCalls(BatchWriteCommand)).toHaveLength(0);

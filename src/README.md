@@ -40,7 +40,7 @@ DynamoDB-backed atomic counter for offset generation.
 - `storage/` - S3 storage helpers
 - `chunking/` - Chunking phase utilities
 - `processing/` - Processing phase utilities
-- `merging/` - Merging phase utilities
+- `post-processing/` - Post-processing phase utilities
 
 ## Execution
 

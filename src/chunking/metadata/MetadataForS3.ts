@@ -57,7 +57,7 @@ export class MetadataForS3 implements IMetadataStorage {
   /**
    * Write chunk metadata to S3.
    * Persists the run manifest (flags, paths, timestamps) and aggregate data (chunkCount, totalRecords, chunkKeys).
-   * Aggregate data is used by merger for completion validation to ensure all expected chunks are processed.
+   * Aggregate data is used by post-processor for completion validation to ensure all expected chunks are processed.
    */
   public async write(params: WriteMetadataParams): Promise<void> {
     const { 
@@ -104,7 +104,7 @@ export class MetadataForS3 implements IMetadataStorage {
       metadata.runFailureTimestamp = runFailureTimestamp;
     }
 
-    // Add aggregate data for merger completion validation
+    // Add aggregate data for post-processor completion validation
     if (chunkCount !== undefined) {
       metadata.chunkCount = chunkCount;
     }
@@ -320,7 +320,7 @@ export class MetadataForS3 implements IMetadataStorage {
 
   /**
    * Mark the chunking run as failed.
-   * This prevents merger orchestration from treating partial chunk output as successful completion.
+   * This prevents post-processor orchestration from treating partial chunk output as successful completion.
    */
   public async markRunFailed(params: MarkRunFailedParams): Promise<void> {
     const { bucketName, chunkDirectory, region, errorMessage } = params;

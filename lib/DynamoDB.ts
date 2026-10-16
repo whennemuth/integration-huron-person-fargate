@@ -121,14 +121,14 @@ export class DynamoDbTables extends Construct {
    *    - SK = "TERMINAL_ERROR": Pipeline-halting failure marker
    *
    * 4. Chunk status records (SK = "CHUNK_STATUS_0009", 1 record per chunk):
-   *    - Processor progress used for "last processor triggers merger" completion detection
+   *    - Processor progress used for "last processor triggers post-processor" completion detection
    *
    * 5. Claim records (OCCFlag-guarded, first-writer-wins on the `claimedAt` attribute):
    *    - SK = "PROCESSOR_BOOST_CLAIM": Exactly one chunker task wins the right to run the
    *      processor scaling check (ProcessorServiceBooster); released when done, and cleared
    *      if stale
-   *    - SK = "MERGER_TRIGGER_CLAIM": Exactly one processor task wins the right to send the
-   *      merger-trigger SQS message; never released
+   *    - SK = "POST_PROCESSOR_TRIGGER_CLAIM": Exactly one processor task wins the right to send the
+   *      post-processor-trigger SQS message; never released
    * 
    * Access Patterns:
    * 1. Get all data for a specific run: Query by PK = integrationTimestamp
@@ -253,7 +253,7 @@ export class DynamoDbTables extends Construct {
    * 
    * Access Patterns:
    * 1. Batch fetch by personId: Processors use BatchGetItem to get previous hashes for delta computation
-   * 2. Query by syncRunId via GSI: Merger uses this to find all persons seen in current sync for deletion detection
+   * 2. Query by syncRunId via GSI: Post-processor uses this to find all persons seen in current sync for deletion detection
    * 
    * GSI (syncRunId-personId-index):
    * - PK: `syncRunId` - ISO timestamp of sync run
@@ -281,7 +281,7 @@ export class DynamoDbTables extends Construct {
       removalPolicy: RemovalPolicy.DESTROY,
     });
 
-    // GSI for querying by sync run (used by merger for deletion detection)
+    // GSI for querying by sync run (used by post-processor for deletion detection)
     this.personCurrentStateTable.addGlobalSecondaryIndex({
       indexName: personCurrentStateGSIIndexName,
       partitionKey: {
@@ -310,7 +310,7 @@ export class DynamoDbTables extends Construct {
    * Write Policy:
    * - NEW: First time person appears in source
    * - UPDATED: Hash changed from previous sync
-   * - DELETED: Person removed from source (detected by merger)
+   * - DELETED: Person removed from source (detected by post-processor)
    * - UNCHANGED: DO NOT WRITE (skipped entirely to save storage)
    * 
    * Access Patterns:

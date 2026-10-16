@@ -2,10 +2,10 @@ import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { ChunkMetadata, MetadataFactoryForBootstrap } from '../chunking/metadata';
 
-export const FUNCTION_BASE_NAME = 'merger-subscriber';
+export const FUNCTION_BASE_NAME = 'post-processor-subscriber';
 
 const {
-  MERGER_QUEUE_URL,
+  POST_PROCESSOR_QUEUE_URL,
   REGION: region,
   CHUNKS_BUCKET_NAME,
 } = process.env;
@@ -16,23 +16,23 @@ const s3Client = new S3Client({ region });
 /**
  * Lambda handler triggered by S3 events when delta chunk files are created.
  * Checks if all expected delta chunks have been created. If so, sends message to SQS
- * to trigger the merger Fargate task via QueueProcessingFargateService auto-scaling.
+ * to trigger the post-processor Fargate task via QueueProcessingFargateService auto-scaling.
  * 
  * This function is invoked each time a processor task writes a delta chunk file to S3.
  * It reads the metadata file to determine how many chunks are expected, counts the actual
- * delta chunks created, and sends a message to the merger queue when all are complete.
+ * delta chunks created, and sends a message to the post-processor queue when all are complete.
  * 
  * Architecture:
  * 1. Delta chunk file created → S3 event triggers this Lambda
  * 2. Lambda checks if all delta chunks are ready
- * 3. If ready: sends message to merger SQS queue
+ * 3. If ready: sends message to post-processor SQS queue
  * 4. QueueProcessingFargateService detects queue depth increase
- * 5. Service auto-scales up and launches merger Fargate task
- * 6. Merger task reads message and processes delta files
+ * 5. Service auto-scales up and launches post-processor Fargate task
+ * 6. Post-processor task reads message and processes delta files
  * 7. Queue empties, service scales back down
  * 
  * Environment Variables:
- * - MERGER_QUEUE_URL: URL of the SQS queue for merger tasks
+ * - POST_PROCESSOR_QUEUE_URL: URL of the SQS queue for post-processor tasks
  * - REGION: AWS region (e.g., 'us-east-2')
  * - CHUNKS_BUCKET_NAME: Name of the S3 bucket where chunk and delta files are stored
  * 
@@ -41,19 +41,19 @@ const s3Client = new S3Client({ region });
  * 
  * Output:
  * - If not all chunks are ready: logs status and returns 200 with message "Still processing"
- * - If all chunks are ready: triggers merger Fargate task, logs result, and returns 200 with message "Merger triggered"
- * - If error occurs: logs error and returns 500 with message "Failed to trigger merger"
+ * - If all chunks are ready: triggers post-processor Fargate task, logs result, and returns 200 with message "Post-processor triggered"
+ * - If error occurs: logs error and returns 500 with message "Failed to trigger post-processor"
  */
 export async function handler(event: any): Promise<any> {
-  console.log('=== Merger Trigger (S3 Event) ===');
+  console.log('=== Post-Processor Trigger (S3 Event) ===');
   console.log('Event:', JSON.stringify(event, null, 2));
 
   const {
-    CHUNKS_BUCKET_NAME, REGION, MERGER_QUEUE_URL, DRY_RUN = 'false'
+    CHUNKS_BUCKET_NAME, REGION, POST_PROCESSOR_QUEUE_URL, DRY_RUN = 'false'
   } = process.env; // Destructure env vars here for easier reference and potential validation/logging
 
   console.log(`Environment Variables - ${JSON.stringify({ 
-    CHUNKS_BUCKET_NAME, REGION, MERGER_QUEUE_URL, DRY_RUN 
+    CHUNKS_BUCKET_NAME, REGION, POST_PROCESSOR_QUEUE_URL, DRY_RUN 
   }, null, 2)}`);
 
   // Extract marker file info from S3 event
@@ -97,27 +97,27 @@ export async function handler(event: any): Promise<any> {
     });
     if (terminalError) {
       console.error(
-        `⛔ Merger blocked because chunking terminal error marker exists for ${chunkDirectory}. ` +
+        `⛔ Post-processor blocked because chunking terminal error marker exists for ${chunkDirectory}. ` +
         `Reason: ${terminalError.errorMessage || 'unknown error'}`
       );
-      return { statusCode: 200, body: 'Run failed - merger blocked' };
+      return { statusCode: 200, body: 'Run failed - post-processor blocked' };
     }
 
     // Step 1: Read metadata to get expected chunk count for validation
     const metadata = await getChunkMetadata(metadataManager, chunkDirectory, bucket, region);
     
     if (!metadata) {
-      const msg = '⚠️  Metadata file not found - blocking merger until metadata is available';
+      const msg = '⚠️  Metadata file not found - blocking post-processor until metadata is available';
       console.warn(msg);
       return { statusCode: 200, body: msg };
     } else if (!metadata.chunkCount) {
-      const msg = '⚠️  Metadata missing chunkCount field - blocking merger until chunkCount is available';
+      const msg = '⚠️  Metadata missing chunkCount field - blocking post-processor until chunkCount is available';
       console.warn(msg);
       return { statusCode: 200, body: msg };
     }
 
     // Step 2: Validate contiguous marker ordinals AND matching count to determine completion
-    // Merger is triggered only when markers form uninterrupted sequence 0..N AND count matches metadata.chunkCount
+    // Post-processor is triggered only when markers form uninterrupted sequence 0..N AND count matches metadata.chunkCount
     const { isComplete, actualChunks, maxOrdinal, hasGaps } = await validateContiguousMarkerOrdinals(
       deltaStoragePath,
       markerFileKey,
@@ -143,26 +143,26 @@ export async function handler(event: any): Promise<any> {
 
     const dryRun = DRY_RUN.toLowerCase().trim() === 'true';
     if(dryRun) {
-      console.log('DRY_RUN mode enabled - skipping merger trigger');
-      return { statusCode: 200, body: 'DRY_RUN - Merger trigger skipped' };
+      console.log('DRY_RUN mode enabled - skipping post-processor trigger');
+      return { statusCode: 200, body: 'DRY_RUN - Post-processor trigger skipped' };
     }
 
-    // Step 3: All markers validated - trigger merger
+    // Step 3: All markers validated - trigger post-processor
     console.log(`✅ All markers complete: ${actualChunks} of ${metadata?.chunkCount || actualChunks} chunks processed (0..${maxOrdinal})`);
 
-    const triggered = await triggerMerger(
+    const triggered = await triggerPostProcessor(
       chunkDirectory, 
       metadata?.createdAt || new Date().toISOString()
     );
 
     if (triggered) {
-      return { statusCode: 200, body: 'Merger triggered' };
+      return { statusCode: 200, body: 'Post-processor triggered' };
     } else {
-      return { statusCode: 500, body: 'Failed to trigger merger' };
+      return { statusCode: 500, body: 'Failed to trigger post-processor' };
     }
   } catch (error: any) {
-    console.error(`✗ Unexpected error checking/triggering merger for ${chunkDirectory}:`, error);
-    return { statusCode: 500, body: `Failed to trigger merger: ${error.message}` };
+    console.error(`✗ Unexpected error checking/triggering post-processor for ${chunkDirectory}:`, error);
+    return { statusCode: 500, body: `Failed to trigger post-processor: ${error.message}` };
   }
 }
 
@@ -195,7 +195,7 @@ export async function getChunkMetadata(
     return null;
   }
 
-  // Log additional info specific to merger context
+  // Log additional info specific to post-processor context
   if (metadata.chunkCount) {
     console.log(`Metadata found: ${metadata.chunkCount} chunks expected`);
   }
@@ -214,7 +214,7 @@ export async function getChunkMetadata(
  * 1. Markers form contiguous sequence: 0, 1, 2, ..., N with no gaps
  * 2. Total marker count matches expectedChunkCount (if provided)
  * 
- * Failed-status markers still count as terminal (merger proceeds regardless of failure).
+ * Failed-status markers still count as terminal (post-processor proceeds regardless of failure).
  * Handles S3 pagination for 1000+ markers.
  * 
  * @param deltaStoragePath - The delta storage path (e.g., "deltas/person-full/2026-03-03T19:58:41.277Z")
@@ -314,7 +314,7 @@ async function validateContiguousMarkerOrdinals(
 /**
  * Counts completed chunks by counting marker files in S3.
  * DEPRECATED: Use validateContiguousMarkerOrdinals() instead.
- * This function is kept for backwards compatibility but should not be used for merger gating.
+ * This function is kept for backwards compatibility but should not be used for post-processor gating.
  * 
  * @param deltaStoragePath - The delta storage path (e.g., "deltas/person-full/2026-03-03T19:58:41.277Z")
  */
@@ -346,14 +346,14 @@ async function countCompletedChunks(deltaStoragePath: string): Promise<number> {
 }
 
 /**
- * Triggers the merger Fargate task by sending a message to SQS.
+ * Triggers the post-processor Fargate task by sending a message to SQS.
  * The QueueProcessingFargateService will detect the message and auto-scale to process it.
- * @param chunkDirectory - The chunk directory path to pass to merger
+ * @param chunkDirectory - The chunk directory path to pass to post-processor
  * @param createdAt - ISO timestamp when chunking started (from metadata file)
  */
-async function triggerMerger(chunkDirectory: string, createdAt: string): Promise<boolean> {
-  if (!MERGER_QUEUE_URL) {
-    console.error('Missing required environment variable: MERGER_QUEUE_URL');
+async function triggerPostProcessor(chunkDirectory: string, createdAt: string): Promise<boolean> {
+  if (!POST_PROCESSOR_QUEUE_URL) {
+    console.error('Missing required environment variable: POST_PROCESSOR_QUEUE_URL');
     return false;
   }
   if (!CHUNKS_BUCKET_NAME) {
@@ -361,10 +361,10 @@ async function triggerMerger(chunkDirectory: string, createdAt: string): Promise
     return false;
   }
 
-  console.log('🚀 Triggering merger via SQS queue...');
+  console.log('🚀 Triggering post-processor via SQS queue...');
 
   // Prepare message with task parameters
-  // The merger task will read these from the SQS message
+  // The post-processor task will read these from the SQS message
   // Message format uses camelCase (standardized across all message bodies)
   const message = {
     chunksBucket: CHUNKS_BUCKET_NAME,
@@ -373,16 +373,16 @@ async function triggerMerger(chunkDirectory: string, createdAt: string): Promise
   };
 
   try {
-    console.log('Sending message to merger queue:', JSON.stringify(message));
+    console.log('Sending message to post-processor queue:', JSON.stringify(message));
     await sqsClient.send(new SendMessageCommand({
-      QueueUrl: MERGER_QUEUE_URL,
+      QueueUrl: POST_PROCESSOR_QUEUE_URL,
       MessageBody: JSON.stringify(message),
     }));
-    console.log('✅ Message sent to merger queue successfully');
+    console.log('✅ Message sent to post-processor queue successfully');
     console.log('   QueueProcessingFargateService will auto-scale to process this message');
     return true;
   } catch (error: any) {
-    console.error(`❌ Failed to send message to merger queue: ${error.message}`);
+    console.error(`❌ Failed to send message to post-processor queue: ${error.message}`);
     return false;
   }
 }

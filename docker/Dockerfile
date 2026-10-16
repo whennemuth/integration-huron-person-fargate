@@ -76,7 +76,7 @@ ENV INPUT_BUCKET="" \
 # Default command (can be overridden by ECS task definition)
 # To run chunker: node dist/docker/chunker.js
 # To run processor: node dist/docker/processor.js
-# To run merger: node dist/docker/merger.js
+# To run post-processor: node dist/docker/post-processor.js
 CMD ["node", "dist/docker/chunker.js"]
 
 # Health check (optional, for debugging)

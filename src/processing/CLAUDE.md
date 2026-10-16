@@ -300,7 +300,7 @@ describe('ProcessingService', () => {
 
 ### Output
 - **Destination**: S3 (processed/chunk-NNNN.ndjson)
-- **Signal**: SQS acknowledgment (tells merger chunk complete)
+- **Signal**: SQS acknowledgment (tells post-processor chunk complete)
 - **Format**: NDJSON (mapped/validated records)
 
 ### Failure Handling

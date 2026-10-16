@@ -8,7 +8,7 @@ The system uses a single Docker image with three entry points:
 
 1. **Chunker** (`dist/docker/chunker.js`): Reads large JSON files from S3 and breaks them into NDJSON chunks
 2. **Processor** (`dist/docker/processor.js`): Reads NDJSON chunks and syncs person records to Huron API
-3. **Merger** (`dist/docker/merger.js`): Concatenates processed chunk outputs into a single merged file
+3. **Post-processor** (`dist/docker/post-processor.js`): Concatenates processed chunk outputs into a single merged file
 
 ### Chunker Operation
 
@@ -26,7 +26,7 @@ The processor uses a router pattern (`docker/processor.ts`) that detects storage
 **ProcessorForS3 (src/processing/ProcessorForS3.ts - S3 Mode):**
 - Writes mini-deltas to S3 for each chunk
 - Maintains coordination via marker files
-- Merger consolidates all chunk deltas into single previous-input.ndjson
+- Post-processor consolidates all chunk deltas into single previous-input.ndjson
 
 **ProcessorForDynamoDB (src/processing/ProcessorForDynamoDb.ts - DynamoDB Mode):**
 - Writes directly to PersonCurrentState and PersonHistory tables
@@ -51,39 +51,39 @@ The processor uses a router pattern (`docker/processor.ts`) that detects storage
 
 This dual-mode design allows identical code to run locally for testing and in Fargate for production.
 
-### Merger Operation (Template Method Pattern)
+### Post-Processor Operation (Template Method Pattern)
 
-The merger uses an abstract base class with mode-specific implementations:
+The post-processor uses an abstract base class with mode-specific implementations:
 
-**AbstractMerger (src/merging/AbstractMerger.ts - Base Class):**
+**AbstractPostProcessor (src/post-processing/AbstractPostProcessor.ts - Base Class):**
 - Implements Template Method pattern for shared logic
 - `getTaskParameters()`: Reads from SQS or environment
 - `processDeferredDeletes()`: Handles soft-deletion of removed records
 - `main()`: Template method orchestrating full merge flow
 - `merge()`: Abstract method for mode-specific implementation
 
-**MergerForS3 (src/merging/MergerForS3.ts - S3 Mode Implementation):**
+**PostProcessorForS3 (src/post-processing/PostProcessorForS3.ts - S3 Mode Implementation):**
 - Consolidates delta chunk files from `deltas/{population}/{timestamp}/`
 - Merges with existing baseline (`previous-input.ndjson`)
 - Writes merged result to `delta-storage/previous-input.ndjson`
 - Cleans up temporary delta chunk files
 
-**MergerForDynamoDB (src/merging/MergerForDynamoDB.ts - DynamoDB Mode Implementation):**
+**PostProcessorForDynamoDB (src/post-processing/PostProcessorForDynamoDB.ts - DynamoDB Mode Implementation):**
 - No file consolidation needed (processors wrote directly to tables)
 - No baseline merging needed (state already in PersonCurrentStateTable)
 - `merge()` method is essentially a no-op
 - Still invokes DeferredDeleteHandler for soft-deletions
 
-**merger.ts (docker/merger.ts - Router):**
+**post-processor.ts (docker/post-processor.ts - Router):**
 - Detects storage mode using same logic as processor router
-- Routes to `MergerForS3` or `MergerForDynamoDB`
+- Routes to `PostProcessorForS3` or `PostProcessorForDynamoDB`
 - Single entry point for both modes
 
 **Critical Design Note:**
-- **BOTH modes require the merger service**
+- **BOTH modes require the post-processor service**
 - S3 mode: File consolidation + deletion handling
 - DynamoDB mode: Deletion handling only
-- Previous assumption that DynamoDB mode doesn't need merger was incorrect
+- Previous assumption that DynamoDB mode doesn't need post-processor was incorrect
 
 **Environment:**
 - ECS Mode: Reads `SQS_QUEUE_URL` and processes messages
@@ -92,8 +92,8 @@ The merger uses an abstract base class with mode-specific implementations:
 - Triggers DeferredDeleteHandler if configured
 
 **Trigger:**
-- In AWS: EventBridge rule polls metadata file and triggers merger when all chunks are processed
-- Locally: Run manually via `./run.sh merger` after processing all chunks
+- In AWS: EventBridge rule polls metadata file and triggers post-processor when all chunks are processed
+- Locally: Run manually via `./run.sh post-processor` after processing all chunks
 
 ## Storage Modes
 
@@ -169,9 +169,9 @@ AWS_PROFILE=infnprd INPUT_BUCKET=input-bucket INPUT_KEY=data/people.json CHUNKS_
 AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket CHUNK_KEY=client/chunks/chunk-0000.ndjson ./run.sh processor
 ```
 
-**Run Merger:**
+**Run Post-processor:**
 ```bash
-AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket INPUT_BUCKET=input-bucket ./run.sh merger
+AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket INPUT_BUCKET=input-bucket ./run.sh post-processor
 ```
 
 #### Option 2: Using docker-compose directly
@@ -190,8 +190,8 @@ docker-compose up chunker
 export CHUNK_KEY=client/chunks/chunk-0000.ndjson
 docker-compose up processor
 
-# Run merger
-docker-compose up merger
+# Run post-processor
+docker-compose up post-processor
 ```
 
 Edit environment variables in `docker-compose.yml` or create a `.env` file.
@@ -216,9 +216,9 @@ node dist/docker/processor.js
 # Test with different chunk
 CHUNK_KEY=client/chunks/chunk-0001.ndjson node dist/docker/processor.js
 
-# Or for merger
+# Or for post-processor
 export INPUT_BUCKET=input-bucket
-node dist/docker/merger.js
+node dist/docker/post-processor.js
 
 # Stop when done
 docker-compose down
@@ -289,11 +289,11 @@ The AWS SDK automatically uses the specified profile. No need to set `AWS_ACCESS
 - `STATIC_MAP_USAGE` - JSON object specifying which static maps to load (e.g., `{ "orgMap": true }`)
 - `SHARED_DELTA_STORAGE_DIR` - S3 directory for baseline delta files (default: delta-storage)
 
-### Merger-Specific
+### Post-Processor-Specific
 - `CHUNKS_BUCKET` - Bucket containing chunk files (required)
 - `INPUT_BUCKET` - Original input bucket name, used as top-level folder prefix (required)
 - `CHUNK_DIRECTORY` - Explicit chunk directory path (optional, for direct execution)
-- `SQS_QUEUE_URL` - SQS queue for merge trigger (required for ECS mode)
+- `SQS_QUEUE_URL` - SQS queue for post-processor trigger (required for ECS mode)
 - `DYNAMODB_STATISTICS_TABLE_NAME` - DynamoDB table for statistics tracking (required for both S3 and DynamoDB modes)
 - `SECRET_ARN` - Secrets Manager ARN for configuration (optional)
 - `SHARED_DELTA_STORAGE_DIR` - S3 directory for baseline delta files (default: delta-storage)
@@ -334,8 +334,8 @@ ECS task definitions are created via CDK with these settings:
 - CPU: 1024, Memory: 2048 MB
 - Environment: `CHUNKS_BUCKET`, `CHUNK_KEY` (from SQS message)
 
-**Merger Task:**
-- Command: `["node", "dist/docker/merger.js"]`
+**Post-Processor Task:**
+- Command: `["node", "dist/docker/post-processor.js"]`
 - Platform: `ARM64`, `LINUX`
 - CPU: 1024, Memory: 2048 MB
 - Environment: `CHUNKS_BUCKET`, `INPUT_BUCKET` (set by Lambda at runtime)
@@ -381,7 +381,7 @@ See `SECURITY.md` for vulnerability analysis and mitigation strategies.
 - Verify required environment variables are set:
   - Chunker: `INPUT_BUCKET`, `INPUT_KEY`, `CHUNKS_BUCKET`
   - Processor: `CHUNKS_BUCKET`, `CHUNK_KEY`
-  - Merger: `CHUNKS_BUCKET`, `INPUT_BUCKET`
+  - Post-processor: `CHUNKS_BUCKET`, `INPUT_BUCKET`
 - Try manual mode to debug: `./run.sh chunker --manual`
 
 **S3 access denied:**

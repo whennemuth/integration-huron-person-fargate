@@ -49,7 +49,7 @@ Phase 2: Processor (Parallel)
 ├─ Writes to same chunk file (chunks/chunk-XXXX.ndjson)
 └─ No file conflicts because each task has unique chunk ID
 
-Phase 3: Merger (Sequential)
+Phase 3: Post-Processor (Sequential)
 ├─ Reads all chunks/chunk-*.ndjson files
 ├─ Concatenates into single previous-input.ndjson
 └─ Deletes chunk files
@@ -106,7 +106,7 @@ Phase 3: Merger (Sequential)
 - Zero code duplication
 - Each task processes exactly one chunk
 
-#### 3. Merger (`docker/merger.ts`)
+#### 3. Post-Processor (`docker/post-processor.ts`)
 **Purpose**: Combine all processed chunks into final output
 
 **Input**:
@@ -160,7 +160,7 @@ Phase 3: Merger (Sequential)
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ Phase 3: Merger (Single Task)                                   │
+│ Phase 3: Post-Processor (Single Task)                                   │
 │                                                                  │
 │  Read all chunks/chunk-*.ndjson files                           │
 │         │                                                        │
@@ -347,7 +347,7 @@ export const buildChunkConfig = (
 |--------|-----------|-------|--------|
 | chunker.ts | chunker.test.ts | 14 | ✅ Passing |
 | processor.ts | processor.test.ts | 20 | ✅ Passing |
-| merger.ts | merger.test.ts | 42 | ✅ Passing |
+| post-processor.ts | post-processor.test.ts | 42 | ✅ Passing |
 | BigJsonFile.ts | BigJsonFile.test.ts | Multiple | ✅ Passing |
 | PersonArrayWrapper.ts | PersonArrayWrapper.test.ts | Multiple | ✅ Passing |
 | **Total** | **5 suites** | **103** | **✅ All Passing** |
@@ -387,9 +387,9 @@ Tests cover:
   - Base config preservation
 - Output path transformations
 
-### Merger Tests
+### Post-Processor Tests
 
-**File**: `test/merger.test.ts` (42 tests)
+**File**: `test/post-processor.test.ts` (42 tests)
 
 Tests cover:
 - Chunk file discovery
@@ -451,7 +451,7 @@ QUEUE_URL=https://sqs.us-east-2.amazonaws.com/123456789/integration-queue
 CHUNK_KEY=example-client/chunks/chunk-0042.ndjson
 ```
 
-### Merger-Specific
+### Post-Processor-Specific
 
 ```bash
 # No additional variables required
@@ -475,9 +475,9 @@ CHUNK_KEY=example-client/chunks/chunk-0042.ndjson
    - Tasks process chunks in parallel
    - Auto-scales based on queue depth
 
-3. **Start Merger (after all processors complete)**
+3. **Start Post-Processor (after all processors complete)**
    ```bash
-   docker run --env-file .env merger
+   docker run --env-file .env post-processor
    ```
    - Waits for all chunks to be processed
    - Merges into final output
@@ -514,7 +514,7 @@ CHUNK_KEY=example-client/chunks/chunk-0042.ndjson
 **CloudWatch Logs**:
 - Chunker: Chunk count, SQS publish success
 - Processor: Chunk ID, processing time, sync results
-- Merger: Chunk count, merge time, deletion success
+- Post-processor: Chunk count, merge time, deletion success
 
 ### Error Handling
 
@@ -527,8 +527,8 @@ CHUNK_KEY=example-client/chunks/chunk-0042.ndjson
 - Impact: Partial data loss if not retried
 - Detection: Missing chunk files
 
-**Merger failures**:
-- Retry: Merger is idempotent (overwrites previous-input.ndjson)
+**Post-processor failures**:
+- Retry: Post-processor is idempotent (overwrites previous-input.ndjson)
 - Impact: No final output, chunk files remain
 
 **Recommendations**:
@@ -540,7 +540,7 @@ CHUNK_KEY=example-client/chunks/chunk-0042.ndjson
 ### Cost Optimization
 
 **S3 costs**:
-- Chunk files are temporary (cleaned up by merger)
+- Chunk files are temporary (cleaned up by post-processor)
 - Use S3 Lifecycle policy for orphaned chunks (delete after 7 days)
 
 **Fargate costs**:

@@ -8,7 +8,7 @@ import { CLUSTER_BASE_NAME } from './EcsInfrastructure';
 import { HuronPersonSecrets } from './Secrets';
 import { SERVICE_LOGICAL_ID } from './services/chunker/ChunkerService';
 import { ChunkerTaskDefinition } from './services/chunker/ChunkerTaskDefinition';
-import { MergerTaskDefinition } from './services/merger/MergerTaskDefinition';
+import { PostProcessorTaskDefinition } from './services/post-processor/PostProcessorTaskDefinition';
 import { ProcessorTaskDefinition } from './services/processor/ProcessorTaskDefinition';
 
 export interface TaskDefinitionsProps {
@@ -37,7 +37,7 @@ export type StorageParams = {
 export class TaskDefinitions extends Construct {
   public readonly chunker: ChunkerTaskDefinition;
   public readonly processor: ProcessorTaskDefinition;
-  public readonly merger: MergerTaskDefinition;
+  public readonly postProcessor: PostProcessorTaskDefinition;
 
   constructor(scope: Construct, id: string, props: TaskDefinitionsProps) {
     super(scope, id);
@@ -133,13 +133,13 @@ export class TaskDefinitions extends Construct {
       tags,
     });
 
-    // Merger task definition
-    this.merger = new MergerTaskDefinition(this, 'Merger', {
+    // Post-processor task definition
+    this.postProcessor = new PostProcessorTaskDefinition(this, 'PostProcessor', {
       repository,
-      cpu: ctx.ECS.mergerTaskDefinition.cpu,
-      memoryLimitMiB: ctx.ECS.mergerTaskDefinition.memoryLimitMiB,
-      memoryReservationMiB: ctx.ECS.mergerTaskDefinition.memoryReservationMiB,
-      logRetentionDays: ctx.ECS.mergerTaskDefinition.logRetentionDays,
+      cpu: ctx.ECS.postProcessorTaskDefinition.cpu,
+      memoryLimitMiB: ctx.ECS.postProcessorTaskDefinition.memoryLimitMiB,
+      memoryReservationMiB: ctx.ECS.postProcessorTaskDefinition.memoryReservationMiB,
+      logRetentionDays: ctx.ECS.postProcessorTaskDefinition.logRetentionDays,
       inputBucketName: ctx.S3.inputBucket,
       chunksBucketName: `${ctx.S3.chunksBucket}-${ctx.TAGS.Landscape.toLowerCase()}`,
       storageParams,
@@ -147,7 +147,7 @@ export class TaskDefinitions extends Construct {
       personDeleteType: config?.dataTarget?.personDeleteType || TargetPersonDeleteType.SOFT,
       region: ctx.REGION,
       landscape: ctx.TAGS.Landscape.toLowerCase(),
-      dryRun: ctx.DRY_RUN?.taskdef?.merger,
+      dryRun: ctx.DRY_RUN?.taskdef?.postProcessor,
       tags,
     });
   }

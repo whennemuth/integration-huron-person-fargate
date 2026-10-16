@@ -622,7 +622,7 @@ export class ChunkFromAPI implements IChunkFromSource {
           region
         } satisfies WriteMetadataParams);
 
-        // Keep flags aligned with metadata so merger gating has the same terminal signal.
+        // Keep flags aligned with metadata so post-processor gating has the same terminal signal.
         await metadataBroker.markRunFailed({
           bucketName: chunksBucket,
           chunkDirectory,

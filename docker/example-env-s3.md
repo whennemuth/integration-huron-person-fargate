@@ -209,7 +209,7 @@ DRY_RUN=false                                      # Set to true to avoid target
 
 ---
 
-## merger.env (S3 Mode)
+## post-processor.env (S3 Mode)
 
 ```bash
 # ============================================================================
@@ -249,7 +249,7 @@ SHARED_DELTA_STORAGE_DIR=delta-storage             # S3 prefix for baseline delt
 # Required for statistics tracking (used by all storage modes)
 DYNAMODB_STATISTICS_TABLE_NAME={STACK_ID}-statistics-{landscape}
 
-# Note: Person state tables are NOT used by merger in any mode
+# Note: Person state tables are NOT used by post-processor in any mode
 
 # ============================================================================
 # Deletion Handling
@@ -277,7 +277,7 @@ IS_ECS_TASK=false                                  # Auto-set by ECS, override f
 # ============================================================================
 # SQS Queue (ECS Fargate mode)
 # ============================================================================
-# SQS_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/770203350335/{STACK_ID}-merger-queue-{landscape}
+# SQS_QUEUE_URL=https://sqs.us-east-2.amazonaws.com/770203350335/{STACK_ID}-post-processor-queue-{landscape}
 
 # ============================================================================
 # Local Mode (explicit chunk directory)

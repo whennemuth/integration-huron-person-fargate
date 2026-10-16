@@ -1,11 +1,11 @@
 /**
- * Integration tests for merger.ts entry point
+ * Integration tests for post-processor.ts entry point
  * 
  * Tests the Phase 3 entry point that orchestrates merging, deduplication, and deletion handling.
  * For detailed MergeEngine tests, see MergeEngine.test.ts
  */
 
-describe('Merger Entry Point Integration', () => {
+describe('Post-Processor Entry Point Integration', () => {
   let originalEnv: NodeJS.ProcessEnv;
 
   beforeEach(() => {

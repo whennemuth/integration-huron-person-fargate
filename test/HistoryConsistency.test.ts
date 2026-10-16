@@ -14,7 +14,7 @@ import { PersonCurrentStateTable } from '../src/dynamodb/PersonCurrentStateTable
 import { PersonHistoryTable } from '../src/dynamodb/PersonHistoryTable';
 import { StatisticsTable } from '../src/dynamodb/StatisticsTable';
 import { IntegrationRunPruner } from '../src/dynamodb/IntegrationRun';
-import { toDeletedHash } from '../src/merging/DeletedHashMarker';
+import { toDeletedHash } from '../src/post-processing/DeletedHashMarker';
 import { IContext } from '../context/IContext';
 
 // PersonCurrentStateTable.findPreviousPersonState dynamically imports './PersonHistoryTable.js',

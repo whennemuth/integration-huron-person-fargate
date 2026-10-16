@@ -14,7 +14,7 @@ import { TestEnvironment } from "integration-core";
  *   freely, and DynamoDB detects and rejects the losers at commit time via a ConditionExpression.
  *
  * Use cases:
- * - Ensuring only one process triggers a task (e.g., last processor triggers merger)
+ * - Ensuring only one process triggers a task (e.g., last processor triggers post-processor)
  * - Leader election / "first writer wins" claims in distributed systems
  * - One-time initialization guards
  * - Idempotent operation guards
@@ -27,12 +27,12 @@ import { TestEnvironment } from "integration-core";
  *   partitionKeyName: 'integrationTimestamp',
  *   partitionKeyValue: syncRunId,
  *   sortKeyName: 'eventType',
- *   sortKeyValue: 'MERGER_TRIGGER_CLAIM',
+ *   sortKeyValue: 'POST_PROCESSOR_TRIGGER_CLAIM',
  *   attributeName: 'claimedAt'
  * });
  *
  * await claim.update(new Date().toISOString(),
- *   async () => { // won the claim - trigger the merger },
+ *   async () => { // won the claim - trigger the post-processor },
  *   async () => { // lost the claim - another task already triggered it }
  * );
  * ```

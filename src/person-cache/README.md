@@ -196,7 +196,7 @@ if (await cache.acquireCacheLock({ bucketName, key, region })) {
 
 3. **Cleanup**: Cache is sync-scoped (stored under chunkDirectory)
    - No need to persist between syncs
-   - Can be deleted after merger completes
+   - Can be deleted after post-processor completes
    - Lock files auto-expire after 10 minutes (self-healing)
 
 ## File Format

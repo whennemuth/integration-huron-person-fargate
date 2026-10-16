@@ -29,7 +29,7 @@ flowchart LR
       H[Queue] -->|Depleted of messages| J[Alarm ✗]
       J -->|Empty queue detected| K[Chunking Service]
       K -->|↓↓↓ Scales down to zero| L2[Processor service finishes]
-      L2 -->|Merger service runs one task| END[ ⊘ End]
+      L2 -->|Post-processor service runs one task| END[ ⊘ End]
   end
 ```
 

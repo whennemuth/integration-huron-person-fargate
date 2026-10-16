@@ -2,20 +2,20 @@ import { ScalingInterval } from 'aws-cdk-lib/aws-applicationautoscaling';
 import { Construct } from 'constructs';
 import { AbstractService, AbstractServiceProps } from '../AbstractService';
 
-const SERVICE_LOGICAL_ID = 'Merger';
+const SERVICE_LOGICAL_ID = 'PostProcessor';
 
-export interface MergerServiceProps extends AbstractServiceProps { }
+export interface PostProcessorServiceProps extends AbstractServiceProps { }
 
 /**
- * Creates a QueueProcessingFargateService for merger tasks
- * - Uses dedicated SQS queue + DLQ for merger messages
+ * Creates a QueueProcessingFargateService for post-processor tasks
+ * - Uses dedicated SQS queue + DLQ for post-processor messages
  * - Auto-scales based on queue depth (0 to maxScalingCapacity)
  * - Task reads CHUNKS_BUCKET and CHUNK_DIRECTORY from SQS messages
  * - Merges delta chunk files into final output
  */
-export class MergerService extends AbstractService {
+export class PostProcessorService extends AbstractService {
 
-  constructor(scope: Construct, props: MergerServiceProps) {
+  constructor(scope: Construct, props: PostProcessorServiceProps) {
     super(scope, props);
   }
 

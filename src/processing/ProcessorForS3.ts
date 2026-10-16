@@ -112,8 +112,8 @@ export const buildChunkConfig = async (params: {
   // Derive delta storage paths from chunk key
   // Chunked path: "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0124.ndjson" 
   //            -> "deltas/person-full/2026-03-03T19:58:41.277Z" (for chunk-specific delta writes)
-  // Integrated path: SHARED_DELTA_STORAGE_DIR env var (for reading previous-input.ndjson created by merger)
-  //   This matches the sharedDeltaDir used by merger.ts
+  // Integrated path: SHARED_DELTA_STORAGE_DIR env var (for reading previous-input.ndjson created by post-processor)
+  //   This matches the sharedDeltaDir used by post-processor.ts
   const chunkDir = s3Key.substring(0, s3Key.lastIndexOf('/'));
   const chunkedDeltaStoragePath = chunkDir.replace(/^chunks\//, 'deltas/');
 
@@ -163,10 +163,10 @@ export const buildChunkConfig = async (params: {
 }
 
 /**
- * Creates a _processing_complete marker file to trigger the merger Lambda.
+ * Creates a _processing_complete marker file to trigger the post-processor Lambda.
  * 
  * Marker is always written (success or failure) from finally block to guarantee
- * merger knows this chunk has completed processing, regardless of outcome.
+ * post-processor knows this chunk has completed processing, regardless of outcome.
  * 
  * @param bucketName - S3 bucket containing chunks
  * @param chunkKey - S3 key of the processed chunk
@@ -325,16 +325,16 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
      * If delta files are created and deleted within this window, S3 may:
      * 1. Still be processing the "ObjectCreated" event internally
      * 2. Detect the object no longer exists
-     * 3. Cancel or never send the event notification to the merger Lambda
+     * 3. Cancel or never send the event notification to the post-processor Lambda
      * 
      * Timeline that caused the issue:
      * - 20:44:45.333Z: Delta file created → S3 begins internal event processing
      * - 20:44:51.771Z: Delta file deleted (6.4s later) → S3 event processing aborted
-     * - Result: Merger Lambda never invoked (no log stream = no invocation)
+     * - Result: Post-Processor Lambda never invoked (no log stream = no invocation)
      * 
      * Solution: Set cleanupPreviousData=false to prevent delta file deletion.
-     * Delta files are cleaned up by the merger task after successful merge.
-     * See: integration-huron-person-fargate/docker/merger.ts (cleanupDeltaFiles method)
+     * Delta files are cleaned up by the post-processor task after successful merge.
+     * See: integration-huron-person-fargate/docker/post-processor.ts (cleanupDeltaFiles method)
      */
     const cleanupPreviousData = false;
 
@@ -360,7 +360,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
       errorEventProcessor: errorTracker, // Inject error tracker for tracking errors and throttling
       retryStrategy, // Inject retry strategy for handling transient API failures (429, 5xx, network errors)
       cleanupPreviousData,
-      ignoreRemovals: syncPopulation === SyncPopulation.PersonDelta, // Ignore removals in delta computation since chunk processing is only a partial population and merger determines removals at the end of the full sync
+      ignoreRemovals: syncPopulation === SyncPopulation.PersonDelta, // Ignore removals in delta computation since chunk processing is only a partial population and post-processor determines removals at the end of the full sync
       personRecordProcessor: customPersonProcessor
     });
     
@@ -375,7 +375,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
      * be overwriting a global previous-input.ndjson file, but instead writing to a chunk-specific,
      * unique delta storage path derived from the chunk ID (as part of parallel processing). 
      * Thus, no prior state is ever actually being overwritten, though we let the "EndToEnd" flow 
-     * maintain the illusion that it is doing so. We will later have the merger read all of these 
+     * maintain the illusion that it is doing so. We will later have the post-processor read all of these 
      * chunk-specific delta outputs and merge them together to create a new global 
      * previous-input.ndjson for the next run.
      */
@@ -395,18 +395,18 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     processingError = error;
   } finally {
     // Create terminal marker file - ALWAYS executed (success or failure)
-    // This guarantees merger knows this chunk has been processed
+    // This guarantees post-processor knows this chunk has been processed
     if (bucketName && s3Key) {
       try {
         const markerStatus = processingError ? 'failed' : 'success';
         const errorMsg = processingError?.message || undefined;
         await createProcessingCompleteMarker(bucketName, s3Key, markerStatus, errorMsg, region);
       } catch (markerError: any) {
-        // Marker write failure is CRITICAL - prevents merger trigger
+        // Marker write failure is CRITICAL - prevents post-processor trigger
         // Log and exit with error code
         console.error(`\nCRITICAL FAILURE: Could not create processing marker`);
         console.error(`Error: ${markerError.message}`);
-        console.error(`This will cause the sync to stall as merger will not be triggered.`);
+        console.error(`This will cause the sync to stall as post-processor will not be triggered.`);
         
         // Try to clean up and exit immediately
         try {

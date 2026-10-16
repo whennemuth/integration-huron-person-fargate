@@ -7,7 +7,7 @@
 
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { mockClient } from 'aws-sdk-client-mock';
-import { ChunkPopulationReader } from '../src/merging/ChunkPopulationReader';
+import { ChunkPopulationReader } from '../src/post-processing/ChunkPopulationReader';
 
 const s3Mock = mockClient(S3Client);
 

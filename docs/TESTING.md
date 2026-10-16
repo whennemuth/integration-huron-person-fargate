@@ -57,7 +57,7 @@ npm test
 **Test suites**: 5
 1. `test/chunker.test.ts`: 14 tests
 2. `test/processor.test.ts`: 20 tests
-3. `test/merger.test.ts`: 42 tests
+3. `test/post-processor.test.ts`: 42 tests
 4. `test/BigJsonFile.test.ts`: Multiple tests
 5. `test/PersonArrayWrapper.test.ts`: Multiple tests
 
@@ -71,7 +71,7 @@ npm test
 ```bash
 npm test test/chunker.test.ts
 npm test test/processor.test.ts
-npm test test/merger.test.ts
+npm test test/post-processor.test.ts
 ```
 
 ## Detailed Test Coverage
@@ -182,9 +182,9 @@ describe('extractChunkId', () => {
 });
 ```
 
-### Merger Tests (42 tests)
+### Post-Processor Tests (42 tests)
 
-**File**: `test/merger.test.ts`
+**File**: `test/post-processor.test.ts`
 
 **Test categories**:
 
@@ -240,7 +240,7 @@ describe('extractChunkId', () => {
 
 **Example test**:
 ```typescript
-describe('Merger', () => {
+describe('Post-processor', () => {
   it('should concatenate multiple chunks in correct order', async () => {
     // Mock S3 to return 5 chunks
     mockS3.send.mockImplementation((command) => {
@@ -428,8 +428,8 @@ for i in {0000..0009}; do
 done
 wait
 
-# 6. Run merger
-docker run --env-file .env integration-merger
+# 6. Run post-processor
+docker run --env-file .env integration-post-processor
 
 # 7. Verify output
 FINAL_COUNT=$(aws s3 cp s3://$CHUNKS_BUCKET/$CLIENT_ID/previous-input.ndjson - | wc -l)

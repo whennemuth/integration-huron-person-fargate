@@ -1,6 +1,6 @@
 /**
  * Marks a stored baseline hash as belonging to a person who has been soft-deleted (deactivated)
- * in the target by the merger's deferred delete handling.
+ * in the target by the post-processor's deferred delete handling.
  *
  * Why the marker lives in the hash itself:
  * Baselines (PersonCurrentStateTable in DynamoDB mode, previous-input.ndjson in S3 mode) retain

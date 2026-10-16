@@ -7,7 +7,7 @@ Process large datasets in parallel using a 3-phase pipeline that prevents race c
 ## Architecture in 60 Seconds
 
 ```
-Phase 1: Chunker      →  Phase 2: Processors (parallel)  →  Phase 3: Merger
+Phase 1: Chunker      →  Phase 2: Processors (parallel)  →  Phase 3: Post-processor
 Split input file     →  Process each chunk              →  Combine results
 chunks/chunk-*.ndjson →  Update chunk in place           →  previous-input.ndjson
 ```
@@ -17,7 +17,7 @@ chunks/chunk-*.ndjson →  Update chunk in place           →  previous-input.n
 - Docker images built:
   - `integration-chunker`
   - `integration-processor`
-  - `integration-merger`
+  - `integration-post-processor`
 - S3 bucket with input data
 - SQS queue created
 - Huron API credentials
@@ -71,7 +71,7 @@ aws ecs list-tasks --cluster integration-cluster --service-name processor
 - Queue depth = 0
 - All tasks = STOPPED status
 
-## Step 3: Run Merger
+## Step 3: Run Post-processor
 
 **Combine chunks into final output:**
 
@@ -79,7 +79,7 @@ aws ecs list-tasks --cluster integration-cluster --service-name processor
 docker run \
   --env-file .env \
   -e CLIENT_ID=example-client \
-  integration-merger
+  integration-post-processor
 ```
 
 **Output:**
@@ -131,7 +131,7 @@ JWT_SUBJECT=...
 JWT_AUDIENCE=...
 ```
 
-### Merger Only
+### Post-Processor Only
 
 ```bash
 # CLIENT_ID is sufficient (reuses from "All Phases")
@@ -174,7 +174,7 @@ aws logs tail /ecs/processor --follow
 - Check Huron API status
 - Review environment configuration
 
-### Merger fails
+### Post-processor fails
 
 **Symptom**: No previous-input.ndjson created, chunks remain
 **Check**:
@@ -186,7 +186,7 @@ docker logs <container-id>
 - S3 permissions
 - Network timeout
 
-**Fix**: Ensure all processors complete before running merger
+**Fix**: Ensure all processors complete before running post-processor
 
 ## Monitoring Commands
 
@@ -292,8 +292,8 @@ docker run --env-file .env \
 
 # 6. Process remaining chunks (or let Fargate handle)
 
-# 7. Run merger
-docker run --env-file .env integration-merger
+# 7. Run post-processor
+docker run --env-file .env integration-post-processor
 
 # 8. Verify output
 aws s3 cp s3://$CHUNKS_BUCKET/$CLIENT_ID/previous-input.ndjson - | wc -l

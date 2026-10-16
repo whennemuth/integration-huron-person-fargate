@@ -108,7 +108,7 @@ export class MetadataForDynamoDb implements IMetadataStorage {
       metadata.runFailureTimestamp = runFailureTimestamp;
     }
 
-    // Add aggregate data for merger completion validation
+    // Add aggregate data for post-processor completion validation
     if (chunkCount !== undefined) {
       metadata.chunkCount = chunkCount;
     }

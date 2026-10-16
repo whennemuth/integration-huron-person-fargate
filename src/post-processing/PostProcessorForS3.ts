@@ -1,7 +1,7 @@
 /**
- * S3-based Merger Implementation
+ * S3-based Post-Processor Implementation
  * 
- * Extends AbstractMerger to implement S3-specific merge logic:
+ * Extends AbstractPostProcessor to implement S3-specific merge logic:
  * - Consolidates delta chunk files from deltas/{population}/{timestamp}/
  * - Merges consolidated deltas with existing baseline (previous-input.ndjson)
  * - Writes merged result to shared location (delta-storage/previous-input.ndjson)
@@ -15,7 +15,7 @@ import { FieldSet } from 'integration-core';
 import { FieldDefinitions, HashMapMerger } from 'integration-huron-person';
 import { objectExistsInS3 } from '../Utils';
 import { MergeEngine } from './MergeEngine';
-import { AbstractMerger, MergeContext, MergeResult, TaskParameters } from './AbstractMerger';
+import { AbstractPostProcessor, PostProcessorContext, MergeResult, TaskParameters } from './AbstractPostProcessor';
 import { extractChunkDirectory } from '../chunking/filedrop/ChunkPathUtils';
 import { SyncPopulation } from '../../docker/chunkTypes';
 import { MetadataFactoryForBootstrap } from '../chunking/metadata';
@@ -26,7 +26,7 @@ export type TaskParametersForS3 = TaskParameters & {
   chunkDirectory: string | null;
 }
 
-export type MergeContextForS3 = MergeContext & {
+export type PostProcessorContextForS3 = PostProcessorContext & {
   bucketName: string;
   chunkDir: string;
   sharedDeltaStorageDir: string;
@@ -41,7 +41,7 @@ export type MergeResultForS3 = MergeResult & {
   deletedChunks: string[];
 }
 
-export class MergerForS3 extends AbstractMerger {
+export class PostProcessorForS3 extends AbstractPostProcessor {
 
   /**
    * Reads task parameters from SQS queue or environment variables.
@@ -87,9 +87,9 @@ export class MergerForS3 extends AbstractMerger {
     return null;
   }
 
-  public async getMergeContext(taskParams?: TaskParametersForS3): Promise<MergeContextForS3 | null> {
-    if (this.mergeContext) {
-      return this.mergeContext as MergeContextForS3;
+  public async getPostProcessorContext(taskParams?: TaskParametersForS3): Promise<PostProcessorContextForS3 | null> {
+    if (this.postProcessorContext) {
+      return this.postProcessorContext as PostProcessorContextForS3;
     }
 
     if (!taskParams) {
@@ -105,7 +105,7 @@ export class MergerForS3 extends AbstractMerger {
       DRY_RUN = 'false'
     } = process.env;
 
-    // Parse chunking start time from task parameters (provided by MergerSubscriber lambda)
+    // Parse chunking start time from task parameters (provided by PostProcessorSubscriber lambda)
     const chunkingStartTime = await this.getChunkingStartTime();
     if (chunkingStartTime) {
       console.log(`\nChunking started at: ${createdAt}`);
@@ -116,7 +116,7 @@ export class MergerForS3 extends AbstractMerger {
     const primaryKeyFieldSet = new Set(primaryKeyFieldNames);
 
     const dryRun = `${DRY_RUN}`.trim().toLowerCase() === 'true';    
-    this.mergeContext = {
+    this.postProcessorContext = {
       bucketName,
       chunkDir,
       region,
@@ -124,9 +124,9 @@ export class MergerForS3 extends AbstractMerger {
       dryRun,
       primaryKeyFieldNames,
       primaryKeyFieldSet,
-    } as MergeContextForS3;
+    } as PostProcessorContextForS3;
 
-    return this.mergeContext as MergeContextForS3;
+    return this.postProcessorContext as PostProcessorContextForS3;
   }
 
   /**
@@ -143,7 +143,7 @@ export class MergerForS3 extends AbstractMerger {
    */
   protected async merge(taskParams?: TaskParametersForS3): Promise<MergeResultForS3 | null> {
 
-    const mergeContext = await this.getMergeContext(taskParams) as MergeContextForS3;
+    const postProcessorContext = await this.getPostProcessorContext(taskParams) as PostProcessorContextForS3;
     const {
       chunkDir,
       bucketName,
@@ -152,7 +152,7 @@ export class MergerForS3 extends AbstractMerger {
       primaryKeyFieldNames,
       primaryKeyFieldSet,
       dryRun
-    } = mergeContext;
+    } = postProcessorContext;
 
     // const { bucketName, chunkDir, region, sharedDeltaStorageDir, primaryKeyFieldSet } = context;
 
@@ -278,8 +278,8 @@ export class MergerForS3 extends AbstractMerger {
       return;
     }
 
-    const mergeContext = await this.getMergeContext() as MergeContextForS3;
-    const { bucketName, chunkDir, region, sharedDeltaStorageDir, primaryKeyFieldNames } = mergeContext;
+    const postProcessorContext = await this.getPostProcessorContext() as PostProcessorContextForS3;
+    const { bucketName, chunkDir, region, sharedDeltaStorageDir, primaryKeyFieldNames } = postProcessorContext;
     const sourceKey = result.outputKey;
     const targetKey = `${sharedDeltaStorageDir}/previous-input.ndjson`;
 
@@ -297,7 +297,7 @@ export class MergerForS3 extends AbstractMerger {
     if (syncPopulation === SyncPopulation.PersonDelta) {
       console.log(`  Sync population type is PersonDelta - Deletion handling does NOT apply.`);
       // NOTE: Even if this check were not being carried out, the ignoreRemovals flag would have
-      // already been set to true in the MergerSubscriber when the chunking job was kicked off 
+      // already been set to true in the PostProcessorSubscriber when the chunking job was kicked off 
       // for a PersonDelta sync, which would have prevented any deletions from being included 
       // in the merged output via use of the appropriate DeltaStrategy decorator 
       // (ie: src\delta-strategy\IgnoreRemovalsDeltaStrategy.ts). So this is really just an 

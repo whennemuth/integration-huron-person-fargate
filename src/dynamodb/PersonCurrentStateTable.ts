@@ -1,6 +1,6 @@
 import type { BatchGetCommandOutput } from '@aws-sdk/lib-dynamodb';
 import { IContext } from '../../context/IContext';
-import { toDeletedHash } from '../merging/DeletedHashMarker';
+import { toDeletedHash } from '../post-processing/DeletedHashMarker';
 import { DynamoDBTable } from './DynamoDBTable';
 
 /**
@@ -15,18 +15,18 @@ import { DynamoDBTable } from './DynamoDBTable';
  * - personId: string (PK) - Unique identifier (e.g., "U12345678")
  * - hash: string - Current computed hash from person data
  * - syncRunId: string - ISO timestamp of last sync that modified this person
- * - deletedAt: string (optional) - ISO timestamp of the merger's soft-delete of this person. Set
- *   together with a DELETED:-prefixed hash (see merging/DeletedHashMarker.ts); both are cleared
+ * - deletedAt: string (optional) - ISO timestamp of the post-processor's soft-delete of this person. Set
+ *   together with a DELETED:-prefixed hash (see post-processing/DeletedHashMarker.ts); both are cleared
  *   when a processor next writes the record for a person who has reappeared in the source.
  *
  * Access Patterns:
  * 1. Batch fetch by personId: Used by processors to get previous hashes for delta computation
- * 2. Query by syncRunId via GSI: Used by merger for deletion detection
+ * 2. Query by syncRunId via GSI: Used by post-processor for deletion detection
  * 
  * Usage:
  * - Processors: BatchGetItem to fetch previous state for chunk
  * - Processors: BatchWriteItem to update/create records (skip UNCHANGED)
- * - Merger: Query GSI to find all persons seen in current sync
+ * - Post-processor: Query GSI to find all persons seen in current sync
  */
 
 /**
@@ -67,7 +67,7 @@ export interface PersonCurrentStateRecord {
  * PersonCurrentStateTable utility class
  * 
  * Wraps DynamoDBTable with domain-specific operations for person state tracking.
- * Provides high-level methods for processor and merger phase operations.
+ * Provides high-level methods for processor and post-processor phase operations.
  * 
  * Usage:
  * ```typescript
@@ -84,7 +84,7 @@ export interface PersonCurrentStateRecord {
  * ];
  * await stateTable.batchWritePersonState(updatedStates);
  * 
- * // Merger: Find all persons in sync run
+ * // Post-processor: Find all persons in sync run
  * const personsInRun = await stateTable.getPersonsInSyncRun('2026-03-03T19:58:41.277Z');
  * ```
  */
@@ -193,7 +193,7 @@ export class PersonCurrentStateTable {
    * overwriting each record with a DELETED:-prefixed hash, the deleting run's syncRunId and a
    * deletedAt timestamp. The marked hash keeps deferred delete handling from selecting these
    * persons again, and forces their reactivation if they reappear in the source.
-   * See merging/DeletedHashMarker.ts for the rationale.
+   * See post-processing/DeletedHashMarker.ts for the rationale.
    *
    * @param records - personId and baseline (pre-deletion) hash of each soft-deleted person
    * @param syncRunId - ISO timestamp identifying the sync run that performed the deletions
@@ -210,7 +210,7 @@ export class PersonCurrentStateTable {
    * Query all persons seen in a specific sync run.
    * Uses GSI to find all person records with matching syncRunId.
    * 
-   * This method is used by the merger phase for deletion detection:
+   * This method is used by the post-processor phase for deletion detection:
    * - Compare persons in current sync run vs persons in data source
    * - Identify persons no longer in source (candidates for deactivation)
    * 
@@ -240,7 +240,7 @@ export class PersonCurrentStateTable {
 
   /**
    * Full table scan - every person currently tracked, regardless of which sync run last
-   * touched them. Used by the merger for deletion detection (the "baseline" side of the diff):
+   * touched them. Used by the post-processor for deletion detection (the "baseline" side of the diff):
    * a person's row persists here forever once created, so this represents everyone ever seen,
    * each with whatever hash/syncRunId they had as of their own last actual change.
    */
