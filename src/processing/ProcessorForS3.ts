@@ -148,7 +148,9 @@ export const buildChunkConfig = async (params: {
     },
     integratedDeltaClientId: integratedDeltaStoragePath, // Path for reading shared previous-input.ndjson: delta-storage
     storage: {
-      ...baseConfig.storage,
+      // Set explicitly rather than inherited from the base config: this processor only runs when
+      // PREVIOUS_STORAGE_TYPE is 's3', whatever storage type the loaded config happens to carry.
+      type: 's3',
       config: (() => {
         const baseConfigStorage = (baseConfig.storage.config as any) || {};
         const { keyPrefix: _, ...otherConfig } = baseConfigStorage;

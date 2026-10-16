@@ -194,8 +194,7 @@ describe('Processor (Phase 2)', () => {
         apiEndpoint: 'https://api.example.com'
       });
       expect(config.storage).toMatchObject({
-        bucketName: 'test-bucket',
-        fileKeyPrefix: 'test-data/',
+        type: 's3',
         config: {
           bucketName: 'my-bucket',
           keyPrefix: ''  // Empty prefix - clientId paths include 'deltas/' where needed

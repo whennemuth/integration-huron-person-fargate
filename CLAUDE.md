@@ -207,7 +207,10 @@ UPDATED and reactivated (via `__active`); the processor's write then clears the 
 
 ## Storage Modes: DynamoDB vs S3
 
-The pipeline supports two storage modes for delta state and metadata, controlled by `config.storage.type`:
+The pipeline supports two storage modes for delta state and metadata, selected at deploy time by
+`context.PREVIOUS_STORAGE_TYPE` (CDK bakes it into every task definition as the `PREVIOUS_STORAGE_TYPE`
+env var, which the Docker routers branch on; the runtime factories below then switch on the resulting
+`config.storage.type`):
 - `'s3'` | `'file'` | `'database'` → **S3 Mode** (traditional file-based storage)
 - `'dynamodb'` → **DynamoDB Mode** (database-backed state tracking)
 
@@ -355,17 +358,22 @@ against a mock landscape), but consume from the real, depleting source API like 
 **Deploying one**: `context/context.mock.json` (+ git-ignored `context/mock.env`) -> `./context/swap.sh mock`,
 then `cdk deploy`. Add `context.mock1.json` etc. for more mock stacks.
 
-**Switching Between Modes**:
-```typescript
-// In Secrets Manager or context.json:
-{
-  "storage": {
-    "type": "s3"        // Traditional file-based mode
-    // OR
-    "type": "dynamodb"  // DynamoDB state tracking mode (default)
-  }
-}
-```
+**Switching Between Modes**: set `PREVIOUS_STORAGE_TYPE` (`"s3"` or `"dynamodb"`) in the active
+`context/context.json` and update the stack. That one value is the switch: the integration config
+files (`integration-huron-person/config/config.*.json`) need no change, because the config secret's
+storage block is derived from it (`resolveSecretStorage()` in `lib/Secrets.ts`):
+- **Type**: `context.PREVIOUS_STORAGE_TYPE`, else the integration config's `storage.type`, else `'s3'`
+  (`DEFAULT_STORAGE_TYPE`, the last resort). So the secret always agrees with the mode the tasks run in.
+- **Settings**: the integration config's `storage.config` is kept only if it belongs to the resolved
+  type (e.g. an S3 `keyPrefix`); settings for another type are dropped, not mixed in. Settings the
+  stack determines come from the context: the landscape's chunks bucket (`bucketName`, S3 mode) or
+  the person current-state/history table names and region (DynamoDB mode).
+- Environment variables (`.env`, loaded by `bin/App.ts`) don't set storage in the secret.
+
+Keep `PREVIOUS_STORAGE_TYPE` set in every `context.*.json`: when it is missing, CDK's fallbacks
+disagree (`lib/DynamoDB.ts` creates the DynamoDB tables, `TaskDefinitions` takes the type from the
+locally loaded integration config). Switching a stack to S3 mode deletes its PersonCurrentState and
+PersonHistory tables (removal policy DESTROY); switching back creates them empty.
 
 **IAM Permissions** (automatically configured in task definitions):
 - S3 mode: S3 bucket read/write only
