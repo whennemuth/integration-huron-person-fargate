@@ -1,9 +1,13 @@
 import { App, Stack } from 'aws-cdk-lib';
+import { DeleteObjectsCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
+import { DescribeTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { mockClient } from 'aws-sdk-client-mock';
 import { Template } from 'aws-cdk-lib/assertions';
 import { IContext } from '../context/IContext';
 import { DynamoDbTables } from '../lib/DynamoDB';
 import { AppConstruct } from '../lib/AppConstruct';
-import { BulkPurger, BulkPurgerMode } from '../src/dynamodb/BulkPurger';
+import { BulkPurger, BulkPurgerMode, BulkPurgerTables } from '../src/dynamodb/BulkPurger';
+import { MockTargetPersonTable } from '../src/dynamodb/MockTargetPersonTable';
 import { isMockLandscape } from '../src/Utils';
 import { ChunkingServiceRunner } from '../src/runner/AbstractRunner';
 import { MockLandscapeRunnerDecorator } from '../src/runner/decorators/MockLandscapeRunnerDecorator';
@@ -131,5 +135,130 @@ describe('MockLandscapeRunnerDecorator', () => {
     const decorator = new MockLandscapeRunnerDecorator(wrapped);
     await expect(decorator.validatePrerequisites()).resolves.toBe(false);
     expect(wrapped.validatePrerequisites).not.toHaveBeenCalled();
+  });
+});
+
+describe('MockLandscapeRunnerDecorator run state reset', () => {
+  const s3Mock = mockClient(S3Client);
+  const dynamoMock = mockClient(DynamoDBClient);
+  let purgedTables: BulkPurgerTables[][];
+
+  beforeEach(() => {
+    s3Mock.reset();
+    dynamoMock.reset();
+    purgedTables = [];
+    jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    jest.spyOn(MockTargetPersonTable.prototype, 'tableExists').mockResolvedValue(true);
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  const wrappedRunner = (env: Partial<RunnerEnv> = {}) => ({
+    env: {
+      messagesToPrepopulate: '0', desiredCount: 0, sourceSimulator: true,
+      landscape: 'mock', stackId: STACK_ID, region: 'us-east-2', mockTargetResetState: true,
+      ...env
+    },
+    validatePrerequisites: jest.fn().mockResolvedValue(true),
+  }) as unknown as ChunkingServiceRunner;
+
+  const decoratorFor = (env: Partial<RunnerEnv> = {}) => {
+    const decorator = new MockLandscapeRunnerDecorator(wrappedRunner(env));
+    jest.spyOn(decorator as any, 'loadContext').mockResolvedValue({ S3: { chunksBucket: 'huron-person-chunks' } });
+    jest.spyOn(decorator as any, 'truncateTables').mockImplementation(async (_context: any, tables: any) => {
+      purgedTables.push(tables);
+    });
+    return decorator;
+  };
+
+  describe('storage mode detection', () => {
+    it('detects DynamoDB mode when the person current-state table exists', async () => {
+      dynamoMock.on(DescribeTableCommand, { TableName: `${STACK_ID}-person-current-state-mock` }).resolves({});
+      await expect((decoratorFor() as any).detectStorageMode(contextFor('mock'))).resolves.toBe('dynamodb');
+    });
+
+    it('detects S3 mode when the person current-state table does not exist', async () => {
+      dynamoMock.on(DescribeTableCommand).rejects(Object.assign(new Error('not found'), { name: 'ResourceNotFoundException' }));
+      await expect((decoratorFor() as any).detectStorageMode(contextFor('mock'))).resolves.toBe('s3');
+    });
+
+    it('rethrows any other error', async () => {
+      dynamoMock.on(DescribeTableCommand).rejects(Object.assign(new Error('denied'), { name: 'AccessDeniedException' }));
+      await expect((decoratorFor() as any).detectStorageMode(contextFor('mock'))).rejects.toThrow('denied');
+    });
+  });
+
+  it('DynamoDB mode: truncates the mock target, person current-state, person history and statistics tables', async () => {
+    const decorator = decoratorFor();
+    jest.spyOn(decorator as any, 'detectStorageMode').mockResolvedValue('dynamodb');
+    const deleteS3Baseline = jest.spyOn(decorator as any, 'deleteS3Baseline');
+
+    await expect(decorator.validatePrerequisites()).resolves.toBe(true);
+
+    expect(purgedTables).toEqual([[
+      BulkPurgerTables.MOCK_TARGET_PERSON,
+      BulkPurgerTables.PERSON_CURRENT_STATE,
+      BulkPurgerTables.PERSON_HISTORY,
+      BulkPurgerTables.STATISTICS
+    ]]);
+    expect(deleteS3Baseline).not.toHaveBeenCalled();
+  });
+
+  it('S3 mode: truncates only the mock target and statistics tables, then deletes the S3 baseline', async () => {
+    const decorator = decoratorFor();
+    jest.spyOn(decorator as any, 'detectStorageMode').mockResolvedValue('s3');
+    const deleteS3Baseline = jest.spyOn(decorator as any, 'deleteS3Baseline').mockResolvedValue(2);
+
+    await expect(decorator.validatePrerequisites()).resolves.toBe(true);
+
+    expect(purgedTables).toEqual([[BulkPurgerTables.MOCK_TARGET_PERSON, BulkPurgerTables.STATISTICS]]);
+    expect(deleteS3Baseline).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reset anything unless MOCK_TARGET_RESET_STATE is set', async () => {
+    const decorator = decoratorFor({ mockTargetResetState: false });
+    const resetRunState = jest.spyOn(decorator as any, 'resetRunState');
+
+    await expect(decorator.validatePrerequisites()).resolves.toBe(true);
+
+    expect(resetRunState).not.toHaveBeenCalled();
+    expect(purgedTables).toEqual([]);
+  });
+
+  it('fails prerequisites when the reset fails', async () => {
+    const decorator = decoratorFor();
+    jest.spyOn(decorator as any, 'detectStorageMode').mockRejectedValue(new Error('boom'));
+
+    await expect(decorator.validatePrerequisites()).resolves.toBe(false);
+  });
+
+  it('deletes every object under the shared delta storage dir of the landscape chunks bucket, page by page', async () => {
+    s3Mock.on(ListObjectsV2Command)
+      .resolvesOnce({
+        Contents: [{ Key: 'delta-storage/previous-input.ndjson' }],
+        IsTruncated: true,
+        NextContinuationToken: 'page-2'
+      })
+      .resolvesOnce({ Contents: [{ Key: 'delta-storage/hashes.ndjson' }], IsTruncated: false });
+    s3Mock.on(DeleteObjectsCommand).resolves({});
+
+    const deleted = await (decoratorFor() as any).deleteS3Baseline(contextFor('mock'));
+
+    expect(deleted).toBe(2);
+    const listCalls = s3Mock.commandCalls(ListObjectsV2Command).map(call => call.args[0].input);
+    expect(listCalls).toEqual([
+      { Bucket: 'huron-person-chunks-mock', Prefix: 'delta-storage/', ContinuationToken: undefined },
+      { Bucket: 'huron-person-chunks-mock', Prefix: 'delta-storage/', ContinuationToken: 'page-2' }
+    ]);
+    const deletedKeys = s3Mock.commandCalls(DeleteObjectsCommand)
+      .flatMap(call => call.args[0].input.Delete!.Objects!.map(({ Key }) => Key));
+    expect(deletedKeys).toEqual(['delta-storage/previous-input.ndjson', 'delta-storage/hashes.ndjson']);
+  });
+
+  it('deletes nothing when there is no S3 baseline', async () => {
+    s3Mock.on(ListObjectsV2Command).resolves({ IsTruncated: false });
+
+    await expect((decoratorFor() as any).deleteS3Baseline(contextFor('mock'))).resolves.toBe(0);
+    expect(s3Mock.commandCalls(DeleteObjectsCommand)).toHaveLength(0);
   });
 });

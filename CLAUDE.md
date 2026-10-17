@@ -349,8 +349,10 @@ dynamic reference) into the mock stack's integration config secret as
 
 **Runner**: when `LANDSCAPE` is a mock landscape, `Runner.ts` wraps the runner in
 `MockLandscapeRunnerDecorator`, which verifies the mock stack is deployed (mock target table exists),
-optionally resets its run state (`RUNNER_MOCK_TARGET_RESET_STATE=true` truncates the mock target,
-person current-state, person history and statistics tables via `BulkPurger`), and warns about
+optionally resets its run state (`RUNNER_MOCK_TARGET_RESET_STATE=true` truncates the mock target and
+statistics tables via `BulkPurger`, then clears the delta baseline of the stack's storage mode: the person
+current-state and history tables in DynamoDB mode, or the `delta-storage/` files of the chunks bucket in
+S3 mode; the mode is detected from whether the person current-state table exists), and warns about
 "hybrid" runs (real source API -> mock target) - which remain supported (`RUNNER_SOURCE_SIMULATOR=false`
 against a mock landscape), but consume from the real, depleting source API like any other landscape.
 `BulkPurger` refuses to purge a non-mock landscape unless `force: true`.
@@ -373,7 +375,9 @@ storage block is derived from it (`resolveSecretStorage()` in `lib/Secrets.ts`):
 Keep `PREVIOUS_STORAGE_TYPE` set in every `context.*.json`: when it is missing, CDK's fallbacks
 disagree (`lib/DynamoDB.ts` creates the DynamoDB tables, `TaskDefinitions` takes the type from the
 locally loaded integration config). Switching a stack to S3 mode deletes its PersonCurrentState and
-PersonHistory tables (removal policy DESTROY); switching back creates them empty.
+PersonHistory tables (removal policy DESTROY); switching back creates them empty. Switching does not
+touch an S3 baseline (`delta-storage/` in the chunks bucket) left by an earlier S3-mode period; in a mock
+landscape the runner's reset deletes it.
 
 **IAM Permissions** (automatically configured in task definitions):
 - S3 mode: S3 bucket read/write only
