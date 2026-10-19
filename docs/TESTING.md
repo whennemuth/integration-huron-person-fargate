@@ -394,6 +394,13 @@ done
 
 ## Integration Testing
 
+### Mock Landscape: Hash Storage State
+
+[MOCK_INTEGRATION_TESTING.md](MOCK_INTEGRATION_TESTING.md) is a runbook for verifying, in the mock
+landscape, the state that person syncs leave in hash storage - for manual syncs
+(integration-huron-person's `SyncPerson.ts` / `SyncPersonBatch.ts`) and pipeline runs
+(`src/runner/Runner.ts`), in both DynamoDB and S3 storage modes.
+
 ### End-to-End Test
 
 **Script**: `test/integration-test.sh`
