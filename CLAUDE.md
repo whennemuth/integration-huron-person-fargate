@@ -254,6 +254,11 @@ env var, which the Docker routers branch on; the runtime factories below then sw
      one chunker task runs the processor scaling check, and exactly one processor task triggers the post-processor
      (see `docs/CONCURRENCY_CONTROL.md`); the boost claim is written in S3 storage mode too
    - Replaces `_metadata.json` and `_flags.json` files from S3 mode
+   - `RUN` marker item (one per run, attribute `distinctRunId` = PK) is the only item in the sparse,
+     KEYS_ONLY `distinct-run-index` GSI, so `getUniqueIntegrationTimestamps()` ("select distinct
+     syncRunId") scans one tiny item per run instead of every STATISTICS/chunk item. It is written
+     idempotently by `writeFlags()`, `addToMetadataTotals()` (every chunker task, both storage modes)
+     and `writeTerminalError()`; runs that predate the index need the harness task `backfill-runs`
 
 **What remains in S3** (even in DynamoDB mode):
 - Chunk NDJSON files (parallel processing dependency)

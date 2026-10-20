@@ -11,6 +11,10 @@ export const DYNAMODB_PARTITION_KEY = 'integrationTimestamp';
 export const DYNAMODB_SECONDARY_PARTITION_KEY = 'errorType';
 export const DYNAMODB_SORT_KEY = 'eventType';
 export const DYNAMODB_GSI_INDEX_NAME = 'errorType-timestamp-index';
+// Sparse GSI holding exactly one item per run: the RUN marker item, whose distinctRunId copies the table PK
+export const DYNAMODB_RUN_INDEX_NAME = 'distinct-run-index';
+export const DYNAMODB_RUN_INDEX_PARTITION_KEY = 'distinctRunId';
+export const RUN_MARKER_SORT_KEY = 'RUN';
 
 export class StatisticsTable {
   private table: AbstractDynamoDbTable;
@@ -102,41 +106,49 @@ export class StatisticsTable {
   }
 
   /**
-   * Get a list of sync operations, uniquely identified by their integration timestamps.
-   * This method queries the existing errorType-timestamp-index GSI to efficiently retrieve
-   * all statistics records (both aggregated and chunk-specific).
-   * 
-   * Note: Returns all records with errorType = 'STATISTICS', which includes both
-   * aggregated records (SK = 'STATISTICS') and chunk-specific records (SK = 'STATISTICS-chunk-XXX').
-   * To get only unique integration runs, use getUniqueIntegrationTimestamps().
-   * 
-   * @returns An array of integration timestamps (may include duplicates if chunks exist),
-   *          sorted chronologically (ascending)
-   */
-  public getSyncList = async (): Promise<string[]> => {
-    // Query the GSI with errorType = "STATISTICS" to get all statistics records
-    const items = await this.table.queryGSI({
-      indexName: DYNAMODB_GSI_INDEX_NAME,
-      gsiPartitionKey: DYNAMODB_SECONDARY_PARTITION_KEY,
-      partitionKeyValue: 'STATISTICS'
-    });
-
-    // Extract and return the integrationTimestamp from each item
-    // Results are already sorted chronologically by the GSI's sort key
-    return items.map(item => item.integrationTimestamp as string);
-  }
-
-  /**
-   * Get a list of unique integration timestamps across all sync operations.
-   * This returns deduplicated timestamps, useful for listing distinct integration runs
-   * when chunk-specific statistics exist.
-   * 
+   * Get the distinct integration timestamps (syncRunIds) in the table - the equivalent of
+   * "SELECT DISTINCT integrationTimestamp". Scans the sparse, KEYS_ONLY distinct-run-index, which
+   * holds exactly one small item per run (see registerRun()), so the cost is proportional to the
+   * number of runs rather than the number of chunks/errors they produced.
+   *
    * @returns An array of unique integration timestamps, sorted chronologically (ascending)
    */
   public getUniqueIntegrationTimestamps = async (): Promise<string[]> => {
-    const allTimestamps = await this.getSyncList();
-    // Deduplicate using Set, then sort chronologically
-    return Array.from(new Set(allTimestamps)).sort();
+    const items = await this.table.scanIndex({ indexName: DYNAMODB_RUN_INDEX_NAME });
+    // ISO timestamps sort chronologically as strings; a scan returns them unordered
+    return items.map(item => item[DYNAMODB_PARTITION_KEY] as string).sort();
+  }
+
+  /**
+   * Write the run's RUN marker item, the only item carrying the distinct-run-index key. Idempotent,
+   * so every write path that can be a run's first item in this table calls it.
+   */
+  public async registerRun(syncRunId: string): Promise<void> {
+    await this.table.putItem({
+      [DYNAMODB_PARTITION_KEY]: syncRunId,
+      [DYNAMODB_SORT_KEY]: RUN_MARKER_SORT_KEY,
+      [DYNAMODB_RUN_INDEX_PARTITION_KEY]: syncRunId
+    });
+  }
+
+  /**
+   * One-time backfill of RUN marker items for runs written before the distinct-run-index existed.
+   * Scans the whole base table once.
+   *
+   * @returns The number of runs registered
+   */
+  public async backfillRunMarkers(): Promise<number> {
+    const items = await this.table.scanAll();
+    const syncRunIds = Array.from(new Set(items.map(item => item[DYNAMODB_PARTITION_KEY] as string)));
+    await this.table.batchWrite({
+      items: syncRunIds.map(syncRunId => ({
+        [DYNAMODB_PARTITION_KEY]: syncRunId,
+        [DYNAMODB_SORT_KEY]: RUN_MARKER_SORT_KEY,
+        [DYNAMODB_RUN_INDEX_PARTITION_KEY]: syncRunId
+      })),
+      operation: 'put'
+    });
+    return syncRunIds.length;
   }
 
   /**
@@ -160,6 +172,7 @@ export class StatisticsTable {
       ...flags
     };
     await this.table.putItem(record);
+    await this.registerRun(syncRunId);
   }
 
   /**
@@ -229,6 +242,7 @@ export class StatisticsTable {
       [DYNAMODB_PARTITION_KEY]: syncRunId,
       [DYNAMODB_SORT_KEY]: 'TERMINAL_ERROR'
     });
+    await this.registerRun(syncRunId);
   }
 
   /**
@@ -369,6 +383,7 @@ export class StatisticsTable {
     } satisfies UpdateCommandInput;
 
     const result = await client.send(new UpdateCommand(input));
+    await this.registerRun(syncRunId);
     return {
       chunkCount: result.Attributes?.chunkCount ?? 0,
       totalRecords: result.Attributes?.totalRecords ?? 0
@@ -619,6 +634,10 @@ export async function main() {
         console.log(`Found ${chunks.length} chunk(s) for integration run at ${timestamp}:`);
         console.log(JSON.stringify(chunks, null, 2));
         break;
+      case 'backfill-runs':
+        const registered = await statisticsTable.backfillRunMarkers();
+        console.log(`Registered ${registered} run(s) in ${DYNAMODB_RUN_INDEX_NAME}`);
+        break;
       case 'delete':
         if(!timestamp) {
           console.error('Missing required STATISTICS_TABLE_INTEGRATION_TIMESTAMP environment variable for delete task!');
@@ -628,7 +647,7 @@ export async function main() {
         console.log(`Deleted ${deletedCount} record(s) for integration run at ${timestamp}`);
         break;
       default:
-        console.error(`Unknown task: ${task}. Supported tasks: truncate, statistics, list, chunks, delete`);
+        console.error(`Unknown task: ${task}. Supported tasks: truncate, statistics, list, chunks, backfill-runs, delete`);
     }
   })();
 }

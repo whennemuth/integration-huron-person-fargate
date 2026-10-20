@@ -1,5 +1,5 @@
 import { mockClient } from 'aws-sdk-client-mock';
-import { DynamoDBDocumentClient, GetCommand, QueryCommand, BatchWriteCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, QueryCommand, BatchWriteCommand, UpdateCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { StatisticsTable } from '../src/dynamodb/StatisticsTable';
 import { IContext } from '../context/IContext';
 import { StatisticsItem } from '../src/ApiErrorTracking';
@@ -231,50 +231,90 @@ describe('StatisticsTable', () => {
   });
 
   describe('getUniqueIntegrationTimestamps', () => {
-    it('should return unique integration timestamps', async () => {
+    it('scans the distinct-run-index and returns its timestamps', async () => {
       const timestamp1 = '2026-05-14T12:00:00.000Z';
       const timestamp2 = '2026-05-14T13:00:00.000Z';
 
-      const mockItems = [
-        { integrationTimestamp: timestamp1, eventType: 'STATISTICS' },
-        { integrationTimestamp: timestamp1, eventType: 'STATISTICS-chunk-0000' },
-        { integrationTimestamp: timestamp1, eventType: 'STATISTICS-chunk-0001' },
-        { integrationTimestamp: timestamp2, eventType: 'STATISTICS' },
-        { integrationTimestamp: timestamp2, eventType: 'STATISTICS-chunk-0000' }
-      ];
-
-      dynamoMock.on(QueryCommand).resolves({ Items: mockItems });
+      dynamoMock.on(ScanCommand).resolves({ Items: [
+        { integrationTimestamp: timestamp1, eventType: 'RUN', distinctRunId: timestamp1 },
+        { integrationTimestamp: timestamp2, eventType: 'RUN', distinctRunId: timestamp2 }
+      ] });
 
       const result = await statisticsTable.getUniqueIntegrationTimestamps();
 
       expect(result).toEqual([timestamp1, timestamp2]);
-      expect(result).toHaveLength(2);
+      expect(dynamoMock.commandCalls(ScanCommand)[0].args[0].input.IndexName).toBe('distinct-run-index');
+      expect(dynamoMock.commandCalls(QueryCommand)).toHaveLength(0);
     });
 
     it('should handle empty results', async () => {
-      dynamoMock.on(QueryCommand).resolves({ Items: [] });
+      dynamoMock.on(ScanCommand).resolves({ Items: [] });
 
       const result = await statisticsTable.getUniqueIntegrationTimestamps();
 
       expect(result).toEqual([]);
     });
 
-    it('should sort timestamps chronologically', async () => {
+    it('should sort timestamps chronologically and follow pagination', async () => {
       const timestamp1 = '2026-05-14T12:00:00.000Z';
       const timestamp2 = '2026-05-14T11:00:00.000Z';
       const timestamp3 = '2026-05-14T13:00:00.000Z';
 
-      const mockItems = [
-        { integrationTimestamp: timestamp1 },
-        { integrationTimestamp: timestamp3 },
-        { integrationTimestamp: timestamp2 }
-      ];
-
-      dynamoMock.on(QueryCommand).resolves({ Items: mockItems });
+      dynamoMock.on(ScanCommand)
+        .resolvesOnce({ Items: [{ integrationTimestamp: timestamp1 }, { integrationTimestamp: timestamp3 }], LastEvaluatedKey: { k: 1 } })
+        .resolvesOnce({ Items: [{ integrationTimestamp: timestamp2 }] });
 
       const result = await statisticsTable.getUniqueIntegrationTimestamps();
 
       expect(result).toEqual([timestamp2, timestamp1, timestamp3]);
+      expect(dynamoMock.commandCalls(ScanCommand)).toHaveLength(2);
+    });
+  });
+
+  describe('run marker', () => {
+    const runMarker = { integrationTimestamp, eventType: 'RUN', distinctRunId: integrationTimestamp };
+    const putItems = () => dynamoMock.commandCalls(BatchWriteCommand)
+      .flatMap(call => Object.values(call.args[0].input.RequestItems!)[0] as any[])
+      .map(request => request.PutRequest?.Item);
+
+    beforeEach(() => {
+      dynamoMock.on(BatchWriteCommand).resolves({});
+    });
+
+    it('is written by writeFlags', async () => {
+      await statisticsTable.writeFlags(integrationTimestamp, { bulkReset: false });
+      expect(putItems()).toContainEqual(runMarker);
+    });
+
+    it('is written by writeTerminalError', async () => {
+      await statisticsTable.writeTerminalError(integrationTimestamp, { errorMessage: 'boom' });
+      expect(putItems()).toContainEqual(runMarker);
+    });
+
+    it('is written by addToMetadataTotals', async () => {
+      dynamoMock.on(UpdateCommand).resolves({});
+      await statisticsTable.addToMetadataTotals(integrationTimestamp, {
+        source: 's', chunkDirectory: 'c', itemsPerChunk: 1, bulkReset: false, trustPreviousStorage: false,
+        syncPopulation: 'p', deltaStoragePath: 'd', chunkCountDelta: 1, totalRecordsDelta: 1
+      });
+      expect(putItems()).toContainEqual(runMarker);
+    });
+
+    it('is backfilled once per distinct run', async () => {
+      const other = '2026-05-15T12:00:00.000Z';
+      dynamoMock.on(ScanCommand).resolves({ Items: [
+        { integrationTimestamp, eventType: 'FLAGS' },
+        { integrationTimestamp, eventType: 'STATISTICS-chunk-0000' },
+        { integrationTimestamp: other, eventType: 'METADATA' }
+      ] });
+
+      const count = await statisticsTable.backfillRunMarkers();
+
+      expect(count).toBe(2);
+      expect(putItems()).toEqual([
+        runMarker,
+        { integrationTimestamp: other, eventType: 'RUN', distinctRunId: other }
+      ]);
     });
   });
 
@@ -401,6 +441,10 @@ describe('StatisticsTable', () => {
       chunkCountDelta: 3,
       totalRecordsDelta: 600
     };
+
+    beforeEach(() => {
+      dynamoMock.on(BatchWriteCommand).resolves({});
+    });
 
     it('sends an UpdateCommand with SET if_not_exists + ADD and returns the new totals', async () => {
       dynamoMock.on(UpdateCommand).resolves({ Attributes: { chunkCount: 9, totalRecords: 1800 } });

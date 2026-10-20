@@ -40,6 +40,7 @@ export type AbstractDynamoDbTable = {
     { partitionKeyValue, sortKeyPrefix }: 
     { partitionKeyValue: string, sortKeyPrefix?: string }
   ) => Promise<any[]>;
+  scanIndex: ({ indexName }: { indexName: string }) => Promise<any[]>;
   batchWrite: ({ items, operation }: { items: any[], operation?: 'put' | 'delete' }) => Promise<void>;
   putItem: (item: any) => Promise<void>;
 }
@@ -160,6 +161,30 @@ export class DynamoDBTable implements AbstractDynamoDbTable {
         ExclusiveStartKey: lastEvaluatedKey
       };
 
+      const scanResult = await client.send(new ScanCommand(scanParams));
+      if (scanResult.Items) {
+        items.push(...scanResult.Items);
+      }
+      lastEvaluatedKey = scanResult.LastEvaluatedKey;
+    } while (lastEvaluatedKey);
+
+    return items;
+  }
+
+  /**
+   * Full scan of a secondary index (all pages). Only cheap for small or sparse indexes.
+   */
+  public scanIndex = async (parms: { indexName: string }): Promise<any[]> => {
+    const { client, params: { tableName } } = this;
+    const items: any[] = [];
+    let lastEvaluatedKey = undefined;
+
+    do {
+      const scanParams: ScanCommandInput = {
+        TableName: tableName,
+        IndexName: parms.indexName,
+        ExclusiveStartKey: lastEvaluatedKey
+      };
       const scanResult = await client.send(new ScanCommand(scanParams));
       if (scanResult.Items) {
         items.push(...scanResult.Items);

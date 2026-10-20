@@ -1,5 +1,5 @@
 import { RemovalPolicy } from 'aws-cdk-lib';
-import { AttributeType, BillingMode, Table, TableEncryption } from 'aws-cdk-lib/aws-dynamodb';
+import { AttributeType, BillingMode, ProjectionType, Table, TableEncryption } from 'aws-cdk-lib/aws-dynamodb';
 import { Construct } from 'constructs';
 import { IContext } from '../context/IContext';
 import { isMockLandscape } from '../src/Utils';
@@ -7,7 +7,9 @@ import {
   DYNAMODB_PARTITION_KEY as statisticsPartitionKey, 
   DYNAMODB_SECONDARY_PARTITION_KEY as statisticsSecondaryPartitionKey, 
   DYNAMODB_SORT_KEY as statisticsSortKey, 
-  DYNAMODB_TABLE_NAME as statisticsTableName
+  DYNAMODB_TABLE_NAME as statisticsTableName,
+  DYNAMODB_RUN_INDEX_NAME as statisticsRunIndexName,
+  DYNAMODB_RUN_INDEX_PARTITION_KEY as statisticsRunIndexPartitionKey
 } from '../src/dynamodb/StatisticsTable';
 import {
   DYNAMODB_TABLE_NAME as atomicCounterTableName,
@@ -129,6 +131,9 @@ export class DynamoDbTables extends Construct {
    *      if stale
    *    - SK = "POST_PROCESSOR_TRIGGER_CLAIM": Exactly one processor task wins the right to send the
    *      post-processor-trigger SQS message; never released
+   *
+   * 6. Run marker (SK = "RUN", 1 record per integration run, attribute `distinctRunId` = PK):
+   *    - The only item type in the distinct-run-index GSI (see below)
    * 
    * Access Patterns:
    * 1. Get all data for a specific run: Query by PK = integrationTimestamp
@@ -139,11 +144,16 @@ export class DynamoDbTables extends Construct {
    * 6. Get specific error type for a run: Query by PK = integrationTimestamp, SK begins_with "ERROR:429"
    * 7. Query errors by type across all runs: Use GSI1 (errorType-timestamp-index)
    * 8. Query time-series statistics: Scan with filter (or use GSI for chronological queries)
+   * 9. List distinct integration runs: Scan GSI2 (distinct-run-index)
    * 
    * GSI1 (errorType-timestamp-index):
    * - PK: `errorType` - Error classification (e.g., "ERROR:429", "ERROR:500", "STATISTICS")
    * - SK: `integrationTimestamp` - Enables chronological queries across runs
    * - Use case: "Get all throttling events across all runs in the past 30 days"
+   *
+   * GSI2 (distinct-run-index, sparse, KEYS_ONLY):
+   * - PK: `distinctRunId` - set only on run marker items, so the index holds one item per run
+   * - Use case: "SELECT DISTINCT integrationTimestamp" without reading per-chunk/per-error items
    */
   private createStatisticsTable = () => {
     const { context, tags } = this.params.props;
@@ -182,6 +192,15 @@ export class DynamoDbTables extends Construct {
         name: statisticsPartitionKey,
         type: AttributeType.STRING,
       },
+    });
+
+    this.statisticsTable.addGlobalSecondaryIndex({
+      indexName: statisticsRunIndexName,
+      partitionKey: {
+        name: statisticsRunIndexPartitionKey,
+        type: AttributeType.STRING,
+      },
+      projectionType: ProjectionType.KEYS_ONLY,
     });
   }
 
