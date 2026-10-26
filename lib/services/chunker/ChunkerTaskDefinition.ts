@@ -75,6 +75,9 @@ export class ChunkerTaskDefinition extends Construct {
       CHUNKS_BUCKET: chunksBucketName,
       PREVIOUS_STORAGE_TYPE: previousStorageType!,
       DYNAMODB_ATOMIC_COUNTER_TABLE_NAME: dynamodb!.atomicCounterTable.tableName,
+      // Needed in both storage modes: DynamoDB mode keeps the run's metadata and flags there, and S3
+      // mode still uses it for atomic metadata totals and the processor boost claim (MetadataForS3)
+      DYNAMODB_STATISTICS_TABLE_NAME: dynamodb!.statisticsTable.tableName,
       ITEMS_PER_CHUNK: itemsPerChunk.toString(),
       PERSON_ID_FIELD: 'personid',
       STACK_ID: stackId,
@@ -103,14 +106,9 @@ export class ChunkerTaskDefinition extends Construct {
         // Add DynamoDB-specific table names when using DynamoDB mode
         const { 
           personCurrentStateTable: { tableName: personCurrentStateTableName } = {},
-          statisticsTable: { tableName: statisticsTableName } = {},
         } = dynamodb || {};
         if (personCurrentStateTableName) {
           environment.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME = personCurrentStateTableName;
-        }
-        // Required by MetadataFactory.create() to route _flags.json/_metadata.json writes to DynamoDB
-        if (statisticsTableName) {
-          environment.DYNAMODB_STATISTICS_TABLE_NAME = statisticsTableName;
         }
         break;
     }
@@ -350,9 +348,11 @@ export class ChunkerTaskDefinition extends Construct {
     }
 
 
-    // Grant DynamoDB read/write permissions for StatisticsTable
-    // Used for reading/writing METADATA, FLAGS, and TERMINAL_ERROR event records in DynamoDB mode.
-    // BatchWriteItem is required because DynamoDBTable.putItem() routes through batchWrite() internally.
+    // Grant DynamoDB read/write permissions for StatisticsTable (both storage modes)
+    // Used for reading/writing METADATA, FLAGS, and TERMINAL_ERROR event records in DynamoDB mode, and in
+    // S3 mode for the run's atomic metadata totals, RUN marker and processor boost claim (MetadataForS3).
+    // BatchWriteItem is required because DynamoDBTable.putItem() routes through batchWrite() internally
+    // (it also covers the batched delete that releases the processor boost claim).
     this.taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
