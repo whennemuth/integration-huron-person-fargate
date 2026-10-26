@@ -33,12 +33,14 @@
     "src/**/*.ts",
     "lib/**/*.ts",
     "bin/**/*.ts",
-    "docker/**/*.ts"
+    "docker/**/*.ts",
+    "dashboard/**/*.ts"
   ],
   "exclude": [
     "node_modules",
     "cdk.out",
     "dist",
-    "test"
+    "test",
+    "dashboard/scripts"
   ]
 }

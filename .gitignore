@@ -34,3 +34,8 @@ HuronIRB*.json
 *-cache.json
 
 TODO.txt
+
+# Dashboard: generated template constants, browser scripts, its own CDK output
+dashboard/src/handlers/TemplateConstants.ts
+!dashboard/public/js/*.js
+dashboard/cdk.out/

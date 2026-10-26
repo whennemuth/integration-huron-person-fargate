@@ -1,0 +1,50 @@
+<!-- Bulk Operations Tab -->
+<div class="tab-pane fade {{#bulkActive}}show active{{/bulkActive}}" id="bulk" role="tabpanel" aria-labelledby="bulk-tab">
+    <div class="row mt-4">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header">
+                    <h5><i class="fas fa-users me-2"></i>Bulk Sync Operations</h5>
+                </div>
+                <div class="card-body">
+                    <form id="bulkSyncForm">
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="syncType" class="form-label">Sync Type</label>
+                                <select class="form-select" id="syncType" required>
+                                    <option value="">Choose...</option>
+                                    <option value="full">Full Population</option>
+                                    <option value="delta">Changed Records Only</option>
+                                    <option value="failed">Retry Failed</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="batchSize" class="form-label">Batch Size</label>
+                                <input type="number" class="form-control" id="batchSize" value="100" min="1" max="1000">
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="filters" class="form-label">Filters (Optional)</label>
+                            <textarea class="form-control" id="filters" rows="3" placeholder="JSON filters, e.g., {&quot;department&quot;: &quot;Engineering&quot;}"></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-play me-2"></i>Start Bulk Sync
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5><i class="fas fa-chart-bar me-2"></i>Current Status</h5>
+                </div>
+                <div class="card-body">
+                    <div id="bulkStatus">
+                        <p class="text-muted">No active operations</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

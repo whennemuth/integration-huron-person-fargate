@@ -1,0 +1,491 @@
+{
+  "personId": "U21967744",
+  "sourceData": [
+    {
+      "personid": "U21967744",
+      "personBasic": {
+        "names": [
+          {
+            "source": "SAP",
+            "nameType": "PRI",
+            "displayName": "",
+            "firstName": "Bugs",
+            "middleName": "",
+            "lastName": "Bunny",
+            "fullName": "Bunny, Bugs",
+            "prefix": "",
+            "suffix": "",
+            "effectiveDate": "20251020"
+          },
+          {
+            "nameType": "PRF",
+            "firstName": "Bugs",
+            "middleName": "",
+            "lastName": "Bunny",
+            "suffix": "",
+            "prefix": "",
+            "effectiveDate": "20240104",
+            "source": "Campus Solutions"
+          },
+          {
+            "nameType": "PRI",
+            "firstName": "Bugs",
+            "middleName": "",
+            "lastName": "Bunny",
+            "suffix": "",
+            "prefix": "",
+            "effectiveDate": "20240104",
+            "source": "Campus Solutions"
+          }
+        ],
+        "sex": [
+          {
+            "value": "1",
+            "source": "SAP"
+          },
+          {
+            "value": "U",
+            "description": "Unknown",
+            "source": "Campus Solutions"
+          }
+        ],
+        "pronouns": [
+          {
+            "list": "",
+            "source": "Campus Solutions"
+          }
+        ],
+        "dataRestriction": [
+          {
+            "group": {
+              "code": "FERPA",
+              "isActive": "N",
+              "subGroup": null
+            }
+          }
+        ]
+      },
+      "personDetails": {
+        "affiliation": [
+          "employee"
+        ],
+        "account": [
+          {
+            "name": "BBUNNY",
+            "source": "SAP"
+          },
+          {
+            "name": "TST_bbunny",
+            "source": "Campus Solutions"
+          }
+        ],
+        "maritalStatus": [
+          {
+            "code": "U",
+            "description": "Unknown",
+            "source": "Campus Solutions"
+          }
+        ],
+        "ethnicity": [
+          {
+            "isHispanicLatino": "E2",
+            "group": {
+              "code": "R5",
+              "description": "White"
+            },
+            "source": "SAP"
+          }
+        ],
+        "citizenship": [
+          {
+            "country": {
+              "code": "US"
+            },
+            "source": "SAP"
+          }
+        ],
+        "emergencyContact": [
+          {
+            "name": "Lola Bunny",
+            "phone": {
+              "type": "primary",
+              "number": "5555551234"
+            }
+          }
+        ],
+        "highestEducation": [
+          {
+            "level": {
+              "code": ""
+            },
+            "source": "SAP"
+          }
+        ],
+        "birthPlace": [
+          {
+            "country": {
+              "code": "",
+              "description": ""
+            },
+            "source": "Campus Solutions",
+            "otherDetails": ""
+          }
+        ],
+        "deceasedDate": [
+          {
+            "date": "",
+            "source": "Campus Solutions"
+          }
+        ]
+      },
+      "email": [
+        {
+          "type": "university",
+          "address": "bbunny@bu.edu",
+          "source": "SAP"
+        },
+        {
+          "type": "personal",
+          "address": "bugs.bunny@example.com",
+          "source": "SAP"
+        },
+        {
+          "type": "BUEM",
+          "address": "TST_bbunny@bu.edu",
+          "source": "Campus Solutions",
+          "isPreferred": "Y"
+        },
+        {
+          "type": "PERS",
+          "address": "TST_bugs.bunny@example.com",
+          "source": "Campus Solutions",
+          "isPreferred": "N"
+        }
+      ],
+      "phone": [
+        {
+          "type": "EMRGNCY",
+          "number": "5555551234",
+          "isCell": "N",
+          "source": "SAP"
+        },
+        {
+          "type": "WORK",
+          "countryCode": "",
+          "number": "6175551000",
+          "source": "Campus Solutions",
+          "isPreferred": "Y"
+        }
+      ],
+      "studentInfo": {
+        "address": null,
+        "testResults": null,
+        "admissionHistory": null,
+        "advisor": null,
+        "studentHousing": null,
+        "academicProgress": null,
+        "miscIndicator": null,
+        "studentSemester": null
+      },
+      "employeeInfo": {
+        "address": [
+          {
+            "type": "home",
+            "street": "123 Cartoon Lane, Apt 42",
+            "city": "Springfield",
+            "state": "MA",
+            "postalCode": "01101",
+            "country": "US"
+          }
+        ],
+        "health": [
+          {
+            "type": "covid-19",
+            "testingCategory": {
+              "code": "03"
+            },
+            "vaccineCategory": {
+              "code": "",
+              "description": ""
+            }
+          }
+        ],
+        "positions": [
+          {
+            "positionInfo": {
+              "BasicData": {
+                "personnelNumber": "00082617",
+                "mainPernrIndicator": "Y",
+                "position": {
+                  "code": "50032663",
+                  "description": "Lead Analyst, Programmer",
+                  "shortDescription": "1301238251"
+                },
+                "percentTime": "100",
+                "primaryAdministrativeAppointmentTitle": "",
+                "assignmentDuration": "                12.0",
+                "appointmentStatus": "1",
+                "employmentCode": "AD",
+                "sapEmpStatus": {
+                  "code": "3",
+                  "description": "Active"
+                },
+                "personnelArea": {
+                  "code": "1000",
+                  "description": "Charles River Campus"
+                },
+                "personnelSubArea": {
+                  "code": "0002",
+                  "description": "NREP-Staff"
+                },
+                "employeeGroup": {
+                  "code": "6",
+                  "description": "Staff-Exempt FT"
+                },
+                "employeeSubGroup": {
+                  "code": "05",
+                  "description": "Admin >SG"
+                },
+                "employerName": "Trustees of Boston Univ",
+                "company": {
+                  "code": "TRBU",
+                  "description": "Trustees of Boston Univ"
+                },
+                "mailCode": "U12",
+                "hireDate": "20160201",
+                "employmentDate": "20160201",
+                "terminationDate": "",
+                "testingCategory": "03",
+                "workSchedule": {
+                  "code": "F08MO1N1",
+                  "description": "8 hour 5 day"
+                },
+                "job": {
+                  "code": "03",
+                  "description": "Professionals"
+                },
+                "yearsOfService": " 9",
+                "loaStatus": {
+                  "code": "",
+                  "status": ""
+                }
+              },
+              "Action": {
+                "actionType": "09",
+                "actionReason": "08",
+                "actionDate": "20180201",
+                "actionEntryDate": "20180216",
+                "hirerEmail": {
+                  "type": "university",
+                  "address": "BBUNNY@BU.EDU"
+                }
+              },
+              "I9": {
+                "completionDate": "00000000",
+                "personalIdIssueDate": "",
+                "idExpirationDate": "",
+                "workPermitIssueDate": "",
+                "workPermitExpirationDate": "",
+                "expirationDate": "20180222"
+              },
+              "Office": [
+                {
+                  "isPrimary": true,
+                  "workAddress": {
+                    "type": "business",
+                    "street": "930 Commonwealth Ave",
+                    "city": "Boston",
+                    "state": "MA",
+                    "postalCode": "02215",
+                    "country": "US",
+                    "effectiveDate": "20180701",
+                    "location": {
+                      "building": {
+                        "code": "009411",
+                        "description": "930 Commonwealth Ave"
+                      },
+                      "campus": {
+                        "code": "CHRV"
+                      }
+                    }
+                  },
+                  "workPhone": {
+                    "type": "office",
+                    "number": "6175551000",
+                    "source": "SAP"
+                  }
+                }
+              ],
+              "Department": {
+                "unit": "051",
+                "department": "050",
+                "departmentName": "APPLICATIONS",
+                "organizationalUnit": "10003827",
+                "organizationalUnitDescription": "Res. Adm., Web and .NET",
+                "organizationalUnitParent": "10006404",
+                "organizationalUnitParentDescription": "Health, Faculty and Student Ancillary",
+                "organizationalUnitDepartment": "Health, Faculty and Student Ancillary - Res. Adm., Web and .NET",
+                "previousOrganizationalUnitDepartment": "",
+                "costCenter": "1510500000",
+                "recordType": "",
+                "orgUnit": [
+                  {
+                    "level": "7",
+                    "code": "10003827",
+                    "description": "Res. Adm., Web and .NET"
+                  },
+                  {
+                    "level": "6",
+                    "code": "10006404",
+                    "description": "Health, Faculty and Student Ancillary"
+                  },
+                  {
+                    "level": "5",
+                    "code": "10002309",
+                    "description": "General Applications"
+                  },
+                  {
+                    "level": "4",
+                    "code": "10002129",
+                    "description": "IS&T APPLICATIONS"
+                  },
+                  {
+                    "level": "3",
+                    "code": "10000300",
+                    "description": "Info Services & Technology"
+                  },
+                  {
+                    "level": "2",
+                    "code": "10000157",
+                    "description": "Presidents Office"
+                  },
+                  {
+                    "level": "1",
+                    "code": "10003001",
+                    "description": "Boston University"
+                  }
+                ]
+              },
+              "Academic": {
+                "academicRank": "",
+                "assignmentBeginDate": "20180201",
+                "assignmentEndDate": ""
+              },
+              "Supervisor": {
+                "managerPosition": "50015700",
+                "managerFullName": "Daffy Duck",
+                "managerFirstName": "Daffy",
+                "managerMiddleName": "",
+                "managerLastName": "Duck",
+                "managerPersonId": "DaffyDuck456",
+                "managerEmail": {
+                  "type": "university",
+                  "address": "DDAFFY@BU.EDU",
+                  "source": "SAP"
+                },
+                "managerUsername": "DDAFFY"
+              },
+              "Payroll": {
+                "area": {
+                  "code": "S1"
+                }
+              },
+              "hrRepresentativeId": "U33127293"
+            }
+          }
+        ]
+      },
+      "affiliateInfo": null
+    }
+  ],
+  "targetData": [
+    {
+      "id": "bbunny-bu",
+      "honorific": "",
+      "firstName": "Bugs",
+      "lastName": "Bunny",
+      "middleName": "",
+      "title": "",
+      "userId": "bu-sso_bbunny@bu.edu",
+      "ORCID": "",
+      "employer": {
+        "hrn": "hrn:hrs:orgs:1",
+        "name": "Huron Consulting Group",
+        "id": "HuronConsultingGroup"
+      },
+      "organization": {
+        "hrn": "hrn:hrs:orgs:1",
+        "name": "Huron Consulting Group",
+        "id": "HuronConsultingGroup"
+      },
+      "additionalUnit": null,
+      "secondaryUnit": null,
+      "sourceIdentifier": "U21967744",
+      "contactInformation": {
+        "city": "",
+        "email": "bbunny@bu.edu",
+        "phone": "",
+        "country": {
+          "hrn": "hrn:hrs:lists:countries/usa",
+          "name": "United States"
+        },
+        "website": null,
+        "postalCode": "",
+        "addressLine1": "",
+        "addressLine2": "",
+        "stateProvince": null
+      },
+      "active": true,
+      "isInternal": false,
+      "newUser": false,
+      "showLoginTips": false,
+      "allowLogin": true,
+      "dateCreated": "2025-07-26T00:05:46.8461860Z",
+      "dateModified": "2026-01-25T05:33:11.3758650Z",
+      "earnedDegrees": "",
+      "employeeId": "",
+      "customProperties": null,
+      "tags": [],
+      "roles": [
+        {
+          "hrn": "hrn:hrs:lists:roles/agreements-general-user",
+          "name": "Agreements General User"
+        },
+        {
+          "hrn": "hrn:hrs:lists:roles/connect-api-user",
+          "name": "Connect API User"
+        },
+        {
+          "hrn": "hrn:hrs:lists:roles/agreements-global-viewer",
+          "name": "Global Agreements Viewer"
+        },
+        {
+          "hrn": "hrn:hrs:lists:roles/grnts-user",
+          "name": "Grants General User"
+        },
+        {
+          "hrn": "hrn:hrs:lists:roles/global-grnts-viewer",
+          "name": "Grants Global Viewer"
+        },
+        {
+          "hrn": "hrn:hrs:lists:roles/irb-general-user",
+          "name": "IRB General User"
+        },
+        {
+          "hrn": "hrn:hrs:lists:roles/irb-principal-investigator",
+          "name": "IRB Principal Investigator"
+        },
+        {
+          "hrn": "hrn:hrs:lists:roles/bu~impersonate",
+          "name": "Impersonation"
+        },
+        {
+          "hrn": "hrn:hrs:lists:roles/site-user",
+          "name": "Site User"
+        }
+      ],
+      "hrn": "hrn:hrs:persons:148",
+      "openPaymentsId": ""
+    }
+  ]
+}
