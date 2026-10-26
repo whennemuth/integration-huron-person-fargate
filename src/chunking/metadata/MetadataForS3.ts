@@ -44,8 +44,13 @@ export class MetadataForS3 implements IMetadataStorage {
   // The processor-boost claim (see claimProcessorBoost below) is routed through the DynamoDB
   // statistics table rather than S3 files - that table already exists in both storage modes (for
   // error tracking), so this reuses the same race-free OCCFlag-backed mechanism as DynamoDB mode
-  // instead of maintaining a separate, non-atomic S3 implementation.
+  // instead of maintaining a separate, non-atomic S3 implementation. (See TODO.md: this is the one
+  // remaining S3-mode decision that depends on the statistics table.) Run totals are NOT kept there:
+  // they live in _metadata.json, with only a best-effort copy sent to the table, as statistics.
   private statisticsTableName?: string;
+
+  /** Attempts at the conditional read-modify-write of _metadata.json's run totals before giving up */
+  private static readonly TOTALS_MAX_ATTEMPTS = 8;
 
   constructor(params: { config: Config; storage?: S3StorageAdapter; statisticsTableName?: string }) {
     this.config = params.config;
@@ -467,25 +472,134 @@ export class MetadataForS3 implements IMetadataStorage {
   }
 
   /**
-   * Atomically add this task's own chunkCount/totalRecords contribution to the run's METADATA
-   * record. Delegates to the shared DynamoDB statistics table (see the statisticsTableName
-   * field's doc comment) even in S3 mode, since that's the only channel offering an atomic
-   * accumulate-and-return operation.
+   * Add this task's own chunkCount/totalRecords contribution to the run's totals in _metadata.json,
+   * and record that the end of the source records was reached if this task reached it. These are
+   * the values S3-mode decisions read back from _metadata.json (see read()): whether to chain
+   * another chunker task, whether a late task should abandon its work, the total-records safety
+   * cutoff, and the post-processor's expected chunk count.
+   *
+   * Parallel chunker tasks update the same file, so the update is a conditional read-modify-write:
+   * the file is written back only if it is still the version that was read (IfMatch on its ETag),
+   * or created only if it does not exist yet (IfNoneMatch '*'). A task that loses a race re-reads
+   * and re-applies its contribution, so no task's totals are lost. Descriptive fields (source,
+   * createdAt, ...) are set by whichever task writes first; partialOrEmptyChunkEncountered is only
+   * ever set, never cleared.
+   *
+   * Afterwards, if a statistics table is configured, the same contribution is copied to it on a
+   * best-effort basis, for reporting only - no S3-mode decision reads it from there.
+   *
+   * @returns The run's running totals after this task's contribution
+   * @throws If the update keeps losing races after TOTALS_MAX_ATTEMPTS attempts
    */
   public async accumulateMetadataTotals(params: AccumulateMetadataTotalsParams): Promise<{ chunkCount: number; totalRecords: number }> {
+    const {
+      bucketName, chunkDirectory, region, source, target, itemsPerChunk, bulkReset, trustPreviousStorage,
+      syncPopulation, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
+    } = params;
+    if (!bucketName) {
+      throw new Error('bucketName is required for S3 metadata operations');
+    }
+    const metadataKey = this.metadataUtils.getMetadataKey(chunkDirectory);
+    const deltaStoragePath = this.metadataUtils.deriveDeltaStoragePath(chunkDirectory);
+    const metadataLog = `s3://${bucketName}/${metadataKey}`;
+    const s3Client = new S3Client({ region });
+    const maxAttempts = MetadataForS3.TOTALS_MAX_ATTEMPTS;
+
+    for (let attempt = 1; ; attempt++) {
+      const { metadata: existing, etag } = await this.readMetadataWithETag(s3Client, bucketName, metadataKey);
+
+      const updated: ChunkMetadata = {
+        source, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation, deltaStoragePath,
+        createdAt: new Date().toISOString(),
+        ...(target !== undefined ? { target } : {}),
+        ...existing, // Fields already in the file win - they were set by whichever task wrote first
+        chunkCount: (existing?.chunkCount ?? 0) + chunkCountDelta,
+        totalRecords: (existing?.totalRecords ?? 0) + totalRecordsDelta
+      } as ChunkMetadata;
+      if (partialOrEmptyChunkEncountered) {
+        updated.partialOrEmptyChunkEncountered = true;
+      }
+
+      try {
+        await s3Client.send(new PutObjectCommand({
+          Bucket: bucketName,
+          Key: metadataKey,
+          Body: JSON.stringify(updated, null, 2),
+          ContentType: 'application/json',
+          ...(etag ? { IfMatch: etag } : { IfNoneMatch: '*' })
+        }));
+        console.log(`✓ Metadata totals updated (attempt ${attempt}): ${metadataLog} ` +
+          `[chunkCount=${updated.chunkCount}, totalRecords=${updated.totalRecords}` +
+          `${updated.partialOrEmptyChunkEncountered ? ', partialOrEmptyChunkEncountered=true' : ''}]`);
+
+        await this.copyTotalsToStatistics(params, deltaStoragePath);
+        return { chunkCount: updated.chunkCount!, totalRecords: updated.totalRecords! };
+      }
+      catch (error: any) {
+        if (!isConditionalWriteConflict(error)) {
+          throw error;
+        }
+        if (attempt >= maxAttempts) {
+          throw new Error(`Could not update run totals in ${metadataLog}: it kept changing under ` +
+            `this task's conditional write (${maxAttempts} attempts)`);
+        }
+        const delayMs = Math.min(100 * 2 ** (attempt - 1), 3000) + Math.floor(Math.random() * 100);
+        console.log(`Metadata totals write lost a race with another task (attempt ${attempt}) - retrying in ${delayMs}ms`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+
+  /**
+   * Read _metadata.json together with its ETag, for a conditional write back.
+   * @returns metadata and etag both undefined if the file does not exist yet
+   */
+  private readMetadataWithETag = async (s3Client: S3Client, bucketName: string, metadataKey: string):
+    Promise<{ metadata?: Partial<ChunkMetadata>, etag?: string }> => {
+    try {
+      const response = await s3Client.send(new GetObjectCommand({ Bucket: bucketName, Key: metadataKey }));
+      const body = await response.Body?.transformToString();
+      return { metadata: body ? JSON.parse(body) as Partial<ChunkMetadata> : {}, etag: response.ETag };
+    }
+    catch (error: any) {
+      if (error.name === 'NoSuchKey') {
+        return {};
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Best-effort copy of this task's totals contribution (and the run's RUN marker) to the statistics
+   * table, for reporting. Never throws: statistics must not affect how the sync runs.
+   */
+  private copyTotalsToStatistics = async (params: AccumulateMetadataTotalsParams, deltaStoragePath: string): Promise<void> => {
+    if (!this.statisticsTableName) {
+      return;
+    }
     const {
       chunkDirectory, region, source, target, itemsPerChunk, bulkReset, trustPreviousStorage,
       syncPopulation, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
     } = params;
-    if (!this.statisticsTableName) {
-      throw new Error('statisticsTableName is required for metadata totals accumulation');
+    try {
+      const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
+      await StatisticsTable.fromTableName(this.statisticsTableName, region).addToMetadataTotals(syncRunId, {
+        source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage,
+        syncPopulation, deltaStoragePath, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
+      });
     }
-    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
-    const deltaStoragePath = this.metadataUtils.deriveDeltaStoragePath(chunkDirectory);
-    const statisticsTable = StatisticsTable.fromTableName(this.statisticsTableName, region);
-    return statisticsTable.addToMetadataTotals(syncRunId, {
-      source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage,
-      syncPopulation, deltaStoragePath, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
-    });
+    catch (error: any) {
+      console.warn(`Could not copy run totals to the statistics table (reporting only, sync unaffected): ${error?.message ?? error}`);
+    }
   }
+}
+
+/**
+ * True if an S3 conditional write failed because the object changed (or appeared, or is being
+ * written) since it was read: 412 PreconditionFailed, or 409 ConditionalRequestConflict.
+ */
+const isConditionalWriteConflict = (error: any): boolean => {
+  const status = error?.$metadata?.httpStatusCode;
+  return error?.name === 'PreconditionFailed' || error?.name === 'ConditionalRequestConflict'
+    || status === 412 || status === 409;
 }
