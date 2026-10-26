@@ -248,8 +248,9 @@ env var, which the Docker routers branch on; the runtime factories below then sw
 
 3. **StatisticsTable** - Metadata, flags, and error events
    - PK: `integrationTimestamp` (syncRunId), SK: `eventType`
-   - Event types: `METADATA`, `FLAGS`, `TERMINAL_ERROR`, `STATISTICS`, `STATISTICS-chunk-*`, `ERROR:*`,
-     `CHUNK_STATUS_*`, `PROCESSOR_BOOST_CLAIM`, `POST_PROCESSOR_TRIGGER_CLAIM`
+   - Event types: `METADATA`, `FLAGS`, `TERMINAL_ERROR`, `STATISTICS-chunk-*`, `ERROR:*`,
+     `CHUNK_STATUS_*`, `PROCESSOR_BOOST_CLAIM`, `POST_PROCESSOR_TRIGGER_CLAIM`, `RUN`, `RUN_SUMMARY`
+     (no aggregate `STATISTICS` item is ever written: processors always pass a chunkId)
    - `PROCESSOR_BOOST_CLAIM` / `POST_PROCESSOR_TRIGGER_CLAIM` are `OCCFlag`-guarded claim records ensuring exactly
      one chunker task runs the processor scaling check, and exactly one processor task triggers the post-processor
      (see `docs/CONCURRENCY_CONTROL.md`); the boost claim is written in S3 storage mode too
@@ -259,6 +260,21 @@ env var, which the Docker routers branch on; the runtime factories below then sw
      syncRunId") scans one tiny item per run instead of every STATISTICS/chunk item. It is written
      idempotently by `writeFlags()`, `addToMetadataTotals()` (every chunker task, both storage modes)
      and `writeTerminalError()`; runs that predate the index need the harness task `backfill-runs`
+   - `STATISTICS-chunk-*` items carry the chunk's `IntegrationResult` counts (success/failure/skipped,
+     added/updated/removed) as well as its error counts.
+   - `RUN_SUMMARY` (one per run) is written by `AbstractPostProcessor.main()`'s `finally` block, in both
+     storage modes: METADATA plus the summed chunk statistics plus the deletion outcome
+     (`DeletionOutcome`, returned by `runDeferredDeletes()`: COMPLETED with counts, SKIPPED with a
+     reason, or FAILED). Status: `SUCCEEDED`, `FAILED` (deletes skipped because the run carries a
+     terminal error) or `POST_PROCESSING_FAILED`. Writing it never fails post-processing. Runs that
+     never reach the post-processor have no summary; `src/reporting/RunReporting.ts` reports them as
+     FAILED/INCOMPLETE from METADATA, FLAGS and the terminal error (S3 files in S3 mode, located via
+     METADATA's `chunkDirectory`).
+   - `src/reporting/RunReporting.ts` is the read side (no transport): `listRuns`, `getRunReport`,
+     `getRunChunkStatistics`, paged `getRunErrors` and `getRunChanges` (person-history changes,
+     DynamoDB mode only; S3 mode keeps no per-person change record per run). Page cursors are
+     base64url `LastEvaluatedKey`s, rejected unless their key attributes match the requested run
+     (and change type).
 
 **What remains in S3** (even in DynamoDB mode):
 - Chunk NDJSON files (parallel processing dependency)

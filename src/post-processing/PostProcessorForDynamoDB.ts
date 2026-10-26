@@ -23,6 +23,7 @@ import { FieldDefinitions } from 'integration-huron-person';
 import { extractChunkDirectory } from '../chunking/filedrop/ChunkPathUtils';
 import { MetadataFactoryForBootstrap, StandardMetadataUtils } from '../chunking/metadata';
 import { SyncPopulation } from '../../docker/chunkTypes';
+import { DeletionOutcome } from '../dynamodb/StatisticsTable';
 import { AbstractPostProcessor, PostProcessorContext, MergeResult, TaskParameters } from './AbstractPostProcessor';
 import { DeferredDeleteHandlerForDynamoDB, DeferredDeleteHandlerForDynamoDBParams } from './DeferredDeleteHandlerForDynamoDB';
 
@@ -138,7 +139,7 @@ export class PostProcessorForDynamoDB extends AbstractPostProcessor {
     return { chunkDir, syncRunId };
   }
 
-  protected async runDeferredDeletes(result: MergeResultForDynamoDB): Promise<void> {
+  protected async runDeferredDeletes(result: MergeResultForDynamoDB): Promise<DeletionOutcome> {
     const postProcessorContext = await this.getPostProcessorContext() as PostProcessorContextForDynamoDB;
     const { bucketName, chunkDir, region, syncRunId, primaryKeyFieldNames } = postProcessorContext;
 
@@ -150,12 +151,12 @@ export class PostProcessorForDynamoDB extends AbstractPostProcessor {
 
     if (await metadata.terminalErrorExists({ bucketName, chunkDirectory: chunkDir, region })) {
       console.error(`  ⛔ Run is marked failed (TERMINAL_ERROR) - deletion handling skipped.`);
-      return;
+      return { status: 'SKIPPED', reason: 'TERMINAL_ERROR', message: 'Run is marked failed (TERMINAL_ERROR)' };
     }
 
     if (syncPopulation === SyncPopulation.PersonDelta) {
       console.log(`  Sync population type is PersonDelta - Deletion handling does NOT apply.`);
-      return;
+      return { status: 'SKIPPED', reason: 'PERSON_DELTA', message: 'Deletion handling does not apply to PersonDelta syncs' };
     }
 
     const personCurrentStateTableName = process.env.DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME;
@@ -163,7 +164,7 @@ export class PostProcessorForDynamoDB extends AbstractPostProcessor {
 
     if (!personCurrentStateTableName || !personHistoryTableName) {
       console.warn(`  Missing DynamoDB table name(s) for deletion processing. Skipping.`);
-      return;
+      return { status: 'SKIPPED', reason: 'MISSING_TABLES', message: 'Missing DynamoDB table name(s) for deletion processing' };
     }
 
     console.log(`\nStep 3.5: Processing deletions`);
@@ -186,10 +187,12 @@ export class PostProcessorForDynamoDB extends AbstractPostProcessor {
           console.warn(`  Failed: ${deletionResult.failedCount} deletions failed`);
         }
       }
+      return { status: 'COMPLETED', ...deletionResult };
     } catch (deleteError: any) {
       console.error(`  Failed to process deletions: ${deleteError.message}`);
       // Don't fail the entire merge if deletions fail - log and continue
       console.warn(`  Continuing with merge despite deletion failure`);
+      return { status: 'FAILED', message: deleteError.message };
     }
   }
 }

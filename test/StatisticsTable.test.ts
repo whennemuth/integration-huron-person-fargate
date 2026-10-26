@@ -26,42 +26,113 @@ describe('StatisticsTable', () => {
     statisticsTable = new StatisticsTable(mockContext);
   });
 
-  describe('getStatistics', () => {
-    it('should retrieve aggregated statistics with STATISTICS sort key', async () => {
-      const mockStats: StatisticsItem = {
-        integrationTimestamp,
-        eventType: 'STATISTICS',
-        errorType: 'STATISTICS',
-        startTimestamp: '2026-05-14T12:00:00.000Z',
-        endTimestamp: '2026-05-14T12:05:00.000Z',
-        chunkCount: 10,
-        chunkSize: 1000,
-        totalRecords: 10000,
-        sourceDescription: 'Test source',
-        totalErrors: 5,
+  describe('run summary', () => {
+    const chunk = (chunkId: string, overrides: Partial<StatisticsItem> = {}): StatisticsItem => ({
+      integrationTimestamp,
+      eventType: `STATISTICS-${chunkId}`,
+      errorType: 'STATISTICS',
+      chunkId,
+      startTimestamp: '2026-05-14T12:00:00.000Z',
+      endTimestamp: '2026-05-14T12:01:00.000Z',
+      chunkCount: 1,
+      chunkSize: 200,
+      totalRecords: 200,
+      sourceDescription: chunkId,
+      totalErrors: 0,
+      throttleCount: 0,
+      errorsByStatus: {},
+      ...overrides
+    });
+
+    const mockRun = (chunks: StatisticsItem[]) => {
+      dynamoMock.on(GetCommand).resolves({ Item: {
+        integrationTimestamp, eventType: 'METADATA',
+        createdAt: '2026-05-14T11:59:00.000Z', syncPopulation: 'person-full', bulkReset: false,
+        chunkCount: 3, totalRecords: 600
+      } });
+      dynamoMock.on(QueryCommand).resolves({ Items: chunks });
+    };
+
+    it('sums chunk counts and errors and folds in METADATA and the deletion outcome', async () => {
+      mockRun([
+        chunk('chunk-0000', { successCount: 190, failureCount: 10, addedCount: 5, updatedCount: 185,
+          totalErrors: 10, throttleCount: 2, errorsByStatus: { 500: 8, 429: 2 } }),
+        chunk('chunk-0001', { successCount: 200, addedCount: 1, updatedCount: 199,
+          totalErrors: 1, errorsByStatus: { 500: 1 } })
+      ]);
+      const deletion = { status: 'COMPLETED' as const, deletedCount: 3, failedCount: 0, totalProcessed: 3, message: 'ok' };
+
+      const summary = await statisticsTable.buildRunSummary(integrationTimestamp, {
+        postProcessingSucceeded: true, storageMode: 'dynamodb', dryRun: false, deletion
+      });
+
+      expect(summary).toMatchObject({
+        syncRunId: integrationTimestamp,
+        status: 'SUCCEEDED',
+        storageMode: 'dynamodb',
+        createdAt: '2026-05-14T11:59:00.000Z',
+        syncPopulation: 'person-full',
+        chunkCount: 3,
+        totalRecords: 600,
+        chunksReported: 2,
+        results: { processed: 400, succeeded: 390, failed: 10, skipped: 0, added: 6, updated: 384, removed: 0 },
+        totalErrors: 11,
         throttleCount: 2,
-        errorsByStatus: { '500': 3, '429': 2 }
-      };
-
-      dynamoMock.on(GetCommand).resolves({ Item: mockStats });
-
-      const result = await statisticsTable.getStatistics(integrationTimestamp);
-
-      expect(result).toEqual(mockStats);
-      expect(dynamoMock.commandCalls(GetCommand)).toHaveLength(1);
-      const call = dynamoMock.commandCalls(GetCommand)[0];
-      expect(call.args[0].input.Key).toEqual({
-        integrationTimestamp,
-        eventType: 'STATISTICS'
+        errorsByStatus: { '500': 9, '429': 2 },
+        deletion
       });
     });
 
-    it('should return undefined when aggregated statistics do not exist', async () => {
+    it('is FAILED when deletions were skipped because the run was marked failed', async () => {
+      mockRun([]);
+      const summary = await statisticsTable.buildRunSummary(integrationTimestamp, {
+        postProcessingSucceeded: true, dryRun: false,
+        deletion: { status: 'SKIPPED', reason: 'TERMINAL_ERROR', message: 'marked failed' }
+      });
+      expect(summary.status).toBe('FAILED');
+    });
+
+    it('is POST_PROCESSING_FAILED when post-processing failed', async () => {
+      mockRun([]);
+      const summary = await statisticsTable.buildRunSummary(integrationTimestamp, {
+        postProcessingSucceeded: false, dryRun: false
+      });
+      expect(summary.status).toBe('POST_PROCESSING_FAILED');
+    });
+
+    it('writes and reads the summary under the RUN_SUMMARY sort key', async () => {
+      dynamoMock.on(BatchWriteCommand).resolves({});
+      mockRun([]);
+      const summary = await statisticsTable.buildRunSummary(integrationTimestamp, { postProcessingSucceeded: true, dryRun: true });
+
+      await statisticsTable.writeRunSummary(summary);
+
+      const requestItems = Object.values(dynamoMock.commandCalls(BatchWriteCommand)[0].args[0].input.RequestItems!)[0] as any[];
+      expect(requestItems[0].PutRequest.Item).toMatchObject({ integrationTimestamp, eventType: 'RUN_SUMMARY', status: 'SUCCEEDED', dryRun: true });
+
+      dynamoMock.on(GetCommand).resolves({ Item: { integrationTimestamp, eventType: 'RUN_SUMMARY', ...summary } });
+      expect(await statisticsTable.readRunSummary(integrationTimestamp)).toEqual(summary);
+      expect(dynamoMock.commandCalls(GetCommand).at(-1)!.args[0].input.Key).toEqual({ integrationTimestamp, eventType: 'RUN_SUMMARY' });
+    });
+
+    it('readRunSummary returns undefined when no summary was written', async () => {
       dynamoMock.on(GetCommand).resolves({ Item: undefined });
+      expect(await statisticsTable.readRunSummary(integrationTimestamp)).toBeUndefined();
+    });
+  });
 
-      const result = await statisticsTable.getStatistics(integrationTimestamp);
+  describe('getRunErrorsPage', () => {
+    it('queries one page of ERROR items, optionally for one status code', async () => {
+      dynamoMock.on(QueryCommand).resolves({ Items: [{ eventType: 'ERROR:500:t1' }], LastEvaluatedKey: { k: 1 } });
 
-      expect(result).toBeUndefined();
+      const page = await statisticsTable.getRunErrorsPage(integrationTimestamp, { limit: 10 });
+      await statisticsTable.getRunErrorsPage(integrationTimestamp, { statusCode: 429, limit: 5, startKey: { k: 1 } });
+
+      expect(page).toEqual({ items: [{ eventType: 'ERROR:500:t1' }], lastEvaluatedKey: { k: 1 } });
+      const [first, second] = dynamoMock.commandCalls(QueryCommand).map(call => call.args[0].input);
+      expect(first).toMatchObject({ Limit: 10, ExpressionAttributeValues: { ':pkValue': integrationTimestamp, ':skPrefix': 'ERROR:' } });
+      expect(first.ExclusiveStartKey).toBeUndefined();
+      expect(second).toMatchObject({ Limit: 5, ExclusiveStartKey: { k: 1 }, ExpressionAttributeValues: { ':skPrefix': 'ERROR:429:' } });
     });
   });
 

@@ -39,7 +39,7 @@
  */
 
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { FieldSet, TestEnvironment, Timer } from 'integration-core';
+import { FieldSet, IntegrationResult, TestEnvironment, Timer } from 'integration-core';
 import {
   BasicCache,
   Config,
@@ -266,6 +266,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
   let integrationTimestamp: string | undefined;
   let errorTracker: TargetApiErrorEventProcessor | undefined;
   let processedRecordCount = 0;
+  let integrationResult: IntegrationResult | undefined;
   let processingError: Error | null = null;
   const startTimestamp = new Date().toISOString();
 
@@ -382,6 +383,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
      * previous-input.ndjson for the next run.
      */
     const result = await integration.run(`Processing chunk: s3://${bucketName}/${s3Key}`, chunkId);
+    integrationResult = result;
 
     // Extract actual record count from integration result
     processedRecordCount = result.totalProcessed;
@@ -423,7 +425,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     // Write statistics to DynamoDB
     try {
       if (errorTracker) {
-        await writeTrackerStatistics({ errorTracker, startTimestamp, chunkId, processedRecordCount });
+        await writeTrackerStatistics({ errorTracker, startTimestamp, chunkId, processedRecordCount, integrationResult });
       }
       timer.stop();
       timer.logElapsed('Total processing time');

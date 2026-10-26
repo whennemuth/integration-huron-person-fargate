@@ -73,6 +73,13 @@ export interface SyncStatistics {
   totalRecords: number;
   sourceDescription: string;
   chunkId?: string; // Optional chunk identifier for parallel processing
+  // The chunk's IntegrationResult counts; absent on items written before they were recorded
+  successCount?: number;
+  failureCount?: number;
+  skippedCount?: number;
+  addedCount?: number;
+  updatedCount?: number;
+  removedCount?: number;
 }
 
 /**

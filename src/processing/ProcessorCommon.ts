@@ -146,9 +146,10 @@ export async function writeTrackerStatistics(params: {
   errorTracker: TargetApiErrorEventProcessor,
   startTimestamp: string,
   chunkId?: string,
-  processedRecordCount: number
+  processedRecordCount: number,
+  integrationResult?: IntegrationResult
 }): Promise<void> {
-  const { errorTracker, startTimestamp, chunkId, processedRecordCount } = params;
+  const { errorTracker, startTimestamp, chunkId, processedRecordCount, integrationResult } = params;
   if (!(errorTracker instanceof TrackingTargetApiErrorProcessor)) {
     return;
   }
@@ -162,7 +163,15 @@ export async function writeTrackerStatistics(params: {
     chunkSize: processedRecordCount,
     totalRecords: processedRecordCount,
     sourceDescription: `chunk-${chunkId || 'unknown'}`,
-    chunkId: chunkIdFromDesc // Pass chunk ID to prevent overwrites
+    chunkId: chunkIdFromDesc, // Pass chunk ID to prevent overwrites
+    ...(integrationResult && {
+      successCount: integrationResult.successCount,
+      failureCount: integrationResult.failureCount,
+      skippedCount: integrationResult.skippedCount,
+      addedCount: integrationResult.addedCount,
+      updatedCount: integrationResult.updatedCount,
+      removedCount: integrationResult.removedCount
+    })
   });
 
   const stats = errorTracker.getStatisticsSummary();

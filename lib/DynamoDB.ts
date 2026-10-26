@@ -107,9 +107,8 @@ export class DynamoDbTables extends Construct {
    * - Sort Key (SK): `eventType` - Event type identifier
    * 
    * Item Types:
-   * 1. Statistics Record (SK = "STATISTICS" or "STATISTICS-chunk-XXXX"):
-   *    - Aggregated stats: SK = "STATISTICS" (1 record per integration run)
-   *    - Chunk-specific stats: SK = "STATISTICS-chunk-0009" (1 record per chunk)
+   * 1. Statistics Record (SK = "STATISTICS-chunk-XXXX", 1 record per chunk):
+   *    - The chunk's result counts (succeeded/failed/skipped, added/updated/removed) and error counts
    *    - Chunk-specific records prevent parallel processors from overwriting each other
    * 
    * 2. Error Record (SK = "ERROR:<statusCode>:<timestamp>"):
@@ -121,6 +120,7 @@ export class DynamoDbTables extends Construct {
    *    - SK = "FLAGS": Sync configuration flags (written first by the chunker)
    *    - SK = "METADATA": Run manifest (written after chunking completes)
    *    - SK = "TERMINAL_ERROR": Pipeline-halting failure marker
+   *    - SK = "RUN_SUMMARY": Run totals and deletion outcome (written by the post-processor)
    *
    * 4. Chunk status records (SK = "CHUNK_STATUS_0009", 1 record per chunk):
    *    - Processor progress used for "last processor triggers post-processor" completion detection
@@ -137,7 +137,7 @@ export class DynamoDbTables extends Construct {
    * 
    * Access Patterns:
    * 1. Get all data for a specific run: Query by PK = integrationTimestamp
-   * 2. Get aggregated statistics: Query by PK = integrationTimestamp, SK = "STATISTICS"
+   * 2. Get a run's summary: Query by PK = integrationTimestamp, SK = "RUN_SUMMARY"
    * 3. Get all chunk statistics: Query by PK = integrationTimestamp, SK begins_with "STATISTICS-chunk-"
    * 4. Get specific chunk statistics: Query by PK = integrationTimestamp, SK = "STATISTICS-chunk-0009"
    * 5. Get all errors for a run: Query by PK = integrationTimestamp, SK begins_with "ERROR:"

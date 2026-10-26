@@ -19,6 +19,7 @@ import { AbstractPostProcessor, PostProcessorContext, MergeResult, TaskParameter
 import { extractChunkDirectory } from '../chunking/filedrop/ChunkPathUtils';
 import { SyncPopulation } from '../../docker/chunkTypes';
 import { MetadataFactoryForBootstrap } from '../chunking/metadata';
+import { DeletionOutcome } from '../dynamodb/StatisticsTable';
 import { DeferredDeleteHandlerForS3, DeferredDeleteHandlerForS3Params } from './DeferredDeleteHandlerForS3';
 
 export type TaskParametersForS3 = TaskParameters & {
@@ -272,10 +273,10 @@ export class PostProcessorForS3 extends AbstractPostProcessor {
     };
   }
 
-  protected async runDeferredDeletes(result: MergeResultForS3): Promise<void> {
+  protected async runDeferredDeletes(result: MergeResultForS3): Promise<DeletionOutcome> {
     if(!result.outputKey) {
       console.warn(`  No output key found in merge result. Skipping deferred deletes.`);
-      return;
+      return { status: 'SKIPPED', reason: 'NO_MERGE_OUTPUT', message: 'No output key in merge result' };
     }
 
     const postProcessorContext = await this.getPostProcessorContext() as PostProcessorContextForS3;
@@ -291,7 +292,7 @@ export class PostProcessorForS3 extends AbstractPostProcessor {
 
     if (await metadata.terminalErrorExists({ bucketName, chunkDirectory: chunkDir, region })) {
       console.error(`  ⛔ Run is marked failed (terminal error marker) - deletion handling skipped.`);
-      return;
+      return { status: 'SKIPPED', reason: 'TERMINAL_ERROR', message: 'Run is marked failed (terminal error marker)' };
     }
 
     if (syncPopulation === SyncPopulation.PersonDelta) {
@@ -302,7 +303,7 @@ export class PostProcessorForS3 extends AbstractPostProcessor {
       // in the merged output via use of the appropriate DeltaStrategy decorator 
       // (ie: src\delta-strategy\IgnoreRemovalsDeltaStrategy.ts). So this is really just an 
       // additional safeguard to avoid accidentally running deletion logic for an incompatible sync type.
-      return;
+      return { status: 'SKIPPED', reason: 'PERSON_DELTA', message: 'Deletion handling does not apply to PersonDelta syncs' };
     }
 
     console.log(`\nStep 3.5: Processing deletions`);
@@ -323,10 +324,12 @@ export class PostProcessorForS3 extends AbstractPostProcessor {
           console.warn(`  Failed: ${deletionResult.failedCount} deletions failed`);
         }
       }
+      return { status: 'COMPLETED', ...deletionResult };
     } catch (deleteError: any) {
       console.error(`  Failed to process deletions: ${deleteError.message}`);
       // Don't fail the entire merge if deletions fail - log and continue
       console.warn(`  Continuing with merge despite deletion failure`);
+      return { status: 'FAILED', message: deleteError.message };
     }
   }
 }

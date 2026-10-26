@@ -10,6 +10,8 @@ import {
   ScanCommandInput 
 } from '@aws-sdk/lib-dynamodb';
 
+export type QueryPage = { items: any[], lastEvaluatedKey?: Record<string, any> };
+
 export type AbstractDynamoDbTable = {
   truncateTable: (chunkSize?: number) => Promise<void>;
   scanAll: () => Promise<any[]>;
@@ -41,6 +43,13 @@ export type AbstractDynamoDbTable = {
     { partitionKeyValue: string, sortKeyPrefix?: string }
   ) => Promise<any[]>;
   scanIndex: ({ indexName }: { indexName: string }) => Promise<any[]>;
+  queryPage: (parms: {
+    partitionKeyValue: string, sortKeyPrefix?: string, limit: number, exclusiveStartKey?: Record<string, any>
+  }) => Promise<QueryPage>;
+  queryGSIPage: (parms: {
+    indexName: string, gsiPartitionKey: string, partitionKeyValue: string,
+    gsiSortKey?: string, sortKeyValue?: string, limit: number, exclusiveStartKey?: Record<string, any>
+  }) => Promise<QueryPage>;
   batchWrite: ({ items, operation }: { items: any[], operation?: 'put' | 'delete' }) => Promise<void>;
   putItem: (item: any) => Promise<void>;
 }
@@ -409,6 +418,68 @@ export class DynamoDBTable implements AbstractDynamoDbTable {
       console.error(`Error querying ${tableName}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Query one page of items by partition key (optional sort key prefix). Pass the returned
+   * lastEvaluatedKey back as exclusiveStartKey for the next page; it is absent on the last page.
+   */
+  public async queryPage(parms: {
+    partitionKeyValue: string, sortKeyPrefix?: string, limit: number, exclusiveStartKey?: Record<string, any>
+  }): Promise<QueryPage> {
+    const { client, params: { tableName, partitionKey, sortKey } } = this;
+    const { partitionKeyValue, sortKeyPrefix, limit, exclusiveStartKey } = parms;
+
+    if (!sortKey && sortKeyPrefix) {
+      throw new Error('Cannot use sortKeyPrefix when table has no sort key');
+    }
+
+    const result: QueryCommandOutput = await client.send(new QueryCommand({
+      TableName: tableName,
+      KeyConditionExpression: sortKeyPrefix
+        ? `#pk = :pkValue AND begins_with(#sk, :skPrefix)`
+        : `#pk = :pkValue`,
+      ExpressionAttributeNames: {
+        '#pk': partitionKey,
+        ...(sortKeyPrefix && sortKey && { '#sk': sortKey })
+      },
+      ExpressionAttributeValues: {
+        ':pkValue': partitionKeyValue,
+        ...(sortKeyPrefix && { ':skPrefix': sortKeyPrefix })
+      },
+      Limit: limit,
+      ExclusiveStartKey: exclusiveStartKey
+    }));
+    return { items: result.Items ?? [], lastEvaluatedKey: result.LastEvaluatedKey };
+  }
+
+  /**
+   * Query one page of a GSI by partition key (optional exact-match sort key). Paging works as in queryPage().
+   */
+  public async queryGSIPage(parms: {
+    indexName: string, gsiPartitionKey: string, partitionKeyValue: string,
+    gsiSortKey?: string, sortKeyValue?: string, limit: number, exclusiveStartKey?: Record<string, any>
+  }): Promise<QueryPage> {
+    const { client, params: { tableName } } = this;
+    const { indexName, gsiPartitionKey, partitionKeyValue, gsiSortKey, sortKeyValue, limit, exclusiveStartKey } = parms;
+    const useSortKey = !!(gsiSortKey && sortKeyValue);
+
+    const result: QueryCommandOutput = await client.send(new QueryCommand({
+      TableName: tableName,
+      IndexName: indexName,
+      KeyConditionExpression: useSortKey ? `#pk = :pkValue AND #sk = :skValue` : `#pk = :pkValue`,
+      ExpressionAttributeNames: {
+        '#pk': gsiPartitionKey,
+        ...(useSortKey && { '#sk': gsiSortKey })
+      },
+      ExpressionAttributeValues: {
+        ':pkValue': partitionKeyValue,
+        ...(useSortKey && { ':skValue': sortKeyValue })
+      },
+      Limit: limit,
+      ExclusiveStartKey: exclusiveStartKey
+    }));
+    return { items: result.Items ?? [], lastEvaluatedKey: result.LastEvaluatedKey };
   }
 
   /**

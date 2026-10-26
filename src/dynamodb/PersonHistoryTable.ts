@@ -1,5 +1,5 @@
 import { IContext } from '../../context/IContext';
-import { AbstractDynamoDbTable, DynamoDBTable } from './DynamoDBTable';
+import { AbstractDynamoDbTable, DynamoDBTable, QueryPage } from './DynamoDBTable';
 
 /**
  * PersonHistory DynamoDB Table Constants
@@ -203,6 +203,25 @@ export class PersonHistoryTable {
     });
     
     return items as PersonHistoryRecord[];
+  }
+
+  /**
+   * One page of a sync run's changes of one type. Uses GSI1 (syncRunId-changeType-index).
+   */
+  public async getChangesInSyncRunPage(
+    syncRunId: string,
+    changeType: 'NEW' | 'UPDATED' | 'DELETED',
+    page: { limit: number; startKey?: Record<string, any> }
+  ): Promise<QueryPage> {
+    return this.table.queryGSIPage({
+      indexName: DYNAMODB_GSI1_INDEX_NAME,
+      gsiPartitionKey: DYNAMODB_GSI1_PARTITION_KEY,
+      partitionKeyValue: syncRunId,
+      gsiSortKey: DYNAMODB_GSI1_SORT_KEY,
+      sortKeyValue: changeType,
+      limit: page.limit,
+      exclusiveStartKey: page.startKey
+    });
   }
 
   /**

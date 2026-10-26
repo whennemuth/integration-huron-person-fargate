@@ -23,10 +23,13 @@
 import { DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { Timer } from 'integration-core';
 import { TaskProtection } from '../TaskProtection';
+import { StandardMetadataUtils } from '../chunking/metadata/MetadataUtils';
+import { DeletionOutcome, StatisticsTable } from '../dynamodb/StatisticsTable';
 import { AbstractDeferredDeleteHandler } from './AbstractDeferredDeleteHandler';
 
 export type TaskParameters = {
   createdAt?: string; // Timestamp from chunker metadata (when chunking started)
+  chunkDirectory?: string | null;
 }
 
 export type MergeResult = { }
@@ -133,13 +136,39 @@ export abstract class AbstractPostProcessor {
    * removed from source and soft-deletes them from target API.
    * 
    * @param params Context for deletion processing
+   * @returns What the deletion step did, recorded in the run summary
    */
-  protected abstract runDeferredDeletes(mergeResult: MergeResult): Promise<void>; 
+  protected abstract runDeferredDeletes(mergeResult: MergeResult): Promise<DeletionOutcome>; 
 
   public getChunkingStartTime = async (): Promise<Date | null> => {
     const taskParams = await this.getTaskParameters();
     const { createdAt } = taskParams as TaskParameters;
     return createdAt ? new Date(createdAt) : null;
+  }
+
+  /**
+   * Write the run's RUN_SUMMARY item. Never throws: a missing summary must not fail post-processing.
+   */
+  private async writeRunSummary(chunkDirectory: string | null | undefined, postProcessingSucceeded: boolean, deletion?: DeletionOutcome): Promise<void> {
+    const { DYNAMODB_STATISTICS_TABLE_NAME: tableName, REGION: region, DRY_RUN = 'false', PREVIOUS_STORAGE_TYPE } = process.env;
+    if (!chunkDirectory || !tableName) {
+      console.warn('⚠️  Run summary not written: chunk directory or DYNAMODB_STATISTICS_TABLE_NAME unavailable');
+      return;
+    }
+    try {
+      const syncRunId = new StandardMetadataUtils({ chunkDirectory }).extractSyncRunId();
+      const statisticsTable = StatisticsTable.fromTableName(tableName, region);
+      const summary = await statisticsTable.buildRunSummary(syncRunId, {
+        postProcessingSucceeded,
+        storageMode: PREVIOUS_STORAGE_TYPE?.toLowerCase(),
+        dryRun: `${DRY_RUN}`.trim().toLowerCase() === 'true',
+        deletion
+      });
+      await statisticsTable.writeRunSummary(summary);
+      console.log(`✓ Run summary written for ${syncRunId} (status: ${summary.status})`);
+    } catch (error: any) {
+      console.warn(`⚠️  Failed to write run summary: ${error.message}`);
+    }
   }
 
   /**
@@ -159,6 +188,7 @@ export abstract class AbstractPostProcessor {
     timer.start();
     let exitCode = 0;
     let chunkingStartTime: Date | null = null;
+    let deletion: DeletionOutcome | undefined;
 
     try {
       // Enable task protection for 1 hour (protects from sigkills by ECS during scale-in)
@@ -180,13 +210,16 @@ export abstract class AbstractPostProcessor {
       // Step 3: Check if deletion handling is configured
       if (!AbstractDeferredDeleteHandler.isConfiguredForDeletes()) {
         console.log(`\nStep 3.5: Deletion handling disabled (skipping)`);
+        deletion = { status: 'SKIPPED', reason: 'DELETES_DISABLED', message: 'Deletion handling disabled' };
         return;
       }
 
       if (result) {
         // Step 4: Process deferred deletions (if merge produced output)
-        await this.runDeferredDeletes(result);
-      }        
+        deletion = await this.runDeferredDeletes(result);
+      } else {
+        deletion = { status: 'SKIPPED', reason: 'NO_MERGE_OUTPUT', message: 'Merge produced no output (no deltas)' };
+      }
 
       exitCode = 0;
 
@@ -212,6 +245,7 @@ export abstract class AbstractPostProcessor {
       } else {
         timer.logElapsed('\n✗ Duration until failure');
       }
+      await this.writeRunSummary(taskParams?.chunkDirectory, exitCode === 0, deletion);
       await new TaskProtection().disable();
       process.exit(exitCode);
     }

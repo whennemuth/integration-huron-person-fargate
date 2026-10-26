@@ -3,7 +3,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, UpdateCommand, UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
 import { IContext } from '../../context/IContext';
 import { StatisticsItem } from '../ApiErrorTracking';
-import { AbstractDynamoDbTable, DynamoDBTable } from './DynamoDBTable';
+import { AbstractDynamoDbTable, DynamoDBTable, QueryPage } from './DynamoDBTable';
 import { OCCFlag } from './OCCFlag';
 
 export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-statistics-${context.TAGS.Landscape.toLowerCase()}`;
@@ -15,6 +15,47 @@ export const DYNAMODB_GSI_INDEX_NAME = 'errorType-timestamp-index';
 export const DYNAMODB_RUN_INDEX_NAME = 'distinct-run-index';
 export const DYNAMODB_RUN_INDEX_PARTITION_KEY = 'distinctRunId';
 export const RUN_MARKER_SORT_KEY = 'RUN';
+export const RUN_SUMMARY_SORT_KEY = 'RUN_SUMMARY';
+
+export type DeletionSkipReason = 'TERMINAL_ERROR' | 'PERSON_DELTA' | 'DELETES_DISABLED' | 'NO_MERGE_OUTPUT' | 'MISSING_TABLES';
+
+/** What the post-processor's deferred-deletes step did for a run. */
+export type DeletionOutcome =
+  | { status: 'COMPLETED'; deletedCount: number; failedCount: number; totalProcessed: number; message: string }
+  | { status: 'SKIPPED'; reason: DeletionSkipReason; message: string }
+  | { status: 'FAILED'; message: string };
+
+export type RunSummaryStatus = 'SUCCEEDED' | 'FAILED' | 'POST_PROCESSING_FAILED';
+
+/** Per-run totals written once by the post-processor (SK = RUN_SUMMARY). */
+export type RunSummary = {
+  syncRunId: string;
+  status: RunSummaryStatus;
+  storageMode?: string;
+  dryRun: boolean;
+  createdAt?: string;
+  completedAt: string;
+  syncPopulation?: string;
+  bulkReset?: boolean;
+  /** Chunks written and records fetched by the chunker (from METADATA) */
+  chunkCount?: number;
+  totalRecords?: number;
+  /** Chunks that wrote a STATISTICS-chunk item; fewer than chunkCount if processor tasks died */
+  chunksReported: number;
+  results: {
+    processed: number;
+    succeeded: number;
+    failed: number;
+    skipped: number;
+    added: number;
+    updated: number;
+    removed: number;
+  };
+  totalErrors: number;
+  throttleCount: number;
+  errorsByStatus: Record<string, number>;
+  deletion?: DeletionOutcome;
+};
 
 export class StatisticsTable {
   private table: AbstractDynamoDbTable;
@@ -60,22 +101,82 @@ export class StatisticsTable {
   }
 
   /**
-   * Fetch aggregated statistics for a specific integration run.
-   * Retrieves the statistics record using the integrationTimestamp as the partition key
-   * and "STATISTICS" as the sort key.
-   * 
-   * Note: This only retrieves the aggregated statistics record (SK = 'STATISTICS').
-   * For chunk-specific statistics, use getChunkStatistics() or getAllChunkStatistics().
-   * 
-   * @param integrationTimestamp - ISO timestamp of the integration run
-   * @returns The aggregated statistics item for that run, or undefined if not found
+   * Assemble a run's summary from its METADATA record and STATISTICS-chunk items. A deletion step
+   * skipped because the run was marked failed makes the run FAILED, even if post-processing succeeded.
    */
-  public getStatistics = async (integrationTimestamp: string): Promise<StatisticsItem | undefined> => {
-    const eventType = 'STATISTICS';
-    const item = await this.table.getItem({ 
-      partitionKeyValue: integrationTimestamp, sortKeyValue: eventType 
+  public buildRunSummary = async (syncRunId: string, params: {
+    postProcessingSucceeded: boolean;
+    storageMode?: string;
+    dryRun: boolean;
+    deletion?: DeletionOutcome;
+  }): Promise<RunSummary> => {
+    const { postProcessingSucceeded, storageMode, dryRun, deletion } = params;
+    const metadata = await this.readMetadata(syncRunId) ?? {};
+    const chunks = await this.getAllChunkStatistics(syncRunId);
+
+    const results = { processed: 0, succeeded: 0, failed: 0, skipped: 0, added: 0, updated: 0, removed: 0 };
+    const errorsByStatus: Record<string, number> = {};
+    let totalErrors = 0;
+    let throttleCount = 0;
+    for (const chunk of chunks) {
+      results.processed += chunk.totalRecords ?? 0;
+      results.succeeded += chunk.successCount ?? 0;
+      results.failed += chunk.failureCount ?? 0;
+      results.skipped += chunk.skippedCount ?? 0;
+      results.added += chunk.addedCount ?? 0;
+      results.updated += chunk.updatedCount ?? 0;
+      results.removed += chunk.removedCount ?? 0;
+      totalErrors += chunk.totalErrors ?? 0;
+      throttleCount += chunk.throttleCount ?? 0;
+      for (const [status, count] of Object.entries(chunk.errorsByStatus ?? {})) {
+        errorsByStatus[status] = (errorsByStatus[status] ?? 0) + Number(count);
+      }
+    }
+
+    let status: RunSummaryStatus = 'SUCCEEDED';
+    if (!postProcessingSucceeded) {
+      status = 'POST_PROCESSING_FAILED';
+    } else if (deletion?.status === 'SKIPPED' && deletion.reason === 'TERMINAL_ERROR') {
+      status = 'FAILED';
+    }
+
+    return {
+      syncRunId,
+      status,
+      storageMode,
+      dryRun,
+      createdAt: metadata.createdAt,
+      completedAt: new Date().toISOString(),
+      syncPopulation: metadata.syncPopulation,
+      bulkReset: metadata.bulkReset,
+      chunkCount: metadata.chunkCount,
+      totalRecords: metadata.totalRecords,
+      chunksReported: chunks.length,
+      results,
+      totalErrors,
+      throttleCount,
+      errorsByStatus,
+      deletion
+    };
+  }
+
+  public async writeRunSummary(summary: RunSummary): Promise<void> {
+    await this.table.putItem({
+      ...summary,
+      [DYNAMODB_PARTITION_KEY]: summary.syncRunId,
+      [DYNAMODB_SORT_KEY]: RUN_SUMMARY_SORT_KEY
     });
-    return item as StatisticsItem | undefined;
+  }
+
+  /**
+   * @returns the run's summary, or undefined if the post-processor never wrote one (run failed
+   * before post-processing, is still in progress, or predates run summaries)
+   */
+  public async readRunSummary(syncRunId: string): Promise<RunSummary | undefined> {
+    const item = await this.table.getItem({ partitionKeyValue: syncRunId, sortKeyValue: RUN_SUMMARY_SORT_KEY });
+    if (!item) return undefined;
+    const { [DYNAMODB_PARTITION_KEY]: _, [DYNAMODB_SORT_KEY]: __, ...summary } = item;
+    return summary as RunSummary;
   }
 
   /**
@@ -103,6 +204,22 @@ export class StatisticsTable {
   public getAllChunkStatistics = async (integrationTimestamp: string): Promise<StatisticsItem[]> => {
     const items = await this.table.queryByPartitionKey({ partitionKeyValue: integrationTimestamp, sortKeyPrefix: 'STATISTICS-chunk-' });
     return items as StatisticsItem[];
+  }
+
+  /**
+   * One page of a run's ERROR items (SK "ERROR:<statusCode>:<timestamp>"), chronological within a
+   * status code, optionally limited to one status code.
+   */
+  public getRunErrorsPage = async (syncRunId: string, page: {
+    statusCode?: number; limit: number; startKey?: Record<string, any>
+  }): Promise<QueryPage> => {
+    const { statusCode, limit, startKey } = page;
+    return this.table.queryPage({
+      partitionKeyValue: syncRunId,
+      sortKeyPrefix: statusCode === undefined ? 'ERROR:' : `ERROR:${statusCode}:`,
+      limit,
+      exclusiveStartKey: startKey
+    });
   }
 
   /**
@@ -613,11 +730,11 @@ export async function main() {
           console.error('Missing required STATISTICS_TABLE_INTEGRATION_TIMESTAMP environment variable for statistics task!');
           process.exit(1);
         }
-        const stats = await statisticsTable.getStatistics(timestamp);
-        if(stats) {
-          console.log(`Statistics for integration run at ${timestamp}:`, JSON.stringify(stats, null, 2));
+        const summary = await statisticsTable.readRunSummary(timestamp);
+        if(summary) {
+          console.log(`Run summary for integration run at ${timestamp}:`, JSON.stringify(summary, null, 2));
         } else {
-          console.log(`No statistics found for integration run at ${timestamp}`);
+          console.log(`No run summary found for integration run at ${timestamp}`);
         }
         break;
       case 'list':
