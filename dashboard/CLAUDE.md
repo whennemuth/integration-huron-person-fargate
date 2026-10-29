@@ -15,17 +15,12 @@ to `dashboard/`; npm scripts run from the fargate root.
 
 ## Shared Skills Repository
 
-Cross-repository Copilot skills are maintained in a separate repository at `integration-workspace-skills/skills/`.
+Cross-repository agent skills are maintained in a separate repository at `integration-workspace-skills/.claude/skills/`. This is a native skill location that both VS Code (GitHub Copilot) and Claude Code discover without any custom settings.
 
-VS Code discovers these skills using the `chat.agentSkillsLocations` setting in your `.code-workspace` file. In multi-root `.code-workspace` configurations, `chat.agentSkillsLocations` paths are resolved relative to each workspace root folder (not from the `.code-workspace` file location).
+- **VS Code**: include `integration-workspace-skills` as a root folder in your `.code-workspace` file. VS Code discovers `.claude/skills/` in every workspace root folder and makes those skills available across the whole workspace.
+- **Claude Code**: load the skills repository with `--add-dir` (or `/add-dir` in a running session), e.g. `claude --add-dir integration-workspace-skills` from the workspace root.
 
-Canonical settings entry:
-
-```json
-"chat.agentSkillsLocations": {
-  "../integration-workspace-skills/skills": true
-}
-```
+See `integration-workspace-skills/README.md` for full setup details.
 
 Core-only and core+person+fargate workspace examples are documented in this repository's `README.md`.
 
