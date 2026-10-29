@@ -21,15 +21,11 @@ See `<workspace root>/.claude/README.md` for full setup details.
 
 Core-only and core+person+fargate workspace examples are documented in this repository's `README.md`.
 
-## Workspace-Scoped Memory Files
+## Workspace Instructions
 
-The `.copilot/memories/` directory (visible in the workspace as "workspace-memories") stores workspace-scoped Copilot memory files that apply to all projects.
+Workspace-wide agent instructions live in `<workspace root>/.claude/CLAUDE.md`, versioned in the integration-skills repository alongside the shared skills. That file holds the workspace architecture overview, pointers to the shared-pattern skills and project CLAUDE.md files, change and commit preferences, and the task verification protocol (build, test, and completion reporting requirements for all code implementation tasks) that apply to all integration projects (core, huron-person, fargate, dashboard, file-drop, etc.).
 
-**Purpose**: Stores coding preferences, task verification protocols, and workflow requirements that should be consistently applied across all integration projects (core, huron-person, fargate, dashboard, file-drop, etc.).
-
-**Key file**: `task-verification-protocol.md` - Defines requirements for build verification, test execution, and completion reporting on all code implementation tasks.
-
-**Discovery**: VS Code Copilot automatically loads memory files from `.copilot/memories/` when the directory is included as a workspace folder.
+**Discovery**: Claude Code and GitHub Copilot CLI load it automatically when started in the workspace root. VS Code Copilot Chat loads it when the workspace root (`"path": "."`) is a root folder of the `.code-workspace` file and the `chat.useClaudeMdFile` setting is enabled. When starting Claude Code in a package repository with `--add-dir` pointing at the workspace root, also set `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` so the workspace instructions are loaded.
 
 ## Implementation Verification Protocol
 
