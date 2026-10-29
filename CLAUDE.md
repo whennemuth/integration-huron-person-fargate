@@ -585,7 +585,12 @@ but share this repo's `package.json`, lockfile and `context/IContext.ts`. So:
 - `context/IContext.ts` types `DASHBOARD` loosely and imports nothing from `dashboard/`; the
   precise `DashboardSettings` is applied in `dashboard/lib/DashboardStacks.ts`. Code under
   `src/`, `docker/` and `context/` must never import from `dashboard/` or `shibboleth-sp-at-edge`.
-- Verify changes here with `npm run docker-build`, not only `tsc`/`jest`.
+- **When to run `npm run docker-build`**: the image is built only from `package.json`,
+  `package-lock.json`, `tsconfig.json`, `src/`, `context/*.ts` and `docker/` (it never copies
+  `dashboard/`). Run it, not only `tsc`/`jest`, when a change touches any of those, which
+  includes a dashboard change that adds a package or edits `context/IContext.ts`. A change
+  confined to `dashboard/`, `lib/`, `bin/`, `test/` or docs can't affect the image, so skip it
+  (check with `git diff --name-only`).
 
 ## personRecordProcessor Customization Framework
 
