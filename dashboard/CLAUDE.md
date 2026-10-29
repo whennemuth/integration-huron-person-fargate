@@ -15,12 +15,13 @@ to `dashboard/`; npm scripts run from the fargate root.
 
 ## Shared Skills Repository
 
-Cross-repository agent skills are maintained in a separate repository at `integration-workspace-skills/.claude/skills/`. This is a native skill location that both VS Code (GitHub Copilot) and Claude Code discover without any custom settings.
+Cross-repository agent skills are maintained in a separate repository (https://github.com/whennemuth/integration-skills) that is cloned as the `.claude` directory of the workspace root, so skills live at `<workspace root>/.claude/skills/`. This is a native skill location that both VS Code (GitHub Copilot) and Claude Code discover without any custom settings.
 
-- **VS Code**: include `integration-workspace-skills` as a root folder in your `.code-workspace` file. VS Code discovers `.claude/skills/` in every workspace root folder and makes those skills available across the whole workspace.
-- **Claude Code**: load the skills repository with `--add-dir` (or `/add-dir` in a running session), e.g. `claude --add-dir integration-workspace-skills` from the workspace root.
+- **Install**: from the workspace root, run `git clone https://github.com/whennemuth/integration-skills.git .claude`.
+- **VS Code**: include the workspace root itself (`"path": "."`) as a root folder in your `.code-workspace` file. VS Code discovers `.claude/skills/` in every workspace root folder and makes those skills available across the whole workspace.
+- **Claude Code**: start Claude Code in the workspace root. When starting in a package repository instead, add the workspace root with `--add-dir` (e.g. `claude --add-dir ..` from the repository root, or `/add-dir` in a running session).
 
-See `integration-workspace-skills/README.md` for full setup details.
+See `<workspace root>/.claude/README.md` for full setup details.
 
 Core-only and core+person+fargate workspace examples are documented in this repository's `README.md`.
 

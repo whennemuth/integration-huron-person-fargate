@@ -10,20 +10,20 @@ It depends on other packages (notably `integration-core`, `integration-huron-per
 
 ## Shared Skills Setup
 
-Shared agent skills are maintained in a separate repository at `integration-workspace-skills/.claude/skills/`. This is a native skill location that both VS Code (GitHub Copilot) and Claude Code discover without any custom settings. See `integration-workspace-skills/README.md` for full setup details.
+Shared agent skills are maintained in a separate repository (https://github.com/whennemuth/integration-skills) that is cloned as the `.claude` directory of the workspace root, so skills live at `<workspace root>/.claude/skills/`. This is a native skill location that both VS Code (GitHub Copilot) and Claude Code discover without any custom settings. See `<workspace root>/.claude/README.md` for full setup details.
+
+```bash
+cd <workspace root>
+git clone https://github.com/whennemuth/integration-skills.git .claude
+```
 
 ### Claude Code
 
-Claude Code has no multi-root workspace. Load the skills repository with `--add-dir` (or `/add-dir` in a running session):
-
-```bash
-# From the workspace root
-claude --add-dir integration-workspace-skills
-```
+Start Claude Code in the workspace root. It loads `.claude/skills/` from its start directory with no extra configuration. When starting in this repository instead, add the workspace root with `claude --add-dir ..` (or `/add-dir` in a running session).
 
 ### VS Code
 
-VS Code discovers `.claude/skills/` in every root folder of a [**multi-root**](https://code.visualstudio.com/docs/editing/workspaces/workspaces#_multiroot-workspaces) workspace and makes those skills available across the whole workspace. Include `integration-workspace-skills` as a root folder in your [**`.code-workspace`** file](https://code.visualstudio.com/docs/editing/workspaces/workspaces#_workspace-settings), as in the scenarios below.
+VS Code discovers `.claude/skills/` only at the top of each root folder of a [**multi-root**](https://code.visualstudio.com/docs/editing/workspaces/workspaces#_multiroot-workspaces) workspace. Include the workspace root itself (`"path": "."`) as a root folder in your [**`.code-workspace`** file](https://code.visualstudio.com/docs/editing/workspaces/workspaces#_workspace-settings), saved in the workspace root, as in the scenarios below. To avoid listing each repository twice, hide the package folders inside that root with `files.exclude` in `<workspace root>/.vscode/settings.json` (see the skills README).
 
 ### Scenario 1: Working only on integration-core
 
@@ -31,8 +31,8 @@ VS Code discovers `.claude/skills/` in every root folder of a [**multi-root**](h
 {
   "folders": [
     {
-      "path": "integration-workspace-skills",
-      "name": "skills"
+      "path": ".",
+      "name": "workspace"
     },
     {
       "path": ".copilot/memories",
@@ -57,8 +57,8 @@ VS Code discovers `.claude/skills/` in every root folder of a [**multi-root**](h
 {
   "folders": [
     {
-      "path": "integration-workspace-skills",
-      "name": "skills"
+      "path": ".",
+      "name": "workspace"
     },
     {
       "path": ".copilot/memories",

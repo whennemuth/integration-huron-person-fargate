@@ -608,5 +608,5 @@ await historyTable.truncate();
 
 ## See Also
 - [Integration Core DeltaStrategy Documentation](../../integration-core/README.md)
-- [Three-Phase Pipeline Skill](../../../integration-workspace-skills/.claude/skills/three-phase-pipeline/SKILL.md)
+- [Three-Phase Pipeline Skill](../../../.claude/skills/three-phase-pipeline/SKILL.md)
 - [DynamoDB Resumption Requirements](../docs/dynamodb-resumption.md)

@@ -105,7 +105,7 @@ After 1–4, very little is left to check. If a gate is still wanted, it reduces
 - **Runtime checks are enough for deploy issues.** Validating how CloudFormation synthesizes resources is out of scope. The user accepts that synth-only issues surface at runtime, where the messages tell them to update the stack.
 - **Mirror existing checks; don't remove them.** Existing scattered checks stay where they are; any central list repeats them.
 - **Errors abort; acknowledged errors still print.** Error-level conflicts should abort. A per-rule acknowledgement (e.g. `CONFIG_CONFLICTS_ALLOW=<rule-id>`) may downgrade one to a warning, but the warning is still printed.
-- **Workspace conventions:** problem-first commit messages (`integration-workspace-skills/.claude/skills/commit-message-conventions/SKILL.md`). Pause for the user before any S3 tgz publish and at each commit.
+- **Workspace conventions:** problem-first commit messages (`<workspace root>/.claude/skills/commit-message-conventions/SKILL.md`). Pause for the user before any S3 tgz publish and at each commit.
 
 ## Research inventory
 
