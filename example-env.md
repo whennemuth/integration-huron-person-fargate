@@ -326,4 +326,36 @@ SERVICE_TOGGLER_TASK=CHECK_STATUS
 SERVICE_TOGGLER_SERVICE=CHUNKER
 SERVICE_TOGGLER_REGION=us-east-2
 SERVICE_TOGGLER_LANDSCAPE=dev
+
+# ------- Harness Groups for dashboard\src\services\ServiceProvider.ts ------- #
+# Test harness for the dashboard's services, called the way DashboardHandler calls them (read only)
+# TASK options: capabilities | runs | summary | chunks | errors | changes | landscapes | lookup | preview | history | status
+DASHBOARD_SERVICE_PROVIDER_TASK=runs
+# true: the mock services, no AWS access
+DASHBOARD_SERVICE_PROVIDER_LOCALHOST_WITH_MOCKS=false
+# The dashboard Lambda's environment for the landscape to read (run reporting, landscape registry)
+DASHBOARD_SERVICE_PROVIDER_LANDSCAPE=<landscape>
+DASHBOARD_SERVICE_PROVIDER_REGION=<aws-region>
+DASHBOARD_SERVICE_PROVIDER_PREVIOUS_STORAGE_TYPE=dynamodb
+DASHBOARD_SERVICE_PROVIDER_DYNAMODB_STATISTICS_TABLE_NAME=huron-person-fargate-processor-statistics-<landscape>
+DASHBOARD_SERVICE_PROVIDER_DYNAMODB_PERSON_HISTORY_TABLE_NAME=huron-person-fargate-processor-person-history-<landscape>
+DASHBOARD_SERVICE_PROVIDER_CHUNKS_BUCKET=huron-person-chunks-<landscape>
+DASHBOARD_SERVICE_PROVIDER_LANDSCAPES_PARAMETER_PATH=/hp-dashboard/landscapes
+DASHBOARD_SERVICE_PROVIDER_HOSTED_ZONE=<hosted-zone-name>
+# Per-run tasks (summary, chunks, errors, changes): default run is the latest
+# DASHBOARD_SERVICE_PROVIDER_SYNC_RUN_ID=<iso-timestamp-sync-run-id>
+# changes: NEW | UPDATED | DELETED (default NEW)
+DASHBOARD_SERVICE_PROVIDER_CHANGE_TYPE=NEW
+# errors: optional status code filter; errors/changes: optional page size (1-500) and cursor from a previous page
+# DASHBOARD_SERVICE_PROVIDER_STATUS_CODE=500
+DASHBOARD_SERVICE_PROVIDER_LIMIT=10
+# DASHBOARD_SERVICE_PROVIDER_CURSOR=<cursor-from-previous-page>
+# lookup / preview (config from getConfig(): SECRET_ARN, else HURON_PERSON_CONFIG_PATH or the local config file)
+DASHBOARD_SERVICE_PROVIDER_PERSON_ID=<buid>
+# lookup: SYSTEM source | target | source-only | target-only; SEARCH_TYPE buid | name | email | hrn | sid | uid
+DASHBOARD_SERVICE_PROVIDER_SYSTEM=source
+DASHBOARD_SERVICE_PROVIDER_SEARCH_TYPE=buid
+# preview: optional create | update | delete
+# DASHBOARD_SERVICE_PROVIDER_OPERATION=update
+# DASHBOARD_SERVICE_PROVIDER_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
 ```

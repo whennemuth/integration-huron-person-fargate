@@ -239,6 +239,24 @@ npm run dashboard:dev:watch        # Watch mode with hot reload
 - `OVERRIDE_CACHE_WITH_LOCAL_CONFIG=true` - Loads the integration config with fargate's
   `getConfig()` (same sources as the fargate harnesses) instead of reading `INTEGRATION_SECRETS_ARN`
 
+### Test Harnesses
+
+Dashboard harnesses follow the fargate harness pattern (`TestEnvironment` from `integration-core`,
+an explicit variable list in the `require.main === module` block, a group in `../.env` and
+`../example-env.md`), with one rule of their own: **every dashboard harness prefix begins with
+`DASHBOARD_`** (e.g. `DASHBOARD_SERVICE_PROVIDER`), so its variables can't be mistaken for a
+pipeline harness's.
+
+- `src/services/ServiceProvider.ts` (`DASHBOARD_SERVICE_PROVIDER`) - gets a service from the
+  provider and calls it as `DashboardHandler` does, read only. `TASK`: `capabilities`, `runs`,
+  `summary`, `chunks`, `errors`, `changes`, `landscapes`, `lookup`, `preview`, `history`,
+  `status`. The landscape's Lambda environment (`LANDSCAPE`, `REGION`, table names, ...) is
+  given with the prefix; `LOCALHOST_WITH_MOCKS=true` uses the mocks without loading any config.
+
+```bash
+DASHBOARD_SERVICE_PROVIDER_TASK=summary npx ts-node -r dotenv/config dashboard/src/services/ServiceProvider.ts
+```
+
 ## CDK Deployment
 
 One dashboard stack per landscape, `${DASHBOARD.STACK_ID}-${landscape}` (e.g. `hp-dashboard-mock`),

@@ -156,6 +156,7 @@ Harness configuration is documented in [example-env.md](./example-env.md). The f
 - **Post-processing Pipeline**: `DeferredDeleteHandler`, `PersonCache`, `StatisticsTable`
 - **Docker Entry Points**: `chunker.ts`, `processor.ts`, `post-processor.ts`
 - **Storage & Error Handling**: `S3StorageAdapter`, `ApiErrorTracking`, `EcrChecker`
+- **Dashboard**: `ServiceProvider` (`dashboard/src/services/ServiceProvider.ts` - the dashboard's services, called as its handler calls them: run reporting, landscape registry, person lookup and sync preview)
 
 ### Running Test Harnesses
 
@@ -180,6 +181,9 @@ npx ts-node src/PersonCache.ts
 
 # Example: Run the docker chunker harness
 npx ts-node docker/chunker.ts
+
+# Example: Run the dashboard ServiceProvider harness (DASHBOARD_SERVICE_PROVIDER_TASK=runs, summary, landscapes, ...)
+npx ts-node dashboard/src/services/ServiceProvider.ts
 ```
 
 For detailed documentation on the Runner harness, see [src/CLAUDE.md](./src/CLAUDE.md).
