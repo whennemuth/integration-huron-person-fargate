@@ -12,6 +12,7 @@ import { join } from "path";
 import { AuthenticatedContext, AuthenticationMode, IContext } from "../context/IContext";
 import { CACHE_SECRET } from "../src/handlers/DashboardCache";
 import { LandscapeResources } from "./LandscapeResources";
+import { registerLandscape } from "./LandscapeRegistration";
 
 export class FunctionUrlOrigin {
   private lambda: NodejsFunction;
@@ -93,6 +94,9 @@ export class FunctionUrlOrigin {
         ]
       },
     });
+
+    // List the landscape in the landscape picker's registry, and let the Lambda read the registry
+    registerLandscape({ stack, context, landscape, lambda: this.lambda });
 
     // Read access to the landscape's integration config secret, run data and chunk files
     Secret.fromSecretNameV2(stack, 'integration-secret', integrationSecretName).grantRead(this.lambda);

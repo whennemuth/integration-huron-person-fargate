@@ -1,12 +1,9 @@
-import { Config } from 'integration-huron-person';
 import { SystemStatusService, SystemStatusResult } from './ServiceTypes';
 
 /**
  * System status implementation with health checks
  */
 export class SystemStatus implements SystemStatusService {
-
-  constructor(private config: Config) { }
 
   async getStatus(): Promise<SystemStatusResult> {
     // TODO: Implement actual health checks

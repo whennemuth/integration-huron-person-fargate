@@ -570,7 +570,10 @@ which synthesizes once and dumps each deployed stack's template to
 `cdk.out/synth.output.<fargate|dashboard>.yaml` from the cloud assembly (`cdk synth --app cdk.out -e`).
 `teardown` / `teardown-fargate` / `teardown-dashboard` mirror them. Every synth still synthesizes both, so it needs AWS
 credentials (the Shibboleth construct reads its secret, the certificate and Route 53 at synth) and
-`build`/`synth` first generate the dashboard's `TemplateConstants.ts`.
+`build`/`synth` first generate the dashboard's `TemplateConstants.ts`. The dashboard reports on
+the landscape's runs in-process (`/api/runs*`, `/api/capabilities`, over `src/reporting/RunReporting.ts`)
+and lists every registered landscape (`/api/landscapes`) from SSM parameters under
+`/hp-dashboard/landscapes`, one owned by each dashboard stack (see `dashboard/CLAUDE.md`).
 
 **Keep the dashboard out of the task image.** The fargate tasks take no part in the dashboard,
 but share this repo's `package.json`, lockfile and `context/IContext.ts`. So:

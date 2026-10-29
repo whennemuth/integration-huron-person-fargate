@@ -143,6 +143,24 @@ The Lambda function serves two primary roles:
 - `GET /api/history` - Get activity history and logs
 - `GET /api/status` - Get system health status and metrics
 
+**Run reporting** (this landscape's sync runs, read in-process from its tables and chunks bucket
+through fargate's `src/reporting/RunReporting.ts`; GET only, no `landscape` parameter):
+- `GET /api/runs` - `{ runs }`, the syncRunIds, oldest first
+- `GET /api/runs/{syncRunId}/summary` - the run's report (`404` if nothing is recorded)
+- `GET /api/runs/{syncRunId}/chunks` - `{ items }`, per-chunk statistics
+- `GET /api/runs/{syncRunId}/errors?cursor&limit&statusCode` - a page `{ items, cursor? }`
+- `GET /api/runs/{syncRunId}/changes?changeType&cursor&limit` - a page of person changes
+  (`NEW` | `UPDATED` | `DELETED`; DynamoDB storage mode only)
+- `GET /api/capabilities` - landscape, storage mode, whether change lists are supported
+
+`syncRunId` must be an ISO timestamp (URL-encoded or not); `limit` 1-500 (default 100). A
+`ReportingError` maps to `400 { error, code }` (`INVALID_CURSOR`, `INVALID_LIMIT`,
+`UNSUPPORTED_IN_STORAGE_MODE`), anything else to `500 { error, message }`.
+
+**Landscape picker data:**
+- `GET /api/landscapes` - `{ current, landscapes: [{ landscape, label, url?, isDefault, current }] }`
+  from the landscape registry (see "Landscape registry" below)
+
 ## Key Patterns
 
 ### Service Provider Pattern
@@ -154,7 +172,12 @@ Centralized registry for managing service instances:
 - BulkSync service
 - History service
 - SystemStatus service
+- RunReporting service (`RunReports.ts`: fargate's `RunReporting` built from the Lambda environment)
+- LandscapeListing service (`LandscapeRegistry.ts`)
 - Template service
+
+The run reporting and landscape listing instances are kept for the life of the Lambda instance
+(the registry caches what it reads from SSM).
 
 **Usage:**
 ```typescript
@@ -229,6 +252,8 @@ characters: the Shibboleth construct names a bucket `<stack name>-context-config
 - A record `<landscape>.cssnprd.warhen.work` plus its `/route53/arecords/<name>` ownership
   parameter, created by the Shibboleth construct when no record for the name exists
 - Lambda Function URL with origin verification (SSM `/cloudfront/<STACK_ID>/<landscape>/origin-verify-secret`)
+- The landscape's registry parameter `/hp-dashboard/landscapes/<landscape>` (see below), and
+  `ssm:GetParametersByPath` on that path for the Lambda
 - No secret of its own: the Lambda reads the landscape's integration config secret
   (`integrationSecretName()` in fargate `lib/Secrets.ts`), and has read-only grants on the
   statistics table, the person history table (DynamoDB mode) and the chunks bucket
@@ -244,7 +269,27 @@ npm run teardown-dashboard  # Destroy the dashboard and edge-lambda stacks (reru
 
 **Context Configuration:**
 - `../context/context*.json` `DASHBOARD` section - Infrastructure parameters
-- `context/IContext.ts` - Dashboard context types (`DashboardSettings`)
+- `context/IContext.ts` - Dashboard context types (`DashboardSettings`), including the optional
+  `LABEL` (picker label, default: the landscape) and `isDefault` (the default landscape)
+
+### Landscape registry
+
+The landscape picker's data is a registry of SSM parameters, one per landscape, under
+`/hp-dashboard/landscapes` (`LANDSCAPES_PARAMETER_PATH` in `src/services/LandscapeRegistry.ts`).
+- **Registration** (`lib/LandscapeRegistration.ts`, `registerLandscape()`): each dashboard stack
+  owns `/hp-dashboard/landscapes/<landscape>`, a String parameter holding JSON
+  `{ landscape, label, url, isDefault }` derived at synth from `ORIGIN.subdomain`, `LABEL` and
+  `isDefault`. Deploying registers the landscape; tearing the stack down deregisters it. Never
+  edit a stack-owned parameter: change the context and redeploy.
+- **One default**: `assertSingleDefaultLandscape()` fails synth when `isDefault` is true and
+  another landscape's parameter already has `isDefault: true`. To move the default, set
+  `isDefault` false on the old landscape and deploy it, then set it on the new one.
+- **Reading** (`LandscapeRegistry`): `GetParametersByPath` once per Lambda instance; a new
+  landscape appears in other dashboards after their next cold start. Missing `label` defaults to
+  the landscape, missing `url` to `https://<landscape>.<HOSTED_ZONE>`; unparseable entries are
+  skipped with a warning.
+- **Other accounts**: SSM is per account and region, so list a landscape deployed elsewhere by
+  creating a parameter under the path by hand, with an explicit `url` (and remove it by hand).
 
 ## Dependencies
 

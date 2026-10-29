@@ -1,6 +1,6 @@
 # Plan: Per-Landscape Dashboards (dashboard merged into the fargate app)
 
-Status: **In progress - Phases 0-3 done**
+Status: **In progress - Phases 0-4 done**
 
 > Supersedes the earlier "pan-landscape data exchange" plan (cross-account dashboard-api Lambda,
 > landscape registry, versioned contracts). That approach was dropped: with one dashboard per
@@ -34,7 +34,8 @@ landscape picker needs.
 | Cross-landscape sign-in | Undecided - investigate `shibboleth-sp-at-edge` first (Phase 6) |
 | Run summary | Post-processor writes a `RUN_SUMMARY` item per run; both storage modes |
 | Reporting depth | First the distinct list of syncRunIds; after one is selected, drill down as deep as the storage mode allows |
-| Landscape picker data | A repo-level list of landscapes and hostnames, baked in at deploy time and served by `GET /api/landscapes` |
+| Landscape picker data | A runtime registry, no repo-level list: each dashboard stack owns one SSM parameter (`/hp-dashboard/landscapes/<landscape>`, JSON) that it creates on deploy and CloudFormation deletes on teardown; the Lambda reads the path on cold start and serves it by `GET /api/landscapes` |
+| Default landscape | `DASHBOARD.isDefault` in the landscape's context: written to its registry parameter and enabling the redirect stack. Synth fails if another landscape's parameter already claims the default |
 | Run-start (bulk pipeline) command | Out of scope |
 | UI | Out of scope |
 
@@ -220,8 +221,15 @@ landscape picker needs.
 
 ### Phase 4 - In-process routes and services (depends on Phases 1 and 3)
 
+*Done.*
+
 15. **RunReportingService** - new interface in `ServiceTypes.ts`, real implementation over
     `src/reporting/RunReporting.ts`, mock in `DashboardMocks.ts`, registered in `ServiceProvider.ts`.
+    `RunReporting` satisfies the interface as it is, so the real implementation is that class,
+    built from the Lambda environment by `runReportingFromEnvironment()`
+    (`dashboard/src/services/RunReports.ts`; `LANDSCAPE`, `PREVIOUS_STORAGE_TYPE` and
+    `DYNAMODB_STATISTICS_TABLE_NAME` are required). `ServiceProvider` keeps one instance per
+    Lambda instance.
 16. **Routes** in `DashboardHandler.ts` (and `LocalServer.ts`):
     - `GET /api/runs`
     - `GET /api/runs/{syncRunId}/summary`
@@ -232,16 +240,81 @@ landscape picker needs.
 
     `syncRunId` validated against the ISO-timestamp pattern; `limit` capped (e.g. 500); errors
     returned without stack traces. No `landscape` parameter - the landscape is the deployment.
-17. **Landscape picker data** - a repo-level `context/landscapes.json`
-    (`[{ landscape, label, url, isDefault }]`), baked into the Lambda environment at synth, served
-    by `GET /api/landscapes` with the current landscape flagged (`local` when run locally).
+
+    As built: GET only (other methods get `405` with `Allow: GET`); the `syncRunId` path segment
+    is URL-decoded first, so `%3A` works. Responses: `/api/runs` `{ runs }` (oldest first),
+    `summary` the `RunReport` (`404` when nothing is recorded for the run), `chunks` `{ items }`,
+    `errors` / `changes` a page `{ items, cursor? }`, `/api/capabilities` the `Capabilities`.
+    `limit` must be digits and `statusCode` three digits (else `400`); a `limit` over 500 is
+    rejected, not clamped, by `RunReporting` (`INVALID_LIMIT`). `changeType` is required for
+    `changes` (`NEW` | `UPDATED` | `DELETED`). A `ReportingError` (`INVALID_CURSOR`,
+    `INVALID_LIMIT`, `UNSUPPORTED_IN_STORAGE_MODE`) is a `400` `{ error, code }`; anything else a
+    `500` `{ error, message }`. `LocalServer.ts` already forwards every path to the handler, so it
+    only logs the new endpoints.
+17. **Landscape picker data** - a registry of SSM parameters, one per landscape, under the
+    constant path `/hp-dashboard/landscapes/`. No repo-level list: adding a landscape never
+    requires editing or redeploying the others.
+    - **Registration** - the dashboard stack creates a CDK `StringParameter`
+      `/hp-dashboard/landscapes/<landscape>`, so deploying registers the landscape and tearing
+      it down deregisters it (CloudFormation deletes the parameter). No register script, and no
+      parameter is written by more than one stack, so there are no read-modify-write races. The
+      value is JSON, `{ landscape, label, url, isDefault }`, all derived at synth: `url` from
+      `ORIGIN.subdomain` (`https://<landscape>.cssnprd.warhen.work`), `label` from an optional
+      `DASHBOARD.LABEL` (default: the landscape name), `isDefault` from an optional
+      `DASHBOARD.isDefault` (default `false`) - both new optional `DashboardSettings` fields in
+      `dashboard/context/IContext.ts`. The parameter's description (up to 1024 characters)
+      says what reads it, that the stack owns it, and how to add a landscape from another account.
+    - **Default check** - at synth, `createDashboardStack()` reads the path and throws when
+      `DASHBOARD.isDefault` is `true` and another landscape's parameter already has
+      `isDefault: true`, naming that landscape. (Synth already needs AWS credentials for the
+      Shibboleth construct's lookups.) To move the default: set `isDefault` to `false` on the old
+      landscape and deploy it, then set `true` on the new one and deploy it. The context stays the
+      only source of truth; nobody edits SSM by hand.
+    - **Landscapes in other accounts** - SSM is per account/region, so such a landscape can't
+      register itself here. Create an unmanaged parameter under the same path by hand, with an
+      explicit `url`; the Lambda and the default check treat it like any other entry.
+    - **Reading** - the Lambda gets `ssm:GetParametersByPath` on the path (read only) and
+      `LANDSCAPES_PARAMETER_PATH` in its environment. A `LandscapeRegistry` reads and parses
+      the entries (`label` defaulting to `landscape`; `url` to `https://<landscape>.<this
+      dashboard's hosted zone>` when absent; an entry that doesn't parse is skipped with a warning)
+      and caches them for the life of the Lambda instance, like `DashboardCache`. A new landscape
+      therefore appears in other dashboards after their next cold start.
+    - **Route** - `GET /api/landscapes` returns the entries sorted by landscape, with the current
+      landscape (`LANDSCAPE`) flagged. Locally (`local` as the current landscape) it reads the path
+      with the developer's credentials, or a fixed list in `DashboardMocks.ts` with
+      `LOCALHOST_WITH_MOCKS=true`.
+    - **Cleanup** - none needed: each stack removes its own parameter. Hand-made entries for other
+      accounts are removed by hand.
+    - **As built** - `dashboard/lib/LandscapeRegistration.ts` (`registerLandscape()`, called from
+      `FunctionUrl.ts`; `assertSingleDefaultLandscape()`, called from `createDashboardStack()`,
+      which reads SSM only when the landscape claims the default) and
+      `dashboard/src/services/LandscapeRegistry.ts` (the path constant, `readLandscapeEntries()`
+      shared with the synth check, and the `LandscapeRegistry` service). An entry's landscape is
+      its value's `landscape`, else the last part of the parameter name; only a literal `true` is
+      the default. The Lambda gets `HOSTED_ZONE` (from `DNS.hostedZone`) for the default url. The
+      route returns `{ current, landscapes: [{ landscape, label, url?, isDefault, current }] }`. A
+      failed SSM read is not cached (the next request retries). No context sets `LABEL` or
+      `isDefault` yet: choosing the default landscape belongs with the redirect stack (Phase 5).
 18. **Person lookup/sync** - unchanged logic, now running against the landscape's own config.
-    `History` / `SystemStatus` stubs drop their unused `Config` constructor parameter.
+    `History` / `SystemStatus` stubs drop their unused `Config` constructor parameter (and their
+    routes no longer load the config).
+
+    **Gate:** `npx tsc --noEmit`; full `npx jest` (758 pass, including the new
+    `test/DashboardRunRoutes.test.ts` and `test/LandscapeRegistry.test.ts`, and registry
+    assertions in `test/DashboardStack.test.ts`). The handler bundled with esbuild (as
+    `NodejsFunction` does) serves every new route from the mocks, and, pointed at the deployed
+    mock landscape's tables (read only), returns its run, summary, chunk statistics and a `NEW`
+    change page, and rejects `limit=501`; `/api/landscapes` returns an empty list there until a
+    stack creates its registry parameter. `cdk synth hp-dashboard-mock` (`AWS_PROFILE=infnprd`)
+    produces `/hp-dashboard/landscapes/mock` with the derived url, the read-only
+    `ssm:GetParametersByPath` grant on the path, and no `Fn::ImportValue`. `npm run docker-build`
+    succeeds (the image copies no `dashboard/` code).
 
 ### Phase 5 - DNS, redirect and migration (depends on Phase 3; auth decision from Phase 6)
 
-19. **Redirect stack** - a small `dashboard-redirect` stack (deployed once, enabled by a context
-    flag on the default landscape): CloudFront distribution with a CloudFront Function returning
+19. **Redirect stack** - a small `dashboard-redirect` stack (deployed once, enabled by
+    `DASHBOARD.isDefault` on the default landscape - the flag step 17 writes to the registry):
+    CloudFront distribution with a CloudFront Function returning
     `302` to `https://<default>.cssnprd.warhen.work` + original path/query; imported
     certificate covering `huron1.cssnprd.warhen.work`. It creates the `huron1` A record the same
     way the construct does (CDK `ARecord` plus the `/route53/arecords/<record name>` ownership
@@ -280,7 +353,7 @@ landscape picker needs.
 - `src/ApiErrorTracking.ts`, `src/processing/ProcessorCommon.ts`, `src/processing/ProcessorForS3.ts`, `src/processing/ProcessorForDynamoDb.ts`
 - `src/post-processing/AbstractPostProcessor.ts`, `src/post-processing/PostProcessorForS3.ts`, `src/post-processing/PostProcessorForDynamoDB.ts`
 - `context/IContext.ts`, `context/context.*.json`, `bin/App.ts`, `package.json`, `lib/services/post-processor/PostProcessorTaskDefinition.ts`
-- New: `src/reporting/RunReporting.ts`, `dashboard/**` (incl. `dashboard/lib/DashboardStacks.ts`, `dashboard/lib/LandscapeResources.ts`), `test/DashboardStack.test.ts`, `context/landscapes.json`, redirect stack
+- New: `src/reporting/RunReporting.ts`, `dashboard/**` (incl. `dashboard/lib/DashboardStacks.ts`, `dashboard/lib/LandscapeResources.ts`), `test/DashboardStack.test.ts`, `LandscapeRegistry` (dashboard `src/services/`), redirect stack
 
 **integration-huron-person-dashboard** (source of the move; retired afterwards)
 - `bin/App.ts`, `lib/*`, `src/**`, `templates/`, `public/`, `scripts/BuildTemplates.ts`, `context/IContext.ts`, `context/*.json`
@@ -295,8 +368,11 @@ landscape picker needs.
    stack; `dashboard:dev` with `LOCALHOST_WITH_MOCKS=true` serves the dashboard as before.
 3. **Phase 3/4 tests** - CDK template assertions for the dashboard stack (secret/table/bucket
    grants by name, no `Fn::ImportValue` against the fargate stack, timeout, an A record and
-   ownership parameter for the landscape's subdomain); route tests for
-   `/api/runs*`, `/api/capabilities`, `/api/landscapes` (validation, limit cap, mocks).
+   ownership parameter for the landscape's subdomain, the registry parameter with the derived
+   `url`/`label`/`isDefault`, read-only `GetParametersByPath` on the registry path; synth throws on
+   a second default); route tests for `/api/runs*`, `/api/capabilities`, `/api/landscapes`
+   (validation, limit cap, mocks; registry defaults for a hand-made entry without `label`/`url`,
+   unparseable entries skipped, current landscape flagged).
 4. **Manual, mock landscape first** - deploy `hp-dashboard-mock` and confirm its A record and
    ownership parameter were created, run a
    source-simulator pipeline; `/api/runs` lists the run; `summary`, `chunks`, `errors`, `changes`
@@ -319,9 +395,9 @@ landscape picker needs.
    move.
 2. **Per-landscape cost** - each landscape, including mock ones, runs a CloudFront distribution
    and Lambda@Edge functions, and may need an IdP registration (Phase 6).
-3. **Picker staleness** - `context/landscapes.json` is baked in at deploy time; adding a landscape
-   requires redeploying the others for it to appear in their pickers. A runtime source (e.g. a
-   small JSON object fetched by the browser) can replace it later.
+3. **Picker staleness** - resolved by the SSM registry (step 17): no landscape is redeployed
+   for another to appear. The remaining lag is the per-instance cache, until each dashboard's
+   next cold start.
 4. **IdP registration of the new hostnames** - the SAML entityId is the wildcard
    `https://*.kualitest.research.bu.edu/shibboleth`, while the hostnames are under
    `cssnprd.warhen.work`; whether `<landscape>` sign-in works without registering each ACS

@@ -1,6 +1,7 @@
 /**
  * Tests the landscape dashboard's resource wiring (dashboard/lib): the names of the pipeline
- * resources it reads, and the Lambda's environment and read-only grants on them.
+ * resources it reads, the Lambda's environment and read-only grants on them, and the landscape's
+ * registry parameter.
  */
 import { App, Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
@@ -58,12 +59,13 @@ describe('getDashboardStackName', () => {
 });
 
 describe('FunctionUrlOrigin', () => {
-  const synth = (storage: 's3' | 'dynamodb') => {
+  const synth = (storage: 's3' | 'dynamodb', dashboardOverrides: Record<string, any> = {}) => {
     // No stack is bundled, so the Lambda entry is not built (no esbuild or generated templates needed)
     const app = new App({ context: { 'aws:cdk:bundling-stacks': [] } });
     const stack = new Stack(app, 'test-stack', { env: { account: '111111111111', region: 'us-east-2' } });
     const landscape = makeLandscape(storage);
-    const context: DashboardContext = toDashboardContext(landscape, landscape.DASHBOARD as unknown as DashboardSettings);
+    const settings = { ...landscape.DASHBOARD, ...dashboardOverrides } as unknown as DashboardSettings;
+    const context: DashboardContext = toDashboardContext(landscape, settings);
     new FunctionUrlOrigin({ stack, context, landscapeResources: landscapeResources(landscape) });
     return Template.fromStack(stack);
   };
@@ -109,6 +111,45 @@ describe('FunctionUrlOrigin', () => {
     expect(resources).toContain('table/huron-person-fargate-processor-statistics-mock/index/*');
     expect(resources).toContain('table/huron-person-fargate-processor-person-history-mock');
     expect(resources).toContain(':::huron-person-chunks-mock/*');
+  });
+
+  it('registers the landscape in the landscape registry, with values derived from the context', () => {
+    const template = synth('dynamodb', {
+      LABEL: 'Mock', isDefault: true, ORIGIN: { subdomain: 'mock.cssnprd.warhen.work' }, DNS: { hostedZone: 'cssnprd.warhen.work' }
+    });
+    const [registration] = Object.values(template.findResources('AWS::SSM::Parameter', {
+      Properties: { Name: '/hp-dashboard/landscapes/mock' }
+    }));
+    expect(JSON.parse(registration.Properties.Value)).toEqual({
+      landscape: 'mock', label: 'Mock', url: 'https://mock.cssnprd.warhen.work', isDefault: true
+    });
+    expect(registration.Properties.Type).toBe('String');
+    expect(registration.Properties.Description.length).toBeLessThanOrEqual(1024);
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: { Variables: Match.objectLike({
+        LANDSCAPES_PARAMETER_PATH: '/hp-dashboard/landscapes', HOSTED_ZONE: 'cssnprd.warhen.work'
+      }) }
+    });
+  });
+
+  it('defaults the registry label to the landscape and isDefault to false, with no url without a subdomain', () => {
+    const template = synth('dynamodb');
+    const [registration] = Object.values(template.findResources('AWS::SSM::Parameter', {
+      Properties: { Name: '/hp-dashboard/landscapes/mock' }
+    }));
+    expect(JSON.parse(registration.Properties.Value)).toEqual({ landscape: 'mock', label: 'mock', isDefault: false });
+    const [fn] = Object.values(template.findResources('AWS::Lambda::Function'));
+    expect(fn.Properties.Environment.Variables.HOSTED_ZONE).toBeUndefined();
+  });
+
+  it('grants read-only access to the registry path', () => {
+    const statements = Object.values(synth('dynamodb').findResources('AWS::IAM::Policy'))
+      .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+    const ssm = statements.filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('ssm:')));
+    expect(ssm.flatMap((s: any) => [s.Action].flat())).toEqual(['ssm:GetParametersByPath']);
+    const resources = JSON.stringify(ssm.map((s: any) => s.Resource));
+    expect(resources).toContain(':parameter/hp-dashboard/landscapes\"');
+    expect(resources).toContain(':parameter/hp-dashboard/landscapes/*');
   });
 
   it('references no other stack and keeps the origin verify secret per landscape', () => {

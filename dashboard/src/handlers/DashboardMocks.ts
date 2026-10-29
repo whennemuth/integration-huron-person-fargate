@@ -10,10 +10,18 @@ import {
   BulkSyncResult,
   HistoryResult,
   SystemStatusResult,
-  PersonLookupParams
+  PersonLookupParams,
+  RunReportingService,
+  LandscapeListingService,
+  LandscapeListing
 } from '../services/ServiceTypes';
 import { CrudOperation } from 'integration-core';
 import { PersonPushRequest } from 'integration-huron-person';
+import { Capabilities, ChangeType, Page, RunReport } from '../../../src/reporting/RunReporting';
+import { RunSummary } from '../../../src/dynamodb/StatisticsTable';
+import { StatisticsItem } from '../../../src/ApiErrorTracking';
+import { PersonHistoryRecord } from '../../../src/dynamodb/PersonHistoryTable';
+import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
 
 export class MockPersonLookupService implements PersonLookupService {
   async lookup(params: PersonLookupParams): Promise<PersonLookupResult> {
@@ -151,6 +159,93 @@ export class MockSystemStatusService implements SystemStatusService {
         weeklyErrors: 2,
         avgProcessingTime: '00:00:08'
       }
+    };
+  }
+}
+
+const MOCK_RUN_IDS = ['2026-10-01T02:00:00.000Z', '2026-10-02T02:00:00.000Z'];
+
+export class MockRunReportingService implements RunReportingService {
+  getCapabilities(): Capabilities {
+    return { landscape: LOCAL_LANDSCAPE, storageMode: 'dynamodb', changesSupported: true };
+  }
+
+  async listRuns(): Promise<string[]> {
+    return [...MOCK_RUN_IDS];
+  }
+
+  async getRunReport(syncRunId: string): Promise<RunReport | undefined> {
+    if (!MOCK_RUN_IDS.includes(syncRunId)) {
+      return undefined;
+    }
+    const summary: RunSummary = {
+      syncRunId,
+      status: 'SUCCEEDED',
+      storageMode: 'dynamodb',
+      dryRun: false,
+      createdAt: syncRunId,
+      completedAt: new Date(Date.parse(syncRunId) + 20 * 60 * 1000).toISOString(),
+      syncPopulation: 'person-full',
+      bulkReset: false,
+      chunkCount: 2,
+      totalRecords: 1500,
+      chunksReported: 2,
+      results: { processed: 1500, succeeded: 1497, failed: 3, skipped: 0, added: 12, updated: 40, removed: 0 },
+      totalErrors: 3,
+      throttleCount: 0,
+      errorsByStatus: { '500': 3 },
+      deletion: { status: 'COMPLETED', deletedCount: 2, failedCount: 0, totalProcessed: 2, message: 'Mock deletions' }
+    };
+    return { syncRunId, status: summary.status, summary };
+  }
+
+  async getRunChunkStatistics(syncRunId: string): Promise<StatisticsItem[]> {
+    return [0, 1].map((chunk): StatisticsItem => ({
+      integrationTimestamp: syncRunId,
+      eventType: `STATISTICS-chunk-000${chunk}`,
+      errorType: 'STATISTICS',
+      chunkId: `000${chunk}`,
+      startTimestamp: syncRunId,
+      endTimestamp: syncRunId,
+      chunkCount: 2,
+      chunkSize: 750,
+      totalRecords: 750,
+      sourceDescription: 'Mock source',
+      successCount: chunk === 0 ? 750 : 747,
+      failureCount: chunk === 0 ? 0 : 3,
+      skippedCount: 0,
+      totalErrors: chunk === 0 ? 0 : 3,
+      throttleCount: 0,
+      errorsByStatus: chunk === 0 ? {} : { 500: 3 } as Record<number, number>
+    }));
+  }
+
+  async getRunErrors(syncRunId: string, page: { statusCode?: number } = {}): Promise<Page<Record<string, any>>> {
+    const errors = MOCK_RUN_IDS.includes(syncRunId) ? [1, 2, 3].map(n => ({
+      integrationTimestamp: syncRunId,
+      eventType: `ERROR:500:${syncRunId}-${n}`,
+      statusCode: 500,
+      message: 'Mock target error'
+    })) : [];
+    return { items: errors.filter(e => page.statusCode === undefined || e.statusCode === page.statusCode) };
+  }
+
+  async getRunChanges(syncRunId: string, changeType: ChangeType): Promise<Page<PersonHistoryRecord>> {
+    const items: PersonHistoryRecord[] = MOCK_RUN_IDS.includes(syncRunId)
+      ? [{ personId: 'U00000001', syncRunId, hash: 'mock-hash', changeType }]
+      : [];
+    return { items };
+  }
+}
+
+export class MockLandscapeListingService implements LandscapeListingService {
+  async getLandscapes(): Promise<LandscapeListing> {
+    return {
+      current: LOCAL_LANDSCAPE,
+      landscapes: [
+        { landscape: 'mock', label: 'mock', url: 'https://mock.example.com', isDefault: false, current: false },
+        { landscape: 'staging', label: 'Staging', url: 'https://staging.example.com', isDefault: true, current: false }
+      ]
     };
   }
 }

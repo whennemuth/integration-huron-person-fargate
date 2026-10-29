@@ -159,6 +159,8 @@ const start = async () => {
     console.log(`🚀 Integration Dashboard running locally at http://localhost:${PORT}`);
     console.log(`📊 Dashboard: http://localhost:${PORT}/dashboard`);
     console.log(`🔍 API Status: http://localhost:${PORT}/api/status`);
+    console.log(`📈 Runs: http://localhost:${PORT}/api/runs (and /api/runs/{syncRunId}/summary|chunks|errors|changes, /api/capabilities)`);
+    console.log(`🗺️  Landscapes: http://localhost:${PORT}/api/landscapes`);
     console.log(`\n💡 Development Mode: Express wrapper for Lambda function`);
   });
 }

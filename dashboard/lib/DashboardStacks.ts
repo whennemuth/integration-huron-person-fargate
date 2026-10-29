@@ -3,6 +3,7 @@ import { OriginType, ShibbolethAtEdgeConstruct } from 'shibboleth-sp-at-edge';
 import { IContext as LandscapeContext } from '../../context/IContext';
 import { AuthenticatedContext, AuthenticationMode, DashboardSettings, IContext, PublicContext, toDashboardContext } from '../context/IContext';
 import { landscapeResources } from './LandscapeResources';
+import { assertSingleDefaultLandscape } from './LandscapeRegistration';
 import { AuthenticatedStack, PublicStack } from './Stack';
 
 export const getDashboardStackName = (context: LandscapeContext): string | undefined => {
@@ -34,6 +35,7 @@ export const createDashboardStack = async (app: cdk.App, landscapeContext: Lands
     tags: { Landscape, CostCenter, Ticket, Service, Function },
   } satisfies cdk.StackProps;
   const resources = landscapeResources(landscapeContext);
+  await assertSingleDefaultLandscape({ landscape: resources.landscape, isDefault: context.isDefault, region });
 
   if (context.AUTHENTICATION_MODE === AuthenticationMode.AUTHENTICATED) {
     const dashboardStack = new AuthenticatedStack({

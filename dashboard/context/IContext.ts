@@ -14,6 +14,13 @@ type CoreInfrastructureProperties = Pick<
 > & {
   LAMBDA_TIMEOUT_SECONDS?: number;
   LAMBDA_MEMORY_SIZE_MB?: number;
+  /** The landscape's name in the landscape picker (default: the landscape) */
+  LABEL?: string;
+  /**
+   * Whether this is the default landscape (the one the bare hostname redirects to). At most one
+   * landscape may be: synth fails if another landscape's registry parameter already claims it.
+   */
+  isDefault?: boolean;
 };
 
 export enum AuthenticationMode {

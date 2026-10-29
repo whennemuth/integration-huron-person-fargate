@@ -3,7 +3,9 @@ import {
   PersonSyncService,
   BulkSyncService,
   HistoryService,
-  SystemStatusService
+  SystemStatusService,
+  RunReportingService,
+  LandscapeListingService
 } from './ServiceTypes';
 
 // Import mock implementations
@@ -12,7 +14,9 @@ import {
   MockPersonSyncService,
   MockBulkSyncService,
   MockHistoryService,
-  MockSystemStatusService
+  MockSystemStatusService,
+  MockRunReportingService,
+  MockLandscapeListingService
 } from '../handlers/DashboardMocks';
 
 // Import concrete implementations
@@ -21,6 +25,8 @@ import { PersonSync } from './PersonSync';
 import { BulkSync } from './BulkSync';
 import { History } from './History';
 import { SystemStatus } from './SystemStatus';
+import { runReportingFromEnvironment } from './RunReports';
+import { LandscapeRegistry } from './LandscapeRegistry';
 import { Config } from 'integration-huron-person';
 
 /**
@@ -28,6 +34,9 @@ import { Config } from 'integration-huron-person';
  * based on environment configuration
  */
 export class ServiceProvider {
+  // Kept for the life of the Lambda instance: the registry caches what it reads from SSM
+  private static runReporting?: RunReportingService;
+  private static landscapeListing?: LandscapeListingService;
   
   /**
    * Determine if we should use mock implementations
@@ -78,22 +87,42 @@ export class ServiceProvider {
   /**
    * Get history service implementation
    */
-  static getHistoryService(config:Config): HistoryService {
+  static getHistoryService(): HistoryService {
     if (this.shouldUseMocks()) {
       return new MockHistoryService();
     } else {
-      return new History(config);
+      return new History();
     }
   }
 
   /**
    * Get system status service implementation
    */
-  static getSystemStatusService(config:Config): SystemStatusService {
+  static getSystemStatusService(): SystemStatusService {
     if (this.shouldUseMocks()) {
       return new MockSystemStatusService();
     } else {
-      return new SystemStatus(config);
+      return new SystemStatus();
     }
+  }
+
+  /**
+   * Get run reporting service implementation (this landscape's run data)
+   */
+  static getRunReportingService(): RunReportingService {
+    if (this.shouldUseMocks()) {
+      return new MockRunReportingService();
+    }
+    return this.runReporting ??= runReportingFromEnvironment();
+  }
+
+  /**
+   * Get landscape listing service implementation (the landscape picker's data)
+   */
+  static getLandscapeListingService(): LandscapeListingService {
+    if (this.shouldUseMocks()) {
+      return new MockLandscapeListingService();
+    }
+    return this.landscapeListing ??= LandscapeRegistry.fromEnvironment();
   }
 }

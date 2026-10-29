@@ -9,6 +9,7 @@ import { OriginHeader } from './OriginVerification';
 import { CrudOperation, Status } from 'integration-core';
 import { PersonSyncResult } from '../services/ServiceTypes';
 import { areTheSame } from '../Utils';
+import { ChangeType, ReportingError } from '../../../src/reporting/RunReporting';
 
 // import { ConfigManager } from 'integration-huron-person';
 
@@ -86,12 +87,24 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
         return await handleBulkSync({requestBody: body, cache });
       
       case '/api/history':
-        return await getHistory({queryParams, cache});
+        return await getHistory({ queryParams });
       
       case '/api/status':
-        return await getSystemStatus({ cache });
+        return await getSystemStatus();
+
+      case '/api/runs':
+        return await handleListRuns(request.method);
+
+      case '/api/capabilities':
+        return handleCapabilities(request.method);
+
+      case '/api/landscapes':
+        return await handleLandscapes(request.method);
       
       default:
+        if (path.startsWith('/api/runs/')) {
+          return await handleRunRoute({ method: request.method, path, queryParams });
+        }
         return createResponse(404, 'text/html', '<h1>404 - Page Not Found</h1>');
     }
   } catch (error) {
@@ -367,14 +380,13 @@ async function handleBulkSync(params: { requestBody: string | null, cache: Dashb
 /**
  * Get activity history from S3 or database
  */
-async function getHistory(params: { queryParams: any, cache: DashboardCache }): Promise<LambdaFunctionUrlResult> {
-  const { queryParams, cache } = params;
+async function getHistory(params: { queryParams: any }): Promise<LambdaFunctionUrlResult> {
+  const { queryParams } = params;
   try {
     const { startDate, endDate, limit = 50 } = queryParams;
     
     // TODO: Implement actual S3 history retrieval
-    const config = await cache.getConfiguration();
-    const historyService = ServiceProvider.getHistoryService(config);
+    const historyService = ServiceProvider.getHistoryService();
     const historyData = await historyService.getHistory(startDate, endDate, limit);
 
     return createResponse(200, 'application/json', JSON.stringify(historyData));
@@ -390,12 +402,10 @@ async function getHistory(params: { queryParams: any, cache: DashboardCache }): 
 /**
  * Get current system status and health
  */
-async function getSystemStatus(params: { cache: DashboardCache }): Promise<LambdaFunctionUrlResult> {
-  const { cache } = params;
+async function getSystemStatus(): Promise<LambdaFunctionUrlResult> {
   try {
     // TODO: Implement actual health checks
-    const config = await cache.getConfiguration();
-    const systemStatusService = ServiceProvider.getSystemStatusService(config);
+    const systemStatusService = ServiceProvider.getSystemStatusService();
     const status = await systemStatusService.getStatus();
 
     return createResponse(200, 'application/json', JSON.stringify(status));
@@ -406,6 +416,138 @@ async function getSystemStatus(params: { cache: DashboardCache }): Promise<Lambd
       message: error instanceof Error ? error.message : 'Unknown error' 
     }));
   }
+}
+
+/** /api/runs/{syncRunId}/{summary|chunks|errors|changes} */
+const RUN_ROUTE = /^\/api\/runs\/([^/]+)\/(summary|chunks|errors|changes)$/;
+/** A syncRunId is the ISO timestamp the run's chunker started it with */
+const SYNC_RUN_ID = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+const CHANGE_TYPES: ChangeType[] = ['NEW', 'UPDATED', 'DELETED'];
+
+/**
+ * List this landscape's sync runs (syncRunIds, oldest first)
+ */
+async function handleListRuns(method: string): Promise<LambdaFunctionUrlResult> {
+  if (method !== 'GET') return methodNotAllowed();
+  try {
+    const runs = await ServiceProvider.getRunReportingService().listRuns();
+    return jsonResponse(200, { runs });
+  } catch (error) {
+    return runReportingErrorResponse(error, 'Failed to list runs');
+  }
+}
+
+/**
+ * This landscape's storage mode, and whether it keeps per-person change lists
+ */
+function handleCapabilities(method: string): LambdaFunctionUrlResult {
+  if (method !== 'GET') return methodNotAllowed();
+  try {
+    return jsonResponse(200, ServiceProvider.getRunReportingService().getCapabilities());
+  } catch (error) {
+    return runReportingErrorResponse(error, 'Failed to get capabilities');
+  }
+}
+
+/**
+ * The landscape picker's data: the registered landscapes, with this one flagged as current
+ */
+async function handleLandscapes(method: string): Promise<LambdaFunctionUrlResult> {
+  if (method !== 'GET') return methodNotAllowed();
+  try {
+    return jsonResponse(200, await ServiceProvider.getLandscapeListingService().getLandscapes());
+  } catch (error) {
+    console.error('Error listing landscapes:', error);
+    return jsonResponse(500, {
+      error: 'Failed to list landscapes',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+}
+
+/**
+ * One run's summary, chunk statistics, or a page of its errors or person changes
+ */
+async function handleRunRoute(params: { method: string, path: string, queryParams: { [key: string]: string } }): Promise<LambdaFunctionUrlResult> {
+  const { method, path, queryParams } = params;
+  const match = RUN_ROUTE.exec(path);
+  if (!match) {
+    return jsonResponse(404, { error: 'Not found' });
+  }
+  if (method !== 'GET') return methodNotAllowed();
+
+  const [, encodedSyncRunId, report] = match;
+  const syncRunId = decodePathSegment(encodedSyncRunId);
+  if (!syncRunId || !SYNC_RUN_ID.test(syncRunId)) {
+    return jsonResponse(400, { error: 'syncRunId must be an ISO timestamp, e.g. 2026-10-01T02:00:00.000Z' });
+  }
+
+  const { cursor, limit, statusCode, changeType } = queryParams;
+  if (limit !== undefined && !/^\d+$/.test(limit)) {
+    return jsonResponse(400, { error: 'limit must be a positive integer', code: 'INVALID_LIMIT' });
+  }
+  if (statusCode !== undefined && !/^\d{3}$/.test(statusCode)) {
+    return jsonResponse(400, { error: 'statusCode must be a 3-digit HTTP status code' });
+  }
+  const page = { cursor: cursor || undefined, limit: limit === undefined ? undefined : Number(limit) };
+
+  try {
+    const service = ServiceProvider.getRunReportingService();
+    switch (report) {
+      case 'summary': {
+        const runReport = await service.getRunReport(syncRunId);
+        return runReport
+          ? jsonResponse(200, runReport)
+          : jsonResponse(404, { error: `No run recorded for ${syncRunId}` });
+      }
+      case 'chunks':
+        return jsonResponse(200, { items: await service.getRunChunkStatistics(syncRunId) });
+      case 'errors':
+        return jsonResponse(200, await service.getRunErrors(syncRunId, {
+          ...page, statusCode: statusCode === undefined ? undefined : Number(statusCode)
+        }));
+      default: {
+        if (!CHANGE_TYPES.includes(changeType as ChangeType)) {
+          return jsonResponse(400, { error: `changeType must be one of: ${CHANGE_TYPES.join(', ')}` });
+        }
+        return jsonResponse(200, await service.getRunChanges(syncRunId, changeType as ChangeType, page));
+      }
+    }
+  } catch (error) {
+    return runReportingErrorResponse(error, `Failed to get run ${report}`);
+  }
+}
+
+const decodePathSegment = (segment: string): string | undefined => {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A ReportingError (bad cursor or limit, or a report the storage mode doesn't keep) is the
+ * caller's to fix: 400 with its code. Anything else is a 500, with the message but no stack.
+ */
+function runReportingErrorResponse(error: unknown, description: string): LambdaFunctionUrlResult {
+  if (error instanceof ReportingError) {
+    return jsonResponse(400, { error: error.message, code: error.code });
+  }
+  console.error(`${description}:`, error);
+  return jsonResponse(500, {
+    error: description,
+    message: error instanceof Error ? error.message : 'Unknown error'
+  });
+}
+
+function methodNotAllowed(): LambdaFunctionUrlResult {
+  const response = jsonResponse(405, { error: 'Method not allowed' });
+  return { ...response, headers: { ...response.headers, Allow: 'GET' } };
+}
+
+function jsonResponse(statusCode: number, body: unknown): LambdaFunctionUrlResult {
+  return createResponse(statusCode, 'application/json', JSON.stringify(body));
 }
 
 /**
