@@ -566,6 +566,32 @@ Defines infrastructure parameters (VPC, subnet, image URIs, etc.) per deployment
 
 **Harness Testing**: Use Runner harness (`src/Runner.ts`) to validate chunking orchestration before deployment
 
+### Landscape Dashboard Stack
+The dashboard (`dashboard/`, see `dashboard/CLAUDE.md` and `docs/pan-landscape-data-exchange-plan.md`)
+is a second stack in this CDK app: `bin/App.ts` calls `createDashboardStack()` when the context has a
+`DASHBOARD` section, creating `${DASHBOARD.STACK_ID}-${landscape}` (`hp-dashboard-<landscape>`, at
+`<landscape>.cssnprd.warhen.work`). It shares no CloudFormation exports with the pipeline
+stack: it reads the landscape's config secret, tables and chunks bucket by the same deterministic
+names (`integrationSecretName()`, `dashboard/lib/LandscapeResources.ts`). `npm run deploy` deploys
+every stack (`--all`); `deploy-fargate` / `deploy-dashboard` deploy one. All run `bin/deploy.sh`,
+which synthesizes once and dumps each deployed stack's template to
+`cdk.out/synth.output.<fargate|dashboard>.yaml` from the cloud assembly (`cdk synth --app cdk.out -e`).
+`teardown` / `teardown-fargate` / `teardown-dashboard` mirror them. Every synth still synthesizes both, so it needs AWS
+credentials (the Shibboleth construct reads its secret, the certificate and Route 53 at synth) and
+`build`/`synth` first generate the dashboard's `TemplateConstants.ts`.
+
+**Keep the dashboard out of the task image.** The fargate tasks take no part in the dashboard,
+but share this repo's `package.json`, lockfile and `context/IContext.ts`. So:
+- Dashboard/CDK-synth-only packages are `optionalDependencies` (`shibboleth-sp-at-edge`, from the
+  `simple-npm-package-bucket` registry URL, `express`, `mustache`); `docker/Dockerfile` runs
+  `npm ci --omit=optional`, which never fetches them. Add new dashboard-only packages with
+  `npm install --save-optional`.
+- The Dockerfile compiles with `npx tsc`, not `npm run build` (which builds the dashboard templates).
+- `context/IContext.ts` types `DASHBOARD` loosely and imports nothing from `dashboard/`; the
+  precise `DashboardSettings` is applied in `dashboard/lib/DashboardStacks.ts`. Code under
+  `src/`, `docker/` and `context/` must never import from `dashboard/` or `shibboleth-sp-at-edge`.
+- Verify changes here with `npm run docker-build`, not only `tsc`/`jest`.
+
 ## personRecordProcessor Customization Framework
 
 **Location**: `src/processing/custom/` (concrete implementations live under `impl/`)

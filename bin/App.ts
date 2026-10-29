@@ -6,6 +6,7 @@ import { IntegrationHuronPersonLambdaStack } from '../lib/Stack';
 import { BU_NameTagAspect, TaggingAspect } from '../lib/Tagging';
 import { getLocalConfig, getStackName } from '../src/Utils';
 import { ConfigManager } from 'integration-huron-person';
+import { createDashboardStack } from '../dashboard/lib/DashboardStacks';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -51,6 +52,9 @@ let stack:IntegrationHuronPersonLambdaStack;
   new TaggingAspect(stack, standardTags).applyTags({ 
     aspect: new BU_NameTagAspect(standardTags) 
   });
+
+  // The landscape's dashboard, as a separate stack (see context DASHBOARD)
+  await createDashboardStack(app, context);
 })();
 
 

@@ -9,6 +9,38 @@
     "CostCenter": "AWS Kuali",
     "Ticket": "PRJ2017653"
   },
+  "DASHBOARD": {
+    "STACK_ID": "hp-dashboard",
+    "AUTHENTICATION_MODE": "authenticated",
+    "ORIGIN": {
+      "originType": "function-url",
+      "httpsPort": 443,
+      "subdomain": "migration.cssnprd.warhen.work",
+      "appAuthorization": true
+    },
+    "DNS": {
+      "hostedZone": "cssnprd.warhen.work",
+      "certificateARN": "arn:aws:acm:us-east-1:770203350335:certificate/92e2fb8b-8f1a-4368-8969-4bed1f96d516"
+    },
+    "APP_LOGIN_HEADER": "SHIB-HANDLER",
+    "APP_LOGOUT_HEADER": "SHIB-IDP-LOGOUT",
+    "SHIBBOLETH": {
+      "entityId": "https://*.kualitest.research.bu.edu/shibboleth",
+      "idpCert": "MIIDPDCCAiSgAwIBAgIVAJ6eiJuZK4QyWfKYUqfJdhx4wzkPMA0GCSqGSIb3DQEBBQUAMB8xHTAbBgNVBAMTFHdlYmxvZ2luLXRlc3QuYnUuZWR1MB4XDTEwMDkxNTE0Mjg0OFoXDTMwMDkxNTE0Mjg0OFowHzEdMBsGA1UEAxMUd2VibG9naW4tdGVzdC5idS5lZHUwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCI5moQtXWSwpI/nt/fppWlIh4KDpF7AoetWTiSekjj6rQNIAVV1BiTGjvcPSsQzdEJZKpgO6tjMxPi8UiP8yXgcklzgsrHHGuIlQt6dwZNgS9IxkDnNTn8YqHoFoIm1v/po34qFERVzAo2n8SphHz3Pfp5BBH/Xc2q/IHxtBbSlhszx+2qYCzUuIVgONR+dN63ZmoRYoEakjosuTHxSqHxTXrPpE01FLCEfMXJlploh6ZrV96Y5pScMnn8ULr0Sgsq8x4qCDP2llEXRAsn/WWpzzmTFxGezzXgA2OQLeDMbq6SqmZ7E7dNEu244E9l1JnHLQBsPe9PXP/QEV7h+f/5AgMBAAGjbzBtMEwGA1UdEQRFMEOCFHdlYmxvZ2luLXRlc3QuYnUuZWR1hitodHRwczovL3dlYmxvZ2luLXRlc3QuYnUuZWR1L2lkcC9zaGliYm9sZXRoMB0GA1UdDgQWBBTPzLtx4wmThF7g6C3eCj6zw4tfszANBgkqhkiG9w0BAQUFAAOCAQEAC3lmttoHGXIHfEL75ViI8EyQD44J+bKIYTvbvQmBLS7Lw4iNgalmHnOgs5RBB5oIzOVWgeRUv0bwl48Gp4F9k7cXXDTwZRUxYc6kV9d/dEOCyOEDl4cDhsbM/TJJHPOVLhhPJXec07b3qxb4SaU/YP0ZiE+zD4FqikvZYkD20blmDIJbKPZvBlqfYZ0bBEdnKbWRH8uvFxgm1cz3+azzIWjqGXc7259shmJc391vNwva8SzJG9mUghTKGW1tdu3uoF6tIf/a3sUPxL+z0F0newS75gUl4ccWCjO4TuDgfyJEcjIZ0CYyIvzmtiWg7ZJxvG0zzYcx1ps3hT3nP38erw==",
+      "entryPoint": "https://shib-test.bu.edu/idp/profile/SAML2/Redirect/SSO",
+      "logoutUrl": "https://shib-test.bu.edu/idp/logout.jsp",
+      "secret": {
+        "secretArn": "arn:aws:secretsmanager:us-east-2:770203350335:secret:shibsp/wp/devl1-PaxxjH",
+        "refreshInterval": "3600000",
+        "samlPrivateKeySecretFld": "wp-sp-key",
+        "samlCertSecretFld": "wp-sp-cert",
+        "jwtPrivateKeySecretFld": "wp-jwt-prikey",
+        "jwtPublicKeySecretFld": "wp-jwt-pubkey"
+      }
+    },
+    "LAMBDA_TIMEOUT_SECONDS": 180,
+    "LAMBDA_MEMORY_SIZE_MB": 1024
+  },
   "ITEMS_PER_CHUNK": 200,
   "S3": {
     "inputBucket": "huron-person-file-drop-dev",

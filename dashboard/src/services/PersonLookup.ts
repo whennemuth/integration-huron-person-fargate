@@ -7,7 +7,7 @@ import {
   AxiosResponseStreamFilter,
   ResponseProcessor
 } from 'integration-huron-person';
-import { IContext } from '../../context/IContext';
+import { getConfig } from '../../../src/Utils';
 import { PersonLookupParams, PersonLookupResult, PersonLookupService } from './ServiceTypes';
 import { isABuid } from '../Utils';
 
@@ -207,13 +207,7 @@ export class PersonLookup implements PersonLookupService {
 if (require.main === module) {
   // Simple test run
   (async () => {
-    const context = require('../../context/context.json') as IContext;
-    const { INTEGRATION_CONFIG } = context;
-    if( ! INTEGRATION_CONFIG ) {
-      throw new Error('INTEGRATION_CONFIG is missing in context');
-    }
-    
-    const config: Config = { ...INTEGRATION_CONFIG } as Config;
+    const config: Config = await getConfig();
 
     const {
       DATASOURCE_ENDPOINTCONFIG_PERSON_API_KEY,

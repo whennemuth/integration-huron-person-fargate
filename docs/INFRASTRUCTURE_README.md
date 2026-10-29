@@ -13,12 +13,16 @@ npm install
 # Build TypeScript
 npm run build
 
-# Deploy CDK stack
-npm run cdk deploy
-
-# Or use the deployment script
+# Deploy every stack: the pipeline and, if the context has a DASHBOARD section, the landscape's dashboard
 npm run deploy
+
+# Or one stack (deploy the pipeline before the dashboard - the dashboard reads its resources)
+npm run deploy-fargate
+npm run deploy-dashboard
 ```
+
+A bare `cdk deploy` fails because the app has more than one stack - see
+[CDK_DEPLOYMENT.md](./CDK_DEPLOYMENT.md#deployment-steps).
 
 ### 2. Build and Push Docker Image
 

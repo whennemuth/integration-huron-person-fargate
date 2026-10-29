@@ -1,14 +1,17 @@
-import { Duration, Fn, RemovalPolicy } from "aws-cdk-lib";
+import { Duration, Fn, RemovalPolicy, Stack } from "aws-cdk-lib";
 import { OriginProtocolPolicy } from "aws-cdk-lib/aws-cloudfront";
 import { HttpOrigin, HttpOriginProps } from "aws-cdk-lib/aws-cloudfront-origins";
 import { FunctionUrl, FunctionUrlAuthType, Runtime } from "aws-cdk-lib/aws-lambda";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { LogGroup } from "aws-cdk-lib/aws-logs";
+import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { StringParameter } from "aws-cdk-lib/aws-ssm";
 import { PolicyStatement, Effect } from "aws-cdk-lib/aws-iam";
 import { Construct } from "constructs";
+import { join } from "path";
 import { AuthenticatedContext, AuthenticationMode, IContext } from "../context/IContext";
 import { CACHE_SECRET } from "../src/handlers/DashboardCache";
+import { LandscapeResources } from "./LandscapeResources";
 
 export class FunctionUrlOrigin {
   private lambda: NodejsFunction;
@@ -16,8 +19,8 @@ export class FunctionUrlOrigin {
   private funcUrlOrigin: HttpOrigin;
   private originVerifySecret: string;
   
-  constructor(private params: { stack: Construct, context: IContext, secretArn?: string }) {
-    const { stack, secretArn, context, context: { 
+  constructor(private params: { stack: Construct, context: IContext, landscapeResources: LandscapeResources }) {
+    const { stack, landscapeResources, context, context: { 
       STACK_ID, 
       TAGS,
       REGION,
@@ -25,6 +28,9 @@ export class FunctionUrlOrigin {
       LAMBDA_TIMEOUT_SECONDS,
       LAMBDA_MEMORY_SIZE_MB,
     } } = this.params;
+    const {
+      landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName
+    } = landscapeResources;
 
     // Generate a secure random secret for origin verification
     this.originVerifySecret = `cf-origin-verify-${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}${Date.now().toString(36)}`;
@@ -33,8 +39,15 @@ export class FunctionUrlOrigin {
     const {env: { arn, region } } = CACHE_SECRET;
     let environment = {
       ORIGIN_VERIFY_SECRET: this.originVerifySecret,
-      [arn]: secretArn,
+      // A secret name, not an ARN: GetSecretValue accepts either
+      [arn]: integrationSecretName,
       [region]: REGION,
+      REGION,
+      LANDSCAPE: landscape,
+      PREVIOUS_STORAGE_TYPE: storageMode,
+      DYNAMODB_STATISTICS_TABLE_NAME: statisticsTableName,
+      CHUNKS_BUCKET: chunksBucketName,
+      ...(personHistoryTableName && { DYNAMODB_PERSON_HISTORY_TABLE_NAME: personHistoryTableName }),
     } as any;
 
     // Add authentication-related environment variables if applicable
@@ -55,9 +68,9 @@ export class FunctionUrlOrigin {
 
     const functionName = `${STACK_ID}-${TAGS.Landscape}-app-function`;
     
-    // Store secret in Systems Manager Parameter Store
+    // Store secret in Systems Manager Parameter Store (per landscape: STACK_ID is shared by every landscape)
     new StringParameter(stack, 'secret', {
-      parameterName: `/cloudfront/${STACK_ID}/origin-verify-secret`,
+      parameterName: `/cloudfront/${STACK_ID}/${TAGS.Landscape}/origin-verify-secret`,
       stringValue: this.originVerifySecret,
       description: 'Secret header value for CloudFront origin verification',
     });
@@ -66,8 +79,8 @@ export class FunctionUrlOrigin {
     this.lambda = new NodejsFunction(stack, 'lambda', {
       runtime: Runtime.NODEJS_LATEST,
       memorySize: LAMBDA_MEMORY_SIZE_MB ?? 512,
-      entry: 'src/handlers/DashboardHandler.ts',
-      timeout: Duration.seconds(LAMBDA_TIMEOUT_SECONDS ?? 10),
+      entry: join(__dirname, '../src/handlers/DashboardHandler.ts'),
+      timeout: Duration.seconds(LAMBDA_TIMEOUT_SECONDS ?? 30),
       functionName,
       environment,
       logGroup: new LogGroup(stack, `logs`, {
@@ -81,14 +94,24 @@ export class FunctionUrlOrigin {
       },
     });
 
-    // Add policy to allow reading from Secrets Manager secret
-    if (secretArn) {
-      this.lambda.addToRolePolicy(new PolicyStatement({
-        effect: Effect.ALLOW,
-        actions: ['secretsmanager:GetSecretValue'],
-        resources: [secretArn],
-      }));
-    }
+    // Read access to the landscape's integration config secret, run data and chunk files
+    Secret.fromSecretNameV2(stack, 'integration-secret', integrationSecretName).grantRead(this.lambda);
+
+    const tableArn = (tableName: string) => Stack.of(stack).formatArn({ service: 'dynamodb', resource: 'table', resourceName: tableName });
+    const tableArns = [statisticsTableName, personHistoryTableName]
+      .filter((name): name is string => !!name)
+      .flatMap(name => [tableArn(name), `${tableArn(name)}/index/*`]);
+    this.lambda.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['dynamodb:GetItem', 'dynamodb:BatchGetItem', 'dynamodb:Query', 'dynamodb:Scan', 'dynamodb:DescribeTable'],
+      resources: tableArns,
+    }));
+
+    this.lambda.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['s3:GetObject', 's3:ListBucket'],
+      resources: [`arn:${Stack.of(stack).partition}:s3:::${chunksBucketName}`, `arn:${Stack.of(stack).partition}:s3:::${chunksBucketName}/*`],
+    }));
 
     // Lambda function url for the web app.
     this.functionUrl = new FunctionUrl(this.lambda, 'url', {

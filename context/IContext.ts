@@ -233,4 +233,15 @@ export interface IContext {
     };
   };
 
+  /**
+   * This landscape's dashboard (a separate stack in the same CDK app, see
+   * dashboard/lib/DashboardStacks.ts). ACCOUNT, REGION and TAGS come from this context; the stack
+   * is named `${DASHBOARD.STACK_ID}-${TAGS.Landscape}`. No dashboard stack is created without it.
+   * Keep that stack name to 25 characters or less: the Shibboleth construct names an S3 bucket
+   * `<stack name>-context-config-<account>-<region>`, which S3 limits to 63.
+   * Typed loosely here so the task images never compile dashboard/Shibboleth types; the full type
+   * is the dashboard's DashboardSettings.
+   */
+  DASHBOARD?: { STACK_ID: string, [key: string]: unknown };
+
 }

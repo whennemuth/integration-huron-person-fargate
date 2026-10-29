@@ -7,11 +7,11 @@ A serverless dashboard for managing integration operations between BU CDM and Hu
 
 The dashboard source lives in the `dashboard/` directory of the `integration-huron-person-fargate`
 repository (moved from the retired `integration-huron-person-dashboard` repository; see
-`docs/pan-landscape-data-exchange-plan.md`). It keeps its original internal layout (`bin/`, `lib/`,
-`src/`, `context/`, `templates/`, `public/`, `scripts/`), shares fargate's `package.json`,
-`node_modules` and `tsconfig.json`, and until the plan's Phase 3 is still deployed as its own CDK app
-(`dashboard/cdk.json`). All paths below are relative to `dashboard/`; npm scripts run from the
-fargate root.
+`docs/pan-landscape-data-exchange-plan.md`). It keeps its original internal layout (`lib/`,
+`src/`, `context/`, `templates/`, `public/`, `scripts/`) and shares fargate's `package.json`,
+`node_modules`, `tsconfig.json` and CDK app: fargate's `bin/App.ts` adds the landscape's dashboard
+stack (`dashboard/lib/DashboardStacks.ts`) next to the pipeline stack. All paths below are relative
+to `dashboard/`; npm scripts run from the fargate root.
 
 ## Shared Skills Repository
 
@@ -221,25 +221,38 @@ npm run dashboard:dev:watch        # Watch mode with hot reload
 - `NODE_ENV=development` - Enables local mode, bypasses origin verification
 - `PORT=3000` - Local server port (default)
 - `LOCALHOST_WITH_MOCKS=true` - Enables mock services
+- `OVERRIDE_CACHE_WITH_LOCAL_CONFIG=true` - Loads the integration config with fargate's
+  `getConfig()` (same sources as the fargate harnesses) instead of reading `INTEGRATION_SECRETS_ARN`
 
 ## CDK Deployment
 
-**Stacks:**
-- Distribution (CloudFront)
-- Lambda Function URL with origin verification
-- Parameter Store for secrets
-- IAM roles and policies
+One dashboard stack per landscape, `${DASHBOARD.STACK_ID}-${landscape}` (e.g. `hp-dashboard-mock`),
+created by `createDashboardStack()` when the landscape's fargate context (`../context/context.json`)
+has a `DASHBOARD` section. That section is this directory's `IContext` minus `ACCOUNT` / `REGION` /
+`TAGS`, which come from the landscape (`toDashboardContext()`). Keep the stack name within 25
+characters: the Shibboleth construct names a bucket `<stack name>-context-config-<account>-<region>`.
 
-**Commands** (from the fargate root; they run `cdk` inside `dashboard/`):
+**Stacks:**
+- Distribution (CloudFront) and Shibboleth Lambda@Edge (separate us-east-1 edge-lambda stack)
+- A record `<landscape>.cssnprd.warhen.work` plus its `/route53/arecords/<name>` ownership
+  parameter, created by the Shibboleth construct when no record for the name exists
+- Lambda Function URL with origin verification (SSM `/cloudfront/<STACK_ID>/<landscape>/origin-verify-secret`)
+- No secret of its own: the Lambda reads the landscape's integration config secret
+  (`integrationSecretName()` in fargate `lib/Secrets.ts`), and has read-only grants on the
+  statistics table, the person history table (DynamoDB mode) and the chunks bucket
+  (`lib/LandscapeResources.ts`). All by deterministic name - no CloudFormation imports from the
+  pipeline stack.
+
+**Commands** (from the fargate root; `npm run deploy` deploys the pipeline and dashboard stacks):
 ```bash
-npm run dashboard:deploy    # Full deployment to AWS
+npm run deploy-dashboard    # Deploy the dashboard stack (and its edge-lambda stack); template in cdk.out/synth.output.dashboard.yaml
 npm run dashboard:synth     # Generate CloudFormation template
-npm run dashboard:teardown  # Destroy stack
+npm run teardown-dashboard  # Destroy the dashboard and edge-lambda stacks (rerun later if Lambda@Edge replicas block the edge stack)
 ```
 
 **Context Configuration:**
-- `context/context.json` - Infrastructure parameters
-- `context/IContext.ts` - Context interface definition
+- `../context/context*.json` `DASHBOARD` section - Infrastructure parameters
+- `context/IContext.ts` - Dashboard context types (`DashboardSettings`)
 
 ## Dependencies
 

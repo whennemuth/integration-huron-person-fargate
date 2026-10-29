@@ -203,6 +203,11 @@ For detailed documentation on the Runner harness, see [src/CLAUDE.md](./src/CLAU
 * `npm run build`   compile typescript to js
 * `npm run watch`   watch for changes and compile
 * `npm run test`    perform the jest unit tests
-* `npx cdk deploy`  deploy this stack to your default AWS account/region
-* `npx cdk diff`    compare deployed stack with current state
-* `npx cdk synth`   emits the synthesized CloudFormation template
+* `npm run deploy`  deploy every stack (pipeline, and the landscape's dashboard if the context has a `DASHBOARD` section)
+* `npm run deploy-fargate` / `npm run deploy-dashboard`  deploy one stack (pipeline first: the dashboard reads its resources)
+* `npm run teardown` / `teardown-fargate` / `teardown-dashboard`  destroy every stack / one stack
+* `npx cdk diff --all`    compare deployed stacks with current state
+* `npm run synth`   emits the pipeline stack's CloudFormation template
+
+The app has more than one stack, so a bare `cdk deploy` / `cdk destroy` fails; see
+[docs/CDK_DEPLOYMENT.md](./docs/CDK_DEPLOYMENT.md#deployment-steps).

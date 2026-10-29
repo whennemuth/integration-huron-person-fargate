@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "Node16",
+    "module": "NodeNext",
     "lib": ["ES2022"],
     "outDir": "dist",
     "rootDir": ".",
@@ -25,7 +25,7 @@
     "typeRoots": [
       "./node_modules/@types"
     ],
-    "moduleResolution": "Node16",
+    "moduleResolution": "NodeNext",
     "resolveJsonModule": true,
     "esModuleInterop": true
   },
@@ -40,7 +40,6 @@
     "node_modules",
     "cdk.out",
     "dist",
-    "test",
-    "dashboard/scripts"
+    "test"
   ]
 }

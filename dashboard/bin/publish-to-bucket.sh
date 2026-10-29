@@ -1,24 +1,14 @@
 # For testing purposes, publish the package to an S3 bucket.
 # The s3 bucket is deployed as a website to serve as a read-only npm package http location.
+# Each package's own publish-s3 script builds, packs and uploads it (to the bucket's dynamodb/ prefix).
+
+set -e
+
+# integration-core and integration-huron-person sit next to the fargate repo
+integration_dir="$(cd "$(dirname "$0")/../../.." && pwd)"
 
 echo "Publishing to S3 bucket..."
 
-bucket_uri="s3://simple-npm-package-bucket"
-
-# Build the integration-core package
-cd ../integration-core || exit 1
-npm run pack
-package_file_core=$(ls *.tgz | head -n 1)
-
-# Copy the integration-core package to the S3 bucket
-aws s3 cp "$package_file_core" "$bucket_uri/"
-cd - || exit 1
-
-# Build the integration-huron-person package
-cd ../integration-huron-person || exit 1
-npm run pack
-package_file_person=$(ls *.tgz | head -n 1)
-
-# Copy the integration-huron-person package to the S3 bucket
-aws s3 cp "$package_file_person" "$bucket_uri/"
-cd - || exit 1
+for package in integration-core integration-huron-person ; do
+  (cd "$integration_dir/$package" && npm run publish-s3)
+done

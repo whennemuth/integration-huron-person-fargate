@@ -21,16 +21,16 @@ WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Install ALL dependencies (including devDependencies for build)
-RUN npm ci
+# Install ALL dependencies (including devDependencies for build); optional ones are the dashboard's/CDK's
+RUN npm ci --omit=optional
 
 # Copy source code
 COPY src ./src
 COPY context/*.ts ./context/
 COPY docker/*.ts ./docker/
 
-# Build TypeScript to JavaScript
-RUN npm run build
+# Build TypeScript to JavaScript (not "npm run build", which also builds the dashboard's templates)
+RUN npx tsc
 
 # Stage 2: Production stage
 FROM --platform=linux/arm64 node:22-alpine3.22
@@ -48,7 +48,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install ONLY production dependencies
-RUN npm ci --omit=dev && \
+RUN npm ci --omit=dev --omit=optional && \
     npm cache clean --force
 
 # Create non-root user for security

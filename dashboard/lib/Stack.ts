@@ -6,30 +6,25 @@ import { AuthenticatedContext, PublicContext } from '../context/IContext';
 import { FunctionUrlOrigin } from "./FunctionUrl";
 import { CloudFrontDistribution } from "./Distribution";
 import { Distribution } from "aws-cdk-lib/aws-cloudfront";
-import { SecretsManagerSecret } from "./Secrets";
+import { LandscapeResources } from "./LandscapeResources";
 
 export type StackParams = {
   scope: Construct;
   stackName: string;
   context: AuthenticatedContext | PublicContext,
+  landscapeResources: LandscapeResources;
   stackProps?: cdk.StackProps;
 };
 
 export abstract class AbstractStack extends cdk.Stack {
-  protected _secret: SecretsManagerSecret;
   protected _functionUrlOrigin: FunctionUrlOrigin;
 
   constructor(stackParams: StackParams) {
-    const { scope, stackName, context, stackProps } = stackParams;
+    const { scope, stackName, context, landscapeResources, stackProps } = stackParams;
 
     super(scope, stackName, stackProps);
 
-    this._secret = new SecretsManagerSecret(this, context);
-    this._functionUrlOrigin = new FunctionUrlOrigin({
-      stack: this, 
-      context, 
-      secretArn: this._secret.secretArn
-    });
+    this._functionUrlOrigin = new FunctionUrlOrigin({ stack: this, context, landscapeResources });
   }
 
   public get functionOrigin (): HttpOrigin {

@@ -68,17 +68,39 @@ Edit [context/context.json](./context/context.json):
 
 ## Deployment Steps
 
+**Stacks:** the CDK app synthesizes the pipeline stack (`huron-person-fargate-processor-<landscape>`)
+and, when the context has a `DASHBOARD` section, the landscape's dashboard stack
+(`hp-dashboard-<landscape>`) plus the dashboard's us-east-1 edge-lambda stack (Lambda@Edge for
+Shibboleth). Because there is more than one stack, a bare `cdk deploy` / `cdk destroy` fails -
+name a stack or use `--all`, or use the npm scripts:
+
+| Script | Stacks |
+|---|---|
+| `npm run deploy` | all (writes `cdk.out/synth.output.fargate.yaml` and `synth.output.dashboard.yaml`) |
+| `npm run deploy-fargate` | pipeline (writes `cdk.out/synth.output.fargate.yaml`) |
+| `npm run deploy-dashboard` | dashboard + edge-lambda (writes `cdk.out/synth.output.dashboard.yaml`) |
+| `npm run teardown` | all |
+| `npm run teardown-fargate` | pipeline |
+| `npm run teardown-dashboard` | dashboard + edge-lambda |
+
+**Order:** the dashboard stack takes nothing from the pipeline stack's outputs - it finds the
+pipeline's config secret, tables and chunks bucket by name - so the stacks deploy in any order.
+But the dashboard only works once its landscape's pipeline stack exists; until then its pages
+load and its data calls fail. Deploying both separately: `deploy-fargate` first, then
+`deploy-dashboard`.
+
+**Edge-lambda teardown:** CloudFront removes its replicas of the Lambda@Edge functions some time
+(up to hours) after the distribution is deleted, and the edge-lambda stack can't be deleted
+before that. If `teardown` / `teardown-dashboard` fails on that stack, rerun it later.
+
 ### 1. Deploy Infrastructure (First Time)
 
 ```bash
-# Synthesize CloudFormation template
+# Synthesize CloudFormation templates
 npm run build
-npm run cdk synth
+npm run synth
 
-# Deploy stack (creates ECR, ECS, SQS, Lambda, S3)
-npm run cdk deploy
-
-# Or use the script
+# Deploy every stack (pipeline: ECR, ECS, SQS, Lambda, S3; dashboard: CloudFront, Lambda, A record)
 npm run deploy
 ```
 
@@ -113,7 +135,7 @@ After pushing a new image, ECS tasks need to reference it:
 
 ```bash
 # Force new deployment (picks up latest image)
-npm run cdk deploy
+npm run deploy-fargate
 ```
 
 Alternatively, update the image tag in task definitions:
@@ -284,8 +306,7 @@ aws sqs receive-message --queue-url $DLQ_URL
 1. **Modify CDK code** (lib/constructs/*.ts)
 2. **Redeploy:**
    ```bash
-   npm run build
-   npm run cdk deploy
+   npm run deploy-fargate
    ```
 
 ### Configuration Changes
@@ -293,14 +314,16 @@ aws sqs receive-message --queue-url $DLQ_URL
 1. **Modify context.json**
 2. **Redeploy:**
    ```bash
-   npm run cdk deploy
+   npm run deploy
    ```
 
 ## Cleanup
 
-**Delete stack:**
+**Delete stacks:**
 ```bash
-npm run cdk destroy
+npm run teardown            # all stacks
+npm run teardown-fargate    # pipeline stack only
+npm run teardown-dashboard  # dashboard + edge-lambda stacks (see "Edge-lambda teardown" above)
 ```
 
 **Manual cleanup required:**

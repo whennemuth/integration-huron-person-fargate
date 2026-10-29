@@ -20,6 +20,12 @@ export type DataTargetOverride = {
   externalToken: string;
 };
 
+/** Name of a landscape's integration config secret (also read by the landscape's dashboard) */
+export const integrationSecretName = (context: IContext): string => {
+  const { STACK_ID, TAGS: { Landscape = 'dev' } = {} } = context;
+  return `${STACK_ID}/integration/_config/${Landscape}`;
+}
+
 /**
  * A Secrets Manager secret that holds the Huron Person integration configuration and secrets.
  * This secret is injected into ECS Fargate tasks as an environment variable at runtime,
@@ -29,11 +35,9 @@ export class HuronPersonSecrets {
   private _secret: Secret;
 
   constructor(scope: Construct, context: IContext, dataTargetOverride?: DataTargetOverride) {
-    const { STACK_ID, S3: { chunksBucket } = {}, TAGS: { Landscape = 'dev' } = {} } = context;
-
     const integrationConfig = buildSecretValue(context, dataTargetOverride);
 
-    const secretName = `${STACK_ID}/integration/_config/${Landscape}`;
+    const secretName = integrationSecretName(context);
 
     const secret = new Secret(scope, 'Secret', {
       secretName,

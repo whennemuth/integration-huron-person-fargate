@@ -1,4 +1,3 @@
-import { Config } from 'integration-huron-person';
 import { IContext as ShibSpContext } from 'shibboleth-sp-at-edge';
 
 /**
@@ -15,7 +14,6 @@ type CoreInfrastructureProperties = Pick<
 > & {
   LAMBDA_TIMEOUT_SECONDS?: number;
   LAMBDA_MEMORY_SIZE_MB?: number;
-  INTEGRATION_CONFIG: Config;
 };
 
 export enum AuthenticationMode {
@@ -44,3 +42,25 @@ export type AuthenticatedContext = CoreInfrastructureProperties & ShibSpContext 
 export type PublicContext = CoreInfrastructureProperties & {
   AUTHENTICATION_MODE: AuthenticationMode.PUBLIC;
 };
+
+type DistributiveOmit<T, K extends PropertyKey> = T extends any ? Omit<T, K> : never;
+
+/**
+ * The DASHBOARD section of a fargate landscape's context: the dashboard's context minus the
+ * account, region and tags it shares with the landscape.
+ */
+export type DashboardSettings = DistributiveOmit<IContext, 'ACCOUNT' | 'REGION' | 'TAGS'>;
+
+/**
+ * Builds the dashboard's context from a fargate landscape context. The landscape's DASHBOARD section
+ * is typed loosely in context/IContext.ts, because the task images compile that file and must not
+ * need Shibboleth types, so callers cast it to DashboardSettings here, at CDK synth time.
+ * Nothing checks that cast: a missing or misspelled setting fails at synth (or, for Shibboleth
+ * settings, at sign-in), not at compile time.
+ */
+export const toDashboardContext = (
+  landscape: Pick<IContext, 'ACCOUNT' | 'REGION' | 'TAGS'>, settings: DashboardSettings
+): IContext => {
+  const { ACCOUNT, REGION, TAGS } = landscape;
+  return { ...settings, ACCOUNT, REGION, TAGS } as IContext;
+}

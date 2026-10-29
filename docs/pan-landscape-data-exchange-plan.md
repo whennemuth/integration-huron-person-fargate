@@ -1,6 +1,6 @@
 # Plan: Per-Landscape Dashboards (dashboard merged into the fargate app)
 
-Status: **Planned - not yet implemented**
+Status: **In progress - Phases 0-3 done**
 
 > Supersedes the earlier "pan-landscape data exchange" plan (cross-account dashboard-api Lambda,
 > landscape registry, versioned contracts). That approach was dropped: with one dashboard per
@@ -12,7 +12,7 @@ Status: **Planned - not yet implemented**
 ## Goal
 
 Every fargate landscape gets its own dashboard, deployed from the same repository and CDK app as
-that landscape's pipeline, reachable at `<landscape>.huron1.cssnprd.warhen.work`. The dashboard
+that landscape's pipeline, reachable at `<landscape>.cssnprd.warhen.work`. The dashboard
 reads its own landscape's run data and performs single-person lookup/sync in-process, using that
 landscape's config secret and code version. "Pan-landscape" becomes navigation between these
 dashboards. **No UI** is in scope - only the data access ("wiring"), plus the data a future
@@ -23,13 +23,14 @@ landscape picker needs.
 | Topic | Decision |
 |---|---|
 | Code home | Dashboard source moves into the fargate repo (one repo, one CDK app); the dashboard repo is retired after migration |
-| Stack arrangement | Separate dashboard stack per landscape in the same CDK app (`fargate-<landscape>` and `dashboard-<landscape>`), so CloudFront / Lambda@Edge deploy and deletion times never block pipeline deploys |
+| Stack arrangement | Separate dashboard stack per landscape in the same CDK app (`huron-person-fargate-processor-<landscape>` and `hp-dashboard-<landscape>`), so CloudFront / Lambda@Edge deploy and deletion times never block pipeline deploys. The dashboard stack name must stay within 25 characters: the Shibboleth construct names a bucket `<stack name>-context-config-<account>-<region>` (S3 limit 63) |
+| Deploys | `npm run deploy` deploys every stack (`cdk deploy --all`); `deploy-fargate` / `deploy-dashboard` deploy one (a named dashboard stack brings its us-east-1 edge-lambda stack, a dependency). All three run `bin/deploy.sh`, which synthesizes once and writes each deployed stack's template to `cdk.out/synth.output.fargate.yaml` / `synth.output.dashboard.yaml` (dumped from the cloud assembly, so `deploy` gets both files without a second synth). `teardown` destroys every stack; `teardown-fargate` / `teardown-dashboard` one |
 | Mock landscapes | Always get a dashboard stack |
 | Data access | In-process: the dashboard Lambda uses fargate's `StatisticsTable`, `PersonHistoryTable` etc. directly. No API contract |
 | Integration config | The dashboard reads its landscape's existing fargate config secret (`${STACK_ID}/integration/_config/${landscape}`); the dashboard's own `Secrets.ts` copy is removed |
 | Cross-stack references | Deterministic resource names (table names, secret name), not CloudFormation exports, so the fargate stack is never locked by imports |
-| DNS / certificates | A records are CDK resources, as today: the `shibboleth-sp-at-edge` construct creates each landscape's A record in `cssnprd.warhen.work`, plus its SSM ownership parameter (`/route53/arecords/<record name>`), when no record for that name exists yet; an existing record it doesn't own is left alone. Certificates stay imported by ARN in context (a single wildcard `*.huron1.cssnprd.warhen.work` certificate can serve every landscape) |
-| Bare hostname `huron1.cssnprd.warhen.work` | Redirects to the default landscape's subdomain (the URL always names the landscape) |
+| DNS / certificates | A records are CDK resources, as today: the `shibboleth-sp-at-edge` construct creates each landscape's A record in `cssnprd.warhen.work`, plus its SSM ownership parameter (`/route53/arecords/<record name>`), when no record for that name exists yet; an existing record it doesn't own is left alone. Certificates stay imported by ARN in context. Hostnames are `<landscape>.cssnprd.warhen.work` (no `huron1` level), so the existing `*.cssnprd.warhen.work` certificate, which covers one level only, serves every landscape; none of those names had a record in the zone |
+| Bare hostname `huron1.cssnprd.warhen.work` | Redirects to the default landscape's hostname (the URL always names the landscape) |
 | Cross-landscape sign-in | Undecided - investigate `shibboleth-sp-at-edge` first (Phase 6) |
 | Run summary | Post-processor writes a `RUN_SUMMARY` item per run; both storage modes |
 | Reporting depth | First the distinct list of syncRunIds; after one is selected, drill down as deep as the storage mode allows |
@@ -47,7 +48,7 @@ landscape picker needs.
 
 ### Phase 1 - fargate run data (depends on Phase 0)
 
-*Done - committed to fargate `master` as `db1482e`.*
+*Done - committed to fargate `master` as `f24cb0a`.*
 
 1. **Persist per-chunk IntegrationResult counts.** Extend `SyncStatistics` in
    `src/ApiErrorTracking.ts` with optional `successCount`, `failureCount`, `skippedCount`,
@@ -106,11 +107,14 @@ landscape picker needs.
    (`.env`, `context/*.key|*.pem|*.xml`) are not copied. This plan moved to fargate `docs/`.
 8. **Dependencies** - added to fargate `package.json`: `mustache`, `express`,
    `@aws-sdk/client-secrets-manager`, `shibboleth-sp-at-edge` (same `file:` path - the repos sit at
-   the same depth); dev deps `nodemon`, `html-minifier-terser`, `@types/express`,
+   the same depth; in Phase 3 `mustache`, `express`, `@aws-sdk/client-acm` and
+   `shibboleth-sp-at-edge` moved to `optionalDependencies` - see step 14a); dev deps `nodemon`, `html-minifier-terser`, `@types/express`,
    `@types/mustache`, `@types/html-minifier-terser` (`esbuild`, `@types/aws-lambda` already
    present). Scripts (run from the fargate root): `dashboard:build:templates` (`ts-node
    --transpile-only`, since fargate's `module: Node16` rejects `require` of the ESM
-   `html-minifier-terser` types - the script was never type-checked in the dashboard repo either),
+   `html-minifier-terser` types - the script was never type-checked in the dashboard repo either;
+   in Phase 3 fargate moved to `NodeNext`, as the dashboard repo used, so the script is now
+   type-checked and `--transpile-only` is gone),
    `dashboard:dev`, `dashboard:dev:watch`, `dashboard:synth`, `dashboard:deploy`,
    `dashboard:teardown`, `dashboard:clearcache`, `dashboard:publish-dev`. `tsconfig.json` includes
    `dashboard/**/*.ts` (excluding `dashboard/scripts`); `.gitignore` covers the generated
@@ -137,29 +141,82 @@ landscape picker needs.
 
 ### Phase 3 - Dashboard stack per landscape (depends on Phase 2)
 
-11. **Context** - add a `DASHBOARD` section to fargate's `IContext` and every
-    `context/context.*.json`, absorbing the dashboard's current context fields:
-    `AUTHENTICATION_MODE`, `ORIGIN` (`subdomain`, e.g. `preview.huron1.cssnprd.warhen.work`,
-    `appAuthorization`), `DNS` (`hostedZone` - required, since the construct only manages the A
-    record when both `ORIGIN.subdomain` and `DNS.hostedZone` are set - and `certificateARN`),
-    Shibboleth/SAML settings, `APP_LOGIN_HEADER` /
-    `APP_LOGOUT_HEADER`, `LAMBDA_TIMEOUT_SECONDS` / `LAMBDA_MEMORY_SIZE_MB`. `INTEGRATION_CONFIG`
-    is dropped. `STACK_ID`, `ACCOUNT`, `REGION`, `TAGS` are shared with the fargate stack.
-12. **bin/App.ts** - create `dashboard-<landscape>` (stack name derived from `STACK_ID` +
-    landscape) next to the fargate stack, Public or Authenticated per `AUTHENTICATION_MODE` as the
-    dashboard's `bin/App.ts` does today (including the async
-    `ShibbolethAtEdgeConstruct.getInstance()`). Always created, including mock landscapes.
-13. **Config from the fargate secret** - delete `lib/dashboard/Secrets.ts`. `FunctionUrl.ts`
-    references the landscape's integration secret by name
-    (`Secret.fromSecretNameV2(..., '${STACK_ID}/integration/_config/${landscape}')`), grants read,
-    and sets the secret reference for `DashboardCache`. `LocalServer.ts`'s
-    `OVERRIDE_CACHE_WITH_LOCAL_CONTEXT` stops depending on `INTEGRATION_CONFIG` (local runs load
-    the integration config file / secret like other fargate harnesses).
-14. **Grants for in-process data access** - by deterministic name: statistics table + its indexes
-    (read), person history table + indexes (read, DynamoDB mode only), person current state table
-    (read, if lookups need it), chunks bucket (read, for S3-mode flags / terminal-error files).
-    Environment variables for table names, bucket, storage mode and landscape. Raise the default
-    Lambda timeout from 10s to 30s (person sync).
+*Done. `hp-dashboard-mock` deployed and Shibboleth sign-in tested (step 14c).*
+
+11. **Context** - fargate's `IContext` has an optional `DASHBOARD: DashboardSettings` (the
+    dashboard's `IContext` minus `ACCOUNT` / `REGION` / `TAGS`, which come from the landscape;
+    `toDashboardContext()` merges them). Every `context/context*.json` has one: `STACK_ID`
+    `hp-dashboard`, `AUTHENTICATION_MODE` `authenticated`, `ORIGIN` (`subdomain`
+    `<landscape>.cssnprd.warhen.work`, `appAuthorization`), `DNS` (`hostedZone` - required,
+    since the construct only manages the A record when both `ORIGIN.subdomain` and `DNS.hostedZone`
+    are set - and `certificateARN`), the Shibboleth/SAML settings and `APP_LOGIN_HEADER` /
+    `APP_LOGOUT_HEADER` copied from the old dashboard context, and its `LAMBDA_TIMEOUT_SECONDS`
+    (180) / `LAMBDA_MEMORY_SIZE_MB` (1024). `INTEGRATION_CONFIG` is dropped. The dashboard's
+    `context/*.json` files are deleted. All landscapes share the old dashboard's Shibboleth secret
+    (`shibsp/wp/devl1`) until Phase 6 decides otherwise.
+12. **bin/App.ts** - calls `createDashboardStack()` (`dashboard/lib/DashboardStacks.ts`), which
+    creates `${DASHBOARD.STACK_ID}-${landscape}` next to the fargate stack, Authenticated (with
+    the async `ShibbolethAtEdgeConstruct.getInstance()`) or Public per `AUTHENTICATION_MODE`. No
+    `DASHBOARD` section, no stack. `dashboard/bin/App.ts`, `dashboard/cdk.json` and
+    `dashboard/bin/clear-cache.sh` are deleted (the root `clearcache` covers the one `cdk.out`).
+    Scripts: `build` and `synth` build the templates first (bundling the dashboard Lambda needs
+    the generated `TemplateConstants.ts`); `dashboard:get-stack-name` is new; `dashboard:synth`
+    names the dashboard stack; `deploy` (all stacks), `deploy-fargate` and `deploy-dashboard` run
+    `bin/deploy.sh <all|fargate|dashboard>`; `teardown` (all), `teardown-fargate` and
+    `teardown-dashboard` (with its edge-lambda stack) destroy; `redeploy` is unchanged (all). `dashboard:deploy`,
+    `dashboard:teardown` and `dashboard:clearcache` are removed.
+13. **Config from the fargate secret** - `dashboard/lib/Secrets.ts` is deleted.
+    `lib/Secrets.ts` exports `integrationSecretName()`, used by both stacks. `FunctionUrl.ts`
+    references the secret by name (`Secret.fromSecretNameV2`), grants read, and passes the name as
+    `DashboardCache`'s secret reference (`GetSecretValue` accepts a name). `LocalServer.ts`'s
+    switch is renamed `OVERRIDE_CACHE_WITH_LOCAL_CONFIG` and loads the config with fargate's
+    `getConfig()`, as the `PersonLookup` harness now does too.
+14. **Grants for in-process data access** - `dashboard/lib/LandscapeResources.ts` derives the
+    names the pipeline stack uses (storage mode via `resolveSecretStorage()`): read on the
+    statistics table and its indexes, the person history table and its indexes (DynamoDB mode
+    only) and the chunks bucket. The person current-state table is not granted (no lookup needs it
+    yet). Environment: `LANDSCAPE`, `PREVIOUS_STORAGE_TYPE`, `DYNAMODB_STATISTICS_TABLE_NAME`,
+    `DYNAMODB_PERSON_HISTORY_TABLE_NAME` (DynamoDB mode), `CHUNKS_BUCKET`. Default Lambda timeout
+    raised from 10s to 30s (the contexts set 180s). The origin-verify SSM parameter is now per
+    landscape (`/cloudfront/<STACK_ID>/<landscape>/origin-verify-secret`).
+
+14a. **Keep the dashboard out of the task image** - Phase 2 broke `docker-build`: the image's
+    `npm ci` could not reach the `file:` Shibboleth tarball outside the build context. The tasks
+    never use the dashboard, so it is excluded rather than made installable: dashboard/CDK-only
+    packages (`shibboleth-sp-at-edge`, `express`, `mustache`, `@aws-sdk/client-acm`) are
+    `optionalDependencies` and the Dockerfile runs `npm ci --omit=optional` (both stages); the
+    builder compiles with `npx tsc` instead of `npm run build`; and `context/IContext.ts` types
+    `DASHBOARD` loosely (`{ STACK_ID, [key]: unknown }`), with `DashboardStacks.ts` applying
+    `DashboardSettings`, so no task code compiles dashboard or Shibboleth types.
+14b. **NodeNext** - fargate's `tsconfig.json` moved from `module`/`moduleResolution` `Node16` to
+    `NodeNext` (the dashboard repo's setting), which lets `dashboard/scripts/BuildTemplates.ts`
+    import the ESM `html-minifier-terser` types. `dashboard/scripts` is no longer excluded from
+    the project, and `dashboard:build:templates` no longer needs `--transpile-only`.
+14c. **shibboleth-sp-at-edge 2.0.1 / shibboleth-sp 1.2.0** - the first `hp-dashboard-mock` deploy returned CloudFront
+    `503`: the installed 1.0.0 tarball (Feb 12) predated the source fix granting its
+    viewer-request function read access to the Shibboleth secret, and its prebuilt edge bundles
+    carried `bu-lambda-shibboleth`'s own (WordPress) context, ignoring `DASHBOARD.SHIBBOLETH`.
+    Version 2.0.0 (`bu-lambda-shibboleth` `MASTER.PLAN.md`, Part 2) writes the consumer's context
+    (`edge-context.json`) next to each prebuilt edge bundle at synth, grants `GetSecretValue` on
+    the configured secret only, declares `@aws-sdk/client-acm`, and makes `aws-cdk-lib` /
+    `constructs` peer dependencies. Fargate now installs it (and `shibboleth-sp` 1.1.0) from the
+    `simple-npm-package-bucket` registry URL, still in `optionalDependencies`, and no longer
+    declares `@aws-sdk/client-acm` itself. No fargate code changed: the construct's API and
+    `IContext` are unchanged.
+
+    The next deploy returned `502`: the dashboard Lambda crashed at load. Its `Authentication.ts`
+    imports `shibboleth-sp`, whose 1.1.0 ES module build (picked by esbuild for an `import`)
+    calls `createRequire(import.meta.url)`, and `import.meta.url` is undefined once
+    `NodejsFunction` bundles it to CommonJS. `shibboleth-sp` 1.2.0 ships CommonJS only
+    (`shibboleth-sp/PLAN-commonjs-only.md`), and `shibboleth-sp-at-edge` 2.0.1 depends on it;
+    fargate installs 2.0.1. With both, the mock dashboard deploys and signs in.
+
+    **Gate:** `npx tsc --noEmit`; full `npx jest` (722 pass, including `test/DashboardStack.test.ts`);
+    `cdk synth hp-dashboard-mock` (`AWS_PROFILE=infnprd`) produces the A record and ownership
+    parameter for `mock.cssnprd.warhen.work`, the edge-lambda stack, and no `Fn::ImportValue`.
+    `bin/deploy.sh`'s synth and template dump steps (run without the deploy) write both
+    `cdk.out/synth.output.*.yaml` files. `npm run docker-build` succeeds, and the image contains
+    the three task entry points and none of the optional packages.
 
 ### Phase 4 - In-process routes and services (depends on Phases 1 and 3)
 
@@ -185,15 +242,15 @@ landscape picker needs.
 
 19. **Redirect stack** - a small `dashboard-redirect` stack (deployed once, enabled by a context
     flag on the default landscape): CloudFront distribution with a CloudFront Function returning
-    `302` to `https://<default>.huron1.cssnprd.warhen.work` + original path/query; imported
+    `302` to `https://<default>.cssnprd.warhen.work` + original path/query; imported
     certificate covering `huron1.cssnprd.warhen.work`. It creates the `huron1` A record the same
     way the construct does (CDK `ARecord` plus the `/route53/arecords/<record name>` ownership
     parameter naming this stack), only when no record for the name exists.
 20. **Migration sequence**:
-    1. Deploy `dashboard-staging` at `staging.huron1.cssnprd.warhen.work` (the stack creates its A
+    1. Deploy `hp-dashboard-staging` at `staging.cssnprd.warhen.work` (the stack creates its A
        record); verify.
     2. Deploy the other landscapes' dashboards.
-    3. Destroy the old standalone dashboard stack. That deletes its `huron1` A record and
+    3. Destroy the old standalone dashboard stack (`hp-dashboard-dev`). That deletes its `huron1` A record and
        ownership parameter, and releases the `huron1.cssnprd.warhen.work` alternate domain name,
        which a distribution must release before another can claim it.
     4. Deploy `dashboard-redirect`; with no `huron1` record left, it creates one pointing at the
@@ -212,6 +269,10 @@ landscape picker needs.
 22. Decide: per-landscape sign-in (relying on the IdP session for silent re-login) vs a shared
     parent-domain token; record the decision here and adjust the Phase 3 context.
 
+    Since `shibboleth-sp-at-edge` 2.0.0 (step 14c), the edge functions use each landscape's
+    `DASHBOARD.SHIBBOLETH` (until then they ran with that package's own compiled-in context), so
+    per-landscape SP keys / secrets are now possible.
+
 ## Relevant Files
 
 **integration-huron-person-fargate**
@@ -219,7 +280,7 @@ landscape picker needs.
 - `src/ApiErrorTracking.ts`, `src/processing/ProcessorCommon.ts`, `src/processing/ProcessorForS3.ts`, `src/processing/ProcessorForDynamoDb.ts`
 - `src/post-processing/AbstractPostProcessor.ts`, `src/post-processing/PostProcessorForS3.ts`, `src/post-processing/PostProcessorForDynamoDB.ts`
 - `context/IContext.ts`, `context/context.*.json`, `bin/App.ts`, `package.json`, `lib/services/post-processor/PostProcessorTaskDefinition.ts`
-- New: `src/reporting/RunReporting.ts`, `src/dashboard/**`, `lib/dashboard/**`, `dashboard/{templates,public,scripts}`, `context/landscapes.json`, redirect stack
+- New: `src/reporting/RunReporting.ts`, `dashboard/**` (incl. `dashboard/lib/DashboardStacks.ts`, `dashboard/lib/LandscapeResources.ts`), `test/DashboardStack.test.ts`, `context/landscapes.json`, redirect stack
 
 **integration-huron-person-dashboard** (source of the move; retired afterwards)
 - `bin/App.ts`, `lib/*`, `src/**`, `templates/`, `public/`, `scripts/BuildTemplates.ts`, `context/IContext.ts`, `context/*.json`
@@ -236,11 +297,11 @@ landscape picker needs.
    grants by name, no `Fn::ImportValue` against the fargate stack, timeout, an A record and
    ownership parameter for the landscape's subdomain); route tests for
    `/api/runs*`, `/api/capabilities`, `/api/landscapes` (validation, limit cap, mocks).
-4. **Manual, mock landscape first** - deploy `dashboard-mock` and confirm its A record and
+4. **Manual, mock landscape first** - deploy `hp-dashboard-mock` and confirm its A record and
    ownership parameter were created, run a
    source-simulator pipeline; `/api/runs` lists the run; `summary`, `chunks`, `errors`, `changes`
    return data; person lookup/sync reaches the target simulator. Repeat on staging; then the
-   migration sequence and redirect check (`huron1...` -> `staging.huron1...`, path/query kept).
+   migration sequence and redirect check (`huron1...` -> `staging...`, path/query kept).
 
 ## Out of Scope
 
@@ -261,3 +322,10 @@ landscape picker needs.
 3. **Picker staleness** - `context/landscapes.json` is baked in at deploy time; adding a landscape
    requires redeploying the others for it to appear in their pickers. A runtime source (e.g. a
    small JSON object fetched by the browser) can replace it later.
+4. **IdP registration of the new hostnames** - the SAML entityId is the wildcard
+   `https://*.kualitest.research.bu.edu/shibboleth`, while the hostnames are under
+   `cssnprd.warhen.work`; whether `<landscape>` sign-in works without registering each ACS
+   URL is for Phase 6 to confirm before the first deploy.
+5. **Context uploaded to S3** - the Shibboleth construct uploads the dashboard's context to a
+   context-config bucket. That context no longer carries the integration config, only the
+   `DASHBOARD` settings plus account, region and tags (the IdP certificate is public).
