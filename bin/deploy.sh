@@ -25,7 +25,9 @@ cd "$(dirname "$0")/.."
 
 # Build TypeScript
 echo -e "${GREEN}Step 1: Building TypeScript...${NC}"
-npm run build
+npm run dashboard:build:templates
+echo -e "${GREEN}Compiling TypeScript (tsc) - prints nothing until it finishes, about a minute...${NC}"
+npx tsc
 
 fargate_stack="$(npm run -s get-stack-name)"
 dashboard_stack="$(npm run -s dashboard:get-stack-name)"

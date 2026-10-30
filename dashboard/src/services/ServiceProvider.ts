@@ -159,7 +159,7 @@ if (require.main === module) {
     'DYNAMODB_PERSON_HISTORY_TABLE_NAME',
     'CHUNKS_BUCKET',
     'LANDSCAPES_PARAMETER_PATH',
-    'HOSTED_ZONE',
+    'DASHBOARD_DOMAIN',
     // Run reporting task parameters
     'SYNC_RUN_ID',
     'CHANGE_TYPE',

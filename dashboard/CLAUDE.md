@@ -267,8 +267,11 @@ characters: the Shibboleth construct names a bucket `<stack name>-context-config
 
 **Stacks:**
 - Distribution (CloudFront) and Shibboleth Lambda@Edge (separate us-east-1 edge-lambda stack)
-- A record `<landscape>.cssnprd.warhen.work` plus its `/route53/arecords/<name>` ownership
-  parameter, created by the Shibboleth construct when no record for the name exists
+- A record `<landscape>.<dashboard domain>` (e.g. `staging.person.huron.cssnprd.warhen.work`) plus
+  its `/route53/arecords/<name>` ownership parameter, created by the Shibboleth construct when no
+  record for the name exists
+- Default landscape only (`isDefault`): the dashboard domain's redirect (see "Dashboard domain and
+  default landscape redirect" below)
 - Lambda Function URL with origin verification (SSM `/cloudfront/<STACK_ID>/<landscape>/origin-verify-secret`)
 - The landscape's registry parameter `/hp-dashboard/landscapes/<landscape>` (see below), and
   `ssm:GetParametersByPath` on that path for the Lambda
@@ -289,6 +292,8 @@ npm run teardown-dashboard  # Destroy the dashboard and edge-lambda stacks (reru
 - `../context/context*.json` `DASHBOARD` section - Infrastructure parameters
 - `context/IContext.ts` - Dashboard context types (`DashboardSettings`), including the optional
   `LABEL` (picker label, default: the landscape) and `isDefault` (the default landscape)
+- Setting up the hosted zone and certificate, and which context keys take them: the fargate
+  `README.md`, "Dashboard DNS and Certificates"
 
 ### Landscape registry
 
@@ -304,10 +309,29 @@ The landscape picker's data is a registry of SSM parameters, one per landscape, 
   `isDefault` false on the old landscape and deploy it, then set it on the new one.
 - **Reading** (`LandscapeRegistry`): `GetParametersByPath` once per Lambda instance; a new
   landscape appears in other dashboards after their next cold start. Missing `label` defaults to
-  the landscape, missing `url` to `https://<landscape>.<HOSTED_ZONE>`; unparseable entries are
+  the landscape, missing `url` to `https://<landscape>.<DASHBOARD_DOMAIN>`; unparseable entries are
   skipped with a warning.
 - **Other accounts**: SSM is per account and region, so list a landscape deployed elsewhere by
   creating a parameter under the path by hand, with an explicit `url` (and remove it by hand).
+
+### Dashboard domain and default landscape redirect
+
+The **dashboard domain** (`person.huron.cssnprd.warhen.work`) is the parent of every landscape's
+hostname, `ORIGIN.subdomain` = `<landscape>.<dashboard domain>`, inside the account's hosted zone
+(`DNS.hostedZone`, `cssnprd.warhen.work`). It has no setting of its own: `lib/DashboardDomain.ts`
+derives it from `ORIGIN.subdomain` (minus the first label), and `assertLandscapeHostname()` fails
+synth unless that first label is the landscape. The Lambda gets it as `DASHBOARD_DOMAIN`.
+- **Redirect** (`lib/DefaultLandscapeRedirect.ts`, added by `createDashboardStack()` when
+  `isDefault`): a CloudFront distribution for the dashboard domain whose viewer-request CloudFront
+  Function returns `302` to `https://<ORIGIN.subdomain>` with the path and query string (its origin
+  is never reached, so no sign-in), plus the domain's alias A record and
+  `/route53/arecords/<dashboard domain>` ownership parameter.
+- **Synth checks** (`planDefaultLandscapeRedirect()`, AWS reads injectable as `RedirectLookups`):
+  the certificate (`DNS.certificateARN`, us-east-1) must cover the dashboard domain, and the A
+  record is created only when none exists or its ownership parameter names this stack, the rule
+  the Shibboleth construct applies; otherwise synth warns and leaves the record alone.
+- **Moving the default** removes the redirect from the old default's stack first (see "One
+  default" above); the dashboard domain doesn't resolve until the new default deploys.
 
 ## Dependencies
 

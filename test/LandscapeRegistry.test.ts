@@ -66,22 +66,22 @@ describe('readLandscapeEntries', () => {
 
 describe('LandscapeRegistry', () => {
   const entries = [
-    parameter('staging', { landscape: 'staging', label: 'Staging', url: 'https://staging.cssnprd.warhen.work', isDefault: true }),
+    parameter('staging', { landscape: 'staging', label: 'Staging', url: 'https://staging.person.huron.cssnprd.warhen.work', isDefault: true }),
     parameter('mock', { landscape: 'mock' }),
   ];
 
   it('fills in label and url defaults, flags the current landscape and sorts by landscape', async () => {
-    const registry = new LandscapeRegistry({ currentLandscape: 'mock', hostedZone: 'cssnprd.warhen.work', client: ssmClient(entries) });
+    const registry = new LandscapeRegistry({ currentLandscape: 'mock', dashboardDomain: 'person.huron.cssnprd.warhen.work', client: ssmClient(entries) });
     expect(await registry.getLandscapes()).toEqual({
       current: 'mock',
       landscapes: [
-        { landscape: 'mock', label: 'mock', url: 'https://mock.cssnprd.warhen.work', isDefault: false, current: true },
-        { landscape: 'staging', label: 'Staging', url: 'https://staging.cssnprd.warhen.work', isDefault: true, current: false },
+        { landscape: 'mock', label: 'mock', url: 'https://mock.person.huron.cssnprd.warhen.work', isDefault: false, current: true },
+        { landscape: 'staging', label: 'Staging', url: 'https://staging.person.huron.cssnprd.warhen.work', isDefault: true, current: false },
       ]
     });
   });
 
-  it('leaves the url out when an entry has none and there is no hosted zone', async () => {
+  it('leaves the url out when an entry has none and there is no dashboard domain', async () => {
     const registry = new LandscapeRegistry({ currentLandscape: 'local', client: ssmClient([parameter('mock', {})]) });
     const { landscapes: [mock] } = await registry.getLandscapes();
     expect(mock.url).toBeUndefined();
@@ -107,9 +107,9 @@ describe('LandscapeRegistry', () => {
   });
 
   it('is configured from the Lambda environment', async () => {
-    const registry = LandscapeRegistry.fromEnvironment({ LANDSCAPE: 'staging', HOSTED_ZONE: 'example.com' });
+    const registry = LandscapeRegistry.fromEnvironment({ LANDSCAPE: 'staging', DASHBOARD_DOMAIN: 'dashboards.example.com' });
     expect((registry as any).params).toEqual({
-      currentLandscape: 'staging', path: undefined, hostedZone: 'example.com', region: undefined
+      currentLandscape: 'staging', path: undefined, dashboardDomain: 'dashboards.example.com', region: undefined
     });
     expect((LandscapeRegistry.fromEnvironment({}) as any).params.currentLandscape).toBe('local');
   });

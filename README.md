@@ -145,6 +145,92 @@ Configured in `context/context.json` under `ECS.chunkerTaskDefinition` and passe
 
 For local harness runs, use the prefixed equivalents (e.g. `DOCKER_CHUNKER_STOP_AT_FIRST_PARTIAL`, `CHUNK_FROM_API_MAX_TOTAL_RECORDS`); see `example-env.md`.
 
+## Dashboard DNS and Certificates
+
+Each landscape's dashboard is served by CloudFront at `<landscape>.<dashboard domain>`, and the
+dashboard domain itself redirects to the default landscape. In the `cssnprd` account the hosted
+zone is `cssnprd.warhen.work` and the dashboard domain is `person.huron.cssnprd.warhen.work`, so
+staging is at `staging.person.huron.cssnprd.warhen.work`. The stacks create the DNS records; the
+hosted zone and the certificate are prerequisites you set up once per account.
+
+### 1. Hosted zone
+
+The stacks never create a hosted zone. Confirm a public one exists and note its exact name:
+
+```bash
+aws route53 list-hosted-zones-by-name --dns-name cssnprd.warhen.work --query 'HostedZones[0].[Name,Id,Config.PrivateZone]'
+```
+
+Every record (landscape hostnames and the dashboard domain) goes in this zone; no delegated zone
+for the dashboard domain is needed.
+
+### 2. Certificate (us-east-1)
+
+CloudFront only accepts certificates from `us-east-1`, and a wildcard covers exactly one label,
+so the dashboards need a certificate of their own naming both the dashboard domain and its wildcard:
+
+```bash
+aws acm request-certificate --region us-east-1 --validation-method DNS \
+  --domain-name person.huron.cssnprd.warhen.work \
+  --subject-alternative-names '*.person.huron.cssnprd.warhen.work'
+```
+
+Validate it in the hosted zone: both names ask for the same CNAME. Read it from the certificate,
+then create it (in the console, the certificate's **Create records in Route 53** button does this):
+
+```bash
+aws acm describe-certificate --region us-east-1 --certificate-arn <arn> \
+  --query 'Certificate.DomainValidationOptions[0].ResourceRecord'
+```
+
+Wait until `aws acm describe-certificate ... --query Certificate.Status` returns `ISSUED`.
+Don't replace an existing account-wide certificate (such as `*.cssnprd.warhen.work`) with this
+one: other applications may use it (ACM lists them under **In use by**).
+
+**No copy in the dashboard's region is needed.** A regional certificate is only for something
+regional that terminates TLS for these hostnames, such as an ALB origin's HTTPS listener. The
+dashboard's origin is always a Lambda function URL (`DASHBOARD.ORIGIN.originType`
+`function-url`; the dashboard stack rejects any other), which takes no certificate. If an ALB
+origin is ever supported, request a copy in `REGION` then: ACM renews only certificates that are
+in use, so a copy requested early would quietly expire.
+
+### 3. Context
+
+In each `context/context.<landscape>.json` (switch the active one with `./context/swap.sh <landscape>`):
+
+```json
+"DASHBOARD": {
+  "isDefault": true,
+  "ORIGIN": { "subdomain": "staging.person.huron.cssnprd.warhen.work", ... },
+  "DNS": {
+    "hostedZone": "cssnprd.warhen.work",
+    "certificateARN": "arn:aws:acm:us-east-1:<account>:certificate/<id>"
+  },
+  ...
+}
+```
+
+- `ORIGIN.subdomain` must be `<landscape>.<dashboard domain>`: the dashboard domain has no setting
+  of its own, it is the subdomain minus its first label.
+- `DNS.hostedZone` is the zone from step 1, `DNS.certificateARN` the certificate from step 2.
+- `isDefault` (optional, default `false`) marks the default landscape, whose dashboard stack also
+  redirects the dashboard domain to it. Set it on one landscape only. `LABEL` (optional) is the
+  landscape's name in the landscape picker.
+
+Synth (`npm run synth`, or any deploy) checks these and fails when:
+- the subdomain doesn't start with the landscape name;
+- the subdomain isn't within the hosted zone, or the hosted zone or certificate is missing;
+- the default landscape's certificate doesn't cover the dashboard domain;
+- `isDefault` is `true` while another landscape is already the default.
+
+If an A record for a hostname already exists and this stack didn't create it (its
+`/route53/arecords/<name>` SSM parameter names another stack, or there is none), synth warns and
+leaves the record alone.
+
+**Moving the default landscape**: set `isDefault` to `false` on the current default and deploy its
+dashboard (which removes the redirect and its record), then set `isDefault: true` on the new one
+and deploy it. The dashboard domain doesn't resolve for the few minutes in between.
+
 ## Test Harnesses
 
 Test harnesses are executable modules that verify individual components using environment-based configuration via the `TestEnvironment` utility from `integration-core`. Each harness loads its own prefixed environment variables and validates component behavior in isolation.

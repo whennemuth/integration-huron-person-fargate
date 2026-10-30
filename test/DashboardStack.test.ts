@@ -115,19 +115,19 @@ describe('FunctionUrlOrigin', () => {
 
   it('registers the landscape in the landscape registry, with values derived from the context', () => {
     const template = synth('dynamodb', {
-      LABEL: 'Mock', isDefault: true, ORIGIN: { subdomain: 'mock.cssnprd.warhen.work' }, DNS: { hostedZone: 'cssnprd.warhen.work' }
+      LABEL: 'Mock', isDefault: true, ORIGIN: { subdomain: 'mock.person.huron.cssnprd.warhen.work' }, DNS: { hostedZone: 'cssnprd.warhen.work' }
     });
     const [registration] = Object.values(template.findResources('AWS::SSM::Parameter', {
       Properties: { Name: '/hp-dashboard/landscapes/mock' }
     }));
     expect(JSON.parse(registration.Properties.Value)).toEqual({
-      landscape: 'mock', label: 'Mock', url: 'https://mock.cssnprd.warhen.work', isDefault: true
+      landscape: 'mock', label: 'Mock', url: 'https://mock.person.huron.cssnprd.warhen.work', isDefault: true
     });
     expect(registration.Properties.Type).toBe('String');
     expect(registration.Properties.Description.length).toBeLessThanOrEqual(1024);
     template.hasResourceProperties('AWS::Lambda::Function', {
       Environment: { Variables: Match.objectLike({
-        LANDSCAPES_PARAMETER_PATH: '/hp-dashboard/landscapes', HOSTED_ZONE: 'cssnprd.warhen.work'
+        LANDSCAPES_PARAMETER_PATH: '/hp-dashboard/landscapes', DASHBOARD_DOMAIN: 'person.huron.cssnprd.warhen.work'
       }) }
     });
   });
@@ -139,7 +139,7 @@ describe('FunctionUrlOrigin', () => {
     }));
     expect(JSON.parse(registration.Properties.Value)).toEqual({ landscape: 'mock', label: 'mock', isDefault: false });
     const [fn] = Object.values(template.findResources('AWS::Lambda::Function'));
-    expect(fn.Properties.Environment.Variables.HOSTED_ZONE).toBeUndefined();
+    expect(fn.Properties.Environment.Variables.DASHBOARD_DOMAIN).toBeUndefined();
   });
 
   it('grants read-only access to the registry path', () => {

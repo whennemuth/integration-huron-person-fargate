@@ -562,14 +562,16 @@ Defines infrastructure parameters (VPC, subnet, image URIs, etc.) per deployment
 The dashboard (`dashboard/`, see `dashboard/CLAUDE.md` and `docs/pan-landscape-data-exchange-plan.md`)
 is a second stack in this CDK app: `bin/App.ts` calls `createDashboardStack()` when the context has a
 `DASHBOARD` section, creating `${DASHBOARD.STACK_ID}-${landscape}` (`hp-dashboard-<landscape>`, at
-`<landscape>.cssnprd.warhen.work`). It shares no CloudFormation exports with the pipeline
+`<landscape>.person.huron.cssnprd.warhen.work`; the default landscape's stack also redirects
+`person.huron.cssnprd.warhen.work` to it). It shares no CloudFormation exports with the pipeline
 stack: it reads the landscape's config secret, tables and chunks bucket by the same deterministic
 names (`integrationSecretName()`, `dashboard/lib/LandscapeResources.ts`). `npm run deploy` deploys
 every stack (`--all`); `deploy-fargate` / `deploy-dashboard` deploy one. All run `bin/deploy.sh`,
 which synthesizes once and dumps each deployed stack's template to
 `cdk.out/synth.output.<fargate|dashboard>.yaml` from the cloud assembly (`cdk synth --app cdk.out -e`).
 `teardown` / `teardown-fargate` / `teardown-dashboard` mirror them. Every synth still synthesizes both, so it needs AWS
-credentials (the Shibboleth construct reads its secret, the certificate and Route 53 at synth) and
+credentials (the Shibboleth construct reads its secret, the certificate and Route 53 at synth, and
+the default landscape's redirect checks its certificate and record the same way) and
 `build`/`synth` first generate the dashboard's `TemplateConstants.ts`. The dashboard reports on
 the landscape's runs in-process (`/api/runs*`, `/api/capabilities`, over `src/reporting/RunReporting.ts`)
 and lists every registered landscape (`/api/landscapes`) from SSM parameters under
@@ -578,7 +580,8 @@ and lists every registered landscape (`/api/landscapes`) from SSM parameters und
 **Keep the dashboard out of the task image.** The fargate tasks take no part in the dashboard,
 but share this repo's `package.json`, lockfile and `context/IContext.ts`. So:
 - Dashboard/CDK-synth-only packages are `optionalDependencies` (`shibboleth-sp-at-edge`, from the
-  `simple-npm-package-bucket` registry URL, `express`, `mustache`); `docker/Dockerfile` runs
+  `simple-npm-package-bucket` registry URL, `express`, `mustache`, and the synth-time
+  `@aws-sdk/client-acm` / `@aws-sdk/client-route-53`); `docker/Dockerfile` runs
   `npm ci --omit=optional`, which never fetches them. Add new dashboard-only packages with
   `npm install --save-optional`.
 - The Dockerfile compiles with `npx tsc`, not `npm run build` (which builds the dashboard templates).
@@ -587,10 +590,23 @@ but share this repo's `package.json`, lockfile and `context/IContext.ts`. So:
   `src/`, `docker/` and `context/` must never import from `dashboard/` or `shibboleth-sp-at-edge`.
 - **When to run `npm run docker-build`**: the image is built only from `package.json`,
   `package-lock.json`, `tsconfig.json`, `src/`, `context/*.ts` and `docker/` (it never copies
-  `dashboard/`). Run it, not only `tsc`/`jest`, when a change touches any of those, which
-  includes a dashboard change that adds a package or edits `context/IContext.ts`. A change
-  confined to `dashboard/`, `lib/`, `bin/`, `test/` or docs can't affect the image, so skip it
-  (check with `git diff --name-only`).
+  `dashboard/`). Check what a change touches with `git diff --name-only`:
+  - `tsconfig.json`, `src/`, `context/*.ts` or `docker/` (including a dashboard change that edits
+    `context/IContext.ts`): run `docker-build`, not only `tsc`/`jest`, since the image's
+    `npx tsc` compiles them.
+  - Only `package.json` / `package-lock.json` (e.g. adding a dashboard-only optional package):
+    skip `docker-build` and run the image's install in a scratch folder instead (about 30
+    seconds, against about 6 minutes). Never run it in the repo: `npm ci` deletes `node_modules`.
+    ```bash
+    mkdir /tmp/npm-ci-check && cp package.json package-lock.json /tmp/npm-ci-check/ && cd /tmp/npm-ci-check
+    npm ci --omit=optional --ignore-scripts --no-audit --no-fund
+    ```
+    It must succeed (that proves the lockfile matches `package.json`), and `node_modules` must
+    not contain the optional packages. Compare versions the pipeline uses (e.g.
+    `node_modules/@aws-sdk/core/package.json`) with the repo's to confirm nothing shared moved.
+    Don't use `--dry-run` for this: it lists the whole tree, optional packages included, so it
+    can't show what `--omit=optional` leaves out.
+  - Only `dashboard/`, `lib/`, `bin/`, `test/` or docs: can't affect the image, so skip both.
 
 ## personRecordProcessor Customization Framework
 

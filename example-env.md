@@ -341,7 +341,7 @@ DASHBOARD_SERVICE_PROVIDER_DYNAMODB_STATISTICS_TABLE_NAME=huron-person-fargate-p
 DASHBOARD_SERVICE_PROVIDER_DYNAMODB_PERSON_HISTORY_TABLE_NAME=huron-person-fargate-processor-person-history-<landscape>
 DASHBOARD_SERVICE_PROVIDER_CHUNKS_BUCKET=huron-person-chunks-<landscape>
 DASHBOARD_SERVICE_PROVIDER_LANDSCAPES_PARAMETER_PATH=/hp-dashboard/landscapes
-DASHBOARD_SERVICE_PROVIDER_HOSTED_ZONE=<hosted-zone-name>
+DASHBOARD_SERVICE_PROVIDER_DASHBOARD_DOMAIN=<dashboard-domain, e.g. person.huron.cssnprd.warhen.work>
 # Per-run tasks (summary, chunks, errors, changes): default run is the latest
 # DASHBOARD_SERVICE_PROVIDER_SYNC_RUN_ID=<iso-timestamp-sync-run-id>
 # changes: NEW | UPDATED | DELETED (default NEW)

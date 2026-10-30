@@ -4,6 +4,7 @@ import { Function as LambdaFunction } from "aws-cdk-lib/aws-lambda";
 import { StringParameter } from "aws-cdk-lib/aws-ssm";
 import { Construct } from "constructs";
 import { IContext } from "../context/IContext";
+import { dashboardDomain } from "./DashboardDomain";
 import { LandscapeEntry, LANDSCAPES_PARAMETER_PATH, readLandscapeEntries } from "../src/services/LandscapeRegistry";
 
 /**
@@ -15,7 +16,7 @@ import { LandscapeEntry, LANDSCAPES_PARAMETER_PATH, readLandscapeEntries } from 
 export const registerLandscape = (params: {
   stack: Construct, context: IContext, landscape: string, lambda: LambdaFunction
 }): StringParameter => {
-  const { stack, landscape, lambda, context: { ORIGIN, DNS, LABEL, isDefault = false } } = params;
+  const { stack, landscape, lambda, context: { ORIGIN, LABEL, isDefault = false } } = params;
   const entry: LandscapeEntry = {
     landscape,
     label: LABEL ?? landscape,
@@ -39,8 +40,8 @@ export const registerLandscape = (params: {
     resources: [parameterArn(LANDSCAPES_PARAMETER_PATH), parameterArn(`${LANDSCAPES_PARAMETER_PATH}/*`)],
   }));
   lambda.addEnvironment('LANDSCAPES_PARAMETER_PATH', LANDSCAPES_PARAMETER_PATH);
-  if (DNS?.hostedZone) {
-    lambda.addEnvironment('HOSTED_ZONE', DNS.hostedZone);
+  if (ORIGIN?.subdomain) {
+    lambda.addEnvironment('DASHBOARD_DOMAIN', dashboardDomain(ORIGIN.subdomain));
   }
   return parameter;
 }
@@ -49,7 +50,7 @@ export const registerLandscape = (params: {
 export const registryDescription = (stackName: string): string => [
   `Landscape picker registry entry, owned by the ${stackName} stack: CloudFormation creates it on deploy and deletes it on teardown.`,
   `Every landscape dashboard in this account and region reads all parameters under ${LANDSCAPES_PARAMETER_PATH} on a cold start and serves them at GET /api/landscapes.`,
-  `Value: JSON {landscape, label?, url?, isDefault?}; label defaults to the landscape, url to https://<landscape>.<hosted zone>.`,
+  `Value: JSON {landscape, label?, url?, isDefault?}; label defaults to the landscape, url to https://<landscape>.<dashboard domain>.`,
   `It is set from the landscape's DASHBOARD context (ORIGIN.subdomain, LABEL, isDefault), so change that and redeploy rather than editing this.`,
   `At most one landscape may be the default: synth fails while another parameter here has isDefault true.`,
   `To list a landscape deployed in another account, create a parameter by hand under ${LANDSCAPES_PARAMETER_PATH} with an explicit url; remove it by hand too.`,

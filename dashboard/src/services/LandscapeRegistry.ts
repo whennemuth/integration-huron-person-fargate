@@ -67,8 +67,8 @@ export type LandscapeRegistryParams = {
   /** This dashboard's landscape */
   currentLandscape: string;
   path?: string;
-  /** For the default url of an entry without one */
-  hostedZone?: string;
+  /** For the default url of an entry without one: https://<landscape>.<dashboardDomain> */
+  dashboardDomain?: string;
   region?: string;
   client?: SSMClient;
 };
@@ -83,17 +83,17 @@ export class LandscapeRegistry implements LandscapeListingService {
   constructor(private params: LandscapeRegistryParams) { }
 
   public static fromEnvironment = (env: NodeJS.ProcessEnv = process.env): LandscapeRegistry => {
-    const { LANDSCAPE, LANDSCAPES_PARAMETER_PATH: path, HOSTED_ZONE, REGION } = env;
+    const { LANDSCAPE, LANDSCAPES_PARAMETER_PATH: path, DASHBOARD_DOMAIN, REGION } = env;
     return new LandscapeRegistry({
       currentLandscape: LANDSCAPE || LOCAL_LANDSCAPE,
       path: path || undefined,
-      hostedZone: HOSTED_ZONE || undefined,
+      dashboardDomain: DASHBOARD_DOMAIN || undefined,
       region: REGION || undefined
     });
   }
 
   public getLandscapes = async (): Promise<LandscapeListing> => {
-    const { currentLandscape, hostedZone } = this.params;
+    const { currentLandscape, dashboardDomain } = this.params;
     if (!this.entries) {
       // Forget a failed read, so the next request retries it
       this.entries = readLandscapeEntries(this.params).catch(error => {
@@ -105,7 +105,7 @@ export class LandscapeRegistry implements LandscapeListingService {
       .map(({ landscape, label, url, isDefault }) => ({
         landscape,
         label: label ?? landscape,
-        url: url ?? (hostedZone ? `https://${landscape}.${hostedZone}` : undefined),
+        url: url ?? (dashboardDomain ? `https://${landscape}.${dashboardDomain}` : undefined),
         isDefault: isDefault === true,
         current: landscape === currentLandscape
       }))

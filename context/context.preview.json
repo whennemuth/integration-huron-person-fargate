@@ -15,12 +15,12 @@
     "ORIGIN": {
       "originType": "function-url",
       "httpsPort": 443,
-      "subdomain": "preview.cssnprd.warhen.work",
+      "subdomain": "preview.person.huron.cssnprd.warhen.work",
       "appAuthorization": true
     },
     "DNS": {
       "hostedZone": "cssnprd.warhen.work",
-      "certificateARN": "arn:aws:acm:us-east-1:770203350335:certificate/92e2fb8b-8f1a-4368-8969-4bed1f96d516"
+      "certificateARN": "arn:aws:acm:us-east-1:770203350335:certificate/a86f025f-af63-4cca-a758-1b77e1f2e0e6"
     },
     "APP_LOGIN_HEADER": "SHIB-HANDLER",
     "APP_LOGOUT_HEADER": "SHIB-IDP-LOGOUT",
