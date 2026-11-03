@@ -6,9 +6,9 @@ A serverless dashboard for managing integration operations between BU CDM and Hu
 ## Repository Relationship Model
 
 The dashboard source lives in the `dashboard/` directory of the `integration-huron-person-fargate`
-repository (moved from the retired `integration-huron-person-dashboard` repository; see
-`docs/pan-landscape-data-exchange-plan.md`). It keeps its original internal layout (`lib/`,
-`src/`, `context/`, `templates/`, `public/`, `scripts/`) and shares fargate's `package.json`,
+repository (moved from the retired `integration-huron-person-dashboard` repository). It keeps its
+original internal layout (`lib/`, `src/`, `context/`, `templates/`, `public/`, `scripts/`) and
+shares fargate's `package.json`,
 `node_modules`, `tsconfig.json` and CDK app: fargate's `bin/App.ts` adds the landscape's dashboard
 stack (`dashboard/lib/DashboardStacks.ts`) next to the pipeline stack. All paths below are relative
 to `dashboard/`; npm scripts run from the fargate root.
@@ -257,6 +257,25 @@ pipeline harness's.
 DASHBOARD_SERVICE_PROVIDER_TASK=summary npx ts-node -r dotenv/config dashboard/src/services/ServiceProvider.ts
 ```
 
+- `src/ShibbolethSecret.ts` (`DASHBOARD_SHIBBOLETH_SECRET`) - the active landscape's `SHIBBOLETH.secret`, through
+  shibboleth-sp-at-edge's `SecretsManagerSecret`. `TASK`: `read` (which values exist; prints only the
+  public ones), `create` (SAML key and certificate copied from `SOURCE_SECRET_ARN` under that secret's
+  own field names, read from PEM files, or, with neither, generated with shibboleth-sp's `Keys` - the
+  IdP must then be given the printed certificate before sign-in works; a new JWT key pair; refuses to
+  replace an existing secret, since a new key pair ends every sign-in that shares it). The
+  `ShibbolethSecret` class is not part of the Lambda: only the edge functions read this secret at
+  runtime.
+  - **Secret names**: a name ending with `/<landscape>` (e.g. `shibsp/hp-dashboard/staging`) is that
+    landscape's own secret; any other (e.g. `shibsp/hp-dashboard`) is shared by the landscapes that
+    share a sign-in (`secretLandscapeOf()`). `create` tags the secret from the context's `TAGS`, with
+    `Landscape` only on a landscape's own secret, describes it accordingly, and creates it in the
+    context's `REGION` (default `us-east-1`). An existing secret is read in the region its ARN names,
+    as the edge functions read it.
+
+```bash
+DASHBOARD_SHIBBOLETH_SECRET_TASK=read npx ts-node -r dotenv/config dashboard/src/ShibbolethSecret.ts
+```
+
 ## CDK Deployment
 
 One dashboard stack per landscape, `${DASHBOARD.STACK_ID}-${landscape}` (e.g. `hp-dashboard-mock`),
@@ -291,7 +310,8 @@ npm run teardown-dashboard  # Destroy the dashboard and edge-lambda stacks (reru
 **Context Configuration:**
 - `../context/context*.json` `DASHBOARD` section - Infrastructure parameters
 - `context/IContext.ts` - Dashboard context types (`DashboardSettings`), including the optional
-  `LABEL` (picker label, default: the landscape) and `isDefault` (the default landscape)
+  `LABEL` (picker label, default: the landscape), `isDefault` (the default landscape) and
+  `sharedSignIn` (see "Shared sign-in" below)
 - Setting up the hosted zone and certificate, and which context keys take them: the fargate
   `README.md`, "Dashboard DNS and Certificates"
 
@@ -332,6 +352,27 @@ synth unless that first label is the landscape. The Lambda gets it as `DASHBOARD
   the Shibboleth construct applies; otherwise synth warns and leaves the record alone.
 - **Moving the default** removes the redirect from the old default's stack first (see "One
   default" above); the dashboard domain doesn't resolve until the new default deploys.
+
+### Shared sign-in
+
+`DASHBOARD.sharedSignIn` (authenticated mode only, default false) lets landscapes share one
+sign-in. `createDashboardStack()` passes the context through `applySharedSignIn()`
+(`lib/SharedSignIn.ts`), which sets `SHIBBOLETH.cookieDomain` to the dashboard domain and
+`SHIBBOLETH.cookieName` to `SHARED_SIGN_IN_COOKIE_NAME` (`hp-dashboard-auth`), before both the
+dashboard stack and the Shibboleth construct see it. shibboleth-sp-at-edge (2.1.0+) passes them to
+the edge functions, which set, clear and read the JWT cookie with them.
+- **The Lambda reads the same cookie**: `lib/FunctionUrl.ts` sets `AUTH_COOKIE_NAME` to
+  `SHIBBOLETH.cookieName` (default `JwtTools.COOKIE_NAME`), and `Authenticator.user`
+  (`src/services/Authentication.ts`) reads that cookie. Never read `JwtTools.COOKIE_NAME`
+  directly: a `sharedSignIn` landscape's browser may also hold an old host-only cookie under it.
+- **Without `sharedSignIn`** the cookie stays host-only under the default name, which must differ
+  from the shared name: the browser sends the shared cookie to every landscape under the dashboard
+  domain, and `parseCookieValue` takes whichever match comes first.
+- **Same key pair**: every `sharedSignIn` landscape must use the same JWT key pair
+  (`SHIBBOLETH.secret`). An isolated landscape needs its own pair as well as its own cookie.
+- **Synth fails** for `sharedSignIn` without `ORIGIN.subdomain`, with a context that also sets
+  `cookieName`/`cookieDomain`, or in public mode. Tests: `test/DashboardSharedSignIn.test.ts`.
+- Setting up a landscape: the fargate `README.md`, "Dashboard DNS and Certificates", step 4.
 
 ## Dependencies
 

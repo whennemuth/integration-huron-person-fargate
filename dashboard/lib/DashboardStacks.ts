@@ -6,6 +6,7 @@ import { assertLandscapeHostname } from './DashboardDomain';
 import { DefaultLandscapeRedirect, planDefaultLandscapeRedirect } from './DefaultLandscapeRedirect';
 import { landscapeResources } from './LandscapeResources';
 import { assertSingleDefaultLandscape } from './LandscapeRegistration';
+import { applySharedSignIn } from './SharedSignIn';
 import { AuthenticatedStack, PublicStack } from './Stack';
 
 export const getDashboardStackName = (context: LandscapeContext): string | undefined => {
@@ -49,12 +50,14 @@ export const createDashboardStack = async (app: cdk.App, landscapeContext: Lands
   }
 
   if (context.AUTHENTICATION_MODE === AuthenticationMode.AUTHENTICATED) {
+    // The Lambda (AUTH_COOKIE_NAME) and the edge functions must read the same cookie
+    const authContext = applySharedSignIn(context);
     const dashboardStack = new AuthenticatedStack({
-      scope: app, stackName, context, landscapeResources: resources, stackProps
+      scope: app, stackName, context: authContext, landscapeResources: resources, stackProps
     });
 
     // The Shibboleth construct fronts the function URL, so it needs the URL in its context
-    const shibContext: AuthenticatedContext = { ...context, ORIGIN: dashboardStack.modifiedContextOrigin };
+    const shibContext: AuthenticatedContext = { ...authContext, ORIGIN: dashboardStack.modifiedContextOrigin };
     await ShibbolethAtEdgeConstruct.getInstance({
       scope: dashboardStack,
       id: 'shibboleth-sp-at-edge',
@@ -67,6 +70,9 @@ export const createDashboardStack = async (app: cdk.App, landscapeContext: Lands
     return addRedirect(dashboardStack);
   }
 
+  if ('sharedSignIn' in context && context.sharedSignIn) {
+    throw new Error(`DASHBOARD.sharedSignIn needs AUTHENTICATION_MODE "${AuthenticationMode.AUTHENTICATED}": a public dashboard has no sign-in`);
+  }
   const publicContext: PublicContext = {
     ...(context as PublicContext),
     ORIGIN: context.ORIGIN ?? { originType: OriginType.FUNCTION_URL, httpsPort: 443, appAuthorization: false }

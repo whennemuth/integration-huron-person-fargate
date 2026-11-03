@@ -41,6 +41,14 @@ export type IContext =
  */
 export type AuthenticatedContext = CoreInfrastructureProperties & ShibSpContext & {
   AUTHENTICATION_MODE: AuthenticationMode.AUTHENTICATED;
+  /**
+   * Whether this landscape shares its sign-in with the other landscapes that set it (default:
+   * false). When true, synth sets SHIBBOLETH.cookieDomain to the dashboard domain and
+   * SHIBBOLETH.cookieName to SHARED_SIGN_IN_COOKIE_NAME (see dashboard/lib/SharedSignIn.ts), so one
+   * sign-in serves every such landscape until the token expires. When false, the landscape signs in
+   * on its own with a host-only cookie under the default name.
+   */
+  sharedSignIn?: boolean;
 };
 
 /**

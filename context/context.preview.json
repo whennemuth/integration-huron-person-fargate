@@ -12,6 +12,7 @@
   "DASHBOARD": {
     "STACK_ID": "hp-dashboard",
     "AUTHENTICATION_MODE": "authenticated",
+    "sharedSignIn": true,
     "ORIGIN": {
       "originType": "function-url",
       "httpsPort": 443,
@@ -30,12 +31,12 @@
       "entryPoint": "https://shib-test.bu.edu/idp/profile/SAML2/Redirect/SSO",
       "logoutUrl": "https://shib-test.bu.edu/idp/logout.jsp",
       "secret": {
-        "secretArn": "arn:aws:secretsmanager:us-east-2:770203350335:secret:shibsp/wp/devl1-PaxxjH",
+        "secretArn": "arn:aws:secretsmanager:us-east-2:770203350335:secret:shibsp/hp-dashboard-3PSb6M",
         "refreshInterval": "3600000",
-        "samlPrivateKeySecretFld": "wp-sp-key",
-        "samlCertSecretFld": "wp-sp-cert",
-        "jwtPrivateKeySecretFld": "wp-jwt-prikey",
-        "jwtPublicKeySecretFld": "wp-jwt-pubkey"
+        "samlPrivateKeySecretFld": "sp-key",
+        "samlCertSecretFld": "sp-cert",
+        "jwtPrivateKeySecretFld": "jwt-prikey",
+        "jwtPublicKeySecretFld": "jwt-pubkey"
       }
     },
     "LAMBDA_TIMEOUT_SECONDS": 180,

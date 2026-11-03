@@ -358,4 +358,24 @@ DASHBOARD_SERVICE_PROVIDER_SEARCH_TYPE=buid
 # preview: optional create | update | delete
 # DASHBOARD_SERVICE_PROVIDER_OPERATION=update
 # DASHBOARD_SERVICE_PROVIDER_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
+
+# ------- Harness Groups for dashboard\src\ShibbolethSecret.ts ------- #
+# Reads or creates the active landscape's dashboard Shibboleth secret (DASHBOARD.SHIBBOLETH.secret in context/context.json)
+# TASK options: read (which values exist; prints only the public ones) | create (fails if the secret exists)
+DASHBOARD_SHIBBOLETH_SECRET_TASK=read
+# create: the SAML key and certificate, copied from another secret under that secret's own field names...
+# DASHBOARD_SHIBBOLETH_SECRET_SOURCE_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
+# DASHBOARD_SHIBBOLETH_SECRET_SOURCE_SAML_PRIVATE_KEY_FLD=<field-name>
+# DASHBOARD_SHIBBOLETH_SECRET_SOURCE_SAML_CERT_FLD=<field-name>
+# ...or read from PEM files (used only when SOURCE_SECRET_ARN is not set)...
+# DASHBOARD_SHIBBOLETH_SECRET_SAML_PRIVATE_KEY_FILE=<path/to/sp-key.pem>
+# DASHBOARD_SHIBBOLETH_SECRET_SAML_CERT_FILE=<path/to/sp-cert.pem>
+# ...or, with none of these set, a new key and self-signed certificate. The IdP must be given the new certificate
+# for the entityId (the harness prints it) before sign-in works.
+# create, optional: the name (default: the name in secretArn without its random suffix) and the CloudFront challenge (default: random).
+# A name ending with "/<landscape>" (e.g. shibsp/hp-dashboard/staging) is that landscape's own secret, tagged with its landscape;
+# any other (e.g. shibsp/hp-dashboard) is shared by the landscapes that share a sign-in, and has no Landscape tag.
+# The other tags come from context.json TAGS, and the secret is created in its REGION (default us-east-1).
+# DASHBOARD_SHIBBOLETH_SECRET_SECRET_NAME=<secret-name>
+# DASHBOARD_SHIBBOLETH_SECRET_CLOUDFRONT_CHALLENGE=<challenge>
 ```

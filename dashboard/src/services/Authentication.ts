@@ -1,7 +1,8 @@
 import { APP_AUTHORIZATION_HEADER_NAME, JwtTools } from 'shibboleth-sp';
 import { LambdaFunctionUrlEvent, LambdaFunctionUrlResult } from '../handlers/DashboardTypes';
 
-const { APP_LOGIN_HEADER, APP_LOGOUT_HEADER, APP_AUTHORIZATION='false' } = process.env;
+// AUTH_COOKIE_NAME is the JWT cookie the edge functions set (shared by sharedSignIn landscapes)
+const { APP_LOGIN_HEADER, APP_LOGOUT_HEADER, APP_AUTHORIZATION='false', AUTH_COOKIE_NAME=JwtTools.COOKIE_NAME } = process.env;
 
 /**
  * Handles authentication logic for incoming requests.
@@ -100,7 +101,7 @@ export class Authenticator {
   }
 
   public get user(): any {
-    return this.getUserFromJwt(this._event.headers['cookie'], JwtTools.COOKIE_NAME);
+    return this.getUserFromJwt(this._event.headers['cookie'], AUTH_COOKIE_NAME);
   }
   public get event(): LambdaFunctionUrlEvent {
     return this._event;

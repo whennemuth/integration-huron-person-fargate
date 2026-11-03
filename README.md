@@ -231,6 +231,31 @@ leaves the record alone.
 dashboard (which removes the redirect and its record), then set `isDefault: true` on the new one
 and deploy it. The dashboard domain doesn't resolve for the few minutes in between.
 
+### 4. Sign-in shared across landscapes (optional)
+
+By default each landscape signs users in on its own: its token cookie is host-only, so signing in
+at staging doesn't sign the browser in at mock. Once BU's IdP session ends (it is much shorter than
+the token's 7 days), each landscape prompts again. To let landscapes share one sign-in, set
+`sharedSignIn` on each of them:
+
+```json
+"DASHBOARD": {
+  "sharedSignIn": true,
+  ...
+}
+```
+
+- Synth scopes the token cookie to the dashboard domain under one shared name
+  (`hp-dashboard-auth`), so a sign-in at any `sharedSignIn` landscape serves the others until the
+  token expires. Logout at any of them signs the browser out of all of them.
+- Every `sharedSignIn` landscape must use the same JWT key pair (the same `SHIBBOLETH.secret`),
+  or the others reject the token and send the user to sign in again.
+- A landscape without `sharedSignIn` keeps its own host-only cookie under the default name, so it
+  never reads the shared one. For real isolation, also give it a secret with its own JWT key pair:
+  with the shared pair, a shared token copied into its cookie would still verify.
+- `sharedSignIn` needs `ORIGIN.subdomain` and `AUTHENTICATION_MODE` `authenticated`, and can't be
+  combined with `SHIBBOLETH.cookieName` or `cookieDomain` in the context; synth fails otherwise.
+
 ## Test Harnesses
 
 Test harnesses are executable modules that verify individual components using environment-based configuration via the `TestEnvironment` utility from `integration-core`. Each harness loads its own prefixed environment variables and validates component behavior in isolation.
@@ -242,7 +267,7 @@ Harness configuration is documented in [example-env.md](./example-env.md). The f
 - **Post-processing Pipeline**: `DeferredDeleteHandler`, `PersonCache`, `StatisticsTable`
 - **Docker Entry Points**: `chunker.ts`, `processor.ts`, `post-processor.ts`
 - **Storage & Error Handling**: `S3StorageAdapter`, `ApiErrorTracking`, `EcrChecker`
-- **Dashboard**: `ServiceProvider` (`dashboard/src/services/ServiceProvider.ts` - the dashboard's services, called as its handler calls them: run reporting, landscape registry, person lookup and sync preview)
+- **Dashboard**: `ServiceProvider` (`dashboard/src/services/ServiceProvider.ts` - the dashboard's services, called as its handler calls them: run reporting, landscape registry, person lookup and sync preview), `ShibbolethSecret` (`dashboard/src/ShibbolethSecret.ts` - reads or creates the dashboard's Shibboleth secret)
 
 ### Running Test Harnesses
 
@@ -270,6 +295,9 @@ npx ts-node docker/chunker.ts
 
 # Example: Run the dashboard ServiceProvider harness (DASHBOARD_SERVICE_PROVIDER_TASK=runs, summary, landscapes, ...)
 npx ts-node dashboard/src/services/ServiceProvider.ts
+
+# Example: Run the dashboard ShibbolethSecret harness (DASHBOARD_SHIBBOLETH_SECRET_TASK=read or create)
+npx ts-node dashboard/src/ShibbolethSecret.ts
 ```
 
 For detailed documentation on the Runner harness, see [src/CLAUDE.md](./src/CLAUDE.md).

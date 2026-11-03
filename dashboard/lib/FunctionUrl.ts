@@ -9,6 +9,7 @@ import { StringParameter } from "aws-cdk-lib/aws-ssm";
 import { PolicyStatement, Effect } from "aws-cdk-lib/aws-iam";
 import { Construct } from "constructs";
 import { join } from "path";
+import { JwtTools } from "shibboleth-sp";
 import { AuthenticatedContext, AuthenticationMode, IContext } from "../context/IContext";
 import { CACHE_SECRET } from "../src/handlers/DashboardCache";
 import { LandscapeResources } from "./LandscapeResources";
@@ -54,16 +55,19 @@ export class FunctionUrlOrigin {
     // Add authentication-related environment variables if applicable
     if(AUTHENTICATION_MODE === AuthenticationMode.AUTHENTICATED) {
       const {
-        ORIGIN: { appAuthorization=true } = {}, 
-        APP_LOGIN_HEADER, 
-        APP_LOGOUT_HEADER
+        ORIGIN: { appAuthorization=true } = {},
+        APP_LOGIN_HEADER,
+        APP_LOGOUT_HEADER,
+        SHIBBOLETH: { cookieName }
       } = context as AuthenticatedContext;
       const APP_AUTHORIZATION = appAuthorization;
       environment = {
         ...environment,
         APP_AUTHORIZATION,
-        APP_LOGIN_HEADER, 
-        APP_LOGOUT_HEADER
+        APP_LOGIN_HEADER,
+        APP_LOGOUT_HEADER,
+        // The JWT cookie the edge functions set (see lib/SharedSignIn.ts)
+        AUTH_COOKIE_NAME: cookieName || JwtTools.COOKIE_NAME
       };
     }
 

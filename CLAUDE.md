@@ -559,9 +559,9 @@ Defines infrastructure parameters (VPC, subnet, image URIs, etc.) per deployment
 **Harness Testing**: Use Runner harness (`src/Runner.ts`) to validate chunking orchestration before deployment
 
 ### Landscape Dashboard Stack
-The dashboard (`dashboard/`, see `dashboard/CLAUDE.md` and `docs/pan-landscape-data-exchange-plan.md`)
-is a second stack in this CDK app: `bin/App.ts` calls `createDashboardStack()` when the context has a
-`DASHBOARD` section, creating `${DASHBOARD.STACK_ID}-${landscape}` (`hp-dashboard-<landscape>`, at
+The dashboard (`dashboard/`, see `dashboard/CLAUDE.md`) is a second stack in this CDK app:
+`bin/App.ts` calls `createDashboardStack()` when the context has a `DASHBOARD` section, creating
+`${DASHBOARD.STACK_ID}-${landscape}` (`hp-dashboard-<landscape>`, at
 `<landscape>.person.huron.cssnprd.warhen.work`; the default landscape's stack also redirects
 `person.huron.cssnprd.warhen.work` to it). It shares no CloudFormation exports with the pipeline
 stack: it reads the landscape's config secret, tables and chunks bucket by the same deterministic
