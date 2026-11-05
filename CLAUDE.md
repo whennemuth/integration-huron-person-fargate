@@ -568,7 +568,9 @@ stack: it reads the landscape's config secret, tables and chunks bucket by the s
 names (`integrationSecretName()`, `dashboard/lib/LandscapeResources.ts`). `npm run deploy` deploys
 every stack (`--all`); `deploy-fargate` / `deploy-dashboard` deploy one. All run `bin/deploy.sh`,
 which synthesizes once and dumps each deployed stack's template to
-`cdk.out/synth.output.<fargate|dashboard>.yaml` from the cloud assembly (`cdk synth --app cdk.out -e`).
+`cdk.out/synth.output.<fargate|dashboard>.yaml` from the cloud assembly (`cdk synth --app cdk.out -e`),
+and after a deploy that includes the dashboard, deletes the Lambda@Edge versions earlier deploys left
+behind (see "Old Lambda@Edge versions" in `dashboard/CLAUDE.md`).
 `teardown` / `teardown-fargate` / `teardown-dashboard` mirror them. Every synth still synthesizes both, so it needs AWS
 credentials (the Shibboleth construct reads its secret, the certificate and Route 53 at synth, and
 the default landscape's redirect checks its certificate and record the same way) and

@@ -330,7 +330,20 @@ characters: the Shibboleth construct names a bucket `<stack name>-context-config
 npm run deploy-dashboard    # Deploy the dashboard stack (and its edge-lambda stack); template in cdk.out/synth.output.dashboard.yaml
 npm run dashboard:synth     # Generate CloudFormation template
 npm run teardown-dashboard  # Destroy the dashboard and edge-lambda stacks (rerun later if Lambda@Edge replicas block the edge stack)
+npm run -s dashboard:prune-edge-versions [-- --dryrun]  # Delete edge function versions earlier deploys left behind
 ```
+
+**Old Lambda@Edge versions:** a deploy that changes an edge function (its code, or a `SHIBBOLETH`
+setting the construct bakes into the bundle's `edge-context.json`, such as `logoutUrl`) publishes a
+new version, and logs `DELETE_FAILED (skipped)` for the version it replaced: Lambda refuses to
+delete it until CloudFront has removed its replicas, hours later. This is expected; the deploy
+succeeds. `bin/deploy.sh` then runs `scripts/PruneEdgeVersions.ts` after every deploy that includes
+the dashboard stack. It calls shibboleth-sp-at-edge's (2.2.0+) `pruneEdgeLambdaVersions`, which
+deletes versions older than the ones the distribution uses and never changes the distribution; a
+version still replicated is left for the next deploy's run. It skips a dashboard without edge
+functions (public mode), and never fails the deploy. Don't use the package's
+`deleteEdgeLambdaVersions` for this: it is a teardown tool that removes the edge functions from the
+distribution first.
 
 **Context Configuration:**
 - `../context/context*.json` `DASHBOARD` section - Infrastructure parameters

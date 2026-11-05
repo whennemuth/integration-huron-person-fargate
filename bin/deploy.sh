@@ -61,6 +61,13 @@ case "$target" in
   dashboard) cdk deploy --app cdk.out "$dashboard_stack" --no-rollback --require-approval never ;;
 esac
 
+# A deploy that changes an edge function logs "DELETE_FAILED (skipped)" for the versions it replaced (still
+# replicated by CloudFront) and leaves them behind. Delete what earlier deploys left; never fails the deploy.
+if [ "$target" != "fargate" ] && [ -n "$dashboard_stack" ] ; then
+  echo -e "${GREEN}Step 4: Pruning old Lambda@Edge versions...${NC}"
+  npm run -s dashboard:prune-edge-versions || echo -e "${YELLOW}Pruning old Lambda@Edge versions failed; the deploy is unaffected.${NC}"
+fi
+
 echo ""
 echo -e "${GREEN}=== Deployment Complete! ===${NC}"
 echo ""

@@ -45,7 +45,8 @@
     "dashboard:dev:signed-in:mocks": "npm run dashboard:build:templates && ts-node dashboard/scripts/LocalLaunch.ts --signed-in --mocks",
     "dashboard:get-stack-name": "ts-node -e \"require('./dashboard/lib/DashboardStacks.ts').echoDashboardStackName()\"",
     "dashboard:synth": "npm run dashboard:build:templates && npm run -s dashboard:get-stack-name | xargs cdk synth",
-    "dashboard:publish-dev": "sh dashboard/bin/publish-to-bucket.sh"
+    "dashboard:publish-dev": "sh dashboard/bin/publish-to-bucket.sh",
+    "dashboard:prune-edge-versions": "ts-node dashboard/scripts/PruneEdgeVersions.ts"
   },
   "devDependencies": {
     "@smithy/util-stream": "^3.0.0",
@@ -92,6 +93,6 @@
     "@aws-sdk/client-route-53": "^3.1158.0",
     "express": "^4.22.3",
     "mustache": "^4.2.0",
-    "shibboleth-sp-at-edge": "https://simple-npm-package-bucket.s3.us-east-1.amazonaws.com/shibboleth-sp-at-edge/shibboleth-sp-at-edge-2.1.1.tgz"
+    "shibboleth-sp-at-edge": "https://simple-npm-package-bucket.s3.us-east-1.amazonaws.com/shibboleth-sp-at-edge/shibboleth-sp-at-edge-2.2.0.tgz"
   }
 }
