@@ -43,9 +43,10 @@ export class ServiceProvider {
   private static landscapeListing?: LandscapeListingService;
   
   /**
-   * Determine if we should use mock implementations
+   * Determine if we should use mock implementations. The mocks ignore the integration config, so
+   * callers that only read it to hand to a service can skip reading it when this is true.
    */
-  private static shouldUseMocks(): boolean {
+  static shouldUseMocks(): boolean {
     // In Lambda environment, always use concrete implementations
     if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
       return false;
@@ -204,7 +205,7 @@ if (require.main === module) {
     };
     const page = () => ({ limit: optionalNumber('LIMIT'), cursor: testEnvironment.getVar('CURSOR') });
     // The mocks ignore the config, so don't load it (no Secrets Manager or file access)
-    const config = async (): Promise<Config> => process.env.LOCALHOST_WITH_MOCKS === 'true' ? {} as Config : getConfig();
+    const config = async (): Promise<Config> => ServiceProvider.shouldUseMocks() ? {} as Config : getConfig();
 
     switch (task) {
       case 'capabilities':

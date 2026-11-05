@@ -161,4 +161,33 @@ describe('Dashboard routes with mock services (LOCALHOST_WITH_MOCKS)', () => {
     });
     expect(await request('/api/landscapes')).toMatchObject({ status: 200, body: { current: 'local' } });
   });
+
+  it('serves the person and bulk sync routes from the mocks without reading the config secret', async () => {
+    const savedArn = process.env.INTEGRATION_SECRETS_ARN;
+    delete process.env.INTEGRATION_SECRETS_ARN;
+    const post = async (path: string, body: any) => {
+      const result = await handler({
+        rawPath: path,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        requestContext: { http: { method: 'POST', path } },
+        isBase64Encoded: false
+      } as unknown as LambdaFunctionUrlEvent);
+      return { status: result.statusCode, body: JSON.parse(`${result.body}`) };
+    };
+    try {
+      expect(await post('/api/person-lookup', { personId: 'U1234567', system: 'source' }))
+        .toMatchObject({ status: 200, body: { personId: 'U1234567', sourceData: [{ name: 'John Doe' }] } });
+      expect(await post('/api/person-sync/preview', { personId: 'U1234567', operation: 'update' }))
+        .toMatchObject({ status: 200, body: { operation: 'update' } });
+      expect(await post('/api/person-sync/preview-experiment', { personId: 'U1234567', personJson: '{}' }))
+        .toMatchObject({ status: 200, body: { data: { personId: 'U1234567' } } });
+      expect(await post('/api/person-sync', { personId: 'U1234567', operation: 'update' }))
+        .toMatchObject({ status: 200, body: { personId: 'U1234567', status: 'success' } });
+      expect(await post('/api/bulk-sync', { operation: 'full' }))
+        .toMatchObject({ status: 200, body: { operation: 'full', status: 'started' } });
+    } finally {
+      if (savedArn !== undefined) process.env.INTEGRATION_SECRETS_ARN = savedArn;
+    }
+  });
 });

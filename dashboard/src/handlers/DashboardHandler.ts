@@ -11,10 +11,19 @@ import { LandscapeListing, PersonSyncResult } from '../services/ServiceTypes';
 import { buildNavigationBar } from './NavigationBar';
 import { areTheSame } from '../Utils';
 import { ChangeType, ReportingError } from '../../../src/reporting/RunReporting';
+import { Config } from 'integration-huron-person';
 
 // import { ConfigManager } from 'integration-huron-person';
 
 let cache: DashboardCache = new DashboardCache();
+
+/**
+ * The integration config for the person and bulk sync services. The mock services ignore it, so
+ * none is read when they're in use: running locally with mocks needs no config secret.
+ */
+async function serviceConfiguration(cache: DashboardCache): Promise<Config> {
+  return ServiceProvider.shouldUseMocks() ? {} as Config : cache.getConfiguration();
+}
 
 /**
  * Lambda event handler for the Integration Dashboard
@@ -209,8 +218,8 @@ async function handlePersonLookup(params: { requestBody: string | null, cache: D
       return createResponse(400, 'application/json', JSON.stringify({ error: 'personId is required' }));
     }
 
-    const config = await cache.getConfiguration();
-    if (config.dataSource.person) {
+    const config = await serviceConfiguration(cache);
+    if (config.dataSource?.person) {
       // Remove fieldsOfInterest from config before passing to service, as it will interfere with 
       // getting a full person from the lookup, where we don't want any fields to be filtered out.
       delete config.dataSource.person.fieldsOfInterest;
@@ -267,7 +276,7 @@ async function handlePersonSyncPreview(params: { requestBody: string | null, cac
       crudOperation = operation as CrudOperation;
     }
 
-    const config = await cache.getConfiguration();
+    const config = await serviceConfiguration(cache);
     const personSyncService = ServiceProvider.getPersonSyncService(config);
     const pushRequest = await personSyncService.preview(buid, crudOperation);
     return createResponse(200, 'application/json', JSON.stringify(pushRequest));
@@ -317,7 +326,7 @@ async function handlePersonSyncPreviewExperiment(params: { requestBody: string |
       }));
     }
 
-    const config = await cache.getConfiguration();
+    const config = await serviceConfiguration(cache);
     const personSyncService = ServiceProvider.getPersonSyncService(config);
     const pushRequest = await personSyncService.previewExperiment(buid, [ parsedPerson ]);
     return createResponse(200, 'application/json', JSON.stringify(pushRequest));
@@ -350,7 +359,7 @@ async function handlePersonSync(params: { requestBody: string | null, cache: Das
     }
     
     const crudOperation = operation as CrudOperation;
-    const config = await cache.getConfiguration();
+    const config = await serviceConfiguration(cache);
     const personSyncService = ServiceProvider.getPersonSyncService(config);
     const syncResult: PersonSyncResult = await personSyncService.sync(personId, crudOperation, hrn);
     if(!areTheSame(syncResult.status, Status.SUCCESS)) {
@@ -383,7 +392,7 @@ async function handleBulkSync(params: { requestBody: string | null, cache: Dashb
     const { operation, batchSize, filters } = JSON.parse(requestBody);
     
     // TODO: Implement actual bulk sync
-    const config = await cache.getConfiguration();
+    const config = await serviceConfiguration(cache);
     const bulkSyncService = ServiceProvider.getBulkSyncService(config);
     const mockResult = await bulkSyncService.start(operation, batchSize, filters);
 

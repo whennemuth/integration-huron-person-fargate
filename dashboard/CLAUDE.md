@@ -189,13 +189,17 @@ const personSync = provider.getPersonSyncService();
 ### Mock Services for Local Development
 **Location**: `src/handlers/DashboardMocks.ts`
 
-Provides mock implementations when `LOCALHOST_WITH_MOCKS=true`:
+Provides mock implementations when `LOCALHOST_WITH_MOCKS=true` (ignored in Lambda):
 - Mock BU CDM data source responses
 - Mock Huron data target operations
 - Simulated sync execution
 - Fake history and status data
+- Fake run reports and a fake landscape registry ("local", plus `mock` and `Staging` at
+  example.com urls). This `mock` is unrelated to the deployed mock landscape.
 
-**Benefit**: Enables full local testing without AWS credentials or external service access
+**Benefit**: Enables full local testing without AWS credentials or external service access. The
+mocks ignore the integration config, so the person and bulk sync routes don't read it when they
+are in use (`serviceConfiguration()` in `DashboardHandler.ts`): no config secret is needed.
 
 ### Template Service Pattern
 **Location**: `src/services/TemplateService.ts`
