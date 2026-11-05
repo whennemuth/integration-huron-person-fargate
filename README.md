@@ -309,7 +309,7 @@ For detailed documentation on the Runner harness, see [src/CLAUDE.md](./src/CLAU
 * `npm run test`    perform the jest unit tests
 * `npm run deploy`  deploy every stack (pipeline, and the landscape's dashboard if the context has a `DASHBOARD` section)
 * `npm run deploy-fargate` / `npm run deploy-dashboard`  deploy one stack (pipeline first: the dashboard reads its resources)
-* `npm run teardown` / `teardown-fargate` / `teardown-dashboard`  destroy every stack / one stack
+* `npm run teardown` / `teardown-fargate` / `teardown-dashboard`  destroy every stack / one stack (`bin/teardown.sh`; tearing down the dashboard can take a few hours while CloudFront removes its Lambda@Edge replicas, and is safe to rerun)
 * `npx cdk diff --all`    compare deployed stacks with current state
 * `npm run synth`   emits the pipeline stack's CloudFormation template
 

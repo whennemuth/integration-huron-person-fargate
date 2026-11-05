@@ -329,7 +329,7 @@ characters: the Shibboleth construct names a bucket `<stack name>-context-config
 ```bash
 npm run deploy-dashboard    # Deploy the dashboard stack (and its edge-lambda stack); template in cdk.out/synth.output.dashboard.yaml
 npm run dashboard:synth     # Generate CloudFormation template
-npm run teardown-dashboard  # Destroy the dashboard and edge-lambda stacks (rerun later if Lambda@Edge replicas block the edge stack)
+npm run teardown-dashboard  # Destroy the dashboard and edge-lambda stacks (see "Teardown" below; can take hours)
 npm run -s dashboard:prune-edge-versions [-- --dryrun]  # Delete edge function versions earlier deploys left behind
 ```
 
@@ -344,6 +344,23 @@ version still replicated is left for the next deploy's run. It skips a dashboard
 functions (public mode), and never fails the deploy. Don't use the package's
 `deleteEdgeLambdaVersions` for this: it is a teardown tool that removes the edge functions from the
 distribution first.
+
+**Teardown:** `teardown` / `teardown-dashboard` run `bin/teardown.sh`, which destroys the dashboard
+in three steps, because Lambda won't delete an edge function while CloudFront still holds replicas
+of it, and CloudFront removes them only hours after the distribution is deleted:
+1. Destroy the dashboard stack, which deletes the distribution.
+2. `scripts/DeleteEdgeVersions.ts` (`npm run -s dashboard:delete-edge-versions`) calls the package's
+   `deleteEdgeLambdaVersions`, which deletes every version of the three edge functions, retrying
+   each until its replicas are gone (up to about two hours per version).
+3. Destroy the edge-lambda stack.
+
+Steps 2 and 3 run only for an authenticated dashboard (the only kind with an edge-lambda stack).
+Step 2 must never run while the distribution exists: `deleteEdgeLambdaVersions` first removes the
+edge functions from the distribution, and the Lambda trusts every request that reaches it to have
+been signed in by them (`Authenticator.isAuthenticated`), so a live dashboard would be open to
+anyone. The script refuses if it finds the landscape's distribution, and the shell script runs it
+only after step 1 succeeds. A failed step stops the teardown; rerunning it is safe, since
+destroying a stack that's already gone does nothing.
 
 **Context Configuration:**
 - `../context/context*.json` `DASHBOARD` section - Infrastructure parameters

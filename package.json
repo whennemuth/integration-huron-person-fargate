@@ -16,10 +16,10 @@
     "deploy": "sh bin/deploy.sh all",
     "deploy-fargate": "sh bin/deploy.sh fargate",
     "deploy-dashboard": "sh bin/deploy.sh dashboard",
-    "redeploy": "cdk destroy --all -f && npm run deploy",
-    "teardown": "cdk destroy --all -f",
-    "teardown-fargate": "npm run -s get-stack-name | xargs cdk destroy -f",
-    "teardown-dashboard": "npm run -s dashboard:get-stack-name | xargs -I{} cdk destroy -f {} 'edge-lambda-stack-*'",
+    "redeploy": "npm run teardown && npm run deploy",
+    "teardown": "sh bin/teardown.sh all",
+    "teardown-fargate": "sh bin/teardown.sh fargate",
+    "teardown-dashboard": "sh bin/teardown.sh dashboard",
     "npm-clean": "npm cache clean --force",
     "uninstall-tgz": "npm uninstall integration-huron-person",
     "install-tgz": "npm install --force integration-huron-person https://simple-npm-package-bucket.s3.us-east-1.amazonaws.com/dynamodb/integration-huron-person-1.0.0.tgz",
@@ -46,7 +46,8 @@
     "dashboard:get-stack-name": "ts-node -e \"require('./dashboard/lib/DashboardStacks.ts').echoDashboardStackName()\"",
     "dashboard:synth": "npm run dashboard:build:templates && npm run -s dashboard:get-stack-name | xargs cdk synth",
     "dashboard:publish-dev": "sh dashboard/bin/publish-to-bucket.sh",
-    "dashboard:prune-edge-versions": "ts-node dashboard/scripts/PruneEdgeVersions.ts"
+    "dashboard:prune-edge-versions": "ts-node dashboard/scripts/PruneEdgeVersions.ts",
+    "dashboard:delete-edge-versions": "ts-node dashboard/scripts/DeleteEdgeVersions.ts"
   },
   "devDependencies": {
     "@smithy/util-stream": "^3.0.0",
