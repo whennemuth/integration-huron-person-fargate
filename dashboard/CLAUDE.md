@@ -231,7 +231,27 @@ npm install
 npm run dashboard:build:templates  # Build Mustache templates with inline assets
 npm run dashboard:dev              # Start local server at http://localhost:3000/dashboard
 npm run dashboard:dev:watch        # Watch mode with hot reload
+npm run dashboard:dev:signed-in    # As a signed-in landscape shows it (see below)
+npm run dashboard:dev:signed-in:mocks  # The same with the mock services: no AWS access
 ```
+
+`dashboard:dev` loads no `.env` and sets no app login/logout headers, so it runs in public mode
+with no landscape navigator (no region to read the registry with) and no sign-out control.
+The two `signed-in` scripts build the templates, then run `dashboard/scripts/LocalLaunch.ts`
+(`--signed-in`, plus `--mocks` for the second), which sets the environment and then loads
+`LocalServer.ts`. It always sets `NODE_ENV=development`; its variables take precedence over `.env`.
+- `--signed-in` sets placeholder `APP_LOGIN_HEADER`/`APP_LOGOUT_HEADER` names, which turn off
+  public mode and so show the sign-out control.
+- Without `--mocks` it loads `.env` (dotenv), which supplies `AWS_PROFILE`, `REGION` and
+  `LANDSCAPE`: the navigator lists the real registry and selects `LANDSCAPE` (it is left out if the
+  registry can't be read, e.g. with an expired AWS session).
+- `--mocks` sets `LOCALHOST_WITH_MOCKS=true` and skips `.env`: the navigator lists the mock
+  registry's made-up landscapes.
+
+Neither shows a user name (no JWT cookie on localhost), and `/logout` is a 404 there: only the
+edge functions answer it. The launcher sets the variables itself, rather than the npm script
+doing it with `VAR=value` or calling a shell script, so it runs from any shell: npm runs scripts
+in `cmd.exe` on Windows, where neither works (`sh` is on the `PATH` only inside Git Bash).
 
 **Environment Variables:**
 - `NODE_ENV=development` - Enables local mode, bypasses origin verification

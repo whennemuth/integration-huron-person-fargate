@@ -41,6 +41,8 @@
     "dashboard:build:templates": "ts-node dashboard/scripts/BuildTemplates.ts",
     "dashboard:dev": "npm run dashboard:build:templates && ts-node dashboard/src/LocalServer.ts",
     "dashboard:dev:watch": "npm run dashboard:build:templates && nodemon --watch dashboard --exec ts-node --transpile-only dashboard/src/LocalServer.ts",
+    "dashboard:dev:signed-in": "npm run dashboard:build:templates && ts-node dashboard/scripts/LocalLaunch.ts --signed-in",
+    "dashboard:dev:signed-in:mocks": "npm run dashboard:build:templates && ts-node dashboard/scripts/LocalLaunch.ts --signed-in --mocks",
     "dashboard:get-stack-name": "ts-node -e \"require('./dashboard/lib/DashboardStacks.ts').echoDashboardStackName()\"",
     "dashboard:synth": "npm run dashboard:build:templates && npm run -s dashboard:get-stack-name | xargs cdk synth",
     "dashboard:publish-dev": "sh dashboard/bin/publish-to-bucket.sh"
