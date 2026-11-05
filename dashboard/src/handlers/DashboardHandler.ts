@@ -156,7 +156,6 @@ async function renderDashboard(request: Request, activeTab?: string): Promise<La
       bulkActive: activeTab === 'bulk',
       historyActive: activeTab === 'history',
       systemActive: activeTab === 'system',
-      currentTime: new Date().toISOString(),
       ...navigationBar,
       cssAssets,
       jsAssets
@@ -190,7 +189,6 @@ async function renderLoginPage(): Promise<LambdaFunctionUrlResult> {
     
     const data = {
       title: 'Integration Dashboard - Boston University Person → Huron',
-      currentTime: new Date().toISOString(),
       cssAssets
     };
     
