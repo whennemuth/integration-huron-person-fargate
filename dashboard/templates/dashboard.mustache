@@ -75,6 +75,30 @@
                     <i class="fas fa-clock me-1"></i>
                     {{currentTime}}
                 </span>
+                {{#landscapeNavigator}}
+                <div class="d-flex align-items-center ms-4">
+                    <label for="landscapeNavigator" class="text-white me-2 text-nowrap">
+                        <i class="fas fa-layer-group me-1"></i>Landscape
+                    </label>
+                    <select id="landscapeNavigator" class="form-select form-select-sm landscape-navigator" aria-label="Go to another landscape's dashboard">
+                        {{#options}}
+                        <option value="{{url}}" {{#selected}}selected{{/selected}} {{#disabled}}disabled{{/disabled}}>{{label}}</option>
+                        {{/options}}
+                    </select>
+                </div>
+                {{/landscapeNavigator}}
+                {{#signOut}}
+                <div class="d-flex align-items-center ms-4">
+                    {{#user}}
+                    <span class="navbar-text text-white me-2 text-nowrap">
+                        <i class="fas fa-user me-1"></i>{{user}}
+                    </span>
+                    {{/user}}
+                    <a href="{{url}}" class="btn btn-outline-light btn-sm text-nowrap" title="Sign out of every landscape's dashboard">
+                        <i class="fas fa-sign-out-alt me-1"></i>Sign out
+                    </a>
+                </div>
+                {{/signOut}}
             </div>
         </div>
     </nav>

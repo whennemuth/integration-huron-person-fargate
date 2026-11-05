@@ -23,6 +23,16 @@ window.addEventListener('load', function() {
     
     // Initialize mapping experiment form
     mappingExperimentCard.renderForm();
+
+    // Landscape navigator: go to the chosen landscape's dashboard
+    const landscapeNavigator = document.getElementById('landscapeNavigator');
+    if (landscapeNavigator) {
+        landscapeNavigator.addEventListener('change', function() {
+            if (this.value) {
+                window.location.assign(this.value);
+            }
+        });
+    }
     
     // Add event listener for experiment preview button
     const experimentPreviewBtn = document.getElementById('experimentPreviewBtn');
@@ -530,3 +540,11 @@ function refreshHistory() {
     document.getElementById('historyContent').innerHTML = '<div class="text-center"><div class="spinner-border text-primary"></div></div>';
     loadHistory();
 }
+// Coming back to this page from the browser's history shows the landscape it was left for:
+// select this landscape again
+window.addEventListener('pageshow', function() {
+    const landscapeNavigator = document.getElementById('landscapeNavigator');
+    if (landscapeNavigator) {
+        Array.from(landscapeNavigator.options).forEach(option => option.selected = option.defaultSelected);
+    }
+});

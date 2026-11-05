@@ -27,6 +27,10 @@ export class Request {
   public get user(): any {
     return this.authenticator.user;
   }
+  /** False in public mode, where the edge functions sign no one in */
+  public get signInRequired(): boolean {
+    return !this.authenticator.isPublicAccess;
+  }
   public get queryParams(): { [key: string]: string } {
     return this.event.queryStringParameters || {};
   }

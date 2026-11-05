@@ -7,7 +7,8 @@ import { DashboardCache } from './DashboardCache';
 import { LambdaFunctionUrlEvent, LambdaFunctionUrlResult } from './DashboardTypes';
 import { OriginHeader } from './OriginVerification';
 import { CrudOperation, Status } from 'integration-core';
-import { PersonSyncResult } from '../services/ServiceTypes';
+import { LandscapeListing, PersonSyncResult } from '../services/ServiceTypes';
+import { buildNavigationBar } from './NavigationBar';
 import { areTheSame } from '../Utils';
 import { ChangeType, ReportingError } from '../../../src/reporting/RunReporting';
 
@@ -51,7 +52,7 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
           }}
 
         }
-        return await renderDashboard(queryParams.tab);
+        return await renderDashboard(request, queryParams.tab);
 
       case '/login-page':
         if(request.isAuthenticated) {
@@ -119,8 +120,13 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
 /**
  * Render the main dashboard HTML with tabs
  */
-async function renderDashboard(activeTab?: string): Promise<LambdaFunctionUrlResult> {
+async function renderDashboard(request: Request, activeTab?: string): Promise<LambdaFunctionUrlResult> {
   try {
+    const navigationBar = buildNavigationBar({
+      listing: await landscapeListingOrNone(),
+      signInRequired: request.signInRequired,
+      user: request.user
+    });
     const template = TemplateService.getDashboardTemplate();
     const partials = TemplateService.getPartials();
     const cssAssets = TemplateService.getCssAssets();
@@ -142,6 +148,7 @@ async function renderDashboard(activeTab?: string): Promise<LambdaFunctionUrlRes
       historyActive: activeTab === 'history',
       systemActive: activeTab === 'system',
       currentTime: new Date().toISOString(),
+      ...navigationBar,
       cssAssets,
       jsAssets
     };
@@ -151,6 +158,19 @@ async function renderDashboard(activeTab?: string): Promise<LambdaFunctionUrlRes
   } catch (error) {
     console.error('Error rendering dashboard:', error);
     return createResponse(500, 'text/html', '<h1>Error Loading Dashboard</h1>');
+  }
+}
+
+/**
+ * The registry's landscapes for the navigator (cached by the LandscapeRegistry for the life of the
+ * Lambda instance), or none if it can't be read: the dashboard renders without the navigator.
+ */
+async function landscapeListingOrNone(): Promise<LandscapeListing | undefined> {
+  try {
+    return await ServiceProvider.getLandscapeListingService().getLandscapes();
+  } catch (error) {
+    console.error('Error listing landscapes for the navigator:', error);
+    return undefined;
   }
 }
 

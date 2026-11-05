@@ -159,7 +159,8 @@ through fargate's `src/reporting/RunReporting.ts`; GET only, no `landscape` para
 
 **Landscape picker data:**
 - `GET /api/landscapes` - `{ current, landscapes: [{ landscape, label, url?, isDefault, current }] }`
-  from the landscape registry (see "Landscape registry" below)
+  from the landscape registry (see "Landscape registry" below). The dashboard page's own
+  navigator doesn't call it (see "Navigation bar" below)
 
 ## Key Patterns
 
@@ -373,6 +374,23 @@ the edge functions, which set, clear and read the JWT cookie with them.
 - **Synth fails** for `sharedSignIn` without `ORIGIN.subdomain`, with a context that also sets
   `cookieName`/`cookieDomain`, or in public mode. Tests: `test/DashboardSharedSignIn.test.ts`.
 - Setting up a landscape: the fargate `README.md`, "Dashboard DNS and Certificates", step 4.
+
+### Navigation bar
+
+`renderDashboard()` builds the navbar's data with `buildNavigationBar()` (`src/handlers/NavigationBar.ts`).
+Tests: `test/DashboardNavigation.test.ts`.
+- **Landscape navigator**: a select over the landscape registry, rendered server-side from the
+  `LandscapeRegistry`'s per-instance cache (no SSM read per page, and no `/api/landscapes` call
+  from the page), with this landscape selected. Choosing one sends the browser to its `url`
+  (`public/js/dashboard.js`). An entry without a `url` is listed but disabled. When the registry
+  doesn't list this landscape (e.g. run locally), it's added, selected. If the registry can't be
+  read, the page renders without the navigator.
+- **Sign-out**: a link to `SIGN_OUT_PATH` (`/logout`), shown unless the dashboard is public. The
+  edge functions answer `/logout` themselves, so the Lambda never sees it: they expire the JWT
+  cookie (with its Domain, so with `sharedSignIn` every landscape is signed out), then redirect to
+  `/logout?target=idp`, which sends the browser to `SHIBBOLETH.logoutUrl` to end the IdP session.
+  The browser ends on the IdP's page. The navbar also shows the JWT's `eduPersonPrincipalName`
+  (else `buPrincipal`).
 
 ## Dependencies
 

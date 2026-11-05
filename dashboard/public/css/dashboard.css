@@ -129,3 +129,8 @@
     width: 1rem;
     height: 1rem;
 }
+/* Landscape navigator (navbar) */
+.landscape-navigator {
+    width: auto;
+    min-width: 10rem;
+}
