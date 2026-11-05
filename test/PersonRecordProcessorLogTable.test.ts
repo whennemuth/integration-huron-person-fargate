@@ -20,16 +20,16 @@ describe('PersonRecordProcessorLogTable', () => {
   });
 
   it('exposes the shared partition/sort key names', () => {
-    expect(DYNAMODB_PARTITION_KEY).toBe('customization');
+    expect(DYNAMODB_PARTITION_KEY).toBe('addon');
     expect(DYNAMODB_SORT_KEY).toBe('sortKey');
   });
 
-  it('writes an item keyed by customization/sortKey with a generic data blob', async () => {
+  it('writes an item keyed by addon/sortKey with a generic data blob', async () => {
     await logTable.putEntry('OrgComparisonLogging', 'U12345', { personid: 'U12345', primaryOrg: 'A', secondaryOrg: 'B' });
 
     expect(putItem).toHaveBeenCalledTimes(1);
     const item = putItem.mock.calls[0][0];
-    expect(item.customization).toBe('OrgComparisonLogging');
+    expect(item.addon).toBe('OrgComparisonLogging');
     expect(item.personid).toBe('U12345');
     expect(item.data).toEqual({ personid: 'U12345', primaryOrg: 'A', secondaryOrg: 'B' });
     expect(item.sortKey).toMatch(/^\d{4}-\d{2}-\d{2}T.*#U12345$/);

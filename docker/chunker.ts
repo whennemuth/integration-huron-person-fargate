@@ -348,7 +348,7 @@ export async function main() {
       // Send next chunking message BEFORE starting this task's processing.
       // This enables true parallelism: the next task can start before the current one finishes.
       //
-      // NOTE: Run flags (e.g. bulkReset, personRecordProcessorCustomizations) are propagated through
+      // NOTE: Run flags (e.g. bulkReset, personRecordProcessorAddons) are propagated through
       // subsequent messages for consistency, even though only the first chunker task needs them
       // (to write FLAGS to storage). Subsequent chunker tasks skip the write (conditional write 
       // pattern), so they don't use these flags. Processor tasks read FLAGS from storage, not 
@@ -384,10 +384,10 @@ export async function main() {
     const syncPopulation = chunker.getSyncPopulation?.() || SyncPopulation.PersonFull;
     console.log(`Sync population type: ${syncPopulation}`);
 
-    // Get personRecordProcessor customization selection from chunker (comma-delimited Customization keys)
-    const personRecordProcessorCustomizations = chunker.getPersonRecordProcessorCustomizations?.();
-    if (personRecordProcessorCustomizations) {
-      console.log(`personRecordProcessor customization(s) requested: ${personRecordProcessorCustomizations}`);
+    // Get personRecordProcessor addon selection from chunker (comma-delimited Addon keys)
+    const personRecordProcessorAddons = chunker.getPersonRecordProcessorAddons?.();
+    if (personRecordProcessorAddons) {
+      console.log(`personRecordProcessor addon(s) requested: ${personRecordProcessorAddons}`);
     }
 
     // Terms endpoint override for the processor tasks (set only for simulated-source runs)
@@ -403,7 +403,7 @@ export async function main() {
       bulkReset: chunkFromParams.bulkReset,
       trustPreviousStorage: chunkFromParams.trustPreviousStorage,
       syncPopulation,
-      personRecordProcessorCustomizations,
+      personRecordProcessorAddons,
       termsEndpoint,
       dryRun: dryRun === 'true',
       region

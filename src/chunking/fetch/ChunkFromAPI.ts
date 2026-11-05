@@ -24,8 +24,8 @@ export type TaskParameters = {
   offset?: number;
   iterationLimit?: number;
   chunkDirectory?: string;
-  /** Comma-delimited list of personRecordProcessor Customization enum keys to activate for this run */
-  personRecordProcessorCustomizations?: string;
+  /** Comma-delimited list of personRecordProcessor Addon enum keys to activate for this run */
+  personRecordProcessorAddons?: string;
   /** Terms endpoint override for this run's processor tasks (see Flags.termsEndpoint) */
   termsEndpoint?: SourceEndpoint;
 };
@@ -240,7 +240,7 @@ export class ChunkFromAPI implements IChunkFromSource {
     const chunkDirectory = messageBody.chunkDirectory;
     const bulkReset = messageBody.bulkReset;
     const trustPreviousStorage = messageBody.trustPreviousStorage;
-    const personRecordProcessorCustomizations = messageBody.personRecordProcessorCustomizations;
+    const personRecordProcessorAddons = messageBody.personRecordProcessorAddons;
     const termsEndpoint = messageBody.termsEndpoint;
 
     this.taskParameters = { 
@@ -254,7 +254,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       trustPreviousStorage: typeof trustPreviousStorage === 'boolean'
         ? trustPreviousStorage
         : trustPreviousStorage === 'true',
-      personRecordProcessorCustomizations,
+      personRecordProcessorAddons,
       termsEndpoint
     };
 
@@ -405,10 +405,10 @@ export class ChunkFromAPI implements IChunkFromSource {
   }
 
   /**
-   * Get the comma-delimited personRecordProcessorCustomizations string from task parameters, if any.
+   * Get the comma-delimited personRecordProcessorAddons string from task parameters, if any.
    */
-  public getPersonRecordProcessorCustomizations = (): string | undefined => {
-    return this.taskParameters?.personRecordProcessorCustomizations;
+  public getPersonRecordProcessorAddons = (): string | undefined => {
+    return this.taskParameters?.personRecordProcessorAddons;
   }
 
   /**

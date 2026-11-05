@@ -14,14 +14,14 @@ export type Flags = {
   runFailureMessage?: string;
   runFailureTimestamp?: string;
   /**
-   * Comma-delimited list of personRecordProcessor Customization enum keys (see
-   * src/processing/custom/AbstractCustomPersonProcessor.ts) to activate for this run, e.g.
-   * 'ORG_COMPARISON_LOGGING' or 'ORG_COMPARISON_LOGGING,SOME_OTHER_CUSTOMIZATION'. Propagated
+   * Comma-delimited list of personRecordProcessor Addon enum keys (see
+   * src/processing/addon/AbstractAddonPersonProcessor.ts) to activate for this run, e.g.
+   * 'ORG_COMPARISON_LOGGING' or 'ORG_COMPARISON_LOGGING,SOME_OTHER_ADDON'. Propagated
    * from the Runner/EventBridge schedule through to processor tasks via this Flags record
    * (not baked into task definition environment variables), so it can be changed per-run
    * without a stack redeploy.
    */
-  personRecordProcessorCustomizations?: string;
+  personRecordProcessorAddons?: string;
   /**
    * Terms data source endpoint for this run, overriding the config's dataSource.terms baseUrl and
    * fetchPath (not its apiKey) in the processor tasks. Set only when the source is the source

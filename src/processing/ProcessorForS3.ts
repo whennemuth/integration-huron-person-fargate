@@ -65,7 +65,7 @@ import {
   computeExitCode,
   logIntegrationResult,
   resolveCommonFlags,
-  resolveCustomPersonProcessor,
+  resolveAddonPersonProcessor,
   resolveNextChunk,
   writeTrackerStatistics
 } from './ProcessorCommon';
@@ -341,10 +341,10 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
      */
     const cleanupPreviousData = false;
 
-    // Optional custom per-person async hook (e.g. outlier logging). Uses the explicitly injected
+    // Optional addon per-person async hook (e.g. outlier logging). Uses the explicitly injected
     // processor if provided (see docker/processor.ts); otherwise resolves it from this run's
-    // Flags (flags.personRecordProcessorCustomizations) - no-op if neither is present.
-    const customPersonProcessor = await resolveCustomPersonProcessor(personRecordProcessor, flags.personRecordProcessorCustomizations);
+    // Flags (flags.personRecordProcessorAddons) - no-op if neither is present.
+    const addonPersonProcessor = await resolveAddonPersonProcessor(personRecordProcessor, flags.personRecordProcessorAddons);
 
     // Create and run integration using HuronPersonIntegration
     const integration = new HuronPersonIntegration({ 
@@ -364,7 +364,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
       retryStrategy, // Inject retry strategy for handling transient API failures (429, 5xx, network errors)
       cleanupPreviousData,
       ignoreRemovals: syncPopulation === SyncPopulation.PersonDelta, // Ignore removals in delta computation since chunk processing is only a partial population and post-processor determines removals at the end of the full sync
-      personRecordProcessor: customPersonProcessor
+      personRecordProcessor: addonPersonProcessor
     });
     
     /**

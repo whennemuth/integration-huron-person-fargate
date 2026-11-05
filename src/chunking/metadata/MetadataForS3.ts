@@ -175,7 +175,7 @@ export class MetadataForS3 implements IMetadataStorage {
       runFailed,
       runFailureMessage,
       runFailureTimestamp,
-      personRecordProcessorCustomizations,
+      personRecordProcessorAddons,
       termsEndpoint,
       dryRun = false,
       region,
@@ -202,8 +202,8 @@ export class MetadataForS3 implements IMetadataStorage {
     if (runFailureTimestamp !== undefined) {
       flags.runFailureTimestamp = runFailureTimestamp;
     }
-    if (personRecordProcessorCustomizations !== undefined) {
-      flags.personRecordProcessorCustomizations = personRecordProcessorCustomizations;
+    if (personRecordProcessorAddons !== undefined) {
+      flags.personRecordProcessorAddons = personRecordProcessorAddons;
     }
     if (termsEndpoint !== undefined) {
       flags.termsEndpoint = termsEndpoint;

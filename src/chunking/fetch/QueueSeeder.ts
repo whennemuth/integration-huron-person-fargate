@@ -20,7 +20,7 @@ export type QueueSeederParams = {
   messagesToSeed: number;
   queueUrl: string;
   dryRun?: boolean;
-  personRecordProcessorCustomizations?: string;
+  personRecordProcessorAddons?: string;
   /** Terms endpoint override for this run's processor tasks (see Flags.termsEndpoint) */
   termsEndpoint?: SourceEndpoint;
 };
@@ -62,7 +62,7 @@ export class QueueSeeder {
   private offsetCounter?: AbstractAtomicCounter;
   private chunkOrdinalCounter?: AbstractAtomicCounter;
   private chunkDirectory?: string;
-  private personRecordProcessorCustomizations?: string;
+  private personRecordProcessorAddons?: string;
 
   constructor(private params: QueueSeederParams) {
     const { REGION, STACK_ID, LANDSCAPE } = process.env;
@@ -70,7 +70,7 @@ export class QueueSeeder {
       stackId=STACK_ID, 
       region=REGION, 
       landscape=LANDSCAPE,
-      personRecordProcessorCustomizations
+      personRecordProcessorAddons
     } = params || {};
     if(!stackId) {
       throw new Error('STACK_ID is required to initialize QueueSeeder');
@@ -82,7 +82,7 @@ export class QueueSeeder {
       throw new Error('LANDSCAPE is required to initialize QueueSeeder');
     }
 
-    this.personRecordProcessorCustomizations = personRecordProcessorCustomizations;
+    this.personRecordProcessorAddons = personRecordProcessorAddons;
 
     console.log('Atomic counters detected in QueueSeeder constructor');
     this.offsetCounter = new class extends AbstractAtomicCounter {
@@ -207,7 +207,7 @@ export class QueueSeeder {
         iterationLimit,
         offset,
         chunkDirectory: this.chunkDirectory,
-        personRecordProcessorCustomizations: this.personRecordProcessorCustomizations,
+        personRecordProcessorAddons: this.personRecordProcessorAddons,
         termsEndpoint: this.params.termsEndpoint,
         processingMetadata: {
           processedAt: new Date().toISOString(),

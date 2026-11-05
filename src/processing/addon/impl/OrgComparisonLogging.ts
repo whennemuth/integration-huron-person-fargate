@@ -1,8 +1,8 @@
 import { PersonRecordProcessor } from 'integration-huron-person';
-import { AbstractPersonRecordProcessor, Customization } from '../AbstractCustomPersonProcessor';
+import { AbstractPersonRecordProcessor, Addon } from '../AbstractAddonPersonProcessor';
 
 /**
- * This custom person record processor looks at the rawData of a person record and does
+ * This addon person record processor looks at the rawData of a person record and does
  * the following:
  * - Determines if the person is deemed a student by checking the mapped title field for the
  *   literal value 'Student' (assigned in src\data-mapper\DataMapperTitle.ts from the SAME
@@ -21,7 +21,7 @@ import { AbstractPersonRecordProcessor, Customization } from '../AbstractCustomP
  * - Secondary (secondaryUnit/additionalUnit): /studentInfo/studentSemester[x]/studentSemesterInfo/degreeProgram[y]/academicGroup/code (only if mapped)
  */
 export class OrgComparisonLoggingPersonProcessor extends AbstractPersonRecordProcessor {
-  readonly customization = Customization.ORG_COMPARISON_LOGGING;
+  readonly addon = Addon.ORG_COMPARISON_LOGGING;
 
   processRecord: PersonRecordProcessor = async ({ raw, mapped, error }): Promise<void> => {
     if (error || !mapped) return;
@@ -34,7 +34,7 @@ export class OrgComparisonLoggingPersonProcessor extends AbstractPersonRecordPro
     if (!secondaryUnit || organization?.hrn === secondaryUnit?.hrn) return;
 
     const personid = raw?.personid;
-    await this.logEntry(this.customization, personid, {
+    await this.logEntry(this.addon, personid, {
       personid,
       primaryOrg: organization?.hrn,
       secondaryOrg: secondaryUnit?.hrn

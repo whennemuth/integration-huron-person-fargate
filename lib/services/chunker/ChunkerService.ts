@@ -100,7 +100,7 @@ export class ChunkerService extends AbstractService {
     }
 
     // TODO LATER: Figure out the best way to assign this variable a value.
-    const personRecordProcessorCustomizations = undefined;
+    const personRecordProcessorAddons = undefined;
 
     // Create the EventBridge schedule with cron as a child of the QueueProcessingFargateService
     const { Landscape } = context.TAGS;
@@ -118,7 +118,7 @@ export class ChunkerService extends AbstractService {
           offset: 0,
           bulkReset: false, // Default value; can be overridden by message parameters if needed
           trustPreviousStorage,
-          personRecordProcessorCustomizations,
+          personRecordProcessorAddons,
           processingMetadata: {
             // processedAt: new Date().toISOString(),
             processedAt: 'Placeholder. Override at runtime with ISO timestamp',

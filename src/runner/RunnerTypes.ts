@@ -30,8 +30,8 @@ export interface RunnerEnv {
   sourceSimulatorMockErrorRate?: number;
   /** Mock landscapes only: truncate the landscape's run-state tables before the run */
   mockTargetResetState?: boolean;
-  /** Comma-delimited list of personRecordProcessor Customization enum keys to activate for this run */
-  personRecordProcessorCustomizations?: string;
+  /** Comma-delimited list of personRecordProcessor Addon enum keys to activate for this run */
+  personRecordProcessorAddons?: string;
 }
 
 /**
@@ -91,7 +91,7 @@ export const extractEnvironment = (): RunnerEnv => {
     SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS: sourceSimulatorMockSimulatedDelaySeconds,
     SOURCE_SIMULATOR_MOCK_ERROR_RATE: sourceSimulatorMockErrorRate,
     MOCK_TARGET_RESET_STATE: mockTargetResetState,
-    PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS: personRecordProcessorCustomizations
+    PERSON_RECORD_PROCESSOR_ADDONS: personRecordProcessorAddons
   } = process.env;
 
   return {
@@ -119,7 +119,7 @@ export const extractEnvironment = (): RunnerEnv => {
     sourceSimulatorMockSimulatedDelaySeconds: sourceSimulatorMockSimulatedDelaySeconds ? parseInt(sourceSimulatorMockSimulatedDelaySeconds) : undefined,
     sourceSimulatorMockErrorRate: sourceSimulatorMockErrorRate ? parseFloat(sourceSimulatorMockErrorRate) : undefined,
     mockTargetResetState: `${mockTargetResetState}`.toLowerCase().trim() === 'true',
-    personRecordProcessorCustomizations
+    personRecordProcessorAddons
   } satisfies RunnerEnv;
 }
 
@@ -146,7 +146,7 @@ export const setTestEnvironment = (): void => {
     'SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS',
     'SOURCE_SIMULATOR_MOCK_ERROR_RATE',
     'MOCK_TARGET_RESET_STATE',
-    'PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS'
+    'PERSON_RECORD_PROCESSOR_ADDONS'
   ].forEach(testEnvironment.getVar);
 
   [

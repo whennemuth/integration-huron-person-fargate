@@ -270,7 +270,7 @@ export class ChunkerQueue {
       populationType, 
       bulkReset, 
       trustPreviousStorage,
-      personRecordProcessorCustomizations,
+      personRecordProcessorAddons,
       termsEndpoint
     } = taskParameters;
 
@@ -304,7 +304,7 @@ export class ChunkerQueue {
         iterationLimit, 
         offset: nextOffset, 
         chunkDirectory,
-        personRecordProcessorCustomizations,
+        personRecordProcessorAddons,
         termsEndpoint
       } satisfies ApiChunkerEvent;
 

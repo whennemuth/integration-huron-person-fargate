@@ -1,5 +1,5 @@
-import { OrgComparisonLoggingPersonProcessor } from '../src/processing/custom/impl/OrgComparisonLogging';
-import { Customization } from '../src/processing/custom/AbstractCustomPersonProcessor';
+import { OrgComparisonLoggingPersonProcessor } from '../src/processing/addon/impl/OrgComparisonLogging';
+import { Addon } from '../src/processing/addon/AbstractAddonPersonProcessor';
 
 describe('OrgComparisonLoggingPersonProcessor', () => {
   let processor: OrgComparisonLoggingPersonProcessor;
@@ -18,8 +18,8 @@ describe('OrgComparisonLoggingPersonProcessor', () => {
     logEntrySpy = jest.spyOn(processor as any, 'logEntry').mockResolvedValue(undefined);
   });
 
-  it('exposes ORG_COMPARISON_LOGGING as its customization', () => {
-    expect(processor.customization).toBe(Customization.ORG_COMPARISON_LOGGING);
+  it('exposes ORG_COMPARISON_LOGGING as its addon', () => {
+    expect(processor.addon).toBe(Addon.ORG_COMPARISON_LOGGING);
   });
 
   it('does nothing when the record has an error', async () => {
@@ -61,6 +61,6 @@ describe('OrgComparisonLoggingPersonProcessor', () => {
       raw: { personid: 'U123' },
       mapped: mappedWithOrgs('Student', 'org-a', 'org-b')
     });
-    expect(logEntrySpy).toHaveBeenCalledWith(Customization.ORG_COMPARISON_LOGGING, 'U123', { personid: 'U123', primaryOrg: 'org-a', secondaryOrg: 'org-b' });
+    expect(logEntrySpy).toHaveBeenCalledWith(Addon.ORG_COMPARISON_LOGGING, 'U123', { personid: 'U123', primaryOrg: 'org-a', secondaryOrg: 'org-b' });
   });
 });

@@ -79,7 +79,7 @@ The source simulator (`src/chunking/fetch/SourceSimulator.ts`) is a Lambda Funct
 - `/person?buid=U0000042`: one person, mirroring the real person API. Stateless (the depletion counter is untouched) and idempotent: `U0000042` is index 41, the same payload `/` produces for that person. A BUID beyond `MOCK_TOTAL_POPULATION` returns `{ response: [] }`; a missing or malformed one (not `U` + digits) returns 400. It must be selected by a `buid` query parameter, because that is what makes the chunker do a single, non-paged request (`BigJsonFetch.isNotBatchable()`). With `RUNNER_SINGLE_PERSON_BUID` set, `SourceSimulatorRunnerDecorator` points the source here.
 - `/terms`: mock current-terms data (6 static terms: 2 current, 2 past, 2 future) - required because `DataMapperOrg.isCurrentSemester()` needs terms data to filter student semesters, and running with `RUNNER_CHUNKING_ONLY=false` exercises this path.
 - **API keys**: every endpoint accepts any of the three source keys in the config secret (people, person, terms), and rejects anything else. Callers pick keys by URL and the simulator's URLs can't satisfy all of them while hybrid runs need the secret's real source URLs: the chunker never matches the simulator's `/person` to the configured person URL, so it sends the people key there, whereas a client given the simulator's URLs directly (integration-huron-person's `SyncPerson.ts`) sends the person key, and the processor always sends the terms key. See "API keys" in the `SourceSimulator.ts` header.
-- **How simulated terms reach the processor** (only for simulated-source runs): terms are fetched by the processor tasks (integration-huron-person's `getDataMapper()`/`DataMapperOrg`), from the config they load from the secret - so the Runner cannot redirect them by changing its own config object (it used to, with no effect: mock runs fetched terms from the real terms API). Instead `SourceSimulatorRunnerDecorator` returns a `termsEndpoint` with the source endpoint, which travels like `personRecordProcessorCustomizations`: chunker SQS message (`ApiChunkerEvent.termsEndpoint`) -> `TaskParameters` -> re-forwarded by `ChunkerQueue.sendNextChunkingMessage()` -> `docker/chunker.ts` writes it to the run's Flags (`Flags.termsEndpoint`) -> `ProcessorForS3`/`ProcessorForDynamoDb` apply it via `applyTermsEndpoint()` (ProcessorCommon.ts: replaces `dataSource.terms` baseUrl/fetchPath only; the apiKey stays). Hybrid runs (real source -> mock target) and scheduled runs never set it, so they keep the configured (real) terms endpoint. The field itself is generic, not mock-specific.
+- **How simulated terms reach the processor** (only for simulated-source runs): terms are fetched by the processor tasks (integration-huron-person's `getDataMapper()`/`DataMapperOrg`), from the config they load from the secret - so the Runner cannot redirect them by changing its own config object (it used to, with no effect: mock runs fetched terms from the real terms API). Instead `SourceSimulatorRunnerDecorator` returns a `termsEndpoint` with the source endpoint, which travels like `personRecordProcessorAddons`: chunker SQS message (`ApiChunkerEvent.termsEndpoint`) -> `TaskParameters` -> re-forwarded by `ChunkerQueue.sendNextChunkingMessage()` -> `docker/chunker.ts` writes it to the run's Flags (`Flags.termsEndpoint`) -> `ProcessorForS3`/`ProcessorForDynamoDb` apply it via `applyTermsEndpoint()` (ProcessorCommon.ts: replaces `dataSource.terms` baseUrl/fetchPath only; the apiKey stays). Hybrid runs (real source -> mock target) and scheduled runs never set it, so they keep the configured (real) terms endpoint. The field itself is generic, not mock-specific.
 - Optional `nonCurrentTermRate` query parameter (0.0-1.0, default 0.0), on `/` and `/person`: the proportion of simulated students assigned a non-current term, for testing semester-filtering logic. Which students get one is decided by a hash of the person's index (not `Math.random()`), so a person's payload is identical on every request and from either endpoint
 
 **Safety enforcement - source simulation entails target simulation**: the source simulator may only exist in a mock landscape (see "Mock Landscapes" below), whose target is always mocked. This is enforced twice: `lib/AppConstruct.ts` refuses to synthesize a stack with `LAMBDA.sourceSimulator.enabled` in a non-mock landscape (so real stacks have no simulator Lambda at all), and `Runner.ts` aborts when `RUNNER_SOURCE_SIMULATOR=true` targets a non-mock landscape. There is no supported way to run simulated source data against the real Huron target API.
@@ -612,80 +612,80 @@ but share this repo's `package.json`, lockfile and `context/IContext.ts`. So:
     can't show what `--omit=optional` leaves out.
   - Only `dashboard/`, `lib/`, `bin/`, `test/` or docs: can't affect the image, so skip both.
 
-## personRecordProcessor Customization Framework
+## personRecordProcessor Addon Framework
 
-**Location**: `src/processing/custom/` (concrete implementations live under `impl/`)
+**Location**: `src/processing/addon/` (concrete implementations live under `impl/`)
 
 Wires `integration-huron-person`'s `personRecordProcessor` hook (see that repo's
-`CLAUDE.md`/`src/data-mapper/CLAUDE.md`) into the processor tasks, letting custom per-person
+`CLAUDE.md`/`src/data-mapper/CLAUDE.md`) into the processor tasks, letting addon per-person
 async logic (e.g. outlier logging/analysis) run during a live sync without touching
-`HuronPersonIntegration` itself. See `src/processing/custom/README.md` for the framework's
-design (dependency injection, multi-customization composition) and how to add a new
+`HuronPersonIntegration` itself. See `src/processing/addon/README.md` for the framework's
+design (dependency injection, multi-addon composition) and how to add a new
 implementation.
 
-**Files**: `AbstractCustomPersonProcessor.ts` (base class + `Customization` enum),
-`CustomizationParser.ts` (parses the comma-delimited config string - see below),
-`PersonRecordProcessorComposite.ts` (combines multiple active customizations),
+**Files**: `AbstractAddonPersonProcessor.ts` (base class + `Addon` enum),
+`AddonParser.ts` (parses the comma-delimited config string - see below),
+`PersonRecordProcessorComposite.ts` (combines multiple active addons),
 `PersonRecordProcessorFactory.ts` (registry/switchboard), `impl/OrgComparisonLogging.ts`
-(first concrete customization: for students - mapped `title === 'Student'`, set in
+(first concrete addon: for students - mapped `title === 'Student'`, set in
 `integration-huron-person`'s `src/data-mapper/DataMapperTitle.ts` from the *same*
 `orgAssignments.personType` that drove the `organization`/`secondaryUnit` assignment, a more
 accurate signal than an independent raw `studentInfo` check - whose primary/secondary org HRNs
 differ, logs `{ personid, primaryOrg, secondaryOrg }`).
 
-**Specifying customizations - key name or numeric value, either works**: `Customization` is a
-plain (numeric) TS enum with no explicit initializers, so config always identifies a
-customization by its enum **key name** (e.g. `'ORG_COMPARISON_LOGGING'`) - the underlying number
-is an implementation detail. `CustomizationParser.ts`'s `parseCustomizations()` additionally
+**Specifying addons - key name or numeric value, either works**: `Addon` is a
+plain (numeric) TS enum with no explicit initializers, so config always identifies an
+addon by its enum **key name** (e.g. `'ORG_COMPARISON_LOGGING'`) - the underlying number
+is an implementation detail. `AddonParser.ts`'s `parseAddons()` additionally
 accepts the raw numeric value as a string (e.g. `'0'`) as an equivalent alternative, since some
 callers may find a stable numeric value more convenient to configure than a name. A token is
 tried as a number first (matched via the enum's reverse mapping) only if it looks like an
-integer; otherwise it's looked up by key name. Mixing both forms for the same customization in
+integer; otherwise it's looked up by key name. Mixing both forms for the same addon in
 one comma-delimited list (e.g. `'ORG_COMPARISON_LOGGING,0'`) de-duplicates to a single instance
-rather than double-counting it. See `test/CustomizationParser.test.ts` for the full set of
+rather than double-counting it. See `test/AddonParser.test.ts` for the full set of
 parsing permutations this covers.
 
 **Shared log table**: `src/dynamodb/PersonRecordProcessorLogTable.ts` + CDK table in
 `lib/DynamoDB.ts` (`personRecordProcessorLogTable`, single table, no mock-mode variant unlike
-most other tables here). Schema: PK=`customization` (groups entries by which customization wrote
+most other tables here). Schema: PK=`addon` (groups entries by which addon wrote
 them), SK=`sortKey` (`${isoTimestamp}#${personid}`, chronologically browsable and collision-free
 per person), plus a generic `data` JSON attribute whose shape is defined entirely by the writing
-customization. This design lets any number of future customizations share one table with zero
-CDK/schema changes - only `AbstractCustomPersonProcessor`, `Customization`, and
+addon. This design lets any number of future addons share one table with zero
+CDK/schema changes - only `AbstractAddonPersonProcessor`, `Addon`, and
 `PersonRecordProcessorFactory` need updating to add one. The log table name IS still baked into
 the task definition as `PERSON_RECORD_PROCESSOR_LOG_TABLE_NAME` (it's an infrastructure resource
 name, not a per-run behavioral toggle, so CDK-time baking is appropriate here - unlike *which*
-customization runs, see below).
+addon runs, see below).
 
-**Selecting which customization(s) run - Flags, not task-definition env vars**: Which
-customization is active is deliberately **not** an `IContext`/task-definition environment
+**Selecting which addon(s) run - Flags, not task-definition env vars**: Which
+addon is active is deliberately **not** an `IContext`/task-definition environment
 variable (that would require a full stack redeploy to change). Instead it follows the same
-runtime-configuration precedent as `flags.bulkReset`: a `personRecordProcessorCustomizations`
-field (comma-delimited `Customization` keys) flows through
+runtime-configuration precedent as `flags.bulkReset`: a `personRecordProcessorAddons`
+field (comma-delimited `Addon` keys) flows through
 `src/chunking/metadata/IMetadataStorage.ts`'s `Flags` type, which is written to S3/DynamoDB
 *before* chunking starts and read back by each processor task - so it can be changed per-run
 without redeploying anything. The full pipeline:
 1. **Manual invocation** (`src/runner/Runner.ts`, "FOR MANUAL INVOCATION ONLY"): reads the
-   `PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS` env var via `RunnerTypes.ts`'s `extractEnvironment()`
-   into `RunnerEnv.personRecordProcessorCustomizations`.
+   `PERSON_RECORD_PROCESSOR_ADDONS` env var via `RunnerTypes.ts`'s `extractEnvironment()`
+   into `RunnerEnv.personRecordProcessorAddons`.
 2. Each runner (`RunnerForSingleMessage.ts`, `RunnerForSinglePerson.ts`, and
    `RunnerForQueueSeeding.ts` via `QueueSeeder.ts`) copies that value into the `ApiChunkerEvent`
-   it sends (`ChunkerSubscriber.ts`'s `ApiChunkerEvent.personRecordProcessorCustomizations`).
+   it sends (`ChunkerSubscriber.ts`'s `ApiChunkerEvent.personRecordProcessorAddons`).
 3. **Scheduled production invocation** (`lib/services/chunker/ChunkerService.ts`'s
    `createApiChunkingSchedule()`): the EventBridge schedule's static `ScheduleTargetInput` also
-   includes a `personRecordProcessorCustomizations` field (currently left `undefined` as a
+   includes a `personRecordProcessorAddons` field (currently left `undefined` as a
    placeholder pending a decision on how to source a real value for scheduled runs - see the
    `// TODO LATER` comment there) - the consuming side described below already handles it
    whenever a value is present.
 4. `ChunkerApiSubscriber.ts`'s `handleApiEvent()` extracts it from the incoming event and forwards
    it into the `TaskParameters` SQS message it sends to the chunker queue.
-5. `ChunkFromAPI.ts` parses it off the queue message into `TaskParameters.personRecordProcessorCustomizations`
-   and exposes it via `getPersonRecordProcessorCustomizations()`; `ChunkerQueue.ts`'s
+5. `ChunkFromAPI.ts` parses it off the queue message into `TaskParameters.personRecordProcessorAddons`
+   and exposes it via `getPersonRecordProcessorAddons()`; `ChunkerQueue.ts`'s
    `sendNextChunkingMessage()` re-forwards it into subsequent messages for parallel chunking.
 6. `docker/chunker.ts` reads that getter and includes it when calling `metadataManager.writeFlags(...)`
    - so it's persisted to the run's Flags record before any processor task starts.
 7. `ProcessorForS3.ts`/`ProcessorForDynamoDb.ts` read it back via
-   `flags.personRecordProcessorCustomizations` (from the same `readFlagsFromChunkKey()` call
+   `flags.personRecordProcessorAddons` (from the same `readFlagsFromChunkKey()` call
    already used for `flags.bulkReset` etc.) and pass it to `personRecordProcessorFactory()`.
 
 **Wiring/DI**: `docker/processor.ts` (the S3-vs-DynamoDB router) accepts an optional
@@ -698,15 +698,15 @@ factory-invocation logic isn't duplicated across processor variants (DRY), while
 Flags-based resolution to work correctly - the router itself can't resolve from Flags because
 those are chunk-specific and not known until deep inside each `main()`.
 
-**Adding a new customization**:
-1. Add a value to the `Customization` enum in `AbstractCustomPersonProcessor.ts`.
+**Adding a new addon**:
+1. Add a value to the `Addon` enum in `AbstractAddonPersonProcessor.ts`.
 2. Create a new file under `impl/` extending `AbstractPersonRecordProcessor`, setting
-   `customization` and implementing `processRecord`; call
-   `this.logEntry(this.customization, personid, data)` to persist findings.
+   `addon` and implementing `processRecord`; call
+   `this.logEntry(this.addon, personid, data)` to persist findings.
 3. Register it in the `switch` in `PersonRecordProcessorFactory.ts`.
-4. Set `PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS` (env var read by `Runner.ts`, or the
-   `personRecordProcessorCustomizations` Flags field directly) to the enum *key* to activate it -
-   comma-delimit multiple keys to run several customizations at once (combined automatically via
+4. Set `PERSON_RECORD_PROCESSOR_ADDONS` (env var read by `Runner.ts`, or the
+   `personRecordProcessorAddons` Flags field directly) to the enum *key* to activate it -
+   comma-delimit multiple keys to run several addons at once (combined automatically via
    `PersonRecordProcessorComposite`).
 
 ## Patterns to Follow

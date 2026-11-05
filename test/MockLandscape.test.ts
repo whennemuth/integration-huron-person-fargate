@@ -48,7 +48,7 @@ describe('DynamoDbTables (CDK)', () => {
     `${STACK_ID}-atomic-counter-${landscape}`,
     `${STACK_ID}-person-current-state-${landscape}`,
     `${STACK_ID}-person-history-${landscape}`,
-    `${STACK_ID}-person-record-processor-log-${landscape}`,
+    `${STACK_ID}-person-record-processor-addon-log-${landscape}`,
     `${STACK_ID}-statistics-${landscape}`,
   ];
 

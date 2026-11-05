@@ -55,7 +55,7 @@ export class SinglePersonRunner extends ChunkingServiceRunner {
     populationType: NormalizedPopulationType
   ): Promise<void> {
     const { 
-      bulkReset, trustPreviousStorage, iterationLimit, buid, queueUrl, sourceSimulator, personRecordProcessorCustomizations
+      bulkReset, trustPreviousStorage, iterationLimit, buid, queueUrl, sourceSimulator, personRecordProcessorAddons
     } = this.env;
     const apiChunkerEvent: ApiChunkerEvent = {
       baseUrl: sourceEndpoint.baseUrl,
@@ -65,7 +65,7 @@ export class SinglePersonRunner extends ChunkingServiceRunner {
       trustPreviousStorage,
       iterationLimit: iterationLimit ? iterationLimit : 0,
       offset: 0,
-      personRecordProcessorCustomizations,
+      personRecordProcessorAddons,
       termsEndpoint: sourceEndpoint.termsEndpoint,
       processingMetadata: {
         processedAt: new Date().toISOString(),

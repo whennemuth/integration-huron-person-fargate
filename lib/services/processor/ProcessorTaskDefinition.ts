@@ -73,7 +73,7 @@ export class ProcessorTaskDefinition extends Construct {
       DYNAMODB_STATISTICS_TABLE_NAME: dynamodb!.statisticsTable.tableName,
       // CHUNKS_BUCKET and CHUNK_KEY are set from SQS messages at runtime (not env vars)
       STATIC_MAP_USAGE: `{ "orgMap": ${orgMap}, "stateMap": ${stateMap}, "countryMap": ${countryMap} }`, // Used by processor to determine which static maps to load in data mapper
-      PERSON_RECORD_PROCESSOR_LOG_TABLE_NAME: dynamodb!.personRecordProcessorLogTable.tableName, // Shared log table for personRecordProcessor customizations
+      PERSON_RECORD_PROCESSOR_LOG_TABLE_NAME: dynamodb!.personRecordProcessorLogTable.tableName, // Shared log table for personRecordProcessor addons
       SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
       IS_ECS_TASK: 'true', // Used by the application code to determine if running in ECS context (vs local dev)
       DRY_RUN: dryRun ? 'true' : 'false',
@@ -274,7 +274,7 @@ export class ProcessorTaskDefinition extends Construct {
     }
 
     // Grant DynamoDB write permissions for the shared personRecordProcessor log table
-    // Used by AbstractPersonRecordProcessor.logEntry() when a customization is configured.
+    // Used by AbstractPersonRecordProcessor.logEntry() when an addon is configured.
     // BatchWriteItem is required because PersonRecordProcessorLogTable.putEntry() routes through
     // DynamoDBTable.putItem() -> batchWrite() internally.
     this.taskDefinition.addToTaskRolePolicy(

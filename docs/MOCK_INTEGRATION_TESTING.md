@@ -122,7 +122,7 @@ here instead of being repeated in the tables:
 | `RUNNER_CHUNKER_QUEUE_URL` | `<mock chunker queue URL>` |
 | `RUNNER_SECRET_ARN` | `<mock config secret ARN>` |
 | `RUNNER_DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT` | `10` |
-| `RUNNER_PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS` | unset |
+| `RUNNER_PERSON_RECORD_PROCESSOR_ADDONS` | unset |
 
 **"unset" means unset everywhere.** The harnesses read prefixed variables through `TestEnvironment`,
 which uses the prefixed variable only if it is non-empty and otherwise falls back to the

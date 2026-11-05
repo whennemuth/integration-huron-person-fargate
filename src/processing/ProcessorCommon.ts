@@ -13,7 +13,7 @@ import { SyncPopulation } from '../../docker/chunkTypes';
 import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../ApiErrorTracking';
 import { NextChunk, QueueReader } from '../Queue';
 import { Flags } from '../chunking/metadata/IMetadataStorage';
-import { personRecordProcessorFactory } from './custom/PersonRecordProcessorFactory';
+import { personRecordProcessorFactory } from './addon/PersonRecordProcessorFactory';
 
 export const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
@@ -110,14 +110,14 @@ export function buildErrorTracker(params: {
 
 /**
  * Resolves the optional per-person hook: an explicitly injected processor wins, otherwise it's
- * resolved from this run's Flags (flags.personRecordProcessorCustomizations) - a no-op if neither is present.
+ * resolved from this run's Flags (flags.personRecordProcessorAddons) - a no-op if neither is present.
  */
-export async function resolveCustomPersonProcessor(
+export async function resolveAddonPersonProcessor(
   personRecordProcessor: PersonRecordProcessor | undefined,
-  customizations: string | undefined
+  addons: string | undefined
 ): Promise<PersonRecordProcessor | undefined> {
   return personRecordProcessor
-    ?? (await personRecordProcessorFactory(customizations))?.processRecord;
+    ?? (await personRecordProcessorFactory(addons))?.processRecord;
 }
 
 /** Logs HuronPersonIntegration.run()'s result and warns if the success/delta math doesn't add up. */

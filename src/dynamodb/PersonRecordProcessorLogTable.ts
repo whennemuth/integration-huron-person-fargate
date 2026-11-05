@@ -2,14 +2,14 @@ import { IContext } from '../../context/IContext';
 import { AbstractDynamoDbTable, DynamoDBTable } from './DynamoDBTable';
 
 /**
- * Shared log table for ALL personRecordProcessor customizations (see
- * src/processing/custom/AbstractCustomPersonProcessor.ts). Each customization's log entries are
- * partitioned by its own Customization enum value, with a generic `data` attribute holding
- * whatever JSON shape that customization needs - keeping this table reusable for future
- * customizations without CDK/schema changes.
+ * Shared log table for ALL personRecordProcessor addons (see
+ * src/processing/addon/AbstractAddonPersonProcessor.ts). Each addon's log entries are
+ * partitioned by its own Addon enum value, with a generic `data` attribute holding
+ * whatever JSON shape that addon needs - keeping this table reusable for future
+ * addons without CDK/schema changes.
  */
-export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-person-record-processor-log-${context.TAGS.Landscape.toLowerCase()}`;
-export const DYNAMODB_PARTITION_KEY = 'customization';
+export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-person-record-processor-addon-log-${context.TAGS.Landscape.toLowerCase()}`;
+export const DYNAMODB_PARTITION_KEY = 'addon';
 export const DYNAMODB_SORT_KEY = 'sortKey';
 
 export class PersonRecordProcessorLogTable {
@@ -38,11 +38,11 @@ export class PersonRecordProcessorLogTable {
   }
 
   /**
-   * Write a single customization-tagged log entry. sortKey combines timestamp + personid so
+   * Write a single addon-tagged log entry. sortKey combines timestamp + personid so
    * entries are both chronologically browsable and never collide for the same person.
    */
-  public putEntry = async (customization: string, personid: string, data: Record<string, any>): Promise<void> => {
+  public putEntry = async (addon: string, personid: string, data: Record<string, any>): Promise<void> => {
     const sortKey = `${new Date().toISOString()}#${personid}`;
-    await this.table.putItem({ customization, sortKey, personid, data });
+    await this.table.putItem({ addon, sortKey, personid, data });
   }
 }

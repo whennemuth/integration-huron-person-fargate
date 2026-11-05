@@ -226,17 +226,17 @@ export class DynamoDbTables extends Construct {
   }
 
   /**
-   * Shared log table for ALL personRecordProcessor customizations (see
-   * src/processing/custom/AbstractCustomPersonProcessor.ts).
+   * Shared log table for ALL personRecordProcessor addons (see
+   * src/processing/addon/AbstractAddonPersonProcessor.ts).
    *
    * Table Design:
-   * - Partition Key (PK): `customization` - identifies which customization wrote the entry
+   * - Partition Key (PK): `addon` - identifies which addon wrote the entry
    * - Sort Key (SK): `sortKey` - `${isoTimestamp}#${personid}`, chronologically browsable and
    *   collision-free per person
-   * - `data`: generic JSON blob whose shape is defined by the writing customization
+   * - `data`: generic JSON blob whose shape is defined by the writing addon
    *
-   * Kept as a single shared table (not one per customization) so future
-   * customizations require no CDK/schema changes.
+   * Kept as a single shared table (not one per addon) so future
+   * addons require no CDK/schema changes.
    */
   private createPersonRecordProcessorLogTable = () => {
     const { context } = this.params.props;

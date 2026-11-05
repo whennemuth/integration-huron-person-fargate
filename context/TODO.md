@@ -61,7 +61,7 @@ Some of this grew naturally: simulators and mock landscapes for testing, the S3-
    |---|---|---|
    | Deployment config (fixed per stack) | storage mode, delete type, static maps, scaling, per-component dry run | one per-landscape file |
    | Secrets | API keys, target credentials | Secrets Manager |
-   | Run parameters (per run) | bulkReset, trust, population, simulator endpoint, customizations | the run request (SQS message → Flags), with one set of defaults |
+   | Run parameters (per run) | bulkReset, trust, population, simulator endpoint, addons | the run request (SQS message → Flags), with one set of defaults |
    | Local dev overrides | harness conveniences | an explicit local-only override layer |
 
    This is the core fix. A value that cannot be specified twice cannot conflict.
@@ -162,7 +162,7 @@ After 1–4, very little is left to check. If a gate is still wanted, it reduces
   - S3 `bucketName` is forced to the chunks bucket. DynamoDB table names come from context, and region is filled with `??=`.
   - In mock landscapes, `dataTargetOverride` replaces the target `baseUrl`, `externalToken` and `authMethod` with the target simulator's.
 - **`lib/TaskDefinitions.ts:62, :78`** destructure `storageCfg` without a guard. If the type is `s3` and App's config has no `storage` block, synth throws a TypeError.
-- **`lib/services/chunker/ChunkerService.ts:71-74`** calls `ConfigManager.getInstance().fromFileSystem(configPath)` **without `reset()`**. It reuses operations already queued by `buildSecretValue` (env first). The schedule input hard-codes `PersonDelta`, `bulkReset: false`, and `personRecordProcessorCustomizations: undefined`.
+- **`lib/services/chunker/ChunkerService.ts:71-74`** calls `ConfigManager.getInstance().fromFileSystem(configPath)` **without `reset()`**. It reuses operations already queued by `buildSecretValue` (env first). The schedule input hard-codes `PersonDelta`, `bulkReset: false`, and `personRecordProcessorAddons: undefined`.
 - **Task-definition env vars:**
 
   | Task | Env vars |
@@ -208,7 +208,7 @@ After 1–4, very little is left to check. If a gate is still wanted, it reduces
 
 **Runner** (`src/runner/`)
 
-- **`RunnerTypes.extractEnvironment`** reads: `SECRET_ARN`, `HURON_PERSON_CONFIG_PATH`, `CHUNKER_QUEUE_URL`, `POPULATION_TYPE`, `DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT`, `SINGLE_PERSON_BUID`, `REGION`, `STACK_ID`, `LANDSCAPE`, `BULK_RESET`, `TRUST_PREVIOUS_STORAGE`, `SKIP_ATOMIC_COUNTER_RESET`, `MESSAGES_TO_PREPOPULATE`, `DESIRED_COUNT`, `ECS_CLUSTER_NAME`, `ECS_SERVICE_NAME`, `MESSAGING_ONLY`, `CHUNKING_ONLY`, `SOURCE_SIMULATOR`, `SOURCE_SIMULATOR_MOCK_*`, `MOCK_TARGET_RESET_STATE`, `PERSON_RECORD_PROCESSOR_CUSTOMIZATIONS`.
+- **`RunnerTypes.extractEnvironment`** reads: `SECRET_ARN`, `HURON_PERSON_CONFIG_PATH`, `CHUNKER_QUEUE_URL`, `POPULATION_TYPE`, `DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT`, `SINGLE_PERSON_BUID`, `REGION`, `STACK_ID`, `LANDSCAPE`, `BULK_RESET`, `TRUST_PREVIOUS_STORAGE`, `SKIP_ATOMIC_COUNTER_RESET`, `MESSAGES_TO_PREPOPULATE`, `DESIRED_COUNT`, `ECS_CLUSTER_NAME`, `ECS_SERVICE_NAME`, `MESSAGING_ONLY`, `CHUNKING_ONLY`, `SOURCE_SIMULATOR`, `SOURCE_SIMULATOR_MOCK_*`, `MOCK_TARGET_RESET_STATE`, `PERSON_RECORD_PROCESSOR_ADDONS`.
 - **`setTestEnvironment`** copies `RUNNER_*` over these. `LANDSCAPE` is not in its list.
 - **`AbstractRunner.loadConfiguration`** order: env → local file → JSON → secret. This is the **reverse of ECS**. Locally resolved endpoints go into the SQS message and override the secret's endpoint in the chunker.
 - **Decorators**

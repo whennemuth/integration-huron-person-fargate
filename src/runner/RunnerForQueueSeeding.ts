@@ -199,7 +199,7 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
       messagesToSeed: seedNumber,
       queueUrl: env.queueUrl!,
       dryRun: false,
-      personRecordProcessorCustomizations: env.personRecordProcessorCustomizations,
+      personRecordProcessorAddons: env.personRecordProcessorAddons,
       termsEndpoint: endpoint.termsEndpoint
     });
     

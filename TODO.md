@@ -70,7 +70,7 @@ DynamoDB entirely. These remain after phase 1:
   chunker tasks (`ChunkerQueue`, `QueueSeeder`, `docker/chunker.ts`, runners). A decision table,
   kept in phase 1 and removed in phase 2.
 - **Mock target person table** - backs the target simulator; mock landscapes only.
-- **Person-record-processor log table** - written by processor customizations, only when one is
+- **Person-record-processor log table** - written by processor addons, only when one is
   enabled (`PERSON_RECORD_PROCESSOR_LOG_TABLE_NAME`).
 
 ## Requirements
