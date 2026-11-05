@@ -161,10 +161,10 @@ async function syncPerson(personId, operation, hrn) {
         });
         
         const result = await response.json();
-        
+
         // Hide loading modal
-        hideSyncLoadingModal();
-        
+        await hideSyncLoadingModal();
+
         if (response.ok) {
             showSyncResultModal('Success', result, true);
         } else {
@@ -172,7 +172,7 @@ async function syncPerson(personId, operation, hrn) {
         }
     } catch (error) {
         // Hide loading modal
-        hideSyncLoadingModal();
+        await hideSyncLoadingModal();
         
         showSyncResultModal('Error', { error: 'Sync error', message: error.message }, false);
         console.error('Sync error:', error);
@@ -183,11 +183,11 @@ async function syncPerson(personId, operation, hrn) {
 async function syncPersonPreview(personId, operation, hrn) {
     
     // Show loading modal
-    showSyncLoadingModal();
-    
+    showSyncLoadingModal('Preparing Sync Preview', 'Mapping the person for Huron. Nothing will be sent to Huron.');
+
     try {
         const requestBody = { personId, operation };
-        
+
         // Include hrn if it exists
         if (hrn) {
             requestBody.hrn = hrn;
@@ -202,8 +202,8 @@ async function syncPersonPreview(personId, operation, hrn) {
         const result = await response.json();
         
         // Hide loading modal
-        hideSyncLoadingModal();
-        
+        await hideSyncLoadingModal();
+
         if (response.ok) {
             showPreviewModal(result);
         } else {
@@ -211,7 +211,7 @@ async function syncPersonPreview(personId, operation, hrn) {
         }
     } catch (error) {
         // Hide loading modal
-        hideSyncLoadingModal();
+        await hideSyncLoadingModal();
         
         showSyncResultModal('Preview Error', { error: 'Preview error', message: error.message }, false);
         console.error('Preview error:', error);
@@ -283,30 +283,47 @@ function showPreviewModal(data) {
     bootstrapModal.show();
 }
 
-// Show sync loading modal
-function showSyncLoadingModal() {
+// Resolves once the sync loading modal has finished appearing
+let syncLoadingModalShown = Promise.resolve();
+
+// Show sync loading modal, titled for what is being waited on (a sync or a preview)
+function showSyncLoadingModal(title = 'Syncing Person Data', message = 'Please wait while the sync operation completes...') {
     let modal = document.getElementById('syncLoadingModal');
     if (!modal) {
         modal = createSyncLoadingModal();
         document.body.appendChild(modal);
     }
-    
-    const bootstrapModal = new bootstrap.Modal(modal, {
+    modal.querySelector('.sync-loading-title').textContent = title;
+    modal.querySelector('.sync-loading-message').textContent = message;
+
+    const bootstrapModal = bootstrap.Modal.getOrCreateInstance(modal, {
         backdrop: 'static',
         keyboard: false
     });
-    bootstrapModal.show();
+    if (!modal.classList.contains('show')) {
+        syncLoadingModalShown = new Promise(resolve => modal.addEventListener('shown.bs.modal', resolve, { once: true }));
+        bootstrapModal.show();
+    }
 }
 
-// Hide sync loading modal
-function hideSyncLoadingModal() {
+/**
+ * Hide sync loading modal, resolving once it is gone, so the result modal that follows doesn't open
+ * on top of it. Bootstrap ignores hide() while the modal is still fading in, which a fast response
+ * (e.g. from the local mock services) would otherwise hit, leaving the loading modal stuck open.
+ */
+async function hideSyncLoadingModal() {
     const modal = document.getElementById('syncLoadingModal');
-    if (modal) {
-        const bootstrapModal = bootstrap.Modal.getInstance(modal);
-        if (bootstrapModal) {
-            bootstrapModal.hide();
-        }
+    const bootstrapModal = modal && bootstrap.Modal.getInstance(modal);
+    if (!bootstrapModal) {
+        return;
     }
+    await syncLoadingModalShown;
+    if (!modal.classList.contains('show')) {
+        return;
+    }
+    const hidden = new Promise(resolve => modal.addEventListener('hidden.bs.modal', resolve, { once: true }));
+    bootstrapModal.hide();
+    await hidden;
 }
 
 // Parse nested JSON strings recursively
@@ -426,8 +443,8 @@ function createSyncLoadingModal() {
                     <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
                         <span class="visually-hidden">Loading...</span>
                     </div>
-                    <h5>Syncing Person Data</h5>
-                    <p class="text-muted">Please wait while the sync operation completes...</p>
+                    <h5 class="sync-loading-title"></h5>
+                    <p class="text-muted sync-loading-message"></p>
                 </div>
             </div>
         </div>
