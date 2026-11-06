@@ -11,6 +11,7 @@ import { LandscapeListing, PersonSyncResult } from '../services/ServiceTypes';
 import { buildNavigationBar } from './NavigationBar';
 import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
 import { PageNavigation } from './PageNavigation';
+import { RUN_LIST_DEFAULT_LIMIT, RUN_LIST_MAX_LIMIT, RunList } from './RunList';
 import { areTheSame } from '../Utils';
 import { ChangeType, ReportingError } from '../../../src/reporting/RunReporting';
 import { Config } from 'integration-huron-person';
@@ -105,7 +106,7 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
         return await getSystemStatus();
 
       case '/api/runs':
-        return await handleListRuns(request.method);
+        return await handleListRuns(request.method, queryParams);
 
       case '/api/capabilities':
         return handleCapabilities(request.method);
@@ -444,13 +445,34 @@ const SYNC_RUN_ID = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 const CHANGE_TYPES: ChangeType[] = ['NEW', 'UPDATED', 'DELETED'];
 
 /**
- * List this landscape's sync runs (syncRunIds, oldest first)
+ * List this landscape's sync runs. Without `include`: { runs }, every syncRunId, oldest first. With
+ * `include=report`: a page of runs with their reports, newest first ({ items, before? }), of up to `limit`
+ * runs (default 20, at most 50) older than `before` (a syncRunId: the previous page's `before`).
  */
-async function handleListRuns(method: string): Promise<LambdaFunctionUrlResult> {
+async function handleListRuns(method: string, queryParams: { [key: string]: string } = {}): Promise<LambdaFunctionUrlResult> {
   if (method !== 'GET') return methodNotAllowed();
+  const { include, limit, before } = queryParams;
+  if (include !== undefined && include !== 'report') {
+    return jsonResponse(400, { error: "include must be 'report'" });
+  }
+  if (include === undefined) {
+    try {
+      const runs = await ServiceProvider.getRunReportingService().listRuns();
+      return jsonResponse(200, { runs });
+    } catch (error) {
+      return runReportingErrorResponse(error, 'Failed to list runs');
+    }
+  }
+
+  const limitValue = limit === undefined ? RUN_LIST_DEFAULT_LIMIT : Number(limit);
+  if (!/^\d+$/.test(limit ?? `${RUN_LIST_DEFAULT_LIMIT}`) || limitValue < 1 || limitValue > RUN_LIST_MAX_LIMIT) {
+    return jsonResponse(400, { error: `limit must be an integer from 1 to ${RUN_LIST_MAX_LIMIT}`, code: 'INVALID_LIMIT' });
+  }
+  if (before !== undefined && !SYNC_RUN_ID.test(before)) {
+    return jsonResponse(400, { error: 'before must be a syncRunId (an ISO timestamp, e.g. 2026-10-01T02:00:00.000Z)' });
+  }
   try {
-    const runs = await ServiceProvider.getRunReportingService().listRuns();
-    return jsonResponse(200, { runs });
+    return jsonResponse(200, await new RunList(ServiceProvider.getRunReportingService()).page({ limit: limitValue, before }));
   } catch (error) {
     return runReportingErrorResponse(error, 'Failed to list runs');
   }

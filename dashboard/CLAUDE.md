@@ -146,6 +146,12 @@ The Lambda function serves two primary roles:
 **Run reporting** (this landscape's sync runs, read in-process from its tables and chunks bucket
 through fargate's `src/reporting/RunReporting.ts`; GET only, no `landscape` parameter):
 - `GET /api/runs` - `{ runs }`, the syncRunIds, oldest first
+- `GET /api/runs?include=report&limit&before` - a page of runs with their reports, newest first:
+  `{ items, before? }`. Up to `limit` runs (1-50, default 20) older than `before` (a syncRunId);
+  the response's `before` continues the list and is present only while older runs remain. A run
+  with nothing recorded to report on is listed as `{ syncRunId, status: 'UNKNOWN' }`. Built by
+  `RunList` (`src/handlers/RunList.ts`): `listRuns()`, then that page's reports in parallel. A bad
+  `limit` is `400` `INVALID_LIMIT`, a bad `before` or `include` is `400`.
 - `GET /api/runs/{syncRunId}/summary` - the run's report (`404` if nothing is recorded)
 - `GET /api/runs/{syncRunId}/chunks` - `{ items }`, per-chunk statistics
 - `GET /api/runs/{syncRunId}/errors?cursor&limit&statusCode` - a page `{ items, cursor? }`
@@ -194,8 +200,18 @@ Provides mock implementations when `LOCALHOST_WITH_MOCKS=true` (ignored in Lambd
 - Mock Huron data target operations
 - Simulated sync execution
 - Fake history and status data
-- Fake run reports and a fake landscape registry ("local", plus `mock` and `Staging` at
-  example.com urls). This `mock` is unrelated to the deployed mock landscape.
+- A fake landscape registry ("local", plus `mock` and `Staging` at example.com urls). This `mock`
+  is unrelated to the deployed mock landscape.
+- Run reporting (`src/handlers/MockRunReporting.ts`): a deterministic history of 40 runs ending
+  with the nightly run of 2026-11-04. `MockRunCatalog` defines them: nightly delta syncs, a full
+  sync every seventh night, and at fixed positions from the newest the special cases (an incomplete
+  run, a terminal error, a failed and a post-processing-failed run, a dry run, a bulk reset, two
+  single-person runs). The newest run has 260 errors across 400/404/429/500 and 130/240/12
+  NEW/UPDATED/DELETED changes, enough for several pages. Chunk statistics, errors and changes agree
+  with each run's summary. `MockRunReportingService` pages them with offset cursors (`OffsetPager`)
+  under RunReporting's limits and `ReportingError` codes. `MOCK_STORAGE_MODE` (`dynamodb`, the
+  default, or `s3`) sets the storage mode it reports; in S3 mode change lists are refused with
+  `UNSUPPORTED_IN_STORAGE_MODE`. Tests: `test/DashboardMockRunReporting.test.ts`.
 
 **Benefit**: Enables full local testing without AWS credentials or external service access. The
 mocks ignore the integration config, so the person and bulk sync routes don't read it when they
@@ -251,6 +267,9 @@ The two `signed-in` scripts build the templates, then run `dashboard/scripts/Loc
   registry can't be read, e.g. with an expired AWS session).
 - `--mocks` sets `LOCALHOST_WITH_MOCKS=true` and skips `.env`: the navigator lists the mock
   registry's made-up landscapes.
+- `--storage-mode dynamodb|s3` (with `--mocks` only) sets `MOCK_STORAGE_MODE`, the storage mode
+  the mock run reporting reports. From npm, pass it after `--`:
+  `npm run dashboard:dev:signed-in:mocks -- --storage-mode s3`.
 
 Neither shows a user name (no JWT cookie on localhost), and `/logout` is a 404 there: only the
 edge functions answer it. The launcher sets the variables itself, rather than the npm script
