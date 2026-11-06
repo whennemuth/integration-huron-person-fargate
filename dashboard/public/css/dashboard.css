@@ -1,134 +1,290 @@
-/* Custom dashboard styles */
-.dashboard-header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    padding: 2rem 0;
+/* ==========================================================================
+   Theme tokens
+   The one place the dashboard's colors, type and shape are decided. Bootstrap 5.3 reads its own
+   --bs-* variables, so they are pointed at these tokens; components below use the tokens directly.
+   A future dark mode redefines these under [data-bs-theme="dark"].
+   ========================================================================== */
+:root {
+    --hp-accent: #2c5a8c;
+    --hp-accent-rgb: 44, 90, 140;
+    --hp-accent-hover: #244b75;
+    --hp-accent-active: #1e3f62;
+    --hp-accent-subtle: #eaf0f6;
+    --hp-accent-border-subtle: #b9cadd;
+
+    --hp-canvas: #f5f6f8;
+    --hp-surface: #ffffff;
+    --hp-surface-muted: #f8f9fa;
+    --hp-border: #e1e4e8;
+    --hp-border-strong: #c9ced6;
+
+    --hp-text: #1f2328;
+    --hp-text-rgb: 31, 35, 40;
+    --hp-text-secondary: #57606a;
+    --hp-text-muted: #6e7781;
+
+    --hp-success: #1a7f37;
+    --hp-success-rgb: 26, 127, 55;
+    --hp-warning: #9a6700;
+    --hp-warning-rgb: 154, 103, 0;
+    --hp-danger: #c4302b;
+    --hp-danger-rgb: 196, 48, 43;
+
+    --hp-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    --hp-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --hp-font-size: 0.9375rem;
+
+    --hp-radius: 6px;
+    --hp-radius-sm: 4px;
+    --hp-radius-lg: 8px;
+    --hp-shadow-sm: 0 1px 2px rgba(var(--hp-text-rgb), 0.06);
+    --hp-focus-ring: 0 0 0 0.2rem rgba(var(--hp-accent-rgb), 0.2);
+
+    /* Bootstrap's variables, pointed at the tokens */
+    --bs-primary: var(--hp-accent);
+    --bs-primary-rgb: var(--hp-accent-rgb);
+    --bs-primary-text-emphasis: var(--hp-accent-active);
+    --bs-primary-bg-subtle: var(--hp-accent-subtle);
+    --bs-primary-border-subtle: var(--hp-accent-border-subtle);
+    --bs-success: var(--hp-success);
+    --bs-success-rgb: var(--hp-success-rgb);
+    --bs-warning-text-emphasis: var(--hp-warning);
+    --bs-danger: var(--hp-danger);
+    --bs-danger-rgb: var(--hp-danger-rgb);
+
+    --bs-link-color: var(--hp-accent);
+    --bs-link-color-rgb: var(--hp-accent-rgb);
+    --bs-link-hover-color: var(--hp-accent-hover);
+    --bs-link-hover-color-rgb: 36, 75, 117;
+
+    --bs-body-font-family: var(--hp-font-sans);
+    --bs-body-font-size: var(--hp-font-size);
+    --bs-font-monospace: var(--hp-font-mono);
+    --bs-body-color: var(--hp-text);
+    --bs-body-color-rgb: var(--hp-text-rgb);
+    --bs-emphasis-color: var(--hp-text);
+    --bs-secondary-color: var(--hp-text-secondary);
+    --bs-tertiary-bg: var(--hp-surface-muted);
+    --bs-border-color: var(--hp-border);
+
+    --bs-border-radius: var(--hp-radius);
+    --bs-border-radius-sm: var(--hp-radius-sm);
+    --bs-border-radius-lg: var(--hp-radius-lg);
+    --bs-focus-ring-color: rgba(var(--hp-accent-rgb), 0.2);
 }
 
-/* Status indicators */
+/* ==========================================================================
+   Base
+   ========================================================================== */
+/* --bs-body-bg stays white because cards, inputs and modals take their surface from it */
+body {
+    background-color: var(--hp-canvas);
+    -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--hp-text);
+}
+
+code, pre, kbd, samp {
+    font-family: var(--hp-font-mono);
+}
+
+.text-muted {
+    color: var(--hp-text-muted) !important;
+}
+
+/* Counts, timestamps and table figures line up in columns */
+.tabular-nums, table, .metric-card {
+    font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   Bootstrap components retuned to the tokens
+   (Bootstrap 5.3 hardcodes some colors per component rather than reading --bs-primary)
+   ========================================================================== */
+.btn-primary {
+    --bs-btn-bg: var(--hp-accent);
+    --bs-btn-border-color: var(--hp-accent);
+    --bs-btn-hover-bg: var(--hp-accent-hover);
+    --bs-btn-hover-border-color: var(--hp-accent-hover);
+    --bs-btn-active-bg: var(--hp-accent-active);
+    --bs-btn-active-border-color: var(--hp-accent-active);
+    --bs-btn-disabled-bg: var(--hp-accent);
+    --bs-btn-disabled-border-color: var(--hp-accent);
+    --bs-btn-focus-shadow-rgb: var(--hp-accent-rgb);
+}
+
+.btn-outline-primary {
+    --bs-btn-color: var(--hp-accent);
+    --bs-btn-border-color: var(--hp-accent);
+    --bs-btn-hover-bg: var(--hp-accent);
+    --bs-btn-hover-border-color: var(--hp-accent);
+    --bs-btn-active-bg: var(--hp-accent-active);
+    --bs-btn-active-border-color: var(--hp-accent-active);
+    --bs-btn-disabled-color: var(--hp-accent);
+    --bs-btn-disabled-border-color: var(--hp-accent);
+    --bs-btn-focus-shadow-rgb: var(--hp-accent-rgb);
+}
+
+.btn-outline-secondary {
+    --bs-btn-color: var(--hp-text-secondary);
+    --bs-btn-border-color: var(--hp-border-strong);
+    --bs-btn-hover-color: var(--hp-text);
+    --bs-btn-hover-bg: var(--hp-surface-muted);
+    --bs-btn-hover-border-color: var(--hp-border-strong);
+    --bs-btn-active-color: var(--hp-text);
+    --bs-btn-active-bg: var(--hp-border);
+    --bs-btn-active-border-color: var(--hp-border-strong);
+}
+
+/* A smaller button for inline actions (e.g. copy to clipboard) */
+.btn-compact {
+    --bs-btn-padding-y: 0.125rem;
+    --bs-btn-padding-x: 0.5rem;
+    --bs-btn-font-size: 0.75rem;
+}
+
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--hp-accent-border-subtle);
+    box-shadow: var(--hp-focus-ring);
+}
+
+.form-check-input:checked {
+    background-color: var(--hp-accent);
+    border-color: var(--hp-accent);
+}
+
+.form-check-input:focus {
+    border-color: var(--hp-accent-border-subtle);
+    box-shadow: var(--hp-focus-ring);
+}
+
+.card {
+    --bs-card-border-color: var(--hp-border);
+    --bs-card-cap-bg: var(--hp-surface);
+    --bs-card-cap-padding-y: 0.75rem;
+    box-shadow: var(--hp-shadow-sm);
+}
+
+.card-header h5 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.nav-tabs {
+    --bs-nav-tabs-border-color: var(--hp-border);
+    --bs-nav-tabs-link-active-border-color: var(--hp-border) var(--hp-border) var(--hp-surface);
+}
+
+.nav-tabs .nav-link {
+    color: var(--hp-text-secondary);
+}
+
+.nav-tabs .nav-link.active {
+    color: var(--hp-text);
+    font-weight: 500;
+}
+
+.modal {
+    --bs-modal-border-color: var(--hp-border);
+}
+
+/* ==========================================================================
+   Dashboard components
+   ========================================================================== */
+/* Status indicators (System Status) */
 .status-indicator {
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     display: inline-block;
     margin-right: 8px;
 }
-.status-healthy { background-color: #28a745; }
-.status-warning { background-color: #ffc107; }
-.status-error { background-color: #dc3545; }
+.status-healthy { background-color: var(--hp-success); }
+.status-warning { background-color: #d4a72c; }
+.status-error { background-color: var(--hp-danger); }
 
-/* Activity log */
+/* Metric tiles (System Status) */
+.metric-card {
+    border: 1px solid var(--hp-border);
+}
+
+/* Activity log (Activity History) */
 .activity-log {
     max-height: 400px;
     overflow-y: auto;
 }
 
-/* Person result styling */
+/* Person lookup result */
 .person-result {
-    background-color: #f8f9fa;
-    border-left: 4px solid #007bff;
+    background-color: var(--hp-surface-muted);
+    border: 1px solid var(--hp-border);
     margin: 15px 0;
 }
 
-.metric-card {
-    transition: all 0.3s ease;
-    border: none;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+/* Person data tree (person-card.js) */
+.person-data-box {
+    margin-bottom: 10px;
 }
 
-.metric-card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 5px 20px rgba(0,0,0,0.15);
+.person-data-box .field-header {
+    padding: 2px 0;
+    border-left: 2px solid transparent;
 }
 
-.status-badge {
-    font-size: 0.8em;
-    padding: 0.25rem 0.5rem;
+.person-data-box .field-header:hover {
+    border-left-color: var(--hp-accent);
 }
 
-.activity-timeline {
-    position: relative;
+.person-data-box .array-item-header {
+    padding: 2px 0;
+    color: var(--hp-text-muted);
 }
 
-.activity-timeline::before {
-    content: '';
-    position: absolute;
-    left: 20px;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    background: #dee2e6;
+.person-data-box .array-item-header:hover {
+    color: var(--hp-accent);
 }
 
-.activity-item {
-    position: relative;
-    padding-left: 50px;
-    margin-bottom: 1rem;
+.person-data-box .field-value {
+    font-family: var(--hp-font-mono);
+    font-size: 0.875em;
+    color: var(--hp-text-secondary);
+    word-break: break-word;
 }
 
-.activity-item::before {
-    content: '';
-    position: absolute;
-    left: 14px;
-    top: 10px;
-    width: 12px;
-    height: 12px;
-    background: #007bff;
-    border-radius: 50%;
-    border: 3px solid white;
-    box-shadow: 0 0 0 3px #007bff;
+.person-list-container {
+    max-height: 600px;
+    overflow-y: auto;
 }
 
-.form-floating-custom {
-    position: relative;
+/* Lookup button spinner, shown while a tab is loading */
+.loading-spinner {
+    display: none;
 }
 
-.btn-loading {
-    position: relative;
-}
-
-.btn-loading .btn-text {
-    opacity: 0;
-}
-
-.btn-loading::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 1rem;
-    height: 1rem;
-    border: 2px solid transparent;
-    border-top: 2px solid currentColor;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-    0% { transform: translate(-50%, -50%) rotate(0deg); }
-    100% { transform: translate(-50%, -50%) rotate(360deg); }
+.tab-loading .loading-spinner {
+    display: inline-block;
 }
 
 .tab-content {
     min-height: 500px;
 }
 
-.person-card {
-    border-left: 4px solid #007bff;
-    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+/* Centered single-column pages (Individual Sync, Person Mapping) */
+.page-column {
+    min-width: 80%;
+    max-width: 100%;
 }
 
-.sync-status {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
+/* Login page prompt */
+.login-panel {
+    min-height: 30vh;
 }
 
-.spinner-border-sm {
-    width: 1rem;
-    height: 1rem;
-}
 /* Landscape navigator (navbar) */
 .landscape-navigator {
     width: auto;
