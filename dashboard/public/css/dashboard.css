@@ -264,6 +264,11 @@ code, pre, kbd, samp {
     color: var(--hp-text-muted);
 }
 
+/* An ungrouped item at the top (the Overview) has no heading to space it from the brand above */
+.app-nav > .nav-link:first-child {
+    margin-top: 0.75rem;
+}
+
 .app-nav .nav-link {
     display: flex;
     align-items: center;
@@ -806,6 +811,45 @@ code, pre, kbd, samp {
     font-size: 0.875em;
     color: var(--hp-text-secondary);
     word-break: break-word;
+}
+
+/* A link at the right of a section heading, to the page with more (e.g. "All runs") */
+.section-link {
+    font-size: 0.875rem;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.section-link:hover {
+    text-decoration: underline;
+}
+
+/* Overview's latest run (overview.js): when and how it ran, beside the way to its page */
+.latest-run {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1.5rem;
+}
+
+.latest-run-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+    margin: 0;
+    font-size: 1.0625rem;
+}
+
+.latest-run-facts {
+    margin: 0.25rem 0 0;
+    font-size: 0.875rem;
+    color: var(--hp-text-secondary);
+}
+
+.latest-run-figures {
+    margin-top: 1rem;
 }
 
 /* Run history (run-history.js) */

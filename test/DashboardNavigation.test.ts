@@ -212,7 +212,7 @@ describe('Dashboard page sidebar', () => {
     for (const group of ['Person', 'Runs', 'System']) {
       expect(body).toMatch(new RegExp(`class="app-nav-group"[^>]*>${group}<`));
     }
-    for (const page of ['individual', 'mapping', 'runs', 'history', 'bulk', 'system']) {
+    for (const page of ['overview', 'individual', 'mapping', 'runs', 'history', 'bulk', 'system']) {
       expect(navItem(body, page)).toContain(`data-page="${page}"`);
       expect(navItem(body, page)).toContain('data-bs-toggle="pill"');
     }
@@ -220,24 +220,24 @@ describe('Dashboard page sidebar', () => {
 
   it('shows the default page when none is requested', async () => {
     const body = await render();
-    expect(navItem(body, 'individual')).toMatch(/class="nav-link active"/);
-    expect(pane(body, 'individual')).toContain('show active');
+    expect(navItem(body, 'overview')).toMatch(/class="nav-link active"/);
+    expect(pane(body, 'overview')).toContain('show active');
     expect(pane(body, 'system')).not.toContain('show active');
   });
 
   it('shows the requested page', async () => {
     const body = await render({ tab: 'system' });
     expect(navItem(body, 'system')).toMatch(/class="nav-link active"/);
-    expect(navItem(body, 'individual')).not.toMatch(/class="nav-link active"/);
+    expect(navItem(body, 'overview')).not.toMatch(/class="nav-link active"/);
     expect(pane(body, 'system')).toContain('show active');
-    expect(pane(body, 'individual')).not.toContain('show active');
+    expect(pane(body, 'overview')).not.toContain('show active');
   });
 
   it('gives every page a page header, and loads the state patterns before the components using them', async () => {
     const body = await render();
     const titles = body.match(/<h1 class="page-title">[^<]*<\/h1>/g) || [];
     expect(titles.map(title => title.replace(/<[^>]+>/g, ''))).toEqual(
-      ['Lookup and sync', 'Mapping experiment', 'Bulk sync', 'Run history', 'Activity history', 'Status']
+      ['Overview', 'Lookup and sync', 'Mapping experiment', 'Bulk sync', 'Run history', 'Activity history', 'Status']
     );
     const pageStateAt = body.indexOf('class PageState');
     expect(pageStateAt).toBeGreaterThan(-1);
@@ -246,13 +246,23 @@ describe('Dashboard page sidebar', () => {
     // The run history page's classes, defined before dashboard.js creates the page
     expect(pageStateAt).toBeLessThan(body.indexOf('class RunHistoryPage'));
     expect(body.indexOf('class RunHistoryPage')).toBeLessThan(body.indexOf('new RunHistoryPage('));
+    // The Overview builds on the run history and service status scripts
+    expect(body.indexOf('class RunHistoryPage')).toBeLessThan(body.indexOf('class OverviewPage'));
+    expect(body.indexOf('class ServiceStatusTable')).toBeLessThan(body.indexOf('class OverviewPage'));
+    expect(body.indexOf('class OverviewPage')).toBeLessThan(body.indexOf('new OverviewPage('));
     // The fixed-height inner scroll boxes are gone: pages scroll as a whole
     expect(body).not.toContain('activity-log');
   });
 
   it('shows the default page, not a blank one, when an unknown page is requested', async () => {
     const body = await render({ tab: 'nonsense' });
-    expect(navItem(body, 'individual')).toMatch(/class="nav-link active"/);
-    expect(pane(body, 'individual')).toContain('show active');
+    expect(navItem(body, 'overview')).toMatch(/class="nav-link active"/);
+    expect(pane(body, 'overview')).toContain('show active');
+  });
+
+  it('lists the Overview first, with no group heading above it', async () => {
+    const body = await render();
+    const nav = body.slice(body.indexOf('id="dashboardTabs"'));
+    expect(nav.indexOf('id="overview-tab"')).toBeLessThan(nav.indexOf('class="app-nav-group"'));
   });
 });

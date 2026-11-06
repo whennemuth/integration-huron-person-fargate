@@ -41,6 +41,7 @@ export class TemplateService {
     } else {
       const partialsPath = join(__dirname, '../../templates/partials');
       return {
+        'overview-tab': readFileSync(join(partialsPath, 'overview-tab.mustache'), 'utf-8'),
         'individual-tab': readFileSync(join(partialsPath, 'individual-tab.mustache'), 'utf-8'),
         'mapping-tab': readFileSync(join(partialsPath, 'mapping-tab.mustache'), 'utf-8'),
         'bulk-tab': readFileSync(join(partialsPath, 'bulk-tab.mustache'), 'utf-8'),
@@ -77,7 +78,9 @@ export class TemplateService {
         'pageState': assets['page-state'] || '',
         'personCard': assets['person-card'] || '',
         'mappingExperimentCard': assets['mapping-experiment-card'] || '',
-        'runHistory': assets['run-history'] || ''
+        'runHistory': assets['run-history'] || '',
+        'systemStatus': assets['system-status'] || '',
+        'overview': assets['overview'] || ''
       };
     } else {
       const jsPath = join(__dirname, '../../public/js');
@@ -86,7 +89,9 @@ export class TemplateService {
         'pageState': readFileSync(join(jsPath, 'page-state.js'), 'utf-8'),
         'personCard': readFileSync(join(jsPath, 'person-card.js'), 'utf-8'),
         'mappingExperimentCard': readFileSync(join(jsPath, 'mapping-experiment-card.js'), 'utf-8'),
-        'runHistory': readFileSync(join(jsPath, 'run-history.js'), 'utf-8')
+        'runHistory': readFileSync(join(jsPath, 'run-history.js'), 'utf-8'),
+        'systemStatus': readFileSync(join(jsPath, 'system-status.js'), 'utf-8'),
+        'overview': readFileSync(join(jsPath, 'overview.js'), 'utf-8')
       };
     }
   }

@@ -105,6 +105,52 @@ class PageState {
 }
 
 /**
+ * Html - escaping and the small markup pieces pages build from template literals: status badges and tags.
+ * Every value placed in such markup goes through Html.escape.
+ */
+class Html {
+
+    static escape(value) {
+        return String(value === undefined || value === null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    /** A status badge (dot and word); tone is success, warning, danger, or none for neutral */
+    static badge(label, tone) {
+        return `<span class="status-badge${tone ? ` status-badge-${tone}` : ''}">${Html.escape(label)}</span>`;
+    }
+
+    /** The words that give a status its tone, for a status shown as it is (e.g. a service's health) */
+    static get STATUS_TONES() {
+        return {
+            success: ['completed', 'succeeded', 'success', 'healthy'],
+            warning: ['started', 'running', 'in_progress', 'incomplete', 'warning', 'degraded'],
+            danger: ['failed', 'error', 'unhealthy', 'post_processing_failed']
+        };
+    }
+
+    static toneOf(status) {
+        const normalized = String(status || '').toLowerCase();
+        const tones = Html.STATUS_TONES;
+        return Object.keys(tones).find(tone => tones[tone].includes(normalized));
+    }
+
+    /** A badge showing a status word as it is, tinted by what the word means */
+    static statusBadge(status) {
+        return Html.badge(status || 'unknown', Html.toneOf(status));
+    }
+
+    /** A small neutral marker beside a value, e.g. "Dry run" */
+    static tag(label) {
+        return `<span class="run-tag">${Html.escape(label)}</span>`;
+    }
+}
+
+/**
  * RefreshStamp - the "Refreshed HH:MM" beside a page's Refresh button, saying how fresh what the page shows is.
  * Pages refresh only when asked (a run that never finishes would keep a polling page busy for ever), so the
  * time tells the reader when to ask again.

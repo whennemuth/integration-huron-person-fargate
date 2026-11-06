@@ -30,7 +30,7 @@
                     </div>
                     <nav class="nav flex-column app-nav" id="dashboardTabs" role="tablist" aria-orientation="vertical" aria-label="Dashboard pages">
                         {{#navigation}}
-                        <div class="app-nav-group" role="presentation">{{label}}</div>
+                        {{#label}}<div class="app-nav-group" role="presentation">{{label}}</div>{{/label}}
                         {{#items}}
                         <button class="nav-link {{#active}}active{{/active}}"
                                 id="{{id}}-tab"
@@ -92,6 +92,8 @@
             <!-- Pages: one tab pane each, shown by the sidebar item of the same id -->
             <main class="app-content tab-content" id="dashboardTabContent">
 
+                {{>overview-tab}}
+
                 {{>individual-tab}}
 
                 {{>mapping-tab}}
@@ -129,6 +131,16 @@
     <!-- Run History Page -->
     <script>
         {{{jsAssets.runHistory}}}
+    </script>
+
+    <!-- Service Status Table (Status and Overview pages) -->
+    <script>
+        {{{jsAssets.systemStatus}}}
+    </script>
+
+    <!-- Overview Page -->
+    <script>
+        {{{jsAssets.overview}}}
     </script>
 
     <!-- Dashboard JavaScript -->

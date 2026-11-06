@@ -6,7 +6,7 @@
  * for (`?tab=<id>`), else the default. In the browser, a URL fragment (`#<id>`) then takes precedence
  * (`public/js/dashboard.js`), since the server never sees it.
  */
-export type PageId = 'individual' | 'mapping' | 'bulk' | 'runs' | 'history' | 'system';
+export type PageId = 'overview' | 'individual' | 'mapping' | 'bulk' | 'runs' | 'history' | 'system';
 
 /** A page as the sidebar shows it */
 export type PageDefinition = {
@@ -16,8 +16,9 @@ export type PageDefinition = {
   icon: string;
 };
 
+/** A sidebar group. A group without a label is listed with no heading (the Overview, at the top) */
 export type PageGroupDefinition = {
-  label: string;
+  label?: string;
   pages: PageDefinition[];
 };
 
@@ -25,7 +26,7 @@ export type PageGroupDefinition = {
 export type NavigationItem = PageDefinition & { active: boolean };
 
 /** A sidebar group, as the dashboard template renders it */
-export type NavigationGroup = { label: string; items: NavigationItem[] };
+export type NavigationGroup = { label?: string; items: NavigationItem[] };
 
 /** One flag per page (`individualActive`, ...), which the page partials use to render themselves shown */
 export type PageActiveFlags = { [Id in PageId as `${Id}Active`]: boolean };
@@ -37,6 +38,11 @@ export type PageNavigationData = PageActiveFlags & {
 };
 
 export const DEFAULT_PAGE_GROUPS: PageGroupDefinition[] = [
+  {
+    pages: [
+      { id: 'overview', label: 'Overview', icon: 'fa-gauge' },
+    ]
+  },
   {
     label: 'Person',
     pages: [
@@ -60,7 +66,7 @@ export const DEFAULT_PAGE_GROUPS: PageGroupDefinition[] = [
   }
 ];
 
-export const DEFAULT_PAGE: PageId = 'individual';
+export const DEFAULT_PAGE: PageId = 'overview';
 
 export class PageNavigation {
 

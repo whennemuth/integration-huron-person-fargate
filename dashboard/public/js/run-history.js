@@ -2,8 +2,8 @@
  * Run history page (the "runs" page): this landscape's sync runs, newest first, and one run's own page
  * (#runs/<syncRunId>) with its facts, its figures, and its Overview, Chunks, Errors and Changes sections.
  *
- * Built from small classes, each testable on its own (test/DashboardRunHistory.test.ts):
- *   RunHtml         escaping, badges and tags for HTML built from template literals
+ * Built from small classes, each testable on its own (test/DashboardRunHistory.test.ts). Markup goes through Html
+ * (page-state.js, loaded first):
  *   RunFormat       numbers, times, durations and the labels for statuses and codes
  *   RunView         one run's report (from the run reporting routes) reduced to what the page shows
  *   RunsApi         the run reporting routes
@@ -16,29 +16,6 @@
  * that drops the rest of a line after a double slash and joins lines. So no string may hold a double slash,
  * and every statement ends with a semicolon.
  */
-
-/** Escaping and small markup pieces for HTML built from template literals */
-class RunHtml {
-
-    static escape(value) {
-        return String(value === undefined || value === null ? '' : value)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-
-    /** A status badge (dot and word); tone is success, warning, danger, or none for neutral */
-    static badge(label, tone) {
-        return `<span class="status-badge${tone ? ` status-badge-${tone}` : ''}">${RunHtml.escape(label)}</span>`;
-    }
-
-    /** A small neutral marker beside a value, e.g. "Dry run" */
-    static tag(label) {
-        return `<span class="run-tag">${RunHtml.escape(label)}</span>`;
-    }
-}
 
 /** How run figures, times and codes read on the page */
 class RunFormat {
@@ -107,12 +84,12 @@ class RunFormat {
 
     static statusBadge(status) {
         const { label, tone } = RunFormat.status(status);
-        return RunHtml.badge(label, tone);
+        return Html.badge(label, tone);
     }
 
     static deletionBadge(status) {
         const { label, tone } = RunFormat.DELETION_STATUSES[status] || { label: status || 'Unknown', tone: null };
-        return RunHtml.badge(label, tone);
+        return Html.badge(label, tone);
     }
 
     static isNumber(value) {
@@ -146,6 +123,27 @@ class RunFormat {
             return `${minutes} min`;
         }
         return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')} min`;
+    }
+
+    /** How long ago a time was, as a person would say it: just now, 5 min ago, 3 h ago, 2 days ago */
+    static ago(iso, now = Date.now()) {
+        const then = Date.parse(iso);
+        if ( ! Number.isFinite(then)) {
+            return RunFormat.NONE;
+        }
+        const minutes = Math.floor((now - then) / 60000);
+        if (minutes < 1) {
+            return 'just now';
+        }
+        if (minutes < 60) {
+            return `${minutes} min ago`;
+        }
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) {
+            return `${hours} h ago`;
+        }
+        const days = Math.floor(hours / 24);
+        return days === 1 ? '1 day ago' : `${days} days ago`;
     }
 
     static population(population) {
@@ -222,6 +220,16 @@ class RunView {
     /** "Person U12345678" for a single-person run whose source names the person, else the population */
     get populationLabel() {
         return this.buid ? `Person ${this.buid}` : RunFormat.population(this.population);
+    }
+
+    /** The run's key facts, in the order a header lists them: population, storage mode, duration, markers */
+    get facts() {
+        return [
+            this.populationLabel,
+            this.storageMode ? `${RunFormat.storageMode(this.storageMode)} storage` : undefined,
+            this.durationMs !== undefined ? RunFormat.duration(this.durationMs) : undefined,
+            ...this.tags
+        ].filter(Boolean);
     }
 
     /** Markers shown beside the population */
@@ -496,20 +504,20 @@ class RunListTable {
     }
 
     static rowHtml(run) {
-        const href = RunHtml.escape(RunHistoryPage.detailHref(run.syncRunId));
-        const tags = run.tags.map(RunHtml.tag).join(' ');
+        const href = Html.escape(RunHistoryPage.detailHref(run.syncRunId));
+        const tags = run.tags.map(Html.tag).join(' ');
         const number = RunFormat.number;
         return `
             <tr data-href="${href}">
-                <td><a class="run-link tabular-nums" href="${href}">${RunHtml.escape(RunFormat.dateTime(run.startedAt))}</a></td>
+                <td><a class="run-link tabular-nums" href="${href}">${Html.escape(RunFormat.dateTime(run.startedAt))}</a></td>
                 <td>${RunFormat.statusBadge(run.status)}</td>
-                <td>${RunHtml.escape(run.populationLabel)}${tags ? ` ${tags}` : ''}</td>
+                <td>${Html.escape(run.populationLabel)}${tags ? ` ${tags}` : ''}</td>
                 <td class="num">${number(run.records)}</td>
                 <td class="num">${number(run.added)}</td>
                 <td class="num">${number(run.updated)}</td>
                 <td class="num">${number(run.deactivated)}</td>
                 <td class="num">${number(run.errors)}</td>
-                <td class="num">${RunHtml.escape(RunFormat.duration(run.durationMs))}</td>
+                <td class="num">${Html.escape(RunFormat.duration(run.durationMs))}</td>
             </tr>
         `;
     }
@@ -607,7 +615,7 @@ class RunDetailView {
         }
         this.run = run;
         this.capabilities = capabilities || {};
-        body.innerHTML = this.headerHtml() + this.tilesHtml() + this.noteHtml() + this.sectionsHtml();
+        body.innerHTML = this.headerHtml() + RunDetailView.tilesHtml(run) + RunDetailView.noteHtml(run) + this.sectionsHtml();
         body.querySelector('[data-action="refresh"]').addEventListener('click', () => this.load());
         RefreshStamp.set(body.querySelector('.refresh-stamp'));
         body.querySelectorAll('[data-section]').forEach(tab => {
@@ -619,21 +627,15 @@ class RunDetailView {
 
     headerHtml() {
         const run = this.run;
-        const facts = [
-            run.populationLabel,
-            run.storageMode ? `${RunFormat.storageMode(run.storageMode)} storage` : undefined,
-            run.durationMs !== undefined ? RunFormat.duration(run.durationMs) : undefined,
-            ...run.tags
-        ].filter(Boolean);
         return `
             <header class="page-header">
                 <div>
                     <h1 class="page-title run-title">
-                        <span>Run of ${RunHtml.escape(RunFormat.dateTime(run.startedAt))}</span>
+                        <span>Run of ${Html.escape(RunFormat.dateTime(run.startedAt))}</span>
                         ${RunFormat.statusBadge(run.status)}
                     </h1>
-                    <p class="page-description">${facts.map(RunHtml.escape).join(' &middot; ')}</p>
-                    <p class="run-id">Run ID <code>${RunHtml.escape(run.syncRunId)}</code></p>
+                    <p class="page-description">${run.facts.map(Html.escape).join(' &middot; ')}</p>
+                    <p class="run-id">Run ID <code>${Html.escape(run.syncRunId)}</code></p>
                 </div>
                 <div class="page-actions">
                     <span class="refresh-stamp"></span>
@@ -645,8 +647,8 @@ class RunDetailView {
         `;
     }
 
-    tilesHtml() {
-        const run = this.run;
+    /** A run's figures as stat tiles (also the Overview page's, for the latest run) */
+    static tilesHtml(run) {
         const tiles = [
             ['Processed', run.processed],
             ['Added', run.added],
@@ -659,7 +661,7 @@ class RunDetailView {
                 <div class="stat-grid">
                     ${tiles.map(([label, value]) => `
                         <div class="stat-tile">
-                            <div class="stat-label">${RunHtml.escape(label)}</div>
+                            <div class="stat-label">${Html.escape(label)}</div>
                             <div class="stat-value">${RunFormat.number(value)}</div>
                         </div>
                     `).join('')}
@@ -668,9 +670,8 @@ class RunDetailView {
         `;
     }
 
-    /** What went wrong, or why the figures are missing: none for a run that succeeded */
-    noteHtml() {
-        const run = this.run;
+    /** What went wrong, or why the figures are missing: none for a run that succeeded (also the Overview page's) */
+    static noteHtml(run) {
         const deletion = run.deletion || {};
         let note;
         if (run.status === 'FAILED') {
@@ -701,9 +702,9 @@ class RunDetailView {
             <div class="run-note run-note-${note.tone}" role="note">
                 <i class="fas ${icon} run-note-icon" aria-hidden="true"></i>
                 <div>
-                    <p class="run-note-title">${RunHtml.escape(note.title)}</p>
-                    ${note.message ? `<p class="run-note-message">${RunHtml.escape(note.message)}</p>` : ''}
-                    ${note.at ? `<p class="run-note-message">At ${RunHtml.escape(RunFormat.dateTime(note.at, { seconds: true }))}</p>` : ''}
+                    <p class="run-note-title">${Html.escape(note.title)}</p>
+                    ${note.message ? `<p class="run-note-message">${Html.escape(note.message)}</p>` : ''}
+                    ${note.at ? `<p class="run-note-message">At ${Html.escape(RunFormat.dateTime(note.at, { seconds: true }))}</p>` : ''}
                 </div>
             </div>
         `;
@@ -726,7 +727,7 @@ class RunDetailView {
             return `
                 <button class="nav-link" type="button" role="tab" id="run-section-${id}-tab" data-section="${id}"
                         aria-controls="run-section-${id}" aria-selected="false">
-                    ${RunHtml.escape(label)}${RunFormat.isNumber(count) ? ` <span class="run-section-count">${RunFormat.number(count)}</span>` : ''}
+                    ${Html.escape(label)}${RunFormat.isNumber(count) ? ` <span class="run-section-count">${RunFormat.number(count)}</span>` : ''}
                 </button>
             `;
         }).join('');
@@ -820,7 +821,7 @@ class RunDetailView {
 
     static factsHtml(facts) {
         return `<dl class="fact-list">${facts.map(([term, value]) => `
-            <dt>${RunHtml.escape(term)}</dt><dd>${RunHtml.escape(value)}</dd>
+            <dt>${Html.escape(term)}</dt><dd>${Html.escape(value)}</dd>
         `).join('')}</dl>`;
     }
 
@@ -830,7 +831,7 @@ class RunDetailView {
             return '<p class="fact-note">No deletion step is recorded. Post-processing has not summarized this run.</p>';
         }
         const reason = deletion.status === 'SKIPPED' && RunFormat.SKIP_REASONS[deletion.reason]
-            ? ` <span class="fact-note">(${RunHtml.escape(RunFormat.SKIP_REASONS[deletion.reason])})</span>`
+            ? ` <span class="fact-note">(${Html.escape(RunFormat.SKIP_REASONS[deletion.reason])})</span>`
             : '';
         const counts = deletion.status === 'COMPLETED'
             ? RunDetailView.factsHtml([
@@ -841,7 +842,7 @@ class RunDetailView {
             : '';
         return `
             <p class="deletion-status">${RunFormat.deletionBadge(deletion.status)}${reason}</p>
-            ${deletion.message ? `<p class="deletion-message">${RunHtml.escape(deletion.message)}</p>` : ''}
+            ${deletion.message ? `<p class="deletion-message">${Html.escape(deletion.message)}</p>` : ''}
             ${counts}
         `;
     }
@@ -918,9 +919,9 @@ class RunDetailView {
             : '';
         const rows = chunks.map(chunk => `
             <tr>
-                <td class="tabular-nums">${RunHtml.escape(chunk.chunkId || chunk.eventType)}</td>
-                <td class="tabular-nums">${RunHtml.escape(RunFormat.dateTime(chunk.startTimestamp, { seconds: true }))}</td>
-                <td class="num">${RunHtml.escape(RunFormat.duration(Date.parse(chunk.endTimestamp) - Date.parse(chunk.startTimestamp)))}</td>
+                <td class="tabular-nums">${Html.escape(chunk.chunkId || chunk.eventType)}</td>
+                <td class="tabular-nums">${Html.escape(RunFormat.dateTime(chunk.startTimestamp, { seconds: true }))}</td>
+                <td class="num">${Html.escape(RunFormat.duration(Date.parse(chunk.endTimestamp) - Date.parse(chunk.startTimestamp)))}</td>
                 ${columns.map(([, key]) => `<td class="num">${RunFormat.number(chunk[key])}</td>`).join('')}
             </tr>
         `).join('');
@@ -977,10 +978,10 @@ class RunDetailView {
         const person = details && (details.sourceIdentifier || details.hrn);
         return `
             <tr>
-                <td class="tabular-nums">${RunHtml.escape(RunFormat.dateTime(item.timestamp, { seconds: true }))}</td>
-                <td>${RunHtml.escape(RunFormat.httpStatus(item.statusCode))}${item.isThrottled ? ` ${RunHtml.tag('Throttled')}` : ''}</td>
-                <td class="tabular-nums">${RunHtml.escape(person || '')}</td>
-                <td class="wrap">${RunHtml.escape(item.message)}</td>
+                <td class="tabular-nums">${Html.escape(RunFormat.dateTime(item.timestamp, { seconds: true }))}</td>
+                <td>${Html.escape(RunFormat.httpStatus(item.statusCode))}${item.isThrottled ? ` ${Html.tag('Throttled')}` : ''}</td>
+                <td class="tabular-nums">${Html.escape(person || '')}</td>
+                <td class="wrap">${Html.escape(item.message)}</td>
             </tr>
         `;
     }
@@ -1066,8 +1067,8 @@ class RunDetailView {
                 headHtml: '<th scope="col">Person</th><th scope="col">Change</th>',
                 rowHtml: item => `
                     <tr>
-                        <td class="tabular-nums">${RunHtml.escape(item.personId)}</td>
-                        <td>${RunHtml.escape(filter.label)}</td>
+                        <td class="tabular-nums">${Html.escape(item.personId)}</td>
+                        <td>${Html.escape(filter.label)}</td>
                     </tr>
                 `,
                 text: {
@@ -1090,10 +1091,10 @@ class RunDetailView {
      */
     renderFilteredList(panel, { filters, filterLabel, selected, createTable }) {
         panel.innerHTML = `
-            <div class="filter-chips" role="group" aria-label="${RunHtml.escape(filterLabel)}">
+            <div class="filter-chips" role="group" aria-label="${Html.escape(filterLabel)}">
                 ${filters.map(({ value, label, count }) => `
-                    <button type="button" class="filter-chip" data-value="${RunHtml.escape(value)}" aria-pressed="false">
-                        ${RunHtml.escape(label)}${RunFormat.isNumber(count) ? ` <span class="filter-chip-count">${RunFormat.number(count)}</span>` : ''}
+                    <button type="button" class="filter-chip" data-value="${Html.escape(value)}" aria-pressed="false">
+                        ${Html.escape(label)}${RunFormat.isNumber(count) ? ` <span class="filter-chip-count">${RunFormat.number(count)}</span>` : ''}
                     </button>
                 `).join('')}
             </div>

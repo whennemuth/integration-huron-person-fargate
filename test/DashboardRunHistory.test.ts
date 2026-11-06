@@ -15,13 +15,13 @@ import { handler } from '../dashboard/src/handlers/DashboardHandler';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
 import { MOCK_RUN_COUNT, NEWEST_MOCK_RUN } from '../dashboard/src/handlers/MockRunReporting';
 
-const SCRIPT = join(__dirname, '../dashboard/public/js/run-history.js');
-const CLASSES = ['RunHtml', 'RunFormat', 'RunView', 'RunsApi', 'CursorPager', 'PagedTable', 'RunListTable', 'RunDetailView', 'RunHistoryPage'];
+const JS_DIR = join(__dirname, '../dashboard/public/js');
+const CLASSES = ['Html', 'RunFormat', 'RunView', 'RunsApi', 'CursorPager', 'PagedTable', 'RunListTable', 'RunDetailView', 'RunHistoryPage'];
 
-/** Load run-history.js as the browser would, returning its classes */
+/** Load run-history.js as the browser would, after page-state.js (Html, PageState), returning its classes */
 const loadRunHistory = (minified = false): Record<string, any> => {
   const context = createContext({ URL, URLSearchParams, console });
-  const source = readFileSync(SCRIPT, 'utf-8');
+  const source = ['page-state.js', 'run-history.js'].map(file => readFileSync(join(JS_DIR, file), 'utf-8')).join('\n');
   const exports = CLASSES.map(name => `this.${name} = ${name};`).join('\n');
   new Script(`${minified ? minifyJS(source).minified : source}\n${exports}`).runInContext(context);
   return context as any;
@@ -50,7 +50,7 @@ const getJson = async (path: string): Promise<any> => {
 
 describe.each([false, true])('run-history.js (minified: %s)', minified => {
   const page = loadRunHistory(minified);
-  const { RunFormat, RunView, RunsApi, CursorPager, RunListTable, RunDetailView, RunHtml } = page;
+  const { RunFormat, RunView, RunsApi, CursorPager, RunListTable, RunDetailView, Html } = page;
 
   describe('RunFormat', () => {
     it('reads durations in the largest unit that reads well', () => {
@@ -69,6 +69,16 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       expect(RunFormat.storageMode('dynamodb')).toBe('DynamoDB');
       expect(RunFormat.httpStatus(429)).toBe('429 Too Many Requests');
       expect(RunFormat.httpStatus(418)).toBe('418');
+    });
+
+    it('says how long ago a time was', () => {
+      const now = Date.parse('2026-11-06T12:00:00.000Z');
+      expect(RunFormat.ago('2026-11-06T11:59:30.000Z', now)).toBe('just now');
+      expect(RunFormat.ago('2026-11-06T11:15:00.000Z', now)).toBe('45 min ago');
+      expect(RunFormat.ago('2026-11-06T02:00:00.000Z', now)).toBe('10 h ago');
+      expect(RunFormat.ago('2026-11-05T11:00:00.000Z', now)).toBe('1 day ago');
+      expect(RunFormat.ago('2026-11-03T12:00:00.000Z', now)).toBe('3 days ago');
+      expect(RunFormat.ago('not a time', now)).toBe(RunFormat.NONE);
     });
 
     it('shows a dash for a missing figure, never NaN or 0', () => {
@@ -96,6 +106,7 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       expect(run.durationMs).toBe(47 * 60_000);
       expect(run.populationLabel).toBe('Full sync');
       expect(run.tags).toEqual(['Bulk reset']);
+      expect(run.facts).toEqual(['Full sync', 'DynamoDB storage', '47 min', 'Bulk reset']);
       expect(run.deactivated).toBe(12);
       expect([run.changeCount('NEW'), run.changeCount('UPDATED'), run.changeCount('DELETED')]).toEqual([130, 240, 12]);
     });
@@ -221,7 +232,7 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       expect(row).toContain('Throttled');
       expect(row).toContain('U12345678');
       expect(row).toContain('Rate &lt;limited&gt;');
-      expect(RunHtml.escape(`"it's" & more`)).toBe('&quot;it&#39;s&quot; &amp; more');
+      expect(Html.escape(`"it's" & more`)).toBe('&quot;it&#39;s&quot; &amp; more');
     });
   });
 });

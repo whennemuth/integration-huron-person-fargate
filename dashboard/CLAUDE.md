@@ -116,6 +116,7 @@ The Lambda function serves two primary roles:
 ### Dashboard Operations
 - **Individual Person Sync**: Lookup and sync single person records by BUID or HRN
 - **Bulk Operations**: Large-scale batch synchronization jobs
+- **Overview** (the landing page): the latest run and the service health checks
 - **Run History**: The landscape's sync runs, newest first, and each run's figures, chunks, errors and changes
 - **Activity History**: Logs and audit trail of integration activities (placeholder, to be retired for Run History)
 - **System Status**: Health monitoring of BU CDM and Huron services
@@ -457,7 +458,8 @@ main column with a top bar above the pages. The login page has the same top bar 
 shape come from the theme tokens at the top of `public/css/dashboard.css` (`--hp-*`), which
 Bootstrap's own `--bs-*` variables point at. Change the look there, not per component.
 - **Sidebar** (`PageNavigation`, `src/handlers/PageNavigation.ts`): the page groups and their
-  items (id, label, Font Awesome icon). `renderDashboard()` passes its `templateData(?tab)`: the
+  items (id, label, Font Awesome icon). A group without a label is listed with no heading: the
+  Overview, at the top, is the default page, so a bare URL opens it. `renderDashboard()` passes its `templateData(?tab)`: the
   `navigation` groups plus a `<page>Active` flag per page, which the page partials use. An unknown
   `?tab` falls back to the default page rather than showing none. Each item is a Bootstrap pill
   (`data-bs-toggle="pill"`) for the tab pane of the same id. At `lg` and up the sidebar is a static
@@ -516,8 +518,8 @@ page-specific styles:
 - **Stat tiles**: `.stat-grid` of `.stat-tile` (`.stat-label` over `.stat-value`).
 - **Data tables**: `table.table.data-table` inside `.table-responsive`. Cells stay on one line and
   the table scrolls sideways on a narrow screen; mark prose cells `.wrap` and figures `.num`.
-  Outcomes use `.status-badge` (`-success`, `-warning`, `-danger`), from `statusBadge()` in
-  `dashboard.js`. No fixed-height inner scroll boxes: pages scroll as a whole.
+  Outcomes use `.status-badge` (`-success`, `-warning`, `-danger`), from `Html.statusBadge()`
+  (or `Html.badge(label, tone)`). No fixed-height inner scroll boxes: pages scroll as a whole.
 - **States** (`PageState`, `public/js/page-state.js`): the one pattern for a section with nothing to
   show: `loading`, `empty`, `error` and `redacted` (the viewer's role doesn't allow the content).
   `PageState.loading(target, title)` and friends replace a container's content;
@@ -527,6 +529,9 @@ page-specific styles:
   section's data load goes through `fetchSectionData()` (`dashboard.js`), which throws an `Error`
   carrying the server's message and `status`. Tests: `test/DashboardPageState.test.ts` (in a vm
   with a stand-in DOM, since jest runs without one).
+- **Markup** (`Html`, `public/js/page-state.js`): HTML built from template literals escapes every
+  value with `Html.escape()`, and draws badges and tags with `Html`. `dashboard.js`'s `escapeHtml()`
+  and `statusBadge()` delegate to it.
 - **Refresh stamp** (`RefreshStamp`, `public/js/page-state.js`): a `.refresh-stamp` in
   `.page-actions`, beside Refresh, set to "Refreshed HH:MM" once a page's data loads. Pages refresh
   only when asked: there is no polling (an incomplete run may never finish).
@@ -555,6 +560,18 @@ landscape's runs from the run reporting routes. Its classes each do one thing:
   `changesSupported` is false, it says why there are none).
 Tests: `test/DashboardRunHistory.test.ts` runs the script in a vm (as written and minified) and drives
 `RunsApi` through the handler with the mock run history.
+
+### Overview page
+
+The `overview` page (`templates/partials/overview-tab.mustache`, `public/js/overview.js`) is the
+landing page. `OverviewPage` loads, each time the page is shown and on Refresh, the latest run
+(`/api/runs?include=report&limit=1`: its status, facts, how long ago it finished or started, the
+run page's note and stat tiles, and a link to its page) and the service checks (`/api/status`, in
+the `ServiceStatusTable` of `public/js/system-status.js`, which the Status page uses too). The two
+load independently, so one failing (the real `SystemStatus` service isn't implemented yet) leaves
+the other shown. Scripts load in dependency order: `page-state.js`, `run-history.js`,
+`system-status.js`, `overview.js`, then `dashboard.js`, which creates the pages. Tests:
+`test/DashboardOverview.test.ts`.
 
 ## Dependencies
 

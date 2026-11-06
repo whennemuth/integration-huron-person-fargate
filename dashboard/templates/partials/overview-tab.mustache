@@ -1,0 +1,34 @@
+<!-- Overview page: the landing page, shown when the URL names no page -->
+<div class="tab-pane fade {{#overviewActive}}show active{{/overviewActive}}" id="overview" role="tabpanel" aria-labelledby="overview-tab">
+    <div class="page">
+        <header class="page-header">
+            <div>
+                <h1 class="page-title">Overview</h1>
+                <p class="page-description">The latest sync run in this landscape, and the health of the services the integration depends on.</p>
+            </div>
+            <div class="page-actions">
+                <span class="refresh-stamp" data-refresh-stamp="overview"></span>
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-action="refresh-overview">
+                    <i class="fas fa-rotate-right me-1"></i>Refresh
+                </button>
+            </div>
+        </header>
+
+        <!-- Both sections are filled by OverviewPage (overview.js) when the page is shown -->
+        <section class="page-section" aria-labelledby="latestRunHeading">
+            <div class="section-heading">
+                <h2 class="section-title" id="latestRunHeading">Latest run</h2>
+                <a class="section-link" href="#runs">All runs<i class="fas fa-arrow-right ms-1" aria-hidden="true"></i></a>
+            </div>
+            <div data-latest-run></div>
+        </section>
+
+        <section class="page-section" aria-labelledby="servicesHeading">
+            <div class="section-heading">
+                <h2 class="section-title" id="servicesHeading">Services</h2>
+                <a class="section-link" href="#system">Status<i class="fas fa-arrow-right ms-1" aria-hidden="true"></i></a>
+            </div>
+            <div class="surface surface-flush" data-services></div>
+        </section>
+    </div>
+</div>

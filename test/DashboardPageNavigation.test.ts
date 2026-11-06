@@ -4,14 +4,15 @@ describe('PageNavigation', () => {
   const navigation = new PageNavigation();
 
   it('lists every page in sidebar order', () => {
-    expect(navigation.pageIds).toEqual(['individual', 'mapping', 'runs', 'history', 'bulk', 'system']);
+    expect(navigation.pageIds).toEqual(['overview', 'individual', 'mapping', 'runs', 'history', 'bulk', 'system']);
   });
 
   it('makes the requested page active', () => {
     expect(navigation.activePage('system')).toBe('system');
   });
 
-  it('falls back to the default page when no page, or an unknown one, is requested', () => {
+  it('falls back to the default page, the Overview, when no page, or an unknown one, is requested', () => {
+    expect(DEFAULT_PAGE).toBe('overview');
     expect(navigation.activePage()).toBe(DEFAULT_PAGE);
     expect(navigation.activePage('nonsense')).toBe(DEFAULT_PAGE);
     expect(navigation.activePage('')).toBe(DEFAULT_PAGE);
@@ -19,13 +20,16 @@ describe('PageNavigation', () => {
 
   it('groups the sidebar items with exactly one active', () => {
     const groups = navigation.navigationGroups('runs');
-    expect(groups.map(({ label }) => label)).toEqual(['Person', 'Runs', 'System']);
+    // The Overview's group has no label: it is listed at the top, with no heading
+    expect(groups.map(({ label }) => label)).toEqual([undefined, 'Person', 'Runs', 'System']);
+    expect(groups[0].items.map(({ id }) => id)).toEqual(['overview']);
     const active = groups.flatMap(({ items }) => items).filter(({ active }) => active);
     expect(active).toEqual([{ id: 'runs', label: 'Run history', icon: 'fa-clock-rotate-left', active: true }]);
   });
 
   it('sets one <page>Active flag per page, true only for the active page', () => {
     expect(navigation.activeFlags('bulk')).toEqual({
+      overviewActive: false,
       individualActive: false,
       mappingActive: false,
       runsActive: false,

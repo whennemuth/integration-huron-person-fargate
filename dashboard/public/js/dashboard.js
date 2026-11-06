@@ -6,6 +6,7 @@ let personCard;
 let mappingExperimentCard;
 let searchTypeManager;
 let runHistoryPage;
+let overviewPage;
 
 // Tab management - use 'load' event instead of 'DOMContentLoaded' for Lambda compatibility
 window.addEventListener('load', function() {
@@ -21,9 +22,14 @@ window.addEventListener('load', function() {
     personCard = new PersonCard('personResults');
     mappingExperimentCard = new MappingExperimentCard('mappingExperimentContainer');
     searchTypeManager = new SearchTypeManager();
+    const runsApi = new RunsApi(fetchSectionData);
     const runsPage = document.getElementById('runs');
     if (runsPage) {
-        runHistoryPage = new RunHistoryPage({ api: new RunsApi(fetchSectionData), root: runsPage });
+        runHistoryPage = new RunHistoryPage({ api: runsApi, root: runsPage });
+    }
+    const overviewRoot = document.getElementById('overview');
+    if (overviewRoot) {
+        overviewPage = new OverviewPage({ api: runsApi, getJson: fetchSectionData, root: overviewRoot });
     }
 
     // Initialize mapping experiment form
@@ -147,7 +153,9 @@ function detailFromFragment(page) {
  * fragment changes while it is shown, and shows the detail now named.
  */
 function onPageShown(page) {
-    if (page === 'runs' && runHistoryPage) {
+    if (page === 'overview' && overviewPage) {
+        overviewPage.load();
+    } else if (page === 'runs' && runHistoryPage) {
         runHistoryPage.show(detailFromFragment('runs'));
     } else if (page === 'history') {
         loadHistory();
@@ -581,26 +589,14 @@ function createSyncResultModal() {
     return modal;
 }
 
-/** Escape a value for use in HTML built from a template literal */
+/** Escape a value for use in HTML built from a template literal (Html, page-state.js) */
 function escapeHtml(value) {
-    return String(value === undefined || value === null ? '' : value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+    return Html.escape(value);
 }
 
-/** A status badge (dot and word), tinted by what the status means */
+/** A status badge (dot and word), tinted by what the status means (Html, page-state.js) */
 function statusBadge(status) {
-    const tones = {
-        success: ['completed', 'succeeded', 'success', 'healthy'],
-        warning: ['started', 'running', 'in_progress', 'incomplete', 'warning', 'degraded'],
-        danger: ['failed', 'error', 'unhealthy', 'post_processing_failed']
-    };
-    const normalized = String(status || '').toLowerCase();
-    const tone = Object.keys(tones).find(name => tones[name].includes(normalized));
-    return `<span class="status-badge${tone ? ` status-badge-${tone}` : ''}">${escapeHtml(status || 'unknown')}</span>`;
+    return Html.statusBadge(status);
 }
 
 /** Fetch a section's JSON, throwing an Error carrying the server's message when the response isn't OK */
@@ -664,14 +660,6 @@ async function loadHistory() {
     }
 }
 
-// Display names for the services /api/status reports on
-const SERVICE_LABELS = {
-    sourceApi: 'Source API (Boston University)',
-    targetApi: 'Target API (Huron)',
-    database: 'Database',
-    s3Storage: 'S3 storage'
-};
-
 // Load system status
 async function loadSystemStatus() {
     const servicesContainer = document.getElementById('serviceStatus');
@@ -681,34 +669,7 @@ async function loadSystemStatus() {
     try {
         const data = await fetchSectionData('/api/status');
 
-        const services = Object.entries(data.services || {});
-        if (services.length === 0) {
-            PageState.empty(servicesContainer, 'No services reported');
-        } else {
-            const rows = services.map(([service, health]) => `
-                <tr>
-                    <td>${escapeHtml(SERVICE_LABELS[service] || service)}</td>
-                    <td>${statusBadge(health.status)}</td>
-                    <td class="num">${health.responseTime === undefined ? '' : `${escapeHtml(health.responseTime)} ms`}</td>
-                    <td class="secondary tabular-nums">${health.lastCheck ? escapeHtml(new Date(health.lastCheck).toLocaleString()) : ''}</td>
-                </tr>
-            `).join('');
-            servicesContainer.innerHTML = `
-                <div class="table-responsive">
-                    <table class="table data-table">
-                        <thead>
-                            <tr>
-                                <th scope="col">Service</th>
-                                <th scope="col">Status</th>
-                                <th scope="col" class="num">Response time</th>
-                                <th scope="col">Last checked</th>
-                            </tr>
-                        </thead>
-                        <tbody>${rows}</tbody>
-                    </table>
-                </div>
-            `;
-        }
+        ServiceStatusTable.show(servicesContainer, data.services);
 
         const metrics = data.metrics || {};
         const tiles = [
