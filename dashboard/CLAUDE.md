@@ -116,7 +116,8 @@ The Lambda function serves two primary roles:
 ### Dashboard Operations
 - **Individual Person Sync**: Lookup and sync single person records by BUID or HRN
 - **Bulk Operations**: Large-scale batch synchronization jobs
-- **Activity History**: Logs and audit trail of integration activities
+- **Run History**: The landscape's sync runs, newest first, and each run's figures, chunks, errors and changes
+- **Activity History**: Logs and audit trail of integration activities (placeholder, to be retired for Run History)
 - **System Status**: Health monitoring of BU CDM and Huron services
 
 ### Security Features
@@ -468,7 +469,12 @@ Bootstrap's own `--bs-*` variables point at. Change the look there, not per comp
   fragment, which the server never sees, takes precedence over the server-rendered page on load.
   Only the fragment's first segment names the page (`#<page>/<detail>`), leaving room for detail
   views. A page shown by following the URL (load, back, forward) adds no history entry. Pages that
-  fetch data when shown are loaded from `onPageShown()`.
+  fetch data when shown are loaded from `onPageShown()`. A page with details (`PAGES_WITH_DETAILS`,
+  e.g. `#runs/<syncRunId>`) is called again when the fragment changes while it is shown, and must
+  ignore a repeat call (a fragment change fires both `popstate` and `hashchange`). Choosing such a
+  page in the sidebar while it shows a detail returns to the page itself. The panes have
+  `scroll-margin-top`, so the browser's jump to the pane a fragment names stays clear of the sticky
+  top bar.
 - **Top bar**: built by `buildNavigationBar()` (`src/handlers/NavigationBar.ts`). Tests:
   `test/DashboardNavigation.test.ts`. Its parts are described below.
 - **Landscape navigator**: a select over the landscape registry, rendered server-side from the
@@ -521,6 +527,34 @@ page-specific styles:
   section's data load goes through `fetchSectionData()` (`dashboard.js`), which throws an `Error`
   carrying the server's message and `status`. Tests: `test/DashboardPageState.test.ts` (in a vm
   with a stand-in DOM, since jest runs without one).
+- **Refresh stamp** (`RefreshStamp`, `public/js/page-state.js`): a `.refresh-stamp` in
+  `.page-actions`, beside Refresh, set to "Refreshed HH:MM" once a page's data loads. Pages refresh
+  only when asked: there is no polling (an incomplete run may never finish).
+- **Paged lists** (`PagedTable` and `CursorPager`, `public/js/run-history.js`): a data table filled a
+  page at a time from a cursor-paged route, with a `.table-footer` saying how many rows are shown and
+  offering the next page, or explaining a failed page and offering to try again. `.filter-chip`
+  buttons (`aria-pressed`, with a count) over a list choose what it lists.
+
+### Run history page
+
+The `runs` page (`templates/partials/runs-tab.mustache`, `public/js/run-history.js`) shows the
+landscape's runs from the run reporting routes. Its classes each do one thing:
+- `RunsApi` calls the routes (`/api/runs?include=report`, `/api/runs/{id}/summary|chunks|errors|changes`,
+  `/api/capabilities`) through `fetchSectionData()`, and `RunView` reduces a run's report to what the
+  page shows: the summary's figures when the post-processor wrote one, else what the metadata, flags
+  and terminal error say. Deactivations are the processors' `removed` plus the deletion step's
+  `deletedCount`. A single-person run is named by its BUID only when the report has metadata (the
+  source URL's `buid`): a finished run's summary doesn't record it.
+- `RunHistoryPage` shows the list (`#runs`, 20 runs a page with "Load older runs") or one run
+  (`#runs/<syncRunId>`). The list keeps what it has loaded while a run is open; Refresh reloads it.
+- `RunDetailView` is one run: the header (status, population, storage mode, duration, dry run, bulk
+  reset), stat tiles, a note when the run failed, failed post-processing or has no summary yet, and
+  four tabs, each loaded when first opened: **Overview** (summary, deletion outcome, flags),
+  **Chunks** (per-chunk statistics with totals), **Errors** (filtered by status code, with counts
+  from the summary or else the chunk statistics) and **Changes** (by type; in S3 mode, where
+  `changesSupported` is false, it says why there are none).
+Tests: `test/DashboardRunHistory.test.ts` runs the script in a vm (as written and minified) and drives
+`RunsApi` through the handler with the mock run history.
 
 ## Dependencies
 
@@ -553,7 +587,8 @@ page-specific styles:
 3. Generated constants appear in `src/handlers/TemplateConstants.ts`
 4. Templates use `{{{cssAssets.dashboard}}}` and `{{{jsAssets.<name>}}}`. A new JS file must also be
    added to `TemplateService.getJsAssets()` (both branches) and given a `<script>` in
-   `templates/dashboard.mustache`.
+   `templates/dashboard.mustache`. A new partial must be added to `TemplateService.getPartials()` and
+   to `partialFiles` in `scripts/BuildTemplates.ts`.
 5. The Lambda serves the minified assets, the local server the files as written, so a local run can't
    catch a minifier break. The minifier is regex-based: it deletes everything after `//` on a line
    (including inside strings and regexes) and joins lines, so end every statement with a semicolon.

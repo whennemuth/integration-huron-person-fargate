@@ -5,6 +5,7 @@ const API_BASE = window.location.origin;
 let personCard;
 let mappingExperimentCard;
 let searchTypeManager;
+let runHistoryPage;
 
 // Tab management - use 'load' event instead of 'DOMContentLoaded' for Lambda compatibility
 window.addEventListener('load', function() {
@@ -20,7 +21,11 @@ window.addEventListener('load', function() {
     personCard = new PersonCard('personResults');
     mappingExperimentCard = new MappingExperimentCard('mappingExperimentContainer');
     searchTypeManager = new SearchTypeManager();
-    
+    const runsPage = document.getElementById('runs');
+    if (runsPage) {
+        runHistoryPage = new RunHistoryPage({ api: new RunsApi(fetchSectionData), root: runsPage });
+    }
+
     // Initialize mapping experiment form
     mappingExperimentCard.renderForm();
 
@@ -77,12 +82,30 @@ function initializePageNavigation() {
             closeSidebarMenu();
             onPageShown(page);
         });
+        // Choosing the page already shown, while it shows a detail (e.g. one run): back to the page itself
+        item.addEventListener('click', function () {
+            const page = this.dataset.page;
+            if (this.classList.contains('active') && pageFromFragment() === page && detailFromFragment(page)) {
+                history.pushState(null, '', `#${page}`);
+                closeSidebarMenu();
+                onPageShown(page);
+            }
+        });
     });
 
-    // Back/forward, or a fragment link followed from within the page
+    // Back/forward, or a fragment link followed from within the page. The page may already be shown, with
+    // another detail (e.g. from the run list to a run): a page with details is then told about the new one.
+    // (A fragment change fires both popstate and hashchange, so this runs twice: those pages ignore a repeat.)
     const showPageFromFragment = () => {
         const item = navItemFor(pageFromFragment()) || navItemFor(renderedPage);
-        if (item && !item.classList.contains('active')) {
+        if ( ! item) {
+            return;
+        }
+        if (item.classList.contains('active')) {
+            if (PAGES_WITH_DETAILS.includes(item.dataset.page)) {
+                onPageShown(item.dataset.page);
+            }
+        } else {
             followingUrl = true;
             bootstrap.Tab.getOrCreateInstance(item).show();
         }
@@ -100,15 +123,33 @@ function initializePageNavigation() {
     }
 }
 
+/** Pages whose fragment can name a detail within them (#runs/<syncRunId>) */
+const PAGES_WITH_DETAILS = ['runs'];
+
 /** The page named by the URL fragment (#<page>[/<detail>]), if any */
 function pageFromFragment() {
     const fragment = decodeURIComponent(window.location.hash.replace(/^#/, ''));
     return fragment.split('/')[0] || undefined;
 }
 
-/** Load the content of a page that fetches its data when shown */
+/** The detail the URL fragment names within a page (#<page>/<detail>), if it names that page */
+function detailFromFragment(page) {
+    const fragment = decodeURIComponent(window.location.hash.replace(/^#/, ''));
+    const slash = fragment.indexOf('/');
+    if (slash < 0 || fragment.slice(0, slash) !== page) {
+        return undefined;
+    }
+    return fragment.slice(slash + 1) || undefined;
+}
+
+/**
+ * Load the content of a page that fetches its data when shown. A page with details is called again when the
+ * fragment changes while it is shown, and shows the detail now named.
+ */
 function onPageShown(page) {
-    if (page === 'history') {
+    if (page === 'runs' && runHistoryPage) {
+        runHistoryPage.show(detailFromFragment('runs'));
+    } else if (page === 'history') {
         loadHistory();
     } else if (page === 'system') {
         loadSystemStatus();
@@ -675,6 +716,7 @@ async function loadSystemStatus() {
             ['Errors this week', metrics.weeklyErrors],
             ['Average processing time', metrics.avgProcessingTime]
         ];
+        RefreshStamp.set(document.getElementById('systemRefreshed'));
         metricsContainer.innerHTML = `
             <div class="stat-grid">
                 ${tiles.map(([label, value]) => `

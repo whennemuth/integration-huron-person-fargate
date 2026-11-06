@@ -103,3 +103,26 @@ class PageState {
         return PageState.show(target, 'redacted', options);
     }
 }
+
+/**
+ * RefreshStamp - the "Refreshed HH:MM" beside a page's Refresh button, saying how fresh what the page shows is.
+ * Pages refresh only when asked (a run that never finishes would keep a polling page busy for ever), so the
+ * time tells the reader when to ask again.
+ *
+ *   RefreshStamp.set(document.getElementById('systemRefreshed'));
+ */
+class RefreshStamp {
+
+    static text(date) {
+        return `Refreshed ${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+    }
+
+    /** Stamp an element with a time (now by default); its title gives the full date and time */
+    static set(element, date = new Date()) {
+        if ( ! element) {
+            return;
+        }
+        element.textContent = RefreshStamp.text(date);
+        element.setAttribute('title', `Refreshed ${date.toLocaleString()}`);
+    }
+}

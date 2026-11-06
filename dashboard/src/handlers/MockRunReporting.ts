@@ -303,7 +303,15 @@ export class MockRunCatalog {
     return `https://cdm.example.bu.edu/api/people${spec.buid ? `/person?buid=${spec.buid}` : ''}`;
   }
 
+  /** An error's fields after its code: like ApiErrorTracking's, the person it concerns is in detailsObj (a JSON string) */
   private static errorDetail(code: number, buid: string, seed: number): Record<string, any> {
+    return {
+      ...MockRunCatalog.errorText(code, buid, seed),
+      detailsObj: JSON.stringify({ hrn: `hrn:hrs:persons:${buid}`, sourceIdentifier: buid })
+    };
+  }
+
+  private static errorText(code: number, buid: string, seed: number): Record<string, any> {
     switch (code) {
       case 400:
         return { statusText: 'Bad Request', message: `Validation failed for ${buid}: organization hrn:hrs:orgs:${1000 + seed % 900} does not exist`, isThrottled: false };

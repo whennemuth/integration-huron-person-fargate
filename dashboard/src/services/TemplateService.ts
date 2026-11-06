@@ -44,6 +44,7 @@ export class TemplateService {
         'individual-tab': readFileSync(join(partialsPath, 'individual-tab.mustache'), 'utf-8'),
         'mapping-tab': readFileSync(join(partialsPath, 'mapping-tab.mustache'), 'utf-8'),
         'bulk-tab': readFileSync(join(partialsPath, 'bulk-tab.mustache'), 'utf-8'),
+        'runs-tab': readFileSync(join(partialsPath, 'runs-tab.mustache'), 'utf-8'),
         'history-tab': readFileSync(join(partialsPath, 'history-tab.mustache'), 'utf-8'),
         'system-tab': readFileSync(join(partialsPath, 'system-tab.mustache'), 'utf-8')
       };
@@ -75,7 +76,8 @@ export class TemplateService {
         'dashboard': assets['dashboard'] || '',
         'pageState': assets['page-state'] || '',
         'personCard': assets['person-card'] || '',
-        'mappingExperimentCard': assets['mapping-experiment-card'] || ''
+        'mappingExperimentCard': assets['mapping-experiment-card'] || '',
+        'runHistory': assets['run-history'] || ''
       };
     } else {
       const jsPath = join(__dirname, '../../public/js');
@@ -83,7 +85,8 @@ export class TemplateService {
         'dashboard': readFileSync(join(jsPath, 'dashboard.js'), 'utf-8'),
         'pageState': readFileSync(join(jsPath, 'page-state.js'), 'utf-8'),
         'personCard': readFileSync(join(jsPath, 'person-card.js'), 'utf-8'),
-        'mappingExperimentCard': readFileSync(join(jsPath, 'mapping-experiment-card.js'), 'utf-8')
+        'mappingExperimentCard': readFileSync(join(jsPath, 'mapping-experiment-card.js'), 'utf-8'),
+        'runHistory': readFileSync(join(jsPath, 'run-history.js'), 'utf-8')
       };
     }
   }

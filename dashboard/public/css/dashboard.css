@@ -363,6 +363,11 @@ code, pre, kbd, samp {
     padding: 0 var(--hp-content-gutter) 2rem;
 }
 
+/* A page's fragment (#runs) names its pane, which the browser scrolls to: keep it clear of the sticky top bar */
+.app-content > .tab-pane {
+    scroll-margin-top: var(--hp-topbar-height);
+}
+
 @media (max-width: 575.98px) {
     :root {
         --hp-content-gutter: 1rem;
@@ -570,6 +575,126 @@ code, pre, kbd, samp {
     background-color: rgba(var(--hp-danger-rgb), 0.1);
 }
 
+/* "Refreshed HH:MM" beside a page's Refresh button (RefreshStamp, page-state.js) */
+.refresh-stamp {
+    align-self: center;
+    font-size: 0.8125rem;
+    color: var(--hp-text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.refresh-stamp:empty {
+    display: none;
+}
+
+/* Rows that open a page: the first cell's link, or a click anywhere on the row */
+.data-table-links tbody tr {
+    cursor: pointer;
+}
+
+.data-table-links tbody tr:hover > * {
+    background-color: var(--hp-surface-muted);
+}
+
+.data-table tfoot > tr > * {
+    font-weight: 600;
+    background-color: var(--hp-surface-muted);
+    border-top: 1px solid var(--hp-border-strong);
+    border-bottom-width: 0;
+}
+
+/* Below a paged table: how many rows are shown, and the button for more */
+.table-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    padding: 0.625rem 1rem;
+    font-size: 0.8125rem;
+    color: var(--hp-text-muted);
+    border-top: 1px solid var(--hp-border);
+}
+
+.table-footer .page-state-compact {
+    flex-basis: 100%;
+    padding: 0;
+}
+
+/* Filter buttons over a list (e.g. errors by status code), each with its count */
+.filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.8125rem;
+    color: var(--hp-text-secondary);
+    background-color: var(--hp-surface);
+    border: 1px solid var(--hp-border);
+    border-radius: 999px;
+}
+
+.filter-chip:hover {
+    border-color: var(--hp-border-strong);
+}
+
+.filter-chip:focus-visible {
+    outline: 0;
+    box-shadow: var(--hp-focus-ring);
+}
+
+.filter-chip[aria-pressed="true"] {
+    color: var(--hp-accent);
+    background-color: var(--hp-accent-subtle);
+    border-color: var(--hp-accent-border-subtle);
+}
+
+.filter-chip-count {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Terms and values in two columns (a run's summary) */
+.fact-list {
+    display: grid;
+    grid-template-columns: minmax(8rem, max-content) 1fr;
+    gap: 0.5rem 1.5rem;
+    margin: 0;
+    font-size: 0.875rem;
+}
+
+.fact-list dt {
+    font-weight: 400;
+    color: var(--hp-text-muted);
+}
+
+.fact-list dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.fact-note,
+.section-note {
+    font-size: 0.875rem;
+    color: var(--hp-text-muted);
+}
+
+.fact-note {
+    margin: 0;
+}
+
+.section-note {
+    margin: 0 0 0.75rem;
+}
+
 /* States (page-state.js): loading, empty, error and redacted */
 .page-state {
     display: flex;
@@ -681,6 +806,160 @@ code, pre, kbd, samp {
     font-size: 0.875em;
     color: var(--hp-text-secondary);
     word-break: break-word;
+}
+
+/* Run history (run-history.js) */
+.run-link {
+    font-weight: 500;
+    text-decoration: none;
+}
+
+.run-link:hover {
+    text-decoration: underline;
+}
+
+.run-tag {
+    display: inline-block;
+    padding: 0 0.375rem;
+    font-size: 0.75rem;
+    color: var(--hp-text-secondary);
+    border: 1px solid var(--hp-border-strong);
+    border-radius: var(--hp-radius-sm);
+}
+
+.back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.875rem;
+    text-decoration: none;
+}
+
+.back-link:hover {
+    text-decoration: underline;
+}
+
+.run-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+}
+
+.run-title .status-badge {
+    font-size: 0.8125rem;
+}
+
+.run-id {
+    margin: 0.25rem 0 0;
+    font-size: 0.8125rem;
+    color: var(--hp-text-muted);
+}
+
+.run-id code {
+    color: inherit;
+}
+
+/* Why a run's figures are missing, or what went wrong */
+.run-note {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+    padding: 0.875rem 1rem;
+    border: 1px solid;
+    border-radius: var(--hp-radius-lg);
+}
+
+.run-note-danger {
+    background-color: rgba(var(--hp-danger-rgb), 0.06);
+    border-color: rgba(var(--hp-danger-rgb), 0.3);
+}
+
+.run-note-warning {
+    background-color: rgba(var(--hp-warning-rgb), 0.07);
+    border-color: rgba(var(--hp-warning-rgb), 0.3);
+}
+
+.run-note-icon {
+    margin-top: 0.1875rem;
+}
+
+.run-note-danger .run-note-icon {
+    color: var(--hp-danger);
+}
+
+.run-note-warning .run-note-icon {
+    color: var(--hp-warning);
+}
+
+.run-note-title {
+    margin: 0;
+    font-weight: 600;
+}
+
+.run-note-message {
+    margin: 0.125rem 0 0;
+    font-size: 0.875rem;
+    color: var(--hp-text-secondary);
+}
+
+/* The sections block follows the tiles, or the note when there is one */
+.run-detail-sections {
+    margin-top: 2rem;
+}
+
+.run-aside-section + .run-aside-section {
+    margin-top: 2rem;
+}
+
+/* The run's sections: underlined tabs, each with its count */
+/* One line of tabs, which scrolls sideways on a narrow screen rather than wrapping */
+.run-sections {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin-bottom: 1.25rem;
+    border-bottom: 1px solid var(--hp-border);
+    scrollbar-width: none;
+}
+
+.run-sections .nav-link {
+    white-space: nowrap;
+}
+
+.run-sections .nav-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin-bottom: -1px;
+    color: var(--hp-text-secondary);
+}
+
+.run-sections .nav-link.active {
+    color: var(--hp-text);
+}
+
+.run-section-count {
+    padding: 0 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    color: var(--hp-text-secondary);
+    background-color: rgba(var(--hp-text-rgb), 0.06);
+    border-radius: 999px;
+}
+
+.deletion-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.375rem;
+    margin: 0 0 0.5rem;
+}
+
+.deletion-message {
+    margin: 0 0 0.75rem;
+    font-size: 0.875rem;
 }
 
 /* Lookup button spinner, shown while the lookup runs */

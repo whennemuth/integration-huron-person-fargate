@@ -4,7 +4,7 @@ describe('PageNavigation', () => {
   const navigation = new PageNavigation();
 
   it('lists every page in sidebar order', () => {
-    expect(navigation.pageIds).toEqual(['individual', 'mapping', 'history', 'bulk', 'system']);
+    expect(navigation.pageIds).toEqual(['individual', 'mapping', 'runs', 'history', 'bulk', 'system']);
   });
 
   it('makes the requested page active', () => {
@@ -18,16 +18,17 @@ describe('PageNavigation', () => {
   });
 
   it('groups the sidebar items with exactly one active', () => {
-    const groups = navigation.navigationGroups('history');
+    const groups = navigation.navigationGroups('runs');
     expect(groups.map(({ label }) => label)).toEqual(['Person', 'Runs', 'System']);
     const active = groups.flatMap(({ items }) => items).filter(({ active }) => active);
-    expect(active).toEqual([{ id: 'history', label: 'Activity history', icon: 'fa-clock-rotate-left', active: true }]);
+    expect(active).toEqual([{ id: 'runs', label: 'Run history', icon: 'fa-clock-rotate-left', active: true }]);
   });
 
   it('sets one <page>Active flag per page, true only for the active page', () => {
     expect(navigation.activeFlags('bulk')).toEqual({
       individualActive: false,
       mappingActive: false,
+      runsActive: false,
       historyActive: false,
       bulkActive: true,
       systemActive: false

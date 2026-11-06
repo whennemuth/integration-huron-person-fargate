@@ -212,7 +212,7 @@ describe('Dashboard page sidebar', () => {
     for (const group of ['Person', 'Runs', 'System']) {
       expect(body).toMatch(new RegExp(`class="app-nav-group"[^>]*>${group}<`));
     }
-    for (const page of ['individual', 'mapping', 'history', 'bulk', 'system']) {
+    for (const page of ['individual', 'mapping', 'runs', 'history', 'bulk', 'system']) {
       expect(navItem(body, page)).toContain(`data-page="${page}"`);
       expect(navItem(body, page)).toContain('data-bs-toggle="pill"');
     }
@@ -237,12 +237,15 @@ describe('Dashboard page sidebar', () => {
     const body = await render();
     const titles = body.match(/<h1 class="page-title">[^<]*<\/h1>/g) || [];
     expect(titles.map(title => title.replace(/<[^>]+>/g, ''))).toEqual(
-      ['Lookup and sync', 'Mapping experiment', 'Bulk sync', 'Activity history', 'Status']
+      ['Lookup and sync', 'Mapping experiment', 'Bulk sync', 'Run history', 'Activity history', 'Status']
     );
     const pageStateAt = body.indexOf('class PageState');
     expect(pageStateAt).toBeGreaterThan(-1);
     expect(pageStateAt).toBeLessThan(body.indexOf('class PersonCard'));
     expect(pageStateAt).toBeLessThan(body.indexOf('class MappingExperimentCard'));
+    // The run history page's classes, defined before dashboard.js creates the page
+    expect(pageStateAt).toBeLessThan(body.indexOf('class RunHistoryPage'));
+    expect(body.indexOf('class RunHistoryPage')).toBeLessThan(body.indexOf('new RunHistoryPage('));
     // The fixed-height inner scroll boxes are gone: pages scroll as a whole
     expect(body).not.toContain('activity-log');
   });
