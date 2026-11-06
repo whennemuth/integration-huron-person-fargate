@@ -9,6 +9,7 @@ import { OriginHeader } from './OriginVerification';
 import { CrudOperation, Status } from 'integration-core';
 import { LandscapeListing, PersonSyncResult } from '../services/ServiceTypes';
 import { buildNavigationBar } from './NavigationBar';
+import { PageNavigation } from './PageNavigation';
 import { areTheSame } from '../Utils';
 import { ChangeType, ReportingError } from '../../../src/reporting/RunReporting';
 import { Config } from 'integration-huron-person';
@@ -127,7 +128,7 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
 };
 
 /**
- * Render the main dashboard HTML with tabs
+ * Render the dashboard page: the sidebar and top bar, with the requested page (`?tab=<id>`) shown
  */
 async function renderDashboard(request: Request, activeTab?: string): Promise<LambdaFunctionUrlResult> {
   try {
@@ -143,19 +144,7 @@ async function renderDashboard(request: Request, activeTab?: string): Promise<La
     
     const data = {
       title: 'Integration Dashboard - Boston University Person → Huron',
-      activeTab: activeTab || 'individual',
-      tabs: [
-        { id: 'individual', label: 'Individual Sync', active: (activeTab || 'individual') === 'individual' },
-        { id: 'mapping', label: 'Person Mapping', active: activeTab === 'mapping' },
-        { id: 'bulk', label: 'Bulk Operations', active: activeTab === 'bulk' },
-        { id: 'history', label: 'Activity History', active: activeTab === 'history' },
-        { id: 'system', label: 'System Status', active: activeTab === 'system' }
-      ],
-      individualActive: (activeTab || 'individual') === 'individual',
-      mappingActive: activeTab === 'mapping',
-      bulkActive: activeTab === 'bulk',
-      historyActive: activeTab === 'history',
-      systemActive: activeTab === 'system',
+      ...new PageNavigation().templateData(activeTab),
       ...navigationBar,
       cssAssets,
       jsAssets

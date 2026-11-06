@@ -46,27 +46,83 @@ window.addEventListener('load', function() {
         personLookupForm.addEventListener('submit', handlePersonLookupSubmit);
     }
     
-    // Add tab change listeners
-    document.querySelectorAll('[data-bs-toggle="tab"]').forEach(tab => {
-        tab.addEventListener('shown.bs.tab', function (event) {
-            const target = event.target.getAttribute('data-bs-target');
-            if (target === '#history') {
-                loadHistory();
-            } else if (target === '#system') {
-                loadSystemStatus();
+    initializePageNavigation();
+});
+
+/**
+ * Sidebar page navigation.
+ * The server renders one page active (?tab=<id>, else the default). A URL fragment takes precedence,
+ * since the server never sees it: #<page>, optionally followed by /<detail> (e.g. #history/<id>), so a
+ * page can be linked to and a refresh stays on it. Choosing a page records its fragment in the browser
+ * history, so back and forward move between pages.
+ */
+function initializePageNavigation() {
+    const navItems = Array.from(document.querySelectorAll('#dashboardTabs [data-page]'));
+    const navItemFor = (page) => navItems.find(item => item.dataset.page === page);
+    // The page the server rendered: where going back to a URL with no fragment returns to
+    const renderedItem = navItems.find(item => item.classList.contains('active'));
+    const renderedPage = renderedItem && renderedItem.dataset.page;
+
+    // True while a page is being shown because the URL changed (back/forward, initial fragment): that
+    // URL is already in the browser history, and pushing another entry would cut off "forward"
+    let followingUrl = false;
+
+    navItems.forEach(item => {
+        item.addEventListener('shown.bs.tab', function () {
+            const page = this.dataset.page;
+            if ( ! followingUrl && pageFromFragment() !== page) {
+                history.pushState(null, '', `#${page}`);
             }
+            followingUrl = false;
+            closeSidebarMenu();
+            onPageShown(page);
         });
     });
-    
-    // Load initial tab content
-    const activeTab = new URLSearchParams(window.location.search).get('tab') || 'individual';
-    
-    if (activeTab === 'history') {
+
+    // Back/forward, or a fragment link followed from within the page
+    const showPageFromFragment = () => {
+        const item = navItemFor(pageFromFragment()) || navItemFor(renderedPage);
+        if (item && !item.classList.contains('active')) {
+            followingUrl = true;
+            bootstrap.Tab.getOrCreateInstance(item).show();
+        }
+    };
+    window.addEventListener('popstate', showPageFromFragment);
+    window.addEventListener('hashchange', showPageFromFragment);
+
+    // Initial page: the fragment's, else the one the server rendered active
+    const requested = navItemFor(pageFromFragment());
+    if (requested && !requested.classList.contains('active')) {
+        followingUrl = true;
+        bootstrap.Tab.getOrCreateInstance(requested).show(); // fires shown.bs.tab, which loads the page
+    } else if (renderedPage) {
+        onPageShown(renderedPage);
+    }
+}
+
+/** The page named by the URL fragment (#<page>[/<detail>]), if any */
+function pageFromFragment() {
+    const fragment = decodeURIComponent(window.location.hash.replace(/^#/, ''));
+    return fragment.split('/')[0] || undefined;
+}
+
+/** Load the content of a page that fetches its data when shown */
+function onPageShown(page) {
+    if (page === 'history') {
         loadHistory();
-    } else if (activeTab === 'system') {
+    } else if (page === 'system') {
         loadSystemStatus();
     }
-});
+}
+
+/** Below the lg breakpoint the sidebar is an off-canvas menu: close it once a page is chosen */
+function closeSidebarMenu() {
+    const sidebar = document.getElementById('appSidebar');
+    const menu = sidebar && bootstrap.Offcanvas.getInstance(sidebar);
+    if (menu) {
+        menu.hide();
+    }
+}
 
 // Person Lookup Handler
 async function handlePersonLookupSubmit(e) {

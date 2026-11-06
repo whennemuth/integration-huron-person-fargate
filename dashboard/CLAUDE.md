@@ -81,7 +81,7 @@ The Lambda function serves two primary roles:
 **1. HTML Dashboard Server:**
 - Serves Mustache-rendered HTML with inline CSS/JS assets
 - Handles static dashboard routes
-- Provides responsive Bootstrap UI with tabbed interface
+- Provides a responsive Bootstrap UI: a sidebar of grouped pages and a top bar
 
 **2. Data Synchronization Engine:**
 - Executes person sync operations (individual and bulk)
@@ -160,7 +160,7 @@ through fargate's `src/reporting/RunReporting.ts`; GET only, no `landscape` para
 **Landscape picker data:**
 - `GET /api/landscapes` - `{ current, landscapes: [{ landscape, label, url?, isDefault, current }] }`
   from the landscape registry (see "Landscape registry" below). The dashboard page's own
-  navigator doesn't call it (see "Navigation bar" below)
+  navigator doesn't call it (see "Page frame: sidebar and top bar" below)
 
 ## Key Patterns
 
@@ -429,10 +429,28 @@ the edge functions, which set, clear and read the JWT cookie with them.
   `cookieName`/`cookieDomain`, or in public mode. Tests: `test/DashboardSharedSignIn.test.ts`.
 - Setting up a landscape: the fargate `README.md`, "Dashboard DNS and Certificates", step 4.
 
-### Navigation bar
+### Page frame: sidebar and top bar
 
-`renderDashboard()` builds the navbar's data with `buildNavigationBar()` (`src/handlers/NavigationBar.ts`).
-Tests: `test/DashboardNavigation.test.ts`.
+The dashboard page (`templates/dashboard.mustache`) is a left sidebar of grouped page links, and a
+main column with a top bar above the pages. The login page has the same top bar and no sidebar. Colors, type and
+shape come from the theme tokens at the top of `public/css/dashboard.css` (`--hp-*`), which
+Bootstrap's own `--bs-*` variables point at. Change the look there, not per component.
+- **Sidebar** (`PageNavigation`, `src/handlers/PageNavigation.ts`): the page groups and their
+  items (id, label, Font Awesome icon). `renderDashboard()` passes its `templateData(?tab)`: the
+  `navigation` groups plus a `<page>Active` flag per page, which the page partials use. An unknown
+  `?tab` falls back to the default page rather than showing none. Each item is a Bootstrap pill
+  (`data-bs-toggle="pill"`) for the tab pane of the same id. At `lg` and up the sidebar is a static
+  column. Below, it's an off-canvas menu (`offcanvas-lg`) opened from the top bar, which
+  `dashboard.js` closes once a page is chosen. Tests: `test/DashboardPageNavigation.test.ts` and
+  the sidebar render tests in `test/DashboardNavigation.test.ts`.
+- **Page fragments** (`initializePageNavigation()` in `public/js/dashboard.js`): choosing a page
+  sets the URL fragment `#<page>` (a history entry, so back and forward move between pages), and a
+  fragment, which the server never sees, takes precedence over the server-rendered page on load.
+  Only the fragment's first segment names the page (`#<page>/<detail>`), leaving room for detail
+  views. A page shown by following the URL (load, back, forward) adds no history entry. Pages that
+  fetch data when shown are loaded from `onPageShown()`.
+- **Top bar**: built by `buildNavigationBar()` (`src/handlers/NavigationBar.ts`). Tests:
+  `test/DashboardNavigation.test.ts`. Its parts are described below.
 - **Landscape navigator**: a select over the landscape registry, rendered server-side from the
   `LandscapeRegistry`'s per-instance cache (no SSM read per page, and no `/api/landscapes` call
   from the page), with this landscape selected. Choosing one sends the browser to its `url`
@@ -443,7 +461,7 @@ Tests: `test/DashboardNavigation.test.ts`.
   edge functions answer `/logout` themselves, so the Lambda never sees it: they expire the JWT
   cookie (with its Domain, so with `sharedSignIn` every landscape is signed out), then redirect to
   `/logout?target=idp`, which sends the browser to `SHIBBOLETH.logoutUrl` to end the IdP session.
-  The browser ends on the IdP's page. The navbar also shows the JWT's `eduPersonPrincipalName`
+  The browser ends on the IdP's page. The top bar also shows the JWT's `eduPersonPrincipalName`
   (else `buPrincipal`).
 
 ## Dependencies

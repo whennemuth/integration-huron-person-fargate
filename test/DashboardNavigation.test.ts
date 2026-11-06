@@ -66,9 +66,9 @@ describe('Dashboard page navigation bar', () => {
    * login/logout headers' names from the environment when it loads.
    */
   const renderDashboard = async (params: {
-    env?: Record<string, string>; headers?: Record<string, string>; getLandscapes: jest.Mock
+    env?: Record<string, string>; headers?: Record<string, string>; query?: Record<string, string>; getLandscapes: jest.Mock
   }): Promise<{ status: number; body: string }> => {
-    const { env = {}, headers = {}, getLandscapes } = params;
+    const { env = {}, headers = {}, query, getLandscapes } = params;
     const saved = { ...process.env };
     Object.assign(process.env, env);
     try {
@@ -80,6 +80,7 @@ describe('Dashboard page navigation bar', () => {
         result = await handler({
           rawPath: '/dashboard',
           headers,
+          queryStringParameters: query,
           requestContext: { http: { method: 'GET', path: '/dashboard' } },
           isBase64Encoded: false
         } as unknown as LambdaFunctionUrlEvent);
@@ -127,5 +128,78 @@ describe('Dashboard page navigation bar', () => {
     expect(status).toBe(200);
     expect(body).toContain(`href="${SIGN_OUT_PATH}"`);
     expect(body).toContain('jdoe@bu.edu');
+  });
+});
+
+describe('Dashboard page sidebar', () => {
+  const render = async (query?: Record<string, string>): Promise<string> => {
+    let body = '';
+    await jest.isolateModulesAsync(async () => {
+      const { ServiceProvider } = require('../dashboard/src/services/ServiceProvider');
+      jest.spyOn(ServiceProvider, 'getLandscapeListingService').mockReturnValue({ getLandscapes: jest.fn().mockResolvedValue(listing) });
+      const { handler } = require('../dashboard/src/handlers/DashboardHandler');
+      const result = await handler({
+        rawPath: '/dashboard',
+        headers: {},
+        queryStringParameters: query,
+        requestContext: { http: { method: 'GET', path: '/dashboard' } },
+        isBase64Encoded: false
+      } as unknown as LambdaFunctionUrlEvent);
+      body = `${result.body}`;
+    });
+    return body;
+  };
+
+  /** The sidebar item for a page: its opening <button ...> tag */
+  const navItem = (body: string, page: string): string => {
+    const match = body.match(new RegExp(`<button[^>]*id="${page}-tab"[^>]*>`));
+    if (!match) throw new Error(`No sidebar item for ${page}`);
+    return match[0];
+  };
+
+  /** The page's tab pane: its opening <div ...> tag */
+  const pane = (body: string, page: string): string => {
+    const match = body.match(new RegExp(`<div[^>]*id="${page}"[^>]*>`));
+    if (!match) throw new Error(`No pane for ${page}`);
+    return match[0];
+  };
+
+  beforeEach(() => {
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('renders the grouped sidebar in place of the tab strip', async () => {
+    const body = await render();
+    expect(body).not.toContain('nav-tabs');
+    for (const group of ['Person', 'Runs', 'System']) {
+      expect(body).toMatch(new RegExp(`class="app-nav-group"[^>]*>${group}<`));
+    }
+    for (const page of ['individual', 'mapping', 'history', 'bulk', 'system']) {
+      expect(navItem(body, page)).toContain(`data-page="${page}"`);
+      expect(navItem(body, page)).toContain('data-bs-toggle="pill"');
+    }
+  });
+
+  it('shows the default page when none is requested', async () => {
+    const body = await render();
+    expect(navItem(body, 'individual')).toMatch(/class="nav-link active"/);
+    expect(pane(body, 'individual')).toContain('show active');
+    expect(pane(body, 'system')).not.toContain('show active');
+  });
+
+  it('shows the requested page', async () => {
+    const body = await render({ tab: 'system' });
+    expect(navItem(body, 'system')).toMatch(/class="nav-link active"/);
+    expect(navItem(body, 'individual')).not.toMatch(/class="nav-link active"/);
+    expect(pane(body, 'system')).toContain('show active');
+    expect(pane(body, 'individual')).not.toContain('show active');
+  });
+
+  it('shows the default page, not a blank one, when an unknown page is requested', async () => {
+    const body = await render({ tab: 'nonsense' });
+    expect(navItem(body, 'individual')).toMatch(/class="nav-link active"/);
+    expect(pane(body, 'individual')).toContain('show active');
   });
 });
