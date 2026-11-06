@@ -365,8 +365,9 @@ destroying a stack that's already gone does nothing.
 **Context Configuration:**
 - `../context/context*.json` `DASHBOARD` section - Infrastructure parameters
 - `context/IContext.ts` - Dashboard context types (`DashboardSettings`), including the optional
-  `LABEL` (picker label, default: the landscape), `isDefault` (the default landscape) and
-  `sharedSignIn` (see "Shared sign-in" below)
+  `LABEL` (picker label, default: the landscape), `isDefault` (the default landscape),
+  `LANDSCAPE_TONE` (the top bar's tint, see "Landscape tone" below) and `sharedSignIn` (see
+  "Shared sign-in" below)
 - Setting up the hosted zone and certificate, and which context keys take them: the fargate
   `README.md`, "Dashboard DNS and Certificates"
 
@@ -456,7 +457,19 @@ Bootstrap's own `--bs-*` variables point at. Change the look there, not per comp
   from the page), with this landscape selected. Choosing one sends the browser to its `url`
   (`public/js/dashboard.js`). An entry without a `url` is listed but disabled. When the registry
   doesn't list this landscape (e.g. run locally), it's added, selected. If the registry can't be
-  read, the page renders without the navigator.
+  read or lists no landscape, a badge naming this landscape (`LANDSCAPE`, else `local`) takes the
+  navigator's place.
+- **Landscape tone** (`LandscapeTone`, `src/handlers/LandscapeTone.ts`): with no colored banner, the
+  navigator (or badge) is tinted so it's obvious which landscape you're in: red for `production`,
+  amber for `test`, gray for `mock`. The tone comes from the optional context setting
+  `LANDSCAPE_TONE`, which `lib/FunctionUrl.ts` validates at synth (any other value fails it) and
+  passes to the Lambda as the `LANDSCAPE_TONE` environment variable. When it's unset, a mock landscape
+  (`isMockLandscape()`) is marked `mock` and any other landscape gets no tint.
+  `buildNavigationBar()` resolves it at render time, ignoring an invalid value with a warning. A
+  local run reads `LANDSCAPE_TONE` from the environment (or `.env`). The tone is also given as text
+  for screen readers ("Production landscape"). Tests: `test/DashboardLandscapeTone.test.ts`,
+  the navigation bar tests in `test/DashboardNavigation.test.ts`, and the synth test in
+  `test/DashboardStack.test.ts`.
 - **Sign-out**: a link to `SIGN_OUT_PATH` (`/logout`), shown unless the dashboard is public. The
   edge functions answer `/logout` themselves, so the Lambda never sees it: they expire the JWT
   cookie (with its Domain, so with `sharedSignIn` every landscape is signed out), then redirect to

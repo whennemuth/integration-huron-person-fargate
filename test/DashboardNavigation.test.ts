@@ -42,6 +42,24 @@ describe('buildNavigationBar', () => {
     expect(buildNavigationBar({ signInRequired: false }).landscapeNavigator).toBeUndefined();
   });
 
+  it('names this landscape in a badge only when there is no navigator to show it', () => {
+    expect(buildNavigationBar({ listing, signInRequired: false }).landscapeBadge).toBeUndefined();
+    expect(buildNavigationBar({ listing: { current: 'preview', landscapes: [] }, signInRequired: false }).landscapeBadge)
+      .toEqual({ label: 'preview' });
+    // The registry could not be read: the landscape comes from the caller
+    expect(buildNavigationBar({ landscape: 'staging', signInRequired: false }).landscapeBadge).toEqual({ label: 'staging' });
+    expect(buildNavigationBar({ signInRequired: false }).landscapeBadge).toBeUndefined();
+  });
+
+  it('tints the landscape by its tone setting, else marks a mock landscape, else leaves it unmarked', () => {
+    expect(buildNavigationBar({ listing, landscapeTone: 'production', signInRequired: false }).landscapeTone)
+      .toEqual({ name: 'production', description: 'Production landscape' });
+    expect(buildNavigationBar({ listing: { ...listing, current: 'mock' }, signInRequired: false }).landscapeTone)
+      .toEqual({ name: 'mock', description: 'Mock landscape' });
+    expect(buildNavigationBar({ landscape: 'mock1', signInRequired: false }).landscapeTone?.name).toBe('mock');
+    expect(buildNavigationBar({ listing, signInRequired: false }).landscapeTone).toBeUndefined();
+  });
+
   it('offers sign-out only when sign-in is required, with the user principal name', () => {
     expect(buildNavigationBar({ listing, signInRequired: false }).signOut).toBeUndefined();
     expect(buildNavigationBar({ signInRequired: true, user: { eduPersonPrincipalName: ['jdoe@bu.edu'] } }).signOut)
@@ -112,6 +130,24 @@ describe('Dashboard page navigation bar', () => {
     expect(status).toBe(200);
     expect(body).not.toContain('id="landscapeNavigator"');
     expect(console.error).toHaveBeenCalledWith('Error listing landscapes for the navigator:', expect.any(Error));
+  });
+
+  it('tints the landscape navigator by the LANDSCAPE_TONE setting', async () => {
+    const { body } = await renderDashboard({ env: { LANDSCAPE_TONE: 'production' }, getLandscapes: jest.fn().mockResolvedValue(listing) });
+    expect(body).toMatch(/<select id="landscapeNavigator" class="[^"]*landscape-tone-production"/);
+    expect(body).toContain('title="Production landscape"');
+    expect(body).not.toContain('class="app-topbar-item landscape-badge');
+  });
+
+  it('shows this landscape in a badge, tinted mock for a mock landscape, when the registry cannot be read', async () => {
+    const { body } = await renderDashboard({ env: { LANDSCAPE: 'mock' }, getLandscapes: jest.fn().mockRejectedValue(new Error('AccessDenied')) });
+    expect(body).not.toContain('id="landscapeNavigator"');
+    expect(body).toMatch(/class="app-topbar-item landscape-badge landscape-tone-mock"[^>]*>\s*<i[^>]*><\/i>mock\s/);
+  });
+
+  it('leaves an unmarked landscape untinted', async () => {
+    const { body } = await renderDashboard({ getLandscapes: jest.fn().mockResolvedValue(listing) });
+    expect(body).not.toMatch(/class="[^"]*landscape-tone-/);
   });
 
   it('has no sign-out control in public mode', async () => {

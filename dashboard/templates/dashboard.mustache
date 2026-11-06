@@ -58,10 +58,18 @@
                 </button>
                 <span class="app-brand d-none d-sm-inline-flex d-lg-none">Integration Dashboard</span>
                 <div class="app-topbar-actions">
+                    {{#landscapeBadge}}
+                    <!-- This landscape, when there's no navigator to show it in -->
+                    <span class="app-topbar-item landscape-badge {{#landscapeTone}}landscape-tone-{{name}}{{/landscapeTone}}" {{#landscapeTone}}title="{{description}}"{{/landscapeTone}}>
+                        <i class="fas fa-layer-group" aria-hidden="true"></i>{{label}}
+                        {{#landscapeTone}}<span class="visually-hidden">({{description}})</span>{{/landscapeTone}}
+                    </span>
+                    {{/landscapeBadge}}
                     {{#landscapeNavigator}}
                     <div class="app-topbar-item">
                         <label for="landscapeNavigator" class="app-topbar-label d-none d-md-inline">Landscape</label>
-                        <select id="landscapeNavigator" class="form-select form-select-sm landscape-navigator" aria-label="Go to another landscape's dashboard">
+                        {{#landscapeTone}}<span class="visually-hidden" id="landscapeToneDescription">{{description}}</span>{{/landscapeTone}}
+                        <select id="landscapeNavigator" class="form-select form-select-sm landscape-navigator {{#landscapeTone}}landscape-tone-{{name}}{{/landscapeTone}}" aria-label="Go to another landscape's dashboard" {{#landscapeTone}}aria-describedby="landscapeToneDescription" title="{{description}}"{{/landscapeTone}}>
                             {{#options}}
                             <option value="{{url}}" {{#selected}}selected{{/selected}} {{#disabled}}disabled{{/disabled}}>{{label}}</option>
                             {{/options}}

@@ -12,6 +12,7 @@ import { join } from "path";
 import { JwtTools } from "shibboleth-sp";
 import { AuthenticatedContext, AuthenticationMode, IContext } from "../context/IContext";
 import { CACHE_SECRET } from "../src/handlers/DashboardCache";
+import { LandscapeTone } from "../src/handlers/LandscapeTone";
 import { LandscapeResources } from "./LandscapeResources";
 import { registerLandscape } from "./LandscapeRegistration";
 
@@ -29,6 +30,7 @@ export class FunctionUrlOrigin {
       AUTHENTICATION_MODE,
       LAMBDA_TIMEOUT_SECONDS,
       LAMBDA_MEMORY_SIZE_MB,
+      LANDSCAPE_TONE,
     } } = this.params;
     const {
       landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName
@@ -36,6 +38,9 @@ export class FunctionUrlOrigin {
 
     // Generate a secure random secret for origin verification
     this.originVerifySecret = `cf-origin-verify-${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}${Date.now().toString(36)}`;
+
+    // The top bar's tint for this landscape: refuse a value that names no tone here, at synth
+    const landscapeTone = LandscapeTone.parse(LANDSCAPE_TONE);
 
     // Start with base environment variable(s)
     const {env: { arn, region } } = CACHE_SECRET;
@@ -50,6 +55,7 @@ export class FunctionUrlOrigin {
       DYNAMODB_STATISTICS_TABLE_NAME: statisticsTableName,
       CHUNKS_BUCKET: chunksBucketName,
       ...(personHistoryTableName && { DYNAMODB_PERSON_HISTORY_TABLE_NAME: personHistoryTableName }),
+      ...(landscapeTone && { LANDSCAPE_TONE: landscapeTone.name }),
     } as any;
 
     // Add authentication-related environment variables if applicable

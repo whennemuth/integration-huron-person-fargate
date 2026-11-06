@@ -9,6 +9,7 @@ import { OriginHeader } from './OriginVerification';
 import { CrudOperation, Status } from 'integration-core';
 import { LandscapeListing, PersonSyncResult } from '../services/ServiceTypes';
 import { buildNavigationBar } from './NavigationBar';
+import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
 import { PageNavigation } from './PageNavigation';
 import { areTheSame } from '../Utils';
 import { ChangeType, ReportingError } from '../../../src/reporting/RunReporting';
@@ -134,6 +135,8 @@ async function renderDashboard(request: Request, activeTab?: string): Promise<La
   try {
     const navigationBar = buildNavigationBar({
       listing: await landscapeListingOrNone(),
+      landscape: process.env.LANDSCAPE || LOCAL_LANDSCAPE,
+      landscapeTone: process.env.LANDSCAPE_TONE,
       signInRequired: request.signInRequired,
       user: request.user
     });

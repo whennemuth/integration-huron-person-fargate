@@ -142,6 +142,14 @@ describe('FunctionUrlOrigin', () => {
     expect(fn.Properties.Environment.Variables.DASHBOARD_DOMAIN).toBeUndefined();
   });
 
+  it('passes the landscape tone to the Lambda only when set, and refuses one that names no tone', () => {
+    const variables = (template: Template) => Object.values(template.findResources('AWS::Lambda::Function'))[0].Properties.Environment.Variables;
+    expect(variables(synth('dynamodb', { LANDSCAPE_TONE: 'production' })).LANDSCAPE_TONE).toBe('production');
+    // The mock-landscape default is applied by the Lambda, from LANDSCAPE: nothing is baked in for it
+    expect(variables(synth('dynamodb')).LANDSCAPE_TONE).toBeUndefined();
+    expect(() => synth('dynamodb', { LANDSCAPE_TONE: 'prod' })).toThrow("LANDSCAPE_TONE must be one of production, test, mock (got 'prod')");
+  });
+
   it('grants read-only access to the registry path', () => {
     const statements = Object.values(synth('dynamodb').findResources('AWS::IAM::Policy'))
       .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);

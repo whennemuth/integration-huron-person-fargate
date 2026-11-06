@@ -702,8 +702,48 @@ code, pre, kbd, samp {
     max-width: 26rem;
 }
 
-/* Landscape navigator (top bar) */
+/* Landscape navigator, or badge when there's no navigator (top bar) */
 .landscape-navigator {
     width: auto;
     min-width: 9rem;
+}
+
+.landscape-badge {
+    gap: 0.375rem;
+    padding: 0.25rem 0.625rem;
+    border: 1px solid var(--hp-border-strong);
+    border-radius: var(--hp-radius);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--hp-text-secondary);
+    white-space: nowrap;
+}
+
+/* Landscape tones (LandscapeTone.ts): the tint marks how careful to be in this landscape */
+.landscape-tone-production {
+    --hp-tone: var(--hp-danger);
+    --hp-tone-rgb: var(--hp-danger-rgb);
+}
+
+.landscape-tone-test {
+    --hp-tone: var(--hp-warning);
+    --hp-tone-rgb: var(--hp-warning-rgb);
+}
+
+.landscape-tone-mock {
+    --hp-tone: var(--hp-text-secondary);
+    --hp-tone-rgb: var(--hp-text-rgb);
+}
+
+.landscape-badge[class*="landscape-tone-"],
+.landscape-navigator[class*="landscape-tone-"] {
+    color: var(--hp-tone);
+    background-color: rgba(var(--hp-tone-rgb), 0.08);
+    border-color: rgba(var(--hp-tone-rgb), 0.45);
+    font-weight: 500;
+}
+
+.landscape-navigator[class*="landscape-tone-"]:focus {
+    border-color: var(--hp-tone);
+    box-shadow: 0 0 0 0.2rem rgba(var(--hp-tone-rgb), 0.2);
 }
