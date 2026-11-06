@@ -97,7 +97,7 @@ code, pre, kbd, samp {
 }
 
 /* Counts, timestamps and table figures line up in columns */
-.tabular-nums, table, .metric-card {
+.tabular-nums, table {
     font-variant-numeric: tabular-nums;
 }
 
@@ -375,36 +375,282 @@ code, pre, kbd, samp {
 }
 
 /* ==========================================================================
+   Page patterns
+   Every page is a page header (title, one-line description, page actions) over sections. A section is a
+   heading over a white surface; a table or a list of tiles may stand in for the surface. Cards are kept for
+   bounded objects shown as one unit (a person record, a mapping result).
+   ========================================================================== */
+.page {
+    max-width: 1200px;
+    padding-top: 1.5rem;
+}
+
+.page-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.page-title {
+    margin: 0;
+    font-size: 1.375rem;
+}
+
+.page-description {
+    max-width: 48rem;
+    margin: 0.25rem 0 0;
+    color: var(--hp-text-secondary);
+}
+
+.page-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: 0.5rem;
+}
+
+.page-section + .page-section {
+    margin-top: 2rem;
+}
+
+.section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.section-title {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.section-description {
+    margin: 0.125rem 0 0;
+    font-size: 0.875rem;
+    color: var(--hp-text-muted);
+}
+
+/* Two sections side by side on wide screens (main, then aside), stacked below lg */
+.page-columns {
+    display: grid;
+    gap: 2rem;
+    align-items: start;
+}
+
+@media (min-width: 992px) {
+    .page-columns {
+        grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    }
+
+    .page-columns .page-section + .page-section {
+        margin-top: 0;
+    }
+}
+
+.surface {
+    padding: 1.25rem;
+    background-color: var(--hp-surface);
+    border: 1px solid var(--hp-border);
+    border-radius: var(--hp-radius-lg);
+    box-shadow: var(--hp-shadow-sm);
+}
+
+/* A surface whose content (e.g. a table) runs to its edges */
+.surface-flush {
+    padding: 0;
+    overflow: hidden;
+}
+
+/* Stat tiles: a label over one figure */
+.stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 1rem;
+}
+
+.stat-tile {
+    padding: 1rem 1.25rem;
+    background-color: var(--hp-surface);
+    border: 1px solid var(--hp-border);
+    border-radius: var(--hp-radius-lg);
+    box-shadow: var(--hp-shadow-sm);
+}
+
+.stat-label {
+    font-size: 0.8125rem;
+    color: var(--hp-text-muted);
+}
+
+.stat-value {
+    margin-top: 0.25rem;
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Data table: hairline rows, a muted header row, figures right-aligned (.num) */
+.data-table {
+    --bs-table-bg: transparent;
+    --bs-table-border-color: var(--hp-border);
+    margin: 0;
+    font-size: 0.875rem;
+}
+
+.data-table > :not(caption) > * > * {
+    padding: 0.625rem 1rem;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+/* A cell holding prose (e.g. an error message) wraps; the rest stay on one line and the table scrolls */
+.data-table .wrap {
+    white-space: normal;
+    min-width: 16rem;
+}
+
+.data-table thead th {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--hp-text-secondary);
+    background-color: var(--hp-surface-muted);
+}
+
+.data-table tbody tr:last-child > * {
+    border-bottom-width: 0;
+}
+
+.data-table .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.data-table .secondary {
+    color: var(--hp-text-muted);
+}
+
+/* Status badge: a dot and a word, tinted by outcome */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
+    color: var(--hp-text-secondary);
+    background-color: rgba(var(--hp-text-rgb), 0.06);
+}
+
+.status-badge::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: currentColor;
+}
+
+.status-badge-success {
+    color: var(--hp-success);
+    background-color: rgba(var(--hp-success-rgb), 0.1);
+}
+
+.status-badge-warning {
+    color: var(--hp-warning);
+    background-color: rgba(var(--hp-warning-rgb), 0.12);
+}
+
+.status-badge-danger {
+    color: var(--hp-danger);
+    background-color: rgba(var(--hp-danger-rgb), 0.1);
+}
+
+/* States (page-state.js): loading, empty, error and redacted */
+.page-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 2.5rem 1rem;
+    text-align: center;
+    color: var(--hp-text-secondary);
+}
+
+.page-state-icon {
+    font-size: 1.25rem;
+    color: var(--hp-text-muted);
+}
+
+.page-state-loading .page-state-icon {
+    font-size: inherit;
+    color: var(--hp-accent);
+}
+
+.page-state-title {
+    margin: 0;
+    font-weight: 600;
+    color: var(--hp-text);
+}
+
+.page-state-message {
+    max-width: 34rem;
+    margin: 0.125rem 0 0;
+    font-size: 0.875rem;
+}
+
+.page-state-error .page-state-icon {
+    color: var(--hp-danger);
+}
+
+.page-state-redacted {
+    margin: 0.25rem;
+    border: 1px dashed var(--hp-border-strong);
+    border-radius: var(--hp-radius);
+    background-color: var(--hp-surface-muted);
+}
+
+/* One line, for a state inside a form or beside other content */
+.page-state-compact {
+    flex-direction: row;
+    align-items: baseline;
+    padding: 0.75rem 0;
+    text-align: left;
+}
+
+.page-state-compact .page-state-title {
+    font-weight: 500;
+}
+
+.page-state-compact .page-state-message {
+    margin: 0;
+}
+
+.page-state-compact .page-state-text {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 0.5rem;
+}
+
+.page-state-compact.page-state-redacted {
+    padding: 0.75rem 1rem;
+}
+
+/* ==========================================================================
    Dashboard components
    ========================================================================== */
-/* Status indicators (System Status) */
-.status-indicator {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    display: inline-block;
-    margin-right: 8px;
-}
-.status-healthy { background-color: var(--hp-success); }
-.status-warning { background-color: #d4a72c; }
-.status-error { background-color: var(--hp-danger); }
-
-/* Metric tiles (System Status) */
-.metric-card {
-    border: 1px solid var(--hp-border);
-}
-
-/* Activity log (Activity History) */
-.activity-log {
-    max-height: 400px;
-    overflow-y: auto;
-}
-
-/* Person lookup result */
+/* Person lookup result (person-card.js) */
 .person-result {
-    background-color: var(--hp-surface-muted);
+    margin-top: 1.5rem;
+    padding: 1.25rem;
+    background-color: var(--hp-surface);
     border: 1px solid var(--hp-border);
-    margin: 15px 0;
+    border-radius: var(--hp-radius-lg);
+    box-shadow: var(--hp-shadow-sm);
 }
 
 /* Person data tree (person-card.js) */
@@ -437,28 +683,13 @@ code, pre, kbd, samp {
     word-break: break-word;
 }
 
-.person-list-container {
-    max-height: 600px;
-    overflow-y: auto;
-}
-
-/* Lookup button spinner, shown while a tab is loading */
+/* Lookup button spinner, shown while the lookup runs */
 .loading-spinner {
     display: none;
 }
 
 .tab-loading .loading-spinner {
     display: inline-block;
-}
-
-.tab-content {
-    min-height: 500px;
-}
-
-/* Centered single-column pages (Individual Sync, Person Mapping) */
-.page-column {
-    min-width: 80%;
-    max-width: 100%;
 }
 
 /* Login page prompt */

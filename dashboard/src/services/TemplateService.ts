@@ -73,6 +73,7 @@ export class TemplateService {
       // Convert hyphenated keys to camelCase for template compatibility
       return {
         'dashboard': assets['dashboard'] || '',
+        'pageState': assets['page-state'] || '',
         'personCard': assets['person-card'] || '',
         'mappingExperimentCard': assets['mapping-experiment-card'] || ''
       };
@@ -80,6 +81,7 @@ export class TemplateService {
       const jsPath = join(__dirname, '../../public/js');
       return {
         'dashboard': readFileSync(join(jsPath, 'dashboard.js'), 'utf-8'),
+        'pageState': readFileSync(join(jsPath, 'page-state.js'), 'utf-8'),
         'personCard': readFileSync(join(jsPath, 'person-card.js'), 'utf-8'),
         'mappingExperimentCard': readFileSync(join(jsPath, 'mapping-experiment-card.js'), 'utf-8')
       };

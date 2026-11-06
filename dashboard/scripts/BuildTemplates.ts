@@ -329,4 +329,4 @@ if (require.main === module) {
   generateTemplateConstants().catch(console.error);
 }
 
-export { generateTemplateConstants };
+export { generateTemplateConstants, minifyCSS, minifyJS };

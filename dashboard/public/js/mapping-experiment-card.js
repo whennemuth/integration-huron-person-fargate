@@ -60,7 +60,7 @@ class MappingExperimentCard {
         
         const clearButton = document.createElement('button');
         clearButton.type = 'button';
-        clearButton.className = 'btn btn-secondary ms-2';
+        clearButton.className = 'btn btn-outline-secondary ms-2';
         clearButton.innerHTML = '<i class="fas fa-eraser me-2"></i>Clear';
         clearButton.onclick = () => {
             textarea.value = '';
@@ -112,13 +112,7 @@ class MappingExperimentCard {
         const resultsContainer = document.getElementById(this.resultsId);
         if (!resultsContainer) return;
         
-        resultsContainer.innerHTML = '';
-        
-        const alert = document.createElement('div');
-        alert.className = 'alert alert-info';
-        alert.innerHTML = '<div class="spinner-border spinner-border-sm me-2"></div>Processing mapping experiment...';
-        
-        resultsContainer.appendChild(alert);
+        PageState.loading(resultsContainer, 'Mapping the person record');
     }
 
     /**
@@ -130,13 +124,13 @@ class MappingExperimentCard {
         
         resultsContainer.innerHTML = '';
         
-        // Success header
+        // A bounded result, so a card: its header says the mapping succeeded
         const card = document.createElement('div');
-        card.className = 'card border-success';
-        
+        card.className = 'card';
+
         const cardHeader = document.createElement('div');
-        cardHeader.className = 'card-header bg-success text-white';
-        cardHeader.innerHTML = '<i class="fas fa-check-circle me-2"></i>Mapping Result';
+        cardHeader.className = 'card-header';
+        cardHeader.innerHTML = '<h5><i class="fas fa-circle-check text-success me-2"></i>Mapping result</h5>';
         
         const cardBody = document.createElement('div');
         cardBody.className = 'card-body';
@@ -161,13 +155,7 @@ class MappingExperimentCard {
         const resultsContainer = document.getElementById(this.resultsId);
         if (!resultsContainer) return;
         
-        resultsContainer.innerHTML = '';
-        
-        const alert = document.createElement('div');
-        alert.className = 'alert alert-danger';
-        alert.innerHTML = `<i class="fas fa-exclamation-triangle me-2"></i>${message}`;
-        
-        resultsContainer.appendChild(alert);
+        PageState.error(resultsContainer, 'The mapping could not be run', message);
     }
 
     /**

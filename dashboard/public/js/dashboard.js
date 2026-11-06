@@ -540,77 +540,160 @@ function createSyncResultModal() {
     return modal;
 }
 
+/** Escape a value for use in HTML built from a template literal */
+function escapeHtml(value) {
+    return String(value === undefined || value === null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+/** A status badge (dot and word), tinted by what the status means */
+function statusBadge(status) {
+    const tones = {
+        success: ['completed', 'succeeded', 'success', 'healthy'],
+        warning: ['started', 'running', 'in_progress', 'incomplete', 'warning', 'degraded'],
+        danger: ['failed', 'error', 'unhealthy', 'post_processing_failed']
+    };
+    const normalized = String(status || '').toLowerCase();
+    const tone = Object.keys(tones).find(name => tones[name].includes(normalized));
+    return `<span class="status-badge${tone ? ` status-badge-${tone}` : ''}">${escapeHtml(status || 'unknown')}</span>`;
+}
+
+/** Fetch a section's JSON, throwing an Error carrying the server's message when the response isn't OK */
+async function fetchSectionData(path) {
+    const response = await fetch(`${API_BASE}${path}`);
+    let data = {};
+    try {
+        data = await response.json();
+    } catch (parseError) {
+        // A response with no JSON body: the status line says enough
+    }
+    if ( ! response.ok) {
+        const error = new Error(data.message || data.error || `The server answered ${response.status}`);
+        error.status = response.status;
+        throw error;
+    }
+    return data;
+}
+
 // Load activity history
 async function loadHistory() {
+    const container = document.getElementById('historyContent');
+    PageState.loading(container, 'Loading activity history');
     try {
-        const response = await fetch(`${API_BASE}/api/history`);
-        const data = await response.json();
-        
-        if (response.ok && data.history) {
-            const historyHtml = data.history.map(item => `
-                <div class="border-bottom pb-2 mb-2">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span><strong>${item.operation}</strong> - ${item.recordsProcessed} records</span>
-                        <span class="badge bg-${item.status === 'completed' ? 'success' : 'danger'}">${item.status}</span>
-                    </div>
-                    <small class="text-muted">${new Date(item.timestamp).toLocaleString()} (${item.duration})</small>
-                </div>
-            `).join('');
-            
-            document.getElementById('historyContent').innerHTML = historyHtml || '<p class="text-muted">No history available</p>';
+        const data = await fetchSectionData('/api/history');
+        const history = Array.isArray(data.history) ? data.history : [];
+        if (history.length === 0) {
+            PageState.empty(container, 'No activity yet', 'Syncs run in this landscape will be listed here.');
+            return;
         }
+        const rows = history.map(item => `
+            <tr>
+                <td>${escapeHtml(item.operation)}</td>
+                <td>${statusBadge(item.status)}</td>
+                <td class="num">${escapeHtml(Number(item.recordsProcessed || 0).toLocaleString())}</td>
+                <td class="num">${escapeHtml(Number(item.errors || 0).toLocaleString())}</td>
+                <td class="tabular-nums">${escapeHtml(new Date(item.timestamp).toLocaleString())}</td>
+                <td class="num">${escapeHtml(item.duration)}</td>
+            </tr>
+        `).join('');
+        container.innerHTML = `
+            <div class="table-responsive">
+                <table class="table data-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">Operation</th>
+                            <th scope="col">Status</th>
+                            <th scope="col" class="num">Records</th>
+                            <th scope="col" class="num">Errors</th>
+                            <th scope="col">Started</th>
+                            <th scope="col" class="num">Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `;
     } catch (error) {
-        document.getElementById('historyContent').innerHTML = '<div class="alert alert-danger">Error loading history</div>';
+        PageState.error(container, 'Activity history could not be loaded', error.message);
         console.error('History load error:', error);
     }
 }
 
+// Display names for the services /api/status reports on
+const SERVICE_LABELS = {
+    sourceApi: 'Source API (Boston University)',
+    targetApi: 'Target API (Huron)',
+    database: 'Database',
+    s3Storage: 'S3 storage'
+};
+
 // Load system status
 async function loadSystemStatus() {
+    const servicesContainer = document.getElementById('serviceStatus');
+    const metricsContainer = document.getElementById('systemMetrics');
+    PageState.loading(servicesContainer, 'Checking services');
+    PageState.loading(metricsContainer, 'Loading sync figures', { compact: true });
     try {
-        const response = await fetch(`${API_BASE}/api/status`);
-        const data = await response.json();
-        
-        if (response.ok) {
-            // Service status
-            const servicesHtml = Object.entries(data.services).map(([service, status]) => `
-                <div class="d-flex justify-content-between align-items-center mb-2 p-2 border rounded">
-                    <span><span class="status-indicator status-${status.status}"></span>${service}</span>
-                    <span class="text-muted">${status.responseTime}ms</span>
-                </div>
+        const data = await fetchSectionData('/api/status');
+
+        const services = Object.entries(data.services || {});
+        if (services.length === 0) {
+            PageState.empty(servicesContainer, 'No services reported');
+        } else {
+            const rows = services.map(([service, health]) => `
+                <tr>
+                    <td>${escapeHtml(SERVICE_LABELS[service] || service)}</td>
+                    <td>${statusBadge(health.status)}</td>
+                    <td class="num">${health.responseTime === undefined ? '' : `${escapeHtml(health.responseTime)} ms`}</td>
+                    <td class="secondary tabular-nums">${health.lastCheck ? escapeHtml(new Date(health.lastCheck).toLocaleString()) : ''}</td>
+                </tr>
             `).join('');
-            
-            document.getElementById('serviceStatus').innerHTML = servicesHtml;
-            
-            // Metrics
-            const metricsHtml = `
-                <div class="text-center">
-                    <div class="metric-card p-3 mb-2 bg-light rounded">
-                        <h4>${data.metrics.dailySyncs}</h4>
-                        <small>Daily Syncs</small>
-                    </div>
-                    <div class="metric-card p-3 mb-2 bg-light rounded">
-                        <h4>${data.metrics.weeklyErrors}</h4>
-                        <small>Weekly Errors</small>
-                    </div>
-                    <div class="metric-card p-3 bg-light rounded">
-                        <h4>${data.metrics.avgProcessingTime}</h4>
-                        <small>Avg Processing Time</small>
-                    </div>
+            servicesContainer.innerHTML = `
+                <div class="table-responsive">
+                    <table class="table data-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Service</th>
+                                <th scope="col">Status</th>
+                                <th scope="col" class="num">Response time</th>
+                                <th scope="col">Last checked</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
                 </div>
             `;
-            
-            document.getElementById('systemMetrics').innerHTML = metricsHtml;
         }
+
+        const metrics = data.metrics || {};
+        const tiles = [
+            ['Syncs today', metrics.dailySyncs],
+            ['Errors this week', metrics.weeklyErrors],
+            ['Average processing time', metrics.avgProcessingTime]
+        ];
+        metricsContainer.innerHTML = `
+            <div class="stat-grid">
+                ${tiles.map(([label, value]) => `
+                    <div class="stat-tile">
+                        <div class="stat-label">${escapeHtml(label)}</div>
+                        <div class="stat-value">${escapeHtml(value === undefined ? '-' : value)}</div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
     } catch (error) {
-        document.getElementById('serviceStatus').innerHTML = '<div class="alert alert-danger">Error loading status</div>';
+        PageState.error(servicesContainer, 'Service status could not be loaded', error.message);
+        metricsContainer.replaceChildren();
         console.error('Status load error:', error);
     }
 }
 
 // Refresh functions
 function refreshHistory() {
-    document.getElementById('historyContent').innerHTML = '<div class="text-center"><div class="spinner-border text-primary"></div></div>';
     loadHistory();
 }
 // Coming back to this page from the browser's history shows the landscape it was left for:

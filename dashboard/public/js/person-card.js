@@ -93,61 +93,33 @@ class PersonCard {
         // Clear global cache
         window.cachedSourceData = null;
         window.cachedTargetData = null;
-        
-        const alert = document.createElement('div');
-        alert.className = 'alert alert-warning';
-        
-        const icon = document.createElement('i');
-        icon.className = 'fas fa-exclamation-triangle me-2';
-        
-        alert.appendChild(icon);
-        alert.appendChild(document.createTextNode('Person not found in either source or target systems'));
-        
-        this.container.appendChild(alert);
+
+        this.container.appendChild(PageState.element('empty', {
+            title: 'Person not found',
+            message: 'No record matches in either Boston University\'s source data or Huron.'
+        }));
     }
 
     /**
      * Render waiting/loading message
      */
     renderWaiting() {
-        this.container.innerHTML = '';
-        
         // Clear global cache while waiting
         window.cachedSourceData = null;
         window.cachedTargetData = null;
-        
-        const alert = document.createElement('div');
-        alert.className = 'alert alert-info';
-        
-        const icon = document.createElement('i');
-        icon.className = 'fas fa-search me-2';
-        
-        alert.appendChild(icon);
-        alert.appendChild(document.createTextNode('Looking up person...'));
-        
-        this.container.appendChild(alert);
+
+        PageState.loading(this.container, 'Looking up person');
     }
 
     /**
      * Render error message
      */
     renderError(message = 'Error looking up person') {
-        this.container.innerHTML = '';
-        
         // Clear global cache on error
         window.cachedSourceData = null;
         window.cachedTargetData = null;
-        
-        const alert = document.createElement('div');
-        alert.className = 'alert alert-danger';
-        
-        const icon = document.createElement('i');
-        icon.className = 'fas fa-exclamation-circle me-2';
-        
-        alert.appendChild(icon);
-        alert.appendChild(document.createTextNode(message));
-        
-        this.container.appendChild(alert);
+
+        PageState.error(this.container, message);
     }
 
     /**

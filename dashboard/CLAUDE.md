@@ -464,6 +464,32 @@ Bootstrap's own `--bs-*` variables point at. Change the look there, not per comp
   The browser ends on the IdP's page. The top bar also shows the JWT's `eduPersonPrincipalName`
   (else `buPrincipal`).
 
+### Page patterns
+
+Every page (`templates/partials/*-tab.mustache`) is built from the same parts, styled in the
+"Page patterns" section of `public/css/dashboard.css`. Reuse them for new pages rather than adding
+page-specific styles:
+- **Page header**: `.page` > `header.page-header` with an `h1.page-title`, a one-line
+  `.page-description`, and `.page-actions` (e.g. Refresh) on the right.
+- **Sections**: `section.page-section`, with an optional `.section-heading` (`h2.section-title`)
+  over a white `.surface`. Use `.surface-flush` when a table runs to its edges, and `.page-columns`
+  for a main section beside a narrower one (stacked below `lg`). Cards are only for a bounded
+  object shown as one unit (a person record, a mapping result), not for every section.
+- **Stat tiles**: `.stat-grid` of `.stat-tile` (`.stat-label` over `.stat-value`).
+- **Data tables**: `table.table.data-table` inside `.table-responsive`. Cells stay on one line and
+  the table scrolls sideways on a narrow screen; mark prose cells `.wrap` and figures `.num`.
+  Outcomes use `.status-badge` (`-success`, `-warning`, `-danger`), from `statusBadge()` in
+  `dashboard.js`. No fixed-height inner scroll boxes: pages scroll as a whole.
+- **States** (`PageState`, `public/js/page-state.js`): the one pattern for a section with nothing to
+  show: `loading`, `empty`, `error` and `redacted` (the viewer's role doesn't allow the content).
+  `PageState.loading(target, title)` and friends replace a container's content;
+  `PageState.element(kind, { title, message, compact })` builds one to place yourself. Text is set
+  as text, so a message may carry server output. `dashboard.js`, `person-card.js` and
+  `mapping-experiment-card.js` all render their states through it, so it loads before them. A
+  section's data load goes through `fetchSectionData()` (`dashboard.js`), which throws an `Error`
+  carrying the server's message and `status`. Tests: `test/DashboardPageState.test.ts` (in a vm
+  with a stand-in DOM, since jest runs without one).
+
 ## Dependencies
 
 - `integration-core`: Base utilities, delta processing, TestEnvironment
@@ -493,7 +519,13 @@ Bootstrap's own `--bs-*` variables point at. Change the look there, not per comp
 1. Modify CSS/JS in `public/` directory
 2. Run `npm run dashboard:build:templates` to minify and embed
 3. Generated constants appear in `src/handlers/TemplateConstants.ts`
-4. Templates in `templates/` use `{{{ inlineCss }}}` and `{{{ inlineJs }}}` placeholders
+4. Templates use `{{{cssAssets.dashboard}}}` and `{{{jsAssets.<name>}}}`. A new JS file must also be
+   added to `TemplateService.getJsAssets()` (both branches) and given a `<script>` in
+   `templates/dashboard.mustache`.
+5. The Lambda serves the minified assets, the local server the files as written, so a local run can't
+   catch a minifier break. The minifier is regex-based: it deletes everything after `//` on a line
+   (including inside strings and regexes) and joins lines, so end every statement with a semicolon.
+   `test/DashboardPageState.test.ts` checks that every script still parses once minified.
 
 ## Common Issues & Debugging
 

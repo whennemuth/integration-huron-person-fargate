@@ -197,6 +197,20 @@ describe('Dashboard page sidebar', () => {
     expect(pane(body, 'individual')).not.toContain('show active');
   });
 
+  it('gives every page a page header, and loads the state patterns before the components using them', async () => {
+    const body = await render();
+    const titles = body.match(/<h1 class="page-title">[^<]*<\/h1>/g) || [];
+    expect(titles.map(title => title.replace(/<[^>]+>/g, ''))).toEqual(
+      ['Lookup and sync', 'Mapping experiment', 'Bulk sync', 'Activity history', 'Status']
+    );
+    const pageStateAt = body.indexOf('class PageState');
+    expect(pageStateAt).toBeGreaterThan(-1);
+    expect(pageStateAt).toBeLessThan(body.indexOf('class PersonCard'));
+    expect(pageStateAt).toBeLessThan(body.indexOf('class MappingExperimentCard'));
+    // The fixed-height inner scroll boxes are gone: pages scroll as a whole
+    expect(body).not.toContain('activity-log');
+  });
+
   it('shows the default page, not a blank one, when an unknown page is requested', async () => {
     const body = await render({ tab: 'nonsense' });
     expect(navItem(body, 'individual')).toMatch(/class="nav-link active"/);
