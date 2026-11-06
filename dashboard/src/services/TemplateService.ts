@@ -46,7 +46,6 @@ export class TemplateService {
         'mapping-tab': readFileSync(join(partialsPath, 'mapping-tab.mustache'), 'utf-8'),
         'bulk-tab': readFileSync(join(partialsPath, 'bulk-tab.mustache'), 'utf-8'),
         'runs-tab': readFileSync(join(partialsPath, 'runs-tab.mustache'), 'utf-8'),
-        'history-tab': readFileSync(join(partialsPath, 'history-tab.mustache'), 'utf-8'),
         'system-tab': readFileSync(join(partialsPath, 'system-tab.mustache'), 'utf-8')
       };
     }

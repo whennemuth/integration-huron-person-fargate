@@ -99,9 +99,6 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
       case '/api/bulk-sync':
         return await handleBulkSync({requestBody: body, cache });
       
-      case '/api/history':
-        return await getHistory({ queryParams });
-      
       case '/api/status':
         return await getSystemStatus();
 
@@ -392,28 +389,6 @@ async function handleBulkSync(params: { requestBody: string | null, cache: Dashb
     console.error('Error in bulk sync:', error);
     return createResponse(500, 'application/json', JSON.stringify({ 
       error: 'Bulk sync failed', 
-      message: error instanceof Error ? error.message : 'Unknown error' 
-    }));
-  }
-}
-
-/**
- * Get activity history from S3 or database
- */
-async function getHistory(params: { queryParams: any }): Promise<LambdaFunctionUrlResult> {
-  const { queryParams } = params;
-  try {
-    const { startDate, endDate, limit = 50 } = queryParams;
-    
-    // TODO: Implement actual S3 history retrieval
-    const historyService = ServiceProvider.getHistoryService();
-    const historyData = await historyService.getHistory(startDate, endDate, limit);
-
-    return createResponse(200, 'application/json', JSON.stringify(historyData));
-  } catch (error) {
-    console.error('Error getting history:', error);
-    return createResponse(500, 'application/json', JSON.stringify({ 
-      error: 'Failed to retrieve history', 
       message: error instanceof Error ? error.message : 'Unknown error' 
     }));
   }

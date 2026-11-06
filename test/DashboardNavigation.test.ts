@@ -212,7 +212,7 @@ describe('Dashboard page sidebar', () => {
     for (const group of ['Person', 'Runs', 'System']) {
       expect(body).toMatch(new RegExp(`class="app-nav-group"[^>]*>${group}<`));
     }
-    for (const page of ['overview', 'individual', 'mapping', 'runs', 'history', 'bulk', 'system']) {
+    for (const page of ['overview', 'individual', 'mapping', 'runs', 'bulk', 'system']) {
       expect(navItem(body, page)).toContain(`data-page="${page}"`);
       expect(navItem(body, page)).toContain('data-bs-toggle="pill"');
     }
@@ -237,7 +237,7 @@ describe('Dashboard page sidebar', () => {
     const body = await render();
     const titles = body.match(/<h1 class="page-title">[^<]*<\/h1>/g) || [];
     expect(titles.map(title => title.replace(/<[^>]+>/g, ''))).toEqual(
-      ['Overview', 'Lookup and sync', 'Mapping experiment', 'Bulk sync', 'Run history', 'Activity history', 'Status']
+      ['Overview', 'Lookup and sync', 'Mapping experiment', 'Bulk sync', 'Run history', 'Status']
     );
     const pageStateAt = body.indexOf('class PageState');
     expect(pageStateAt).toBeGreaterThan(-1);

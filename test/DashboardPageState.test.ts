@@ -93,10 +93,10 @@ describe('PageState', () => {
 
   it('replaces a container\'s content, found by element or by id', () => {
     const { PageState, addContainer } = loadPageState();
-    const container = addContainer('historyContent');
+    const container = addContainer('serviceStatus');
     container.appendChild(new FakeElement('table'));
 
-    const shown = PageState.loading('historyContent', 'Loading');
+    const shown = PageState.loading('serviceStatus', 'Loading');
     expect(container.children).toEqual([shown]);
 
     PageState.error(container, 'Failed', 'detail');

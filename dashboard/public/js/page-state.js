@@ -5,8 +5,8 @@
  * Every page and component renders these states through this class, so they look and read the same
  * everywhere. Text is set with textContent, never as HTML, so a message may safely carry server output.
  *
- *   PageState.loading('historyContent', 'Loading activity history');
- *   PageState.error(container, 'Activity history could not be loaded', error.message);
+ *   PageState.loading('serviceStatus', 'Checking services');
+ *   PageState.error(container, 'Service status could not be loaded', error.message);
  *   container.appendChild(PageState.element('empty', { title: 'No runs yet' }));
  */
 class PageState {

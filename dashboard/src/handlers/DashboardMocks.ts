@@ -3,12 +3,10 @@ import {
   PersonLookupService,
   PersonSyncService,
   BulkSyncService,
-  HistoryService,
   SystemStatusService,
   PersonLookupResult,
   PersonSyncResult,
   BulkSyncResult,
-  HistoryResult,
   SystemStatusResult,
   PersonLookupParams,
   LandscapeListingService,
@@ -108,36 +106,6 @@ export class MockBulkSyncService implements BulkSyncService {
   }
 }
 
-export class MockHistoryService implements HistoryService {
-  async getHistory(startDate?: string, endDate?: string, limit: number = 50): Promise<HistoryResult> {
-    const mockHistory = [
-      {
-        id: '1',
-        timestamp: new Date().toISOString(),
-        operation: 'bulk-sync',
-        status: 'completed',
-        recordsProcessed: 1200,
-        duration: '00:05:30',
-        errors: 0
-      },
-      {
-        id: '2',
-        timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-        operation: 'individual-sync',
-        status: 'completed',
-        recordsProcessed: 1,
-        duration: '00:00:15',
-        errors: 0
-      }
-    ];
-
-    return {
-      history: mockHistory,
-      totalCount: mockHistory.length
-    };
-  }
-}
-
 export class MockSystemStatusService implements SystemStatusService {
   async getStatus(): Promise<SystemStatusResult> {
     return {
@@ -201,13 +169,6 @@ export class MockBulkSync {
   static start(operation: string, batchSize?: number, filters?: any) {
     const service = new MockBulkSyncService();
     return service.start(operation, batchSize, filters);
-  }
-}
-
-export class MockHistory {
-  static getHistory(startDate?: string, endDate?: string, limit: number = 50) {
-    const service = new MockHistoryService();
-    return service.getHistory(startDate, endDate, limit);
   }
 }
 

@@ -26,10 +26,6 @@ export interface BulkSyncService {
   start(operation: string, batchSize?: number, filters?: any): Promise<BulkSyncResult>;
 }
 
-export interface HistoryService {
-  getHistory(startDate?: string, endDate?: string, limit?: number): Promise<HistoryResult>;
-}
-
 export interface SystemStatusService {
   getStatus(): Promise<SystemStatusResult>;
 }
@@ -105,21 +101,6 @@ export interface BulkSyncResult {
   estimatedRecords: number;
   startTime: string;
   jobId: string;
-}
-
-export interface HistoryResult {
-  history: HistoryRecord[];
-  totalCount: number;
-}
-
-export interface HistoryRecord {
-  id: string;
-  timestamp: string;
-  operation: string;
-  status: string;
-  recordsProcessed: number;
-  duration: string;
-  errors: number;
 }
 
 export interface SystemStatusResult {

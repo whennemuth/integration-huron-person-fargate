@@ -329,7 +329,7 @@ SERVICE_TOGGLER_LANDSCAPE=dev
 
 # ------- Harness Groups for dashboard\src\services\ServiceProvider.ts ------- #
 # Test harness for the dashboard's services, called the way DashboardHandler calls them (read only)
-# TASK options: capabilities | runs | summary | chunks | errors | changes | landscapes | lookup | preview | history | status
+# TASK options: capabilities | runs | summary | chunks | errors | changes | landscapes | lookup | preview | status
 DASHBOARD_SERVICE_PROVIDER_TASK=runs
 # true: the mock services, no AWS access
 DASHBOARD_SERVICE_PROVIDER_LOCALHOST_WITH_MOCKS=false

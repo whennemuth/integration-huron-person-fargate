@@ -63,7 +63,7 @@ window.addEventListener('load', function() {
 /**
  * Sidebar page navigation.
  * The server renders one page active (?tab=<id>, else the default). A URL fragment takes precedence,
- * since the server never sees it: #<page>, optionally followed by /<detail> (e.g. #history/<id>), so a
+ * since the server never sees it: #<page>, optionally followed by /<detail> (e.g. #runs/<syncRunId>), so a
  * page can be linked to and a refresh stays on it. Choosing a page records its fragment in the browser
  * history, so back and forward move between pages.
  */
@@ -157,8 +157,6 @@ function onPageShown(page) {
         overviewPage.load();
     } else if (page === 'runs' && runHistoryPage) {
         runHistoryPage.show(detailFromFragment('runs'));
-    } else if (page === 'history') {
-        loadHistory();
     } else if (page === 'system') {
         loadSystemStatus();
     }
@@ -616,50 +614,6 @@ async function fetchSectionData(path) {
     return data;
 }
 
-// Load activity history
-async function loadHistory() {
-    const container = document.getElementById('historyContent');
-    PageState.loading(container, 'Loading activity history');
-    try {
-        const data = await fetchSectionData('/api/history');
-        const history = Array.isArray(data.history) ? data.history : [];
-        if (history.length === 0) {
-            PageState.empty(container, 'No activity yet', 'Syncs run in this landscape will be listed here.');
-            return;
-        }
-        const rows = history.map(item => `
-            <tr>
-                <td>${escapeHtml(item.operation)}</td>
-                <td>${statusBadge(item.status)}</td>
-                <td class="num">${escapeHtml(Number(item.recordsProcessed || 0).toLocaleString())}</td>
-                <td class="num">${escapeHtml(Number(item.errors || 0).toLocaleString())}</td>
-                <td class="tabular-nums">${escapeHtml(new Date(item.timestamp).toLocaleString())}</td>
-                <td class="num">${escapeHtml(item.duration)}</td>
-            </tr>
-        `).join('');
-        container.innerHTML = `
-            <div class="table-responsive">
-                <table class="table data-table">
-                    <thead>
-                        <tr>
-                            <th scope="col">Operation</th>
-                            <th scope="col">Status</th>
-                            <th scope="col" class="num">Records</th>
-                            <th scope="col" class="num">Errors</th>
-                            <th scope="col">Started</th>
-                            <th scope="col" class="num">Duration</th>
-                        </tr>
-                    </thead>
-                    <tbody>${rows}</tbody>
-                </table>
-            </div>
-        `;
-    } catch (error) {
-        PageState.error(container, 'Activity history could not be loaded', error.message);
-        console.error('History load error:', error);
-    }
-}
-
 // Load system status
 async function loadSystemStatus() {
     const servicesContainer = document.getElementById('serviceStatus');
@@ -695,10 +649,6 @@ async function loadSystemStatus() {
     }
 }
 
-// Refresh functions
-function refreshHistory() {
-    loadHistory();
-}
 // Coming back to this page from the browser's history shows the landscape it was left for:
 // select this landscape again
 window.addEventListener('pageshow', function() {

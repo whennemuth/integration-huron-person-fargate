@@ -1,7 +1,7 @@
 # integration-huron-person-dashboard: Serverless Management Dashboard
 
 ## Project Purpose
-A serverless dashboard for managing integration operations between BU CDM and Huron systems. Provides web-based UI for individual person sync, bulk operations, activity history, and system status monitoring. Deployed via AWS CDK with Lambda function serving both as HTML dashboard server and data synchronization engine.
+A serverless dashboard for managing integration operations between BU CDM and Huron systems. Provides web-based UI for individual person sync, bulk operations, run history, and system status monitoring. Deployed via AWS CDK with Lambda function serving both as HTML dashboard server and data synchronization engine.
 
 ## Repository Relationship Model
 
@@ -86,7 +86,7 @@ The Lambda function serves two primary roles:
 **2. Data Synchronization Engine:**
 - Executes person sync operations (individual and bulk)
 - Interfaces with BU CDM data sources and Huron data targets
-- Processes API requests for person lookup, sync, history, and status
+- Processes API requests for person lookup, sync, run reporting, and status
 
 ### Infrastructure Components
 
@@ -118,7 +118,6 @@ The Lambda function serves two primary roles:
 - **Bulk Operations**: Large-scale batch synchronization jobs
 - **Overview** (the landing page): the latest run and the service health checks
 - **Run History**: The landscape's sync runs, newest first, and each run's figures, chunks, errors and changes
-- **Activity History**: Logs and audit trail of integration activities (placeholder, to be retired for Run History)
 - **System Status**: Health monitoring of BU CDM and Huron services
 
 ### Security Features
@@ -142,7 +141,6 @@ The Lambda function serves two primary roles:
 - `POST /api/person-lookup` - Look up individual person by BUID or HRN
 - `POST /api/person-sync` - Sync individual person record
 - `POST /api/bulk-sync` - Start bulk synchronization operation
-- `GET /api/history` - Get activity history and logs
 - `GET /api/status` - Get system health status and metrics
 
 **Run reporting** (this landscape's sync runs, read in-process from its tables and chunks bucket
@@ -179,7 +177,6 @@ Centralized registry for managing service instances:
 - PersonLookup service
 - PersonSync service
 - BulkSync service
-- History service
 - SystemStatus service
 - RunReporting service (`RunReports.ts`: fargate's `RunReporting` built from the Lambda environment)
 - LandscapeListing service (`LandscapeRegistry.ts`)
@@ -201,7 +198,7 @@ Provides mock implementations when `LOCALHOST_WITH_MOCKS=true` (ignored in Lambd
 - Mock BU CDM data source responses
 - Mock Huron data target operations
 - Simulated sync execution
-- Fake history and status data
+- Fake status data
 - A fake landscape registry ("local", plus `mock` and `Staging` at example.com urls). This `mock`
   is unrelated to the deployed mock landscape.
 - Run reporting (`src/handlers/MockRunReporting.ts`): a deterministic history of 40 runs ending
@@ -295,7 +292,7 @@ pipeline harness's.
 
 - `src/services/ServiceProvider.ts` (`DASHBOARD_SERVICE_PROVIDER`) - gets a service from the
   provider and calls it as `DashboardHandler` does, read only. `TASK`: `capabilities`, `runs`,
-  `summary`, `chunks`, `errors`, `changes`, `landscapes`, `lookup`, `preview`, `history`,
+  `summary`, `chunks`, `errors`, `changes`, `landscapes`, `lookup`, `preview`,
   `status`. The landscape's Lambda environment (`LANDSCAPE`, `REGION`, table names, ...) is
   given with the prefix; `LOCALHOST_WITH_MOCKS=true` uses the mocks without loading any config.
 

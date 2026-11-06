@@ -4,7 +4,7 @@ describe('PageNavigation', () => {
   const navigation = new PageNavigation();
 
   it('lists every page in sidebar order', () => {
-    expect(navigation.pageIds).toEqual(['overview', 'individual', 'mapping', 'runs', 'history', 'bulk', 'system']);
+    expect(navigation.pageIds).toEqual(['overview', 'individual', 'mapping', 'runs', 'bulk', 'system']);
   });
 
   it('makes the requested page active', () => {
@@ -33,7 +33,6 @@ describe('PageNavigation', () => {
       individualActive: false,
       mappingActive: false,
       runsActive: false,
-      historyActive: false,
       bulkActive: true,
       systemActive: false
     });
