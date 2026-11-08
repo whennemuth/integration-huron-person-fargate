@@ -22,6 +22,7 @@ cdk.context.json
 # exclude environment files
 .env
 .env.*
+**/*.env
 
 # exclude test data files
 test-data/*

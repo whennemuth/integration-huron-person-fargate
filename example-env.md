@@ -378,4 +378,13 @@ DASHBOARD_SHIBBOLETH_SECRET_TASK=read
 # The other tags come from context.json TAGS, and the secret is created in its REGION (default us-east-1).
 # DASHBOARD_SHIBBOLETH_SECRET_SECRET_NAME=<secret-name>
 # DASHBOARD_SHIBBOLETH_SECRET_CLOUDFRONT_CHALLENGE=<challenge>
+
+# ------- Harness Groups for dashboard\scripts\LambdaFunction.ts ------- #
+# A landscape's deployed dashboard Lambda environment, as the local launcher looks it up (read only)
+# TASK options: show (prints it, secrets masked)
+DASHBOARD_LAMBDA_FUNCTION_TASK=show
+# Default: the active landscape's (context/context.json TAGS.Landscape, REGION and DASHBOARD.STACK_ID)
+# DASHBOARD_LAMBDA_FUNCTION_LANDSCAPE=<landscape>
+# DASHBOARD_LAMBDA_FUNCTION_REGION=<aws-region>
+# DASHBOARD_LAMBDA_FUNCTION_STACK_ID=hp-dashboard
 ```

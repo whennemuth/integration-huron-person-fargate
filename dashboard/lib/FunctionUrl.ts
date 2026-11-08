@@ -13,6 +13,7 @@ import { JwtTools } from "shibboleth-sp";
 import { AuthenticatedContext, AuthenticationMode, IContext } from "../context/IContext";
 import { CACHE_SECRET } from "../src/handlers/DashboardCache";
 import { LandscapeTone } from "../src/handlers/LandscapeTone";
+import { dashboardFunctionName } from "./DashboardFunctionName";
 import { LandscapeResources } from "./LandscapeResources";
 import { registerLandscape } from "./LandscapeRegistration";
 
@@ -77,7 +78,7 @@ export class FunctionUrlOrigin {
       };
     }
 
-    const functionName = `${STACK_ID}-${TAGS.Landscape}-app-function`;
+    const functionName = dashboardFunctionName(STACK_ID, TAGS.Landscape);
     
     // Store secret in Systems Manager Parameter Store (per landscape: STACK_ID is shared by every landscape)
     new StringParameter(stack, 'secret', {

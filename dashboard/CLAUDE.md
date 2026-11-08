@@ -319,6 +319,19 @@ DASHBOARD_SERVICE_PROVIDER_TASK=summary npx ts-node -r dotenv/config dashboard/s
 DASHBOARD_SHIBBOLETH_SECRET_TASK=read npx ts-node -r dotenv/config dashboard/src/ShibbolethSecret.ts
 ```
 
+- `scripts/LambdaFunction.ts` (`DASHBOARD_LAMBDA_FUNCTION`) - a landscape's deployed dashboard Lambda
+  (`LambdaFunction`, found by `dashboardFunctionName()` in `lib/DashboardFunctionName.ts`, which
+  `lib/FunctionUrl.ts` names the function with). Read only. `TASK`: `show` (its environment, with its
+  secret variables masked: what the local launcher looks up). `LANDSCAPE`, `REGION` and `STACK_ID`
+  default to the active context's. `LambdaFunction.SECRET_VARIABLES` (`ORIGIN_VERIFY_SECRET`, read only in
+  Lambda) are what a local run leaves out (`withoutSecrets()`) and any display masks (`masked()`). Tests:
+  `test/DashboardLambdaFunction.test.ts`. The launcher's own settings are in `scripts/LocalLaunch.env`
+  (git-ignored), documented by the committed `scripts/LocalLaunch.env.example`.
+
+```bash
+DASHBOARD_LAMBDA_FUNCTION_TASK=show npx ts-node -r dotenv/config dashboard/scripts/LambdaFunction.ts
+```
+
 ## CDK Deployment
 
 One dashboard stack per landscape, `${DASHBOARD.STACK_ID}-${landscape}` (e.g. `hp-dashboard-mock`),
