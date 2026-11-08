@@ -1,85 +1,125 @@
 /**
- * Starts the dashboard's local server (dashboard/src/LocalServer.ts) at http://localhost:3000/dashboard
- * with the environment a launch option calls for:
+ * Starts the dashboard's local server (dashboard/src/LocalServer.ts) at http://localhost:3000/dashboard as a
+ * landscape's dashboard Lambda would run, with the settings in dashboard/scripts/LocalLaunch.env (git-ignored;
+ * see LocalLaunch.env.example). The repository's .env is never read.
  *
- *   ts-node dashboard/scripts/LocalLaunch.ts [--signed-in] [--mocks [--storage-mode dynamodb|s3]]
+ *   npm run dashboard:dev [-- <flags>]     (flags: see LocalLaunchOptions.ts, e.g. -- --mocks --storage-mode s3)
  *
- * --signed-in  Show the page as a landscape that requires sign-in does: sets NODE_ENV=development and
- *              placeholder APP_LOGIN_HEADER/APP_LOGOUT_HEADER names, which turn off public mode and so
- *              show the sign-out control. No user name shows (there is no JWT cookie on localhost), and
- *              /logout is a 404 here: only the deployed edge functions answer it.
- * --mocks      Use the mock services (LOCALHOST_WITH_MOCKS=true), so no AWS access is needed; the
- *              navigator lists the mock registry's made-up landscapes. Without it, .env is loaded
- *              (AWS_PROFILE, REGION, LANDSCAPE), and the navigator lists the real landscape registry
- *              with LANDSCAPE selected.
- * --storage-mode  With --mocks, the storage mode the mock run reporting reports (MOCK_STORAGE_MODE):
- *              dynamodb (the default) or s3, which keeps no per-person change lists. From npm, pass it
- *              after --: npm run dashboard:dev:signed-in:mocks -- --storage-mode s3
+ * Without mocks (MOCKED=false), it looks up the deployed dashboard Lambda of LANDSCAPE in REGION at every launch
+ * and runs the server with that Lambda's environment (its secrets left out), under LocalLaunch.env's
+ * overrides, so the server reads the landscape's tables, config secret and registry with your AWS_PROFILE's
+ * credentials. With mocks, nothing is looked up and no AWS access is needed.
  *
- * The variables are set here rather than in the npm script because npm runs scripts in cmd.exe on
- * Windows, which can't take VAR=value prefixes. Build the templates first (the npm scripts do).
+ * With WATCH=true it runs the server under nodemon, which restarts it when a file under dashboard/ changes.
+ * The environment is resolved once, here, and handed to each restart (LOCAL_LAUNCH_RESOLVED), so AWS is called
+ * once per launch.
+ *
+ * The launcher is TypeScript rather than a shell script because npm runs scripts in cmd.exe on Windows, where
+ * neither VAR=value prefixes nor sh work. Build the templates first (the npm script does).
  */
+import { spawn } from 'child_process';
+import { existsSync, readFileSync } from 'fs';
+import { join, relative } from 'path';
+import { parse } from 'dotenv';
+import { LambdaFunction } from './LambdaFunction';
+import { LaunchEnvironment, LocalLaunchOptions } from './LocalLaunchOptions';
 
-const FLAGS = ['--signed-in', '--mocks'] as const;
-type Flag = typeof FLAGS[number];
+export const ENV_FILE = join(__dirname, 'LocalLaunch.env');
+const EXAMPLE_FILE = join(__dirname, 'LocalLaunch.env.example');
 
-/** The mock storage modes (MockRunReporting.ts's MOCK_STORAGE_MODES, not imported so nothing loads before the environment is set) */
-const STORAGE_MODES = ['dynamodb', 's3'] as const;
-type StorageMode = typeof STORAGE_MODES[number];
+/** Set in the environment handed to a nodemon restart: the environment is already resolved */
+export const LOCAL_LAUNCH_RESOLVED = 'LOCAL_LAUNCH_RESOLVED';
 
-export type LaunchOptions = {
-  flags: Set<Flag>;
-  storageMode?: StorageMode;
+/** What nodemon watches, and the files whose change restarts the server */
+const WATCH_DIRECTORY = join(__dirname, '..');
+const WATCH_EXTENSIONS = 'ts,js,mustache,css,json';
+
+const readSettings = (): Record<string, string> => {
+  if (!existsSync(ENV_FILE)) {
+    throw new Error(`No ${relative(process.cwd(), ENV_FILE)}: copy ${relative(process.cwd(), EXAMPLE_FILE)} to it and fill it in`);
+  }
+  return parse(readFileSync(ENV_FILE));
 };
 
-export const parseOptions = (args: string[]): LaunchOptions => {
-  const flags = new Set<Flag>();
-  let storageMode: StorageMode | undefined;
-  const unknown: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--storage-mode') {
-      const value = args[++i];
-      if (!STORAGE_MODES.includes(value as StorageMode)) {
-        throw new Error(`--storage-mode must be followed by ${STORAGE_MODES.join(' or ')} (got ${value === undefined ? 'nothing' : `'${value}'`})`);
-      }
-      storageMode = value as StorageMode;
-    } else if (FLAGS.includes(arg as Flag)) {
-      flags.add(arg as Flag);
-    } else {
-      unknown.push(arg);
+/** The deployed dashboard Lambda's environment, with a hint at the usual cause of failure */
+const lookUpLambdaEnvironment = async (options: LocalLaunchOptions, awsProfile?: string): Promise<Record<string, string>> => {
+  const lambdaFunction = options.lambdaFunction();
+  console.log(`Looking up ${lambdaFunction.name} (${lambdaFunction.region})${awsProfile ? ` as AWS_PROFILE=${awsProfile}` : ''}...`);
+  try {
+    return await lambdaFunction.getEnvironment();
+  }
+  catch (error) {
+    throw new Error(`Can't look up the ${options.landscape} dashboard Lambda's environment: ${(error as Error).message}\n` +
+      'Check that your AWS session is current (e.g. aws sso login), or set MOCKED=true.');
+  }
+};
+
+/** Says how the server is about to run, and with what (secrets never reach here, and are masked anyway) */
+const describe = (options: LocalLaunchOptions, { variables, unset, overrides }: LaunchEnvironment): void => {
+  const source = options.mocked ? 'the mock services (no AWS access)' : `the ${options.landscape} landscape's dashboard Lambda environment`;
+  console.log(`\nLocal launch: ${source}; sign-in: ${options.authentication}; watch: ${options.watch}`);
+  const shown = LambdaFunction.masked(variables);
+  const width = Math.max(...Object.keys(shown).map(name => name.length));
+  Object.entries(shown).forEach(([name, value]) => {
+    console.log(`  ${name.padEnd(width)}  ${value}${overrides.includes(name) ? '   (LocalLaunch.env override)' : ''}`);
+  });
+  if (unset.length > 0) {
+    console.log(`  unset: ${unset.join(', ')} (public mode)`);
+  }
+  console.log('');
+};
+
+const applyEnvironment = ({ variables, unset }: LaunchEnvironment): void => {
+  unset.forEach(name => { delete process.env[name]; });
+  Object.assign(process.env, variables);
+};
+
+/** Load the server. Required, not imported: it reads some variables at load time and starts listening as it loads. */
+const startServer = (): void => {
+  require('../src/LocalServer');
+};
+
+/** Run the server under nodemon, each restart taking the environment already applied here */
+const startWatching = (): void => {
+  const nodemon = require.resolve('nodemon/bin/nodemon.js');
+  const exec = `node -r ts-node/register/transpile-only "${__filename}"`;
+  const child = spawn(process.execPath, [nodemon, '--watch', WATCH_DIRECTORY, '--ext', WATCH_EXTENSIONS, '--exec', exec], {
+    stdio: 'inherit',
+    env: { ...process.env, [LOCAL_LAUNCH_RESOLVED]: 'true' }
+  });
+  child.on('exit', code => process.exit(code ?? 0));
+};
+
+export const launch = async (args: string[]): Promise<void> => {
+  if (process.env[LOCAL_LAUNCH_RESOLVED] === 'true') {
+    // A nodemon restart: the launcher that started nodemon resolved the environment
+    startServer();
+    return;
+  }
+  const settings = readSettings();
+  const options = new LocalLaunchOptions(settings, args);
+  let lambdaEnvironment: Record<string, string> = {};
+  if (options.needsLambdaEnvironment) {
+    // The lookup uses the credentials LocalLaunch.env names
+    if (settings.AWS_PROFILE) {
+      process.env.AWS_PROFILE = settings.AWS_PROFILE;
     }
+    lambdaEnvironment = await lookUpLambdaEnvironment(options, settings.AWS_PROFILE);
   }
-  if (unknown.length > 0) {
-    throw new Error(`Unknown option(s): ${unknown.join(', ')} (expected ${FLAGS.join(' and/or ')}, and --storage-mode with --mocks)`);
+  const environment = options.environment(lambdaEnvironment);
+  describe(options, environment);
+  applyEnvironment(environment);
+  if (options.watch) {
+    startWatching();
   }
-  if (storageMode && !flags.has('--mocks')) {
-    throw new Error('--storage-mode applies only to the mocks: add --mocks');
+  else {
+    startServer();
   }
-  return { flags, storageMode };
 };
-
-/** The variables the options call for, which take precedence over .env (dotenv doesn't override) */
-export const launchEnvironment = ({ flags, storageMode }: LaunchOptions): Record<string, string> => ({
-  NODE_ENV: 'development',
-  ...(flags.has('--signed-in') ? { APP_LOGIN_HEADER: 'app-login', APP_LOGOUT_HEADER: 'app-logout' } : {}),
-  ...(flags.has('--mocks') ? { LOCALHOST_WITH_MOCKS: 'true' } : {}),
-  ...(storageMode ? { MOCK_STORAGE_MODE: storageMode } : {})
-});
 
 if (require.main === module) {
-  let options: LaunchOptions;
-  try {
-    options = parseOptions(process.argv.slice(2));
-  } catch (error) {
-    console.error((error as Error).message);
+  launch(process.argv.slice(2)).catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error);
     process.exit(1);
-  }
-  Object.assign(process.env, launchEnvironment(options));
-  if (!options.flags.has('--mocks')) {
-    require('dotenv').config();
-  }
-  // Required, not imported, so it loads after the environment is set: it reads some variables at load
-  // time (e.g. the app login/logout header names) and starts listening as soon as it loads.
-  require('../src/LocalServer');
+  });
 }

@@ -248,34 +248,46 @@ Request validation security layer:
 ```bash
 npm install
 npm run dashboard:build:templates  # Build Mustache templates with inline assets
-npm run dashboard:dev              # Start local server at http://localhost:3000/dashboard
-npm run dashboard:dev:watch        # Watch mode with hot reload
-npm run dashboard:dev:signed-in    # As a signed-in landscape shows it (see below)
-npm run dashboard:dev:signed-in:mocks  # The same with the mock services: no AWS access
+npm run dashboard:dev              # Start the local server at http://localhost:3000/dashboard
+npm run dashboard:dev -- --mocks   # The same with the mock services for one run (flags: see below)
 ```
 
-`dashboard:dev` loads no `.env` and sets no app login/logout headers, so it runs in public mode
-with no landscape navigator (no region to read the registry with) and no sign-out control.
-The two `signed-in` scripts build the templates, then run `dashboard/scripts/LocalLaunch.ts`
-(`--signed-in`, plus `--mocks` for the second), which sets the environment and then loads
-`LocalServer.ts`. It always sets `NODE_ENV=development`; its variables take precedence over `.env`.
-- `--signed-in` sets placeholder `APP_LOGIN_HEADER`/`APP_LOGOUT_HEADER` names, which turn off
-  public mode and so show the sign-out control.
-- Without `--mocks` it loads `.env` (dotenv), which supplies `AWS_PROFILE`, `REGION` and
-  `LANDSCAPE`: the navigator lists the real registry and selects `LANDSCAPE` (it is left out if the
-  registry can't be read, e.g. with an expired AWS session).
-- `--mocks` sets `LOCALHOST_WITH_MOCKS=true` and skips `.env`: the navigator lists the mock
-  registry's made-up landscapes.
-- `--storage-mode dynamodb|s3` (with `--mocks` only) sets `MOCK_STORAGE_MODE`, the storage mode
-  the mock run reporting reports. From npm, pass it after `--`:
-  `npm run dashboard:dev:signed-in:mocks -- --storage-mode s3`.
+`dashboard:dev` builds the templates, then runs `scripts/LocalLaunch.ts`, which starts
+`LocalServer.ts` as a landscape's dashboard Lambda would run. Its settings are in
+`scripts/LocalLaunch.env` (git-ignored; copy the committed `scripts/LocalLaunch.env.example`). The
+repository's `.env` is never read.
+- **The landscape**: `LANDSCAPE`, `REGION` and optional `STACK_ID` name the deployed dashboard Lambda to
+  run as; `AWS_PROFILE` gives the credentials the server uses in place of the Lambda's role.
+- **Without mocks** (`MOCKED=false`) the launcher looks up that Lambda's environment at every launch
+  (`LambdaFunction`, see "Test Harnesses" below), leaves out its secrets (`ORIGIN_VERIFY_SECRET`), and runs
+  the server with it: the server reads the landscape's tables, config secret and registry. A redeploy
+  that changes the environment is picked up at the next launch. An expired AWS session, or a landscape
+  without a deployed dashboard, stops the launch with a message.
+- **Overrides**: any other variable in `LocalLaunch.env` wins over the Lambda's value (the launcher marks
+  each one in what it prints). Without a deployed dashboard Lambda, the whole environment can be given there
+  by hand.
+- **Switches**: `MOCKED` (`LOCALHOST_WITH_MOCKS`; no lookup and no AWS access), `AUTHENTICATION` (`none`:
+  public mode, the app login/logout headers removed; `mock`: signed in as `USER_PRINCIPAL`, see below),
+  `WATCH` (nodemon restarts the server on a change under `dashboard/`; the environment is looked up once and
+  handed to each restart through `LOCAL_LAUNCH_RESOLVED`), `MOCK_STORAGE_MODE` (`dynamodb` | `s3`, the
+  storage mode the mock run reporting reports), `PORT` (default 3000).
+- **Flags** override a switch for one run, after `--`: `--mocks`, `--no-mocks`, `--auth <none|mock>`,
+  `--watch`, `--no-watch`, `--storage-mode <dynamodb|s3>` (mocks only), `--allow-production`.
+- **Production guard**: without mocks the launcher refuses a landscape whose `LANDSCAPE_TONE` (the Lambda's,
+  or an override) is `production`, since Sync and Bulk sync would write to its real target from local code,
+  unless `ALLOW_PRODUCTION=true` or `--allow-production`. A local run also uses your profile's permissions,
+  not the Lambda role's.
+- **Mock sign-in**: under mocks, `AUTHENTICATION=mock` sets placeholder `APP_LOGIN_HEADER` /
+  `APP_LOGOUT_HEADER` names, which show the sign-out control. Against a real landscape it is refused until
+  the mock sign-in (phase 4 step 3) exists: the Lambda's `APP_AUTHORIZATION=true` requires an
+  `authenticated` header only the edge functions add. No user name shows, and `/logout` is a 404 locally.
 
-Neither shows a user name (no JWT cookie on localhost), and `/logout` is a 404 there: only the
-edge functions answer it. The launcher sets the variables itself, rather than the npm script
-doing it with `VAR=value` or calling a shell script, so it runs from any shell: npm runs scripts
-in `cmd.exe` on Windows, where neither works (`sh` is on the `PATH` only inside Git Bash).
+`LocalLaunchOptions` (`scripts/LocalLaunchOptions.ts`) decides all of this from the file and the flags
+without side effects; `LocalLaunch.ts` reads, looks up, prints the environment (secrets masked) and starts.
+Tests: `test/DashboardLocalLaunch.test.ts`. The launcher is TypeScript, not a shell script, because npm
+runs scripts in `cmd.exe` on Windows, where neither `VAR=value` prefixes nor `sh` work.
 
-**Environment Variables:**
+**Environment Variables** (set by the launcher, or in `LocalLaunch.env`):
 - `NODE_ENV=development` - Enables local mode, bypasses origin verification
 - `PORT=3000` - Local server port (default)
 - `LOCALHOST_WITH_MOCKS=true` - Enables mock services

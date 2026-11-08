@@ -5,7 +5,7 @@
  * and as the Lambda build minifies it.
  *
  * RunsApi is driven through the dashboard handler with the mock services (LOCALHOST_WITH_MOCKS), so the page's
- * requests are checked against the routes and the mock run history they will meet under dashboard:dev:*:mocks.
+ * requests are checked against the routes and the mock run history they will meet under `dashboard:dev -- --mocks`.
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
