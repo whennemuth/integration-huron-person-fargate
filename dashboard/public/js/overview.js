@@ -82,7 +82,7 @@ class OverviewPage {
                 <a class="btn btn-sm btn-outline-secondary" href="${href}">View run</a>
             </div>
             ${RunDetailView.noteHtml(run)}
-            <div class="latest-run-figures">${RunDetailView.tilesHtml(run)}</div>
+            <div class="latest-run-figures">${RunDetailView.tilesHtml(run, now)}</div>
         `;
     }
 }

@@ -80,6 +80,18 @@ const failedEarly = {
   terminalError: { stage: 'chunking', errorMessage: 'Source API returned 503', errorTimestamp: '2026-11-06T02:04:00.000Z' }
 };
 
+/** A full sync underway: 6 of its 15 chunks processed, the last 10 minutes before NOW */
+const underway = {
+  syncRunId: '2026-11-06T10:00:00.000Z',
+  status: 'INCOMPLETE',
+  metadata: { createdAt: '2026-11-06T10:00:00.000Z', syncPopulation: 'person-full', chunkCount: 15 },
+  progress: {
+    chunksReported: 6, totalErrors: 0, throttleCount: 0, errorsByStatus: {},
+    results: { processed: 6000, succeeded: 6000, failed: 0, skipped: 0, added: 40, updated: 5960, removed: 0 },
+    lastChunkAt: '2026-11-06T11:50:00.000Z'
+  }
+};
+
 describe.each([false, true])('overview.js and system-status.js (minified: %s)', minified => {
   const { RunView, ServiceStatusTable, OverviewPage } = loadScripts(minified);
 
@@ -92,6 +104,16 @@ describe.each([false, true])('overview.js and system-status.js (minified: %s)', 
       expect(html).toMatch(/Full sync &middot; DynamoDB storage &middot; 47 min &middot; Finished 2 days ago/);
       expect(html).toContain((14500).toLocaleString());
       expect(html).not.toContain('run-note');
+    });
+
+    it("shows a run that is underway with its figures so far, and how far it has got", () => {
+      const html = OverviewPage.latestRunHtml(new RunView(underway), NOW);
+      expect(html).toContain('Started 2 h ago');
+      expect(html).toMatch(/Full sync &middot; 1 h 50 min so far &middot; Started 2 h ago/);
+      expect(html).toContain('run-note-warning');
+      expect(html).toContain('Added so far');
+      expect(html).toContain((6000).toLocaleString());
+      expect(html).toContain('6 of 15 chunks processed · last chunk finished 10 min ago');
     });
 
     it('says when a run that has not finished started, and why it failed', () => {

@@ -166,29 +166,35 @@ class RunFormat {
 
 /**
  * One run as the page shows it, from its report: the post-processor's summary when there is one, else what
- * the run's metadata, flags and terminal error say (a run that failed early, or is incomplete).
+ * the run's metadata, flags and terminal error say (a run that failed early, or is incomplete), with the
+ * figures so far that the report's progress sums from the chunks processed (soFar).
  */
 class RunView {
 
     constructor(report) {
         const item = report || {};
         const summary = item.summary;
+        const progress = summary ? undefined : item.progress;
+        const totals = summary || progress;
         const metadata = item.metadata || {};
         const flags = item.flags || {};
-        const results = (summary && summary.results) || {};
+        const results = (totals && totals.results) || {};
         const first = RunView.first;
 
         this.syncRunId = item.syncRunId;
         this.status = item.status || 'UNKNOWN';
         this.hasSummary = !!summary;
+        this.soFar = !!progress;
         this.flags = item.flags;
         this.terminalError = item.terminalError;
 
         this.startedAt = first(summary && summary.createdAt, metadata.createdAt, item.syncRunId);
         this.completedAt = summary ? summary.completedAt : undefined;
+        this.lastChunkAt = progress ? progress.lastChunkAt : undefined;
+        // An unfinished run's duration runs to its last chunk, not to now, which would keep growing for a run that has died
         const started = Date.parse(this.startedAt);
-        const completed = Date.parse(this.completedAt);
-        this.durationMs = Number.isFinite(started) && Number.isFinite(completed) ? completed - started : undefined;
+        const ended = Date.parse(summary ? this.completedAt : this.lastChunkAt);
+        this.durationMs = Number.isFinite(started) && Number.isFinite(ended) ? ended - started : undefined;
 
         this.population = first(summary && summary.syncPopulation, metadata.syncPopulation, flags.syncPopulation);
         this.buid = RunView.buidFrom(metadata.source);
@@ -197,7 +203,7 @@ class RunView {
         this.bulkReset = !!((summary && summary.bulkReset) || metadata.bulkReset || flags.bulkReset);
 
         this.chunkCount = first(summary && summary.chunkCount, metadata.chunkCount);
-        this.chunksReported = summary ? summary.chunksReported : undefined;
+        this.chunksReported = totals ? totals.chunksReported : undefined;
         this.records = first(summary && summary.totalRecords, metadata.totalRecords);
         this.processed = results.processed;
         this.succeeded = results.succeeded;
@@ -208,11 +214,11 @@ class RunView {
 
         this.deletion = summary ? summary.deletion : undefined;
         const deactivatedByDeletion = this.deletion && this.deletion.status === 'COMPLETED' ? (this.deletion.deletedCount || 0) : 0;
-        this.deactivated = summary ? (results.removed || 0) + deactivatedByDeletion : undefined;
+        this.deactivated = totals ? (results.removed || 0) + deactivatedByDeletion : undefined;
 
-        this.errors = summary ? summary.totalErrors : undefined;
-        this.throttled = summary ? summary.throttleCount : undefined;
-        this.errorsByStatus = summary ? summary.errorsByStatus : undefined;
+        this.errors = totals ? totals.totalErrors : undefined;
+        this.throttled = totals ? totals.throttleCount : undefined;
+        this.errorsByStatus = totals ? totals.errorsByStatus : undefined;
         this.failureMessage = first(item.terminalError && item.terminalError.errorMessage, flags.runFailureMessage);
         this.failedAt = first(item.terminalError && item.terminalError.errorTimestamp, flags.runFailureTimestamp);
     }
@@ -227,9 +233,39 @@ class RunView {
         return [
             this.populationLabel,
             this.storageMode ? `${RunFormat.storageMode(this.storageMode)} storage` : undefined,
-            this.durationMs !== undefined ? RunFormat.duration(this.durationMs) : undefined,
+            this.durationMs !== undefined ? this.durationText : undefined,
             ...this.tags
         ].filter(Boolean);
+    }
+
+    /** The duration as the page shows it: "47 min", or "47 min so far" for an unfinished run */
+    get durationText() {
+        const duration = RunFormat.duration(this.durationMs);
+        return this.soFar && duration !== RunFormat.NONE ? `${duration} so far` : duration;
+    }
+
+    /**
+     * Why an unfinished run's Deactivated figure will grow: a full sync deactivates the people missing from the
+     * source in post-processing, which hasn't run yet. None once the run is summarized, for a delta sync (no
+     * deletion step), or for a failed run (whose post-processing skips deletions).
+     */
+    get deactivationNote() {
+        return this.soFar && this.status === 'INCOMPLETE' && this.population === 'person-full'
+            ? 'Post-processing adds deletions'
+            : undefined;
+    }
+
+    /** How far an unfinished run has got: "12 of 20 chunks processed · last chunk finished 5 min ago" */
+    progressText(now = Date.now()) {
+        if ( ! this.soFar) {
+            return undefined;
+        }
+        const reported = RunFormat.number(this.chunksReported);
+        const chunks = RunFormat.isNumber(this.chunkCount)
+            ? `${reported} of ${RunFormat.number(this.chunkCount)} chunks processed`
+            : `${reported} ${Number(this.chunksReported) === 1 ? 'chunk' : 'chunks'} processed`;
+        const last = this.lastChunkAt ? `last chunk finished ${RunFormat.ago(this.lastChunkAt, now)}` : 'no chunk has finished yet';
+        return `${chunks} · ${last}`;
     }
 
     /** Markers shown beside the population */
@@ -503,21 +539,29 @@ class RunListTable {
         `;
     }
 
+    /**
+     * One run's row. An unfinished run's figures are those so far: shown muted, and said so beside its status.
+     * Its Records come from the run's metadata, so they aren't marked.
+     */
     static rowHtml(run) {
         const href = Html.escape(RunHistoryPage.detailHref(run.syncRunId));
         const tags = run.tags.map(Html.tag).join(' ');
         const number = RunFormat.number;
+        const figure = run.soFar ? 'num so-far' : 'num';
+        const soFar = run.soFar
+            ? ` <span class="so-far-note" title="${Html.escape(`Summed from the chunks processed so far: ${run.progressText()}`)}">so far</span>`
+            : '';
         return `
             <tr data-href="${href}">
                 <td><a class="run-link tabular-nums" href="${href}">${Html.escape(RunFormat.dateTime(run.startedAt))}</a></td>
-                <td>${RunFormat.statusBadge(run.status)}</td>
+                <td>${RunFormat.statusBadge(run.status)}${soFar}</td>
                 <td>${Html.escape(run.populationLabel)}${tags ? ` ${tags}` : ''}</td>
                 <td class="num">${number(run.records)}</td>
-                <td class="num">${number(run.added)}</td>
-                <td class="num">${number(run.updated)}</td>
-                <td class="num">${number(run.deactivated)}</td>
-                <td class="num">${number(run.errors)}</td>
-                <td class="num">${Html.escape(RunFormat.duration(run.durationMs))}</td>
+                <td class="${figure}">${number(run.added)}</td>
+                <td class="${figure}">${number(run.updated)}</td>
+                <td class="${figure}">${number(run.deactivated)}</td>
+                <td class="${figure}">${number(run.errors)}</td>
+                <td class="${figure}">${Html.escape(RunFormat.duration(run.durationMs))}</td>
             </tr>
         `;
     }
@@ -647,25 +691,32 @@ class RunDetailView {
         `;
     }
 
-    /** A run's figures as stat tiles (also the Overview page's, for the latest run) */
-    static tilesHtml(run) {
+    /**
+     * A run's figures as stat tiles (also the Overview page's, for the latest run). An unfinished run's tiles
+     * are labeled "so far", and followed by how far it has got. now is the clock "ago" times are taken from.
+     */
+    static tilesHtml(run, now = Date.now()) {
         const tiles = [
             ['Processed', run.processed],
             ['Added', run.added],
             ['Updated', run.updated],
-            ['Deactivated', run.deactivated],
+            ['Deactivated', run.deactivated, run.deactivationNote],
             ['Errors', run.errors]
         ];
+        const suffix = run.soFar ? ' so far' : '';
+        const progress = run.progressText(now);
         return `
             <section class="page-section" aria-label="Run figures">
                 <div class="stat-grid">
-                    ${tiles.map(([label, value]) => `
-                        <div class="stat-tile">
-                            <div class="stat-label">${Html.escape(label)}</div>
+                    ${tiles.map(([label, value, note]) => `
+                        <div class="stat-tile${run.soFar ? ' stat-tile-so-far' : ''}">
+                            <div class="stat-label">${Html.escape(label + suffix)}</div>
                             <div class="stat-value">${RunFormat.number(value)}</div>
+                            ${note ? `<div class="stat-note">${Html.escape(note)}</div>` : ''}
                         </div>
                     `).join('')}
                 </div>
+                ${progress ? `<p class="stat-progress">${Html.escape(progress)}</p>` : ''}
             </section>
         `;
     }
@@ -691,7 +742,9 @@ class RunDetailView {
             note = {
                 tone: 'warning',
                 title: 'This run has no summary yet',
-                message: 'It may still be running, or it may have stopped without being marked failed. Its figures appear once post-processing summarizes it. Refresh to check again.'
+                message: run.soFar
+                    ? 'Its figures are summed from the chunks processed so far. It may still be running, or it may have stopped without being marked failed. The final figures appear once post-processing summarizes it. Refresh to check again.'
+                    : 'It may still be running, or it may have stopped without being marked failed. Its figures appear once post-processing summarizes it. Refresh to check again.'
             };
         }
         if ( ! note) {
@@ -798,12 +851,13 @@ class RunDetailView {
         const run = this.run;
         const number = RunFormat.number;
         const chunks = RunFormat.isNumber(run.chunksReported) && RunFormat.isNumber(run.chunkCount)
-            ? `${number(run.chunksReported)} of ${number(run.chunkCount)} reported`
+            ? `${number(run.chunksReported)} of ${number(run.chunkCount)} ${run.soFar ? 'processed' : 'reported'}`
             : number(run.chunkCount);
         const facts = [
             ['Started', RunFormat.dateTime(run.startedAt, { seconds: true })],
             ['Completed', run.completedAt ? RunFormat.dateTime(run.completedAt, { seconds: true }) : 'Not recorded'],
-            ['Duration', RunFormat.duration(run.durationMs)],
+            ...(run.soFar ? [['Last chunk finished', run.lastChunkAt ? RunFormat.dateTime(run.lastChunkAt, { seconds: true }) : RunFormat.NONE]] : []),
+            ['Duration', run.durationText],
             ['Population', run.populationLabel],
             ['Storage mode', RunFormat.storageMode(run.storageMode || this.capabilities.storageMode)],
             ['Chunks', chunks],

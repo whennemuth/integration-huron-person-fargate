@@ -48,6 +48,21 @@ const getJson = async (path: string): Promise<any> => {
   return data;
 };
 
+const NOW = Date.parse('2026-11-06T02:30:00.000Z');
+
+/** A full sync underway: 6 of its 15 chunks processed, the last 9 minutes before NOW */
+const incomplete = {
+  syncRunId: '2026-11-06T02:00:00.000Z',
+  status: 'INCOMPLETE',
+  metadata: { createdAt: '2026-11-06T02:00:00.000Z', syncPopulation: 'person-full', chunkCount: 15, totalRecords: 14500 },
+  progress: {
+    chunksReported: 6,
+    results: { processed: 6000, succeeded: 5990, failed: 10, skipped: 0, added: 40, updated: 5900, removed: 3 },
+    totalErrors: 10, throttleCount: 4, errorsByStatus: { 429: 4, 500: 6 },
+    lastChunkAt: '2026-11-06T02:21:00.000Z'
+  }
+};
+
 describe.each([false, true])('run-history.js (minified: %s)', minified => {
   const page = loadRunHistory(minified);
   const { RunFormat, RunView, RunsApi, CursorPager, RunListTable, RunDetailView, Html } = page;
@@ -126,6 +141,38 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       expect(run.deactivated).toBeUndefined();
       expect(run.failureMessage).toBe('Source API returned 503');
       expect(run.failedAt).toBe('2026-10-30T02:04:00.000Z');
+    });
+
+    it("reads an unfinished run's figures so far from its progress, its duration to the last chunk", () => {
+      const run = new RunView(incomplete);
+      expect(run.hasSummary).toBe(false);
+      expect(run.soFar).toBe(true);
+      expect([run.processed, run.succeeded, run.added, run.updated, run.deactivated, run.errors, run.throttled])
+        .toEqual([6000, 5990, 40, 5900, 3, 10, 4]);
+      expect(run.errorsByStatus).toEqual({ 429: 4, 500: 6 });
+      expect(run.chunksReported).toBe(6);
+      expect(run.durationMs).toBe(21 * 60_000);
+      expect(run.facts).toEqual(['Full sync', '21 min so far']);
+      expect(run.deactivationNote).toBe('Post-processing adds deletions');
+      expect(run.progressText(NOW)).toBe('6 of 15 chunks processed · last chunk finished 9 min ago');
+    });
+
+    it('says no chunk has finished, and gives no duration, for an unfinished run with none processed', () => {
+      const run = new RunView({ ...incomplete, metadata: { ...incomplete.metadata, chunkCount: undefined },
+        progress: { chunksReported: 0, results: {}, totalErrors: 0, throttleCount: 0, errorsByStatus: {} } });
+      expect(run.durationMs).toBeUndefined();
+      expect(run.facts).toEqual(['Full sync']);
+      expect(run.progressText(NOW)).toBe('0 chunks processed · no chunk has finished yet');
+    });
+
+    it('notes deletions to come only for an incomplete full sync, and ignores progress beside a summary', () => {
+      const delta = { ...incomplete, metadata: { ...incomplete.metadata, syncPopulation: 'person-delta' } };
+      expect(new RunView(delta).deactivationNote).toBeUndefined();
+      expect(new RunView({ ...incomplete, status: 'FAILED' }).deactivationNote).toBeUndefined();
+      const summarized = new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: { processed: 1 } } });
+      expect(summarized.soFar).toBe(false);
+      expect(summarized.processed).toBe(1);
+      expect(summarized.progressText(NOW)).toBeUndefined();
     });
 
     it("names a single-person run's person when its source URL carries the BUID", () => {
@@ -223,6 +270,42 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       expect(row).not.toContain('<b>');
     });
 
+    it("mutes an unfinished run's figures in its row and says they are so far, leaving its records alone", () => {
+      const row = RunListTable.rowHtml(new RunView(incomplete));
+      expect(row).toContain('class="so-far-note"');
+      expect(row).toContain('Summed from the chunks processed so far: 6 of 15 chunks processed');
+      expect(row.match(/class="num so-far"/g)).toHaveLength(5);
+      expect(row).toContain(`<td class="num">${(14500).toLocaleString()}</td>`);
+      expect(row).toContain('<td class="num so-far">21 min</td>');
+
+      const finished = RunListTable.rowHtml(new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: {} } }));
+      expect(finished).not.toContain('so-far');
+    });
+
+    it("labels an unfinished run's tiles so far, notes deletions to come, and says how far it has got", () => {
+      const tiles = RunDetailView.tilesHtml(new RunView(incomplete), NOW);
+      expect(tiles.match(/stat-tile stat-tile-so-far/g)).toHaveLength(5);
+      expect(tiles).toContain('Processed so far');
+      expect(tiles).toContain('Deactivated so far');
+      expect(tiles).toContain('<div class="stat-note">Post-processing adds deletions</div>');
+      expect(tiles).toContain('<p class="stat-progress">6 of 15 chunks processed · last chunk finished 9 min ago</p>');
+      expect(RunDetailView.noteHtml(new RunView(incomplete))).toContain('summed from the chunks processed so far');
+
+      const finished = RunDetailView.tilesHtml(new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: {} } }), NOW);
+      expect(finished).not.toContain('so far');
+      expect(finished).not.toContain('stat-progress');
+    });
+
+    it("lists an unfinished run's known facts: chunks processed, last chunk, duration so far", () => {
+      const view = Object.assign(Object.create(RunDetailView.prototype), { run: new RunView(incomplete), capabilities: {} });
+      const facts = Object.fromEntries(view.summaryFacts());
+      expect(facts).toMatchObject({
+        Chunks: '6 of 15 processed', Duration: '21 min so far', Succeeded: (5990).toLocaleString(), 'Throttled requests': '4'
+      });
+      expect(facts['Last chunk finished']).toBe(RunFormat.dateTime('2026-11-06T02:21:00.000Z', { seconds: true }));
+      expect(facts).not.toHaveProperty('Dry run');
+    });
+
     it("shows an error's person from its details, and escapes its message", () => {
       const row = RunDetailView.errorRowHtml({
         timestamp: '2026-11-04T02:01:30.893Z', statusCode: 429, isThrottled: true,
@@ -263,6 +346,24 @@ describe('run-history.js against the dashboard routes and mock run history', () 
     expect(new Set(pager.items.map((run: any) => run.status))).toEqual(
       new Set(['SUCCEEDED', 'FAILED', 'INCOMPLETE', 'POST_PROCESSING_FAILED'])
     );
+  });
+
+  it('shows every unsummarized mock run its figures so far, in the list as on its page', async () => {
+    const api = new RunsApi(getJson);
+    const runs = (await api.listRuns({ limit: 50 })).items;
+    const unfinished = runs.filter((run: any) => !run.hasSummary && run.status !== 'UNKNOWN');
+    expect(unfinished.length).toBeGreaterThan(0);
+    expect(unfinished.every((run: any) => run.soFar)).toBe(true);
+    expect(runs.filter((run: any) => run.hasSummary).some((run: any) => run.soFar)).toBe(false);
+
+    const underway = unfinished.find((run: any) => run.status === 'INCOMPLETE' && run.chunksReported > 0);
+    const chunks = await api.chunks(underway.syncRunId);
+    const sum = (field: string) => chunks.reduce((total: number, chunk: any) => total + (chunk[field] ?? 0), 0);
+    expect([underway.processed, underway.added, underway.updated, underway.errors])
+      .toEqual([sum('totalRecords'), sum('addedCount'), sum('updatedCount'), sum('totalErrors')]);
+    const page = await api.run(underway.syncRunId);
+    expect([page.processed, page.added, page.updated, page.deactivated, page.errors, page.durationMs])
+      .toEqual([underway.processed, underway.added, underway.updated, underway.deactivated, underway.errors, underway.durationMs]);
   });
 
   it("pages through one status code's errors, and counts them as the summary does", async () => {

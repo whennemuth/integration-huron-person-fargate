@@ -503,6 +503,41 @@ code, pre, kbd, samp {
     font-variant-numeric: tabular-nums;
 }
 
+.stat-note {
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    color: var(--hp-text-muted);
+}
+
+/* An unfinished run's figures so far: dashed tiles with muted figures, and a line saying how far it has got */
+.stat-tile-so-far {
+    border-style: dashed;
+    box-shadow: none;
+}
+
+.stat-tile-so-far .stat-value {
+    color: var(--hp-text-muted);
+}
+
+.stat-progress {
+    margin: 0.75rem 0 0;
+    font-size: 0.8125rem;
+    color: var(--hp-text-muted);
+}
+
+/* An unfinished run's row in a run list: its figures so far muted, with "so far" beside its status */
+.data-table td.so-far {
+    color: var(--hp-text-muted);
+    font-style: italic;
+}
+
+.so-far-note {
+    margin-left: 0.25rem;
+    font-size: 0.75rem;
+    font-style: italic;
+    color: var(--hp-text-muted);
+}
+
 /* Data table: hairline rows, a muted header row, figures right-aligned (.num) */
 .data-table {
     --bs-table-bg: transparent;

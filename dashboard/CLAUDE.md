@@ -581,13 +581,22 @@ landscape's runs from the run reporting routes. Its classes each do one thing:
 - `RunsApi` calls the routes (`/api/runs?include=report`, `/api/runs/{id}/summary|chunks|errors|changes`,
   `/api/capabilities`) through `fetchSectionData()`, and `RunView` reduces a run's report to what the
   page shows: the summary's figures when the post-processor wrote one, else what the metadata, flags
-  and terminal error say. Deactivations are the processors' `removed` plus the deletion step's
-  `deletedCount`. A single-person run is named by its BUID only when the report has metadata (the
+  and terminal error say, with the report's `progress` (the chunk statistics summed so far) as the
+  figures (`soFar`). An unfinished run's duration runs from its start to its last chunk
+  (`lastChunkAt`), not to now. Deactivations are the processors' `removed` plus the deletion step's
+  `deletedCount`.
+- **An unfinished run's figures** (`soFar`) are marked wherever they show. In the list its Added,
+  Updated, Deactivated, Errors and Duration are muted (`td.so-far`), with "so far" beside its status
+  (Records come from the metadata and aren't marked). Its tiles (`.stat-tile-so-far`, on the run's
+  page and Overview) are labeled "so far" and followed by `RunView.progressText()` ("6 of 15 chunks
+  processed · last chunk finished 9 min ago"); an incomplete full sync's Deactivated tile notes that
+  post-processing adds deletions. A single-person run is named by its BUID only when the report has metadata (the
   source URL's `buid`): a finished run's summary doesn't record it.
 - `RunHistoryPage` shows the list (`#runs`, 20 runs a page with "Load older runs") or one run
   (`#runs/<syncRunId>`). The list keeps what it has loaded while a run is open; Refresh reloads it.
 - `RunDetailView` is one run: the header (status, population, storage mode, duration, dry run, bulk
-  reset), stat tiles, a note when the run failed, failed post-processing or has no summary yet, and
+  reset), stat tiles, a note when the run failed, failed post-processing or has no summary yet (for
+  a run with `progress`, saying its figures are summed from the chunks processed so far), and
   four tabs, each loaded when first opened: **Overview** (summary, deletion outcome, flags),
   **Chunks** (per-chunk statistics with totals), **Errors** (filtered by status code, with counts
   from the summary or else the chunk statistics) and **Changes** (by type; in S3 mode, where
@@ -600,7 +609,7 @@ Tests: `test/DashboardRunHistory.test.ts` runs the script in a vm (as written an
 The `overview` page (`templates/partials/overview-tab.mustache`, `public/js/overview.js`) is the
 landing page. `OverviewPage` loads, each time the page is shown and on Refresh, the latest run
 (`/api/runs?include=report&limit=1`: its status, facts, how long ago it finished or started, the
-run page's note and stat tiles, and a link to its page) and the service checks (`/api/status`, in
+run page's note and stat tiles, figures so far for a run without a summary, and a link to its page) and the service checks (`/api/status`, in
 the `ServiceStatusTable` of `public/js/system-status.js`, which the Status page uses too). The two
 load independently, so one failing (the real `SystemStatus` service isn't implemented yet) leaves
 the other shown. Scripts load in dependency order: `page-state.js`, `run-history.js`,
