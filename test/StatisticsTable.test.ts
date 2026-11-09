@@ -1,6 +1,6 @@
 import { mockClient } from 'aws-sdk-client-mock';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand, BatchWriteCommand, UpdateCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
-import { StatisticsTable } from '../src/dynamodb/StatisticsTable';
+import { StatisticsTable, sumChunkStatistics } from '../src/dynamodb/StatisticsTable';
 import { IContext } from '../context/IContext';
 import { StatisticsItem } from '../src/ApiErrorTracking';
 
@@ -118,6 +118,46 @@ describe('StatisticsTable', () => {
     it('readRunSummary returns undefined when no summary was written', async () => {
       dynamoMock.on(GetCommand).resolves({ Item: undefined });
       expect(await statisticsTable.readRunSummary(integrationTimestamp)).toBeUndefined();
+    });
+
+    it('leaves the latest chunk time out of the summary, which has its own completedAt', async () => {
+      mockRun([chunk('chunk-0000')]);
+      const summary = await statisticsTable.buildRunSummary(integrationTimestamp, { postProcessingSucceeded: true, dryRun: false });
+      expect(summary).not.toHaveProperty('lastChunkAt');
+    });
+
+    describe('sumChunkStatistics', () => {
+      it('sums the chunks\' counts and errors, and finds the latest chunk end time', () => {
+        const totals = sumChunkStatistics([
+          chunk('chunk-0001', { successCount: 200, addedCount: 2, updatedCount: 198, removedCount: 0,
+            totalErrors: 3, throttleCount: 3, errorsByStatus: { 429: 3 }, endTimestamp: '2026-05-14T12:09:00.000Z' }),
+          chunk('chunk-0000', { successCount: 195, failureCount: 4, skippedCount: 1, removedCount: 7,
+            totalErrors: 4, errorsByStatus: { 500: 4 }, endTimestamp: '2026-05-14T12:03:00.000Z' })
+        ]);
+        expect(totals).toEqual({
+          chunksReported: 2,
+          results: { processed: 400, succeeded: 395, failed: 4, skipped: 1, added: 2, updated: 198, removed: 7 },
+          totalErrors: 7,
+          throttleCount: 3,
+          errorsByStatus: { '429': 3, '500': 4 },
+          lastChunkAt: '2026-05-14T12:09:00.000Z'
+        });
+      });
+
+      it('counts nothing, with no latest chunk time, when no chunk has reported', () => {
+        expect(sumChunkStatistics([])).toEqual({
+          chunksReported: 0,
+          results: { processed: 0, succeeded: 0, failed: 0, skipped: 0, added: 0, updated: 0, removed: 0 },
+          totalErrors: 0,
+          throttleCount: 0,
+          errorsByStatus: {}
+        });
+      });
+
+      it('treats counts missing from older chunk items as zero', () => {
+        const { results } = sumChunkStatistics([chunk('chunk-0000')]);
+        expect(results).toEqual({ processed: 200, succeeded: 0, failed: 0, skipped: 0, added: 0, updated: 0, removed: 0 });
+      });
     });
   });
 

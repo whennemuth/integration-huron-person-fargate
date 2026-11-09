@@ -86,6 +86,31 @@ describe('MockRunReportingService', () => {
     }
   });
 
+  it('gives each run without a summary its progress from the chunks reported so far, and summarized runs none', async () => {
+    const reports = await allReports();
+    for (const { syncRunId, summary, progress, metadata } of reports) {
+      if (summary) {
+        expect(progress).toBeUndefined();
+        continue;
+      }
+      const chunks = await service.getRunChunkStatistics(syncRunId);
+      const sum = (field: string) => chunks.reduce((total, chunk: any) => total + (chunk[field] ?? 0), 0);
+      expect(progress).toMatchObject({
+        chunksReported: chunks.length,
+        results: { processed: sum('totalRecords'), added: sum('addedCount'), updated: sum('updatedCount') },
+        totalErrors: sum('totalErrors')
+      });
+      if (chunks.length > 0) {
+        expect(progress!.lastChunkAt).toBe(chunks.map(chunk => chunk.endTimestamp).sort().at(-1));
+        // An unfinished run has reported only some of its chunks
+        expect(progress!.chunksReported).toBeLessThan(metadata!.chunkCount);
+      }
+    }
+    // An incomplete run with figures so far, and a run that failed in chunking with none
+    expect(reports.some(report => report.status === 'INCOMPLETE' && report.progress!.chunksReported > 0)).toBe(true);
+    expect(reports.some(report => report.terminalError && report.progress!.chunksReported === 0)).toBe(true);
+  });
+
   it('pages the newest run\'s errors, newest pages following the cursor, filtered by status code', async () => {
     const all = await drain(cursor => service.getRunErrors(NEWEST_MOCK_RUN, { cursor }));
     expect(all.items).toHaveLength(260);

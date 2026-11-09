@@ -27,6 +27,70 @@ export type DeletionOutcome =
 
 export type RunSummaryStatus = 'SUCCEEDED' | 'FAILED' | 'POST_PROCESSING_FAILED';
 
+/** A run's record counts, summed over its chunks' IntegrationResult counts */
+export type RunResults = {
+  processed: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  added: number;
+  updated: number;
+  removed: number;
+};
+
+/**
+ * The totals of the STATISTICS-chunk items a run's processors have written. The post-processor's RUN_SUMMARY is
+ * built from them, and a run without a summary yet (still running, or stopped) reports them as its progress.
+ */
+export type ChunkTotals = {
+  /** Chunks that wrote a STATISTICS-chunk item */
+  chunksReported: number;
+  results: RunResults;
+  totalErrors: number;
+  throttleCount: number;
+  errorsByStatus: Record<string, number>;
+  /** The latest chunk endTimestamp; absent when no chunk has reported */
+  lastChunkAt?: string;
+};
+
+/**
+ * Sum a run's STATISTICS-chunk items. The one place a run's figures are added up, so the figures shown while it
+ * runs and the summary the post-processor writes can't disagree.
+ */
+export const sumChunkStatistics = (chunks: StatisticsItem[]): ChunkTotals => {
+  const results: RunResults = { processed: 0, succeeded: 0, failed: 0, skipped: 0, added: 0, updated: 0, removed: 0 };
+  const errorsByStatus: Record<string, number> = {};
+  let totalErrors = 0;
+  let throttleCount = 0;
+  let lastChunkAt: string | undefined;
+  for (const chunk of chunks) {
+    results.processed += chunk.totalRecords ?? 0;
+    results.succeeded += chunk.successCount ?? 0;
+    results.failed += chunk.failureCount ?? 0;
+    results.skipped += chunk.skippedCount ?? 0;
+    results.added += chunk.addedCount ?? 0;
+    results.updated += chunk.updatedCount ?? 0;
+    results.removed += chunk.removedCount ?? 0;
+    totalErrors += chunk.totalErrors ?? 0;
+    throttleCount += chunk.throttleCount ?? 0;
+    for (const [status, count] of Object.entries(chunk.errorsByStatus ?? {})) {
+      errorsByStatus[status] = (errorsByStatus[status] ?? 0) + Number(count);
+    }
+    // ISO timestamps order as strings
+    if (chunk.endTimestamp && (!lastChunkAt || chunk.endTimestamp > lastChunkAt)) {
+      lastChunkAt = chunk.endTimestamp;
+    }
+  }
+  return {
+    chunksReported: chunks.length,
+    results,
+    totalErrors,
+    throttleCount,
+    errorsByStatus,
+    ...(lastChunkAt ? { lastChunkAt } : {})
+  };
+};
+
 /** Per-run totals written once by the post-processor (SK = RUN_SUMMARY). */
 export type RunSummary = {
   syncRunId: string;
@@ -42,15 +106,7 @@ export type RunSummary = {
   totalRecords?: number;
   /** Chunks that wrote a STATISTICS-chunk item; fewer than chunkCount if processor tasks died */
   chunksReported: number;
-  results: {
-    processed: number;
-    succeeded: number;
-    failed: number;
-    skipped: number;
-    added: number;
-    updated: number;
-    removed: number;
-  };
+  results: RunResults;
   totalErrors: number;
   throttleCount: number;
   errorsByStatus: Record<string, number>;
@@ -112,26 +168,8 @@ export class StatisticsTable {
   }): Promise<RunSummary> => {
     const { postProcessingSucceeded, storageMode, dryRun, deletion } = params;
     const metadata = await this.readMetadata(syncRunId) ?? {};
-    const chunks = await this.getAllChunkStatistics(syncRunId);
-
-    const results = { processed: 0, succeeded: 0, failed: 0, skipped: 0, added: 0, updated: 0, removed: 0 };
-    const errorsByStatus: Record<string, number> = {};
-    let totalErrors = 0;
-    let throttleCount = 0;
-    for (const chunk of chunks) {
-      results.processed += chunk.totalRecords ?? 0;
-      results.succeeded += chunk.successCount ?? 0;
-      results.failed += chunk.failureCount ?? 0;
-      results.skipped += chunk.skippedCount ?? 0;
-      results.added += chunk.addedCount ?? 0;
-      results.updated += chunk.updatedCount ?? 0;
-      results.removed += chunk.removedCount ?? 0;
-      totalErrors += chunk.totalErrors ?? 0;
-      throttleCount += chunk.throttleCount ?? 0;
-      for (const [status, count] of Object.entries(chunk.errorsByStatus ?? {})) {
-        errorsByStatus[status] = (errorsByStatus[status] ?? 0) + Number(count);
-      }
-    }
+    // The summary keeps its own completedAt; the latest chunk time is only reported for runs without one
+    const { lastChunkAt: _, ...totals } = sumChunkStatistics(await this.getAllChunkStatistics(syncRunId));
 
     let status: RunSummaryStatus = 'SUCCEEDED';
     if (!postProcessingSucceeded) {
@@ -151,11 +189,7 @@ export class StatisticsTable {
       bulkReset: metadata.bulkReset,
       chunkCount: metadata.chunkCount,
       totalRecords: metadata.totalRecords,
-      chunksReported: chunks.length,
-      results,
-      totalErrors,
-      throttleCount,
-      errorsByStatus,
+      ...totals,
       deletion
     };
   }

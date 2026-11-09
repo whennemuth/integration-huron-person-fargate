@@ -3,8 +3,9 @@
  * forty sync runs over six weeks, rich enough to show every state the run reporting screens handle.
  *
  * - MockRunCatalog builds the runs and everything recorded for them: reports, chunk statistics, errors and
- *   person changes, kept consistent with one another (chunk statistics sum to the summary, error items to
- *   its errorsByStatus, change items to its added/updated/removed counts).
+ *   person changes, kept consistent with one another (chunk statistics sum to the summary, or to an unfinished
+ *   run's progress, through sumChunkStatistics() as a real landscape's do; error items to its errorsByStatus,
+ *   change items to its added/updated/removed counts).
  * - MockRunReportingService serves the catalog through the same RunReportingService interface as the real
  *   RunReporting, with the same page limits and ReportingError codes, so the screens' paging and error
  *   handling are exercised as they are against a real landscape.
@@ -13,7 +14,7 @@
  * per-person change list is kept, so getRunChanges() refuses, as RunReporting does.
  */
 import { Capabilities, ChangeType, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, Page, ReportingError, RunReport } from '../../../src/reporting/RunReporting';
-import { DeletionOutcome, RunSummary, RunSummaryStatus } from '../../../src/dynamodb/StatisticsTable';
+import { DeletionOutcome, RunSummary, RunSummaryStatus, sumChunkStatistics } from '../../../src/dynamodb/StatisticsTable';
 import { StatisticsItem } from '../../../src/ApiErrorTracking';
 import { PersonHistoryRecord } from '../../../src/dynamodb/PersonHistoryTable';
 import { RunReportingService } from '../services/ServiceTypes';
@@ -150,7 +151,9 @@ export class MockRunCatalog {
             errorMessage: 'Source API returned 503 Service Unavailable after 5 attempts',
             errorTimestamp: new Date(Date.parse(syncRunId) + 4 * MINUTE).toISOString()
           }
-        } : {})
+        } : {}),
+        // What its processors reported before it stopped, summed as RunReporting sums it
+        progress: sumChunkStatistics(this.chunkStatistics(syncRunId))
       };
     }
     const summary = this.summary(spec);
@@ -262,8 +265,8 @@ export class MockRunCatalog {
   }
 
   private summary(spec: MockRunSpec): RunSummary {
-    const chunks = this.chunkStatistics(spec.syncRunId);
-    const sum = (field: keyof StatisticsItem) => chunks.reduce((total, chunk) => total + Number(chunk[field] ?? 0), 0);
+    // Summed as the post-processor sums a run's chunks
+    const { lastChunkAt: _, ...totals } = sumChunkStatistics(this.chunkStatistics(spec.syncRunId));
     const statusFor: Record<string, RunSummaryStatus> = {
       SUCCEEDED: 'SUCCEEDED', FAILED: 'FAILED', POST_PROCESSING_FAILED: 'POST_PROCESSING_FAILED'
     };
@@ -278,19 +281,7 @@ export class MockRunCatalog {
       bulkReset: spec.bulkReset,
       chunkCount: MockRunCatalog.chunkCount(spec),
       totalRecords: spec.totalRecords,
-      chunksReported: chunks.length,
-      results: {
-        processed: sum('totalRecords'),
-        succeeded: sum('successCount'),
-        failed: sum('failureCount'),
-        skipped: sum('skippedCount'),
-        added: sum('addedCount'),
-        updated: sum('updatedCount'),
-        removed: sum('removedCount')
-      },
-      totalErrors: sum('totalErrors'),
-      throttleCount: sum('throttleCount'),
-      errorsByStatus: Object.fromEntries(Object.entries(spec.errorsByStatus).filter(([, count]) => (count ?? 0) > 0)) as Record<string, number>,
+      ...totals,
       deletion: spec.deletion
     };
   }

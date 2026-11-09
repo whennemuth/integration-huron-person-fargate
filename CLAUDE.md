@@ -261,7 +261,9 @@ env var, which the Docker routers branch on; the runtime factories below then sw
      terminal error) or `POST_PROCESSING_FAILED`. Writing it never fails post-processing. Runs that
      never reach the post-processor have no summary; `src/reporting/RunReporting.ts` reports them as
      FAILED/INCOMPLETE from METADATA, FLAGS and the terminal error (S3 files in S3 mode, located via
-     METADATA's `chunkDirectory`).
+     METADATA's `chunkDirectory`), with their `progress`: the STATISTICS-chunk items written so far, summed by
+     `sumChunkStatistics()`, the same function `buildRunSummary()` sums them with (so the figures shown while a
+     run is underway and its summary can't disagree), plus the latest chunk's end time.
    - `src/reporting/RunReporting.ts` is the read side (no transport): `listRuns`, `getRunReport`,
      `getRunChunkStatistics`, paged `getRunErrors` and `getRunChanges` (person-history changes,
      DynamoDB mode only; S3 mode keeps no per-person change record per run). Page cursors are

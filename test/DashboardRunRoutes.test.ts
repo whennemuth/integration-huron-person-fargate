@@ -241,6 +241,15 @@ describe('Dashboard routes with mock services (LOCALHOST_WITH_MOCKS)', () => {
     expect(listed.every(item => item.status !== 'UNKNOWN')).toBe(true);
   });
 
+  it('carries an unfinished run\'s progress in the run list and in its summary, the same in both', async () => {
+    const { body: { items } } = await request('/api/runs', { include: 'report', limit: '50' });
+    const unfinished = items.find((item: any) => item.status === 'INCOMPLETE');
+    expect(unfinished.progress.chunksReported).toBeGreaterThan(0);
+    const { body: report } = await request(`/api/runs/${unfinished.syncRunId}/summary`);
+    expect(report.progress).toEqual(unfinished.progress);
+    expect(items.filter((item: any) => item.summary).every((item: any) => item.progress === undefined)).toBe(true);
+  });
+
   it('serves the person and bulk sync routes from the mocks without reading the config secret', async () => {
     const savedArn = process.env.INTEGRATION_SECRETS_ARN;
     delete process.env.INTEGRATION_SECRETS_ARN;

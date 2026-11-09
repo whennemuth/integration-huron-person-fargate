@@ -2,7 +2,7 @@ import { Config } from 'integration-huron-person';
 import { MetadataForS3 } from '../chunking/metadata/MetadataForS3';
 import { Flags, TerminalError } from '../chunking/metadata/IMetadataStorage';
 import { PersonHistoryRecord, PersonHistoryTable } from '../dynamodb/PersonHistoryTable';
-import { RunSummary, RunSummaryStatus, StatisticsTable } from '../dynamodb/StatisticsTable';
+import { ChunkTotals, RunSummary, RunSummaryStatus, StatisticsTable, sumChunkStatistics } from '../dynamodb/StatisticsTable';
 import { StatisticsItem } from '../ApiErrorTracking';
 
 export const DEFAULT_PAGE_LIMIT = 100;
@@ -22,9 +22,16 @@ export class ReportingError extends Error {
 }
 
 /**
+ * What a run without a summary has done so far: its chunks' totals, summed as the post-processor sums them for
+ * RUN_SUMMARY (sumChunkStatistics). Not final: chunks still running are missing, and a full sync's deferred
+ * deletes are only counted by post-processing.
+ */
+export type RunProgress = ChunkTotals;
+
+/**
  * A run's report: the post-processor's RUN_SUMMARY when it exists, otherwise what can be read from
  * the run's METADATA, FLAGS and terminal error - FAILED if the run was marked failed, else INCOMPLETE
- * (still running, or stopped without being marked failed).
+ * (still running, or stopped without being marked failed) - with its progress so far.
  */
 export type RunReport = {
   syncRunId: string;
@@ -33,6 +40,7 @@ export type RunReport = {
   metadata?: Record<string, any>;
   flags?: Partial<Flags>;
   terminalError?: TerminalError | Record<string, any>;
+  progress?: RunProgress;
 };
 
 export type Capabilities = {
@@ -82,7 +90,12 @@ export class RunReporting {
     return this.statisticsTable.getUniqueIntegrationTimestamps();
   }
 
-  /** @returns undefined if nothing is recorded for the run */
+  /**
+   * A run without a summary also gets its progress: one Query of its STATISTICS-chunk items (partition key
+   * plus sort-key prefix), made alongside the flags and terminal error reads. A summarized run costs no more
+   * than its RUN_SUMMARY read.
+   * @returns undefined if nothing is recorded for the run
+   */
   public getRunReport = async (syncRunId: string): Promise<RunReport | undefined> => {
     const summary = await this.statisticsTable.readRunSummary(syncRunId);
     if (summary) {
@@ -90,11 +103,17 @@ export class RunReporting {
     }
 
     const metadata = await this.statisticsTable.readMetadata(syncRunId);
-    const { flags, terminalError } = await this.readFlagsAndTerminalError(syncRunId, metadata?.chunkDirectory);
-    if (!metadata && !flags && !terminalError) {
+    const [{ flags, terminalError }, chunks] = await Promise.all([
+      this.readFlagsAndTerminalError(syncRunId, metadata?.chunkDirectory),
+      this.statisticsTable.getAllChunkStatistics(syncRunId)
+    ]);
+    if (!metadata && !flags && !terminalError && chunks.length === 0) {
       return undefined;
     }
-    return { syncRunId, status: terminalError ? 'FAILED' : 'INCOMPLETE', metadata, flags, terminalError };
+    return {
+      syncRunId, status: terminalError ? 'FAILED' : 'INCOMPLETE', metadata, flags, terminalError,
+      progress: sumChunkStatistics(chunks)
+    };
   }
 
   public getRunChunkStatistics = async (syncRunId: string): Promise<StatisticsItem[]> => {

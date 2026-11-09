@@ -1,4 +1,5 @@
 import { MetadataForS3 } from '../src/chunking/metadata/MetadataForS3';
+import { sumChunkStatistics } from '../src/dynamodb/StatisticsTable';
 import { decodeCursor, encodeCursor, ReportingError, RunReporting } from '../src/reporting/RunReporting';
 
 jest.mock('../src/chunking/metadata/MetadataForS3');
@@ -56,7 +57,8 @@ describe('RunReporting', () => {
       stats.readTerminalError.mockResolvedValue({ errorMessage: 'boom' });
 
       expect(await r.getRunReport(syncRunId)).toEqual({
-        syncRunId, status: 'FAILED', metadata: { chunkDirectory }, flags: { bulkReset: false }, terminalError: { errorMessage: 'boom' }
+        syncRunId, status: 'FAILED', metadata: { chunkDirectory }, flags: { bulkReset: false }, terminalError: { errorMessage: 'boom' },
+        progress: sumChunkStatistics([])
       });
     });
 
@@ -65,6 +67,44 @@ describe('RunReporting', () => {
       stats.readMetadata.mockResolvedValue({ chunkDirectory });
 
       expect((await r.getRunReport(syncRunId))?.status).toBe('INCOMPLETE');
+    });
+
+    it('gives a run without a summary its progress, summed from the chunks reported so far', async () => {
+      const { reporting: r, stats } = reporting('dynamodb');
+      stats.readMetadata.mockResolvedValue({ chunkDirectory, chunkCount: 3 });
+      stats.getAllChunkStatistics.mockResolvedValue([
+        { totalRecords: 200, successCount: 199, failureCount: 1, addedCount: 50, updatedCount: 149, totalErrors: 1, throttleCount: 0,
+          errorsByStatus: { 500: 1 }, endTimestamp: '2026-10-01T00:05:00.000Z' },
+        { totalRecords: 200, successCount: 200, addedCount: 10, updatedCount: 190, totalErrors: 0, throttleCount: 0,
+          errorsByStatus: {}, endTimestamp: '2026-10-01T00:07:00.000Z' }
+      ]);
+
+      const report = await r.getRunReport(syncRunId);
+
+      expect(stats.getAllChunkStatistics).toHaveBeenCalledWith(syncRunId);
+      expect(report?.progress).toEqual({
+        chunksReported: 2,
+        results: { processed: 400, succeeded: 399, failed: 1, skipped: 0, added: 60, updated: 339, removed: 0 },
+        totalErrors: 1,
+        throttleCount: 0,
+        errorsByStatus: { '500': 1 },
+        lastChunkAt: '2026-10-01T00:07:00.000Z'
+      });
+    });
+
+    it('reports a run whose only records are chunk statistics', async () => {
+      const { reporting: r, stats } = reporting('dynamodb');
+      stats.getAllChunkStatistics.mockResolvedValue([{ totalRecords: 200, endTimestamp: '2026-10-01T00:05:00.000Z' }]);
+
+      expect(await r.getRunReport(syncRunId)).toMatchObject({ status: 'INCOMPLETE', progress: { chunksReported: 1 } });
+    });
+
+    it('makes no chunk query for a summarized run', async () => {
+      const { reporting: r, stats } = reporting('dynamodb');
+      stats.readRunSummary.mockResolvedValue({ syncRunId, status: 'SUCCEEDED' });
+
+      expect(await r.getRunReport(syncRunId)).not.toHaveProperty('progress');
+      expect(stats.getAllChunkStatistics).not.toHaveBeenCalled();
     });
 
     it('reads flags and the terminal error from S3 files in S3 mode', async () => {
