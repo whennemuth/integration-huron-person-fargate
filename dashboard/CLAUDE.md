@@ -277,10 +277,20 @@ repository's `.env` is never read.
   or an override) is `production`, since Sync and Bulk sync would write to its real target from local code,
   unless `ALLOW_PRODUCTION=true` or `--allow-production`. A local run also uses your profile's permissions,
   not the Lambda role's.
-- **Mock sign-in**: under mocks, `AUTHENTICATION=mock` sets placeholder `APP_LOGIN_HEADER` /
-  `APP_LOGOUT_HEADER` names, which show the sign-out control. Against a real landscape it is refused until
-  the mock sign-in (phase 4 step 3) exists: the Lambda's `APP_AUTHORIZATION=true` requires an
-  `authenticated` header only the edge functions add. No user name shows, and `/logout` is a 404 locally.
+- **Mock sign-in** (`AUTHENTICATION=mock`, `MockSignIn` in `scripts/MockSignIn.ts`): stands in for the sign-in
+  edge functions, so every request arrives signed in as `USER_PRINCIPAL` without an IdP. The Lambda's own
+  sign-in settings are kept (`APP_AUTHORIZATION`, the login/logout header names, `AUTH_COOKIE_NAME`), so
+  `Authenticator` runs as deployed. Before the handler sees a request, `MockSignIn` adds the `authenticated:
+  true` header and presents the JWT cookie, made as the edge functions make it: `JwtTools` signs
+  `{ sub, user: <claims> }` (RS256) with a key pair generated when the server starts (`publicKey` keeps the
+  public half), the claims array-valued as the IdP sends them (`buPrincipal`, and `eduPersonPrincipalName`,
+  `mail`, `givenName`, `sn` from `USER_EPPN`, `USER_MAIL`, `USER_GIVEN_NAME`, `USER_SURNAME`). The top bar shows
+  the user. `/logout` is answered locally with a page saying the mock user can't sign out. Under mocks, with no
+  Lambda to take them from, placeholder login/logout header names are set. The launcher passes
+  `LOCAL_MOCK_SIGN_IN=true` in the environment, so each watch restart puts it back in front of the handler.
+  `LocalServer.ts` takes it through `startLocalServer({ requestDecorator })` (`LocalRequestDecorator`:
+  `decorate(event)` and an optional `respond(path)`), and imports nothing from `scripts/`. Tests:
+  `test/DashboardMockSignIn.test.ts`.
 
 `LocalLaunchOptions` (`scripts/LocalLaunchOptions.ts`) decides all of this from the file and the flags
 without side effects; `LocalLaunch.ts` reads, looks up, prints the environment (secrets masked) and starts.

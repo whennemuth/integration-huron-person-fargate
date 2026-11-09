@@ -10,6 +10,10 @@
  * overrides, so the server reads the landscape's tables, config secret and registry with your AWS_PROFILE's
  * credentials. With mocks, nothing is looked up and no AWS access is needed.
  *
+ * With AUTHENTICATION=mock, the mock sign-in (MockSignIn.ts) stands in front of the handler for the sign-in edge
+ * functions: every request arrives signed in as USER_PRINCIPAL, with a signed JWT cookie, and /logout is answered
+ * locally.
+ *
  * With WATCH=true it runs the server under nodemon, which restarts it when a file under dashboard/ changes.
  * The environment is resolved once, here, and handed to each restart (LOCAL_LAUNCH_RESOLVED), so AWS is called
  * once per launch.
@@ -22,7 +26,8 @@ import { existsSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { parse } from 'dotenv';
 import { LambdaFunction } from './LambdaFunction';
-import { LaunchEnvironment, LocalLaunchOptions } from './LocalLaunchOptions';
+import { LaunchEnvironment, LOCAL_MOCK_SIGN_IN, LocalLaunchOptions } from './LocalLaunchOptions';
+import type { LocalRequestDecorator } from '../src/LocalServer';
 
 export const ENV_FILE = join(__dirname, 'LocalLaunch.env');
 const EXAMPLE_FILE = join(__dirname, 'LocalLaunch.env.example');
@@ -74,9 +79,20 @@ const applyEnvironment = ({ variables, unset }: LaunchEnvironment): void => {
   Object.assign(process.env, variables);
 };
 
-/** Load the server. Required, not imported: it reads some variables at load time and starts listening as it loads. */
+/**
+ * Start the server, with the mock sign-in in front of its handler if the environment asks for it. Required, not
+ * imported: the server's modules read some variables when they load.
+ */
 const startServer = (): void => {
-  require('../src/LocalServer');
+  const { startLocalServer } = require('../src/LocalServer') as typeof import('../src/LocalServer');
+  let requestDecorator: LocalRequestDecorator | undefined;
+  if (process.env[LOCAL_MOCK_SIGN_IN] === 'true') {
+    const { MockSignIn } = require('./MockSignIn') as typeof import('./MockSignIn');
+    const mockSignIn = MockSignIn.fromEnvironment(process.env);
+    console.log(`Mock sign-in: every request is signed in as ${mockSignIn.userName} (JWT cookie ${mockSignIn.cookieName})`);
+    requestDecorator = mockSignIn;
+  }
+  startLocalServer({ requestDecorator });
 };
 
 /** Run the server under nodemon, each restart taking the environment already applied here */

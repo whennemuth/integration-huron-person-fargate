@@ -7,7 +7,8 @@
  * 1. The landscape's deployed dashboard Lambda environment, without its secrets (not with mocks).
  * 2. LocalLaunch.env's variables, except the launcher's own switches: a variable the Lambda also has, with
  *    another value, is an override (listed, so the launcher can say so).
- * 3. What the switches call for: NODE_ENV=development, the mock services or not, public mode or sign-in.
+ * 3. What the switches call for: NODE_ENV=development, the mock services or not, and public mode or the mock
+ *    sign-in (LOCAL_MOCK_SIGN_IN; the Lambda's own sign-in settings are kept, so its Authenticator runs as deployed).
  *
  * Command-line flags override a switch for one run:
  *   --mocks | --no-mocks          MOCKED
@@ -27,6 +28,12 @@ export type StorageMode = typeof STORAGE_MODES[number];
 
 /** LocalLaunch.env's switches: read by the launcher, never passed to the server */
 export const LAUNCHER_SWITCHES = ['MOCKED', 'AUTHENTICATION', 'WATCH', 'ALLOW_PRODUCTION'] as const;
+
+/**
+ * Tells the process that starts the server (this one, or each nodemon restart) to put the mock sign-in
+ * (MockSignIn) in front of the handler. In the environment so that a restart, which reads no settings, knows.
+ */
+export const LOCAL_MOCK_SIGN_IN = 'LOCAL_MOCK_SIGN_IN';
 
 /** The app login/logout header names a mock run uses when signed in, having no Lambda to take them from */
 export const MOCK_SIGN_IN_HEADERS = { APP_LOGIN_HEADER: 'app-login', APP_LOGOUT_HEADER: 'app-logout' };
@@ -87,11 +94,6 @@ export class LocalLaunchOptions {
     if (this.authentication === 'mock' && !setting('USER_PRINCIPAL')) {
       throw new Error('AUTHENTICATION=mock signs in as USER_PRINCIPAL: set it in LocalLaunch.env (a buPrincipal, e.g. jdoe), or use AUTHENTICATION=none');
     }
-    // Until the mock sign-in exists (phase 4 step 3), a real landscape's Lambda environment requires a sign-in
-    // nothing here can give (APP_AUTHORIZATION=true): every page would redirect to an undefined login URL
-    if (this.authentication === 'mock' && !this.mocked) {
-      throw new Error('AUTHENTICATION=mock against a real landscape needs the mock sign-in, which is not built yet: use AUTHENTICATION=none (public mode) or MOCKED=true');
-    }
   }
 
   /** Without mocks the server runs with the landscape's deployed dashboard Lambda environment, looked up at launch */
@@ -121,7 +123,8 @@ export class LocalLaunchOptions {
       ...fromFile,
       NODE_ENV: 'development',
       LOCALHOST_WITH_MOCKS: `${this.mocked}`,
-      MOCK_STORAGE_MODE: this.storageMode
+      MOCK_STORAGE_MODE: this.storageMode,
+      [LOCAL_MOCK_SIGN_IN]: `${this.authentication === 'mock'}`
     };
     const unset: string[] = [];
     if (this.authentication === 'none') {

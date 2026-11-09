@@ -7,6 +7,27 @@ import { isTruthy } from './Utils';
 
 export const OVERRIDE_CACHE_WITH_LOCAL_CONFIG = 'OVERRIDE_CACHE_WITH_LOCAL_CONFIG';
 
+/** A response the local server sends itself, without the Lambda handler */
+export type LocalResponse = {
+  statusCode: number;
+  headers?: Record<string, string>;
+  body: string;
+};
+
+/**
+ * Stands in, locally, for what sits in front of the deployed Lambda (e.g. the sign-in edge functions): the local
+ * launcher passes one to startLocalServer(). This module never imports one, so nothing local-only reaches the
+ * Lambda bundle.
+ */
+export interface LocalRequestDecorator {
+  /** Answer a request the deployed Lambda never sees (e.g. /logout), or return undefined to pass it on */
+  respond?(path: string): LocalResponse | undefined;
+  /** Change the event before the Lambda handler gets it, as what sits in front of the Lambda would */
+  decorate(event: { headers: { [name: string]: string } }): void;
+}
+
+let requestDecorator: LocalRequestDecorator | undefined;
+
 // Local type definition for Lambda Function URL event (based on AWS docs)
 interface LambdaFunctionUrlEvent {
   version: string;
@@ -67,7 +88,8 @@ function transformRequest(req: express.Request): LambdaFunctionUrlEvent {
     routeKey: '$default',
     rawPath: req.path,
     rawQueryString: queryString,
-    headers: req.headers as { [name: string]: string },
+    // A copy: a request decorator may change it
+    headers: { ...req.headers } as { [name: string]: string },
     queryStringParameters: Object.keys(req.query).length > 0 ? req.query as { [name: string]: string } : undefined,
     requestContext: {
       accountId: 'local-account',
@@ -97,10 +119,18 @@ function transformRequest(req: express.Request): LambdaFunctionUrlEvent {
 app.all('*', async (req, res) => {
   try {
     console.log(`${req.method} ${req.path}`, req.query);
-    
-    // Transform Express request to Lambda event
+
+    // A request the deployed Lambda never sees, answered by what stands in for the edge functions
+    const local = requestDecorator?.respond?.(req.path);
+    if (local) {
+      res.status(local.statusCode).set(local.headers ?? {}).send(local.body);
+      return;
+    }
+
+    // Transform Express request to Lambda event, as what sits in front of the Lambda would present it
     const lambdaEvent = transformRequest(req);
-    
+    requestDecorator?.decorate(lambdaEvent);
+
     // Call the Lambda handler
     const result = await handler(lambdaEvent);
     
@@ -148,8 +178,12 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
   });
 });
 
-// Start the server
-const start = async () => {
+/**
+ * Start the server.
+ * @param options.requestDecorator What stands in for the edge functions (e.g. the local launcher's mock sign-in)
+ */
+export const startLocalServer = async (options: { requestDecorator?: LocalRequestDecorator } = {}) => {
+  requestDecorator = options.requestDecorator;
   if (isTruthy(process.env[OVERRIDE_CACHE_WITH_LOCAL_CONFIG])) {
     // Same sources as the fargate harnesses (SECRET_ARN, environment, local config file), bypassing INTEGRATION_SECRETS_ARN
     console.log('Overriding cache with the local integration config as per environment variable setting');
@@ -164,6 +198,11 @@ const start = async () => {
     console.log(`\n💡 Development Mode: Express wrapper for Lambda function`);
   });
 }
-start();
+
+// Run directly (ts-node dashboard/src/LocalServer.ts), it starts with the shell's environment and nothing in
+// front of the handler; npm run dashboard:dev starts it through dashboard/scripts/LocalLaunch.ts instead.
+if (require.main === module) {
+  startLocalServer();
+}
 
 export default app;

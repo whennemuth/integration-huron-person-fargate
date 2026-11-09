@@ -4,7 +4,7 @@
  * the environment the local server runs with.
  */
 import { LambdaFunction } from '../dashboard/scripts/LambdaFunction';
-import { LocalLaunchOptions, MOCK_SIGN_IN_HEADERS } from '../dashboard/scripts/LocalLaunchOptions';
+import { LOCAL_MOCK_SIGN_IN, LocalLaunchOptions, MOCK_SIGN_IN_HEADERS } from '../dashboard/scripts/LocalLaunchOptions';
 
 /** A LocalLaunch.env for a real landscape, signed out (public mode) */
 const FILE = {
@@ -84,9 +84,6 @@ describe('LocalLaunchOptions', () => {
       expect(() => new LocalLaunchOptions({ ...MOCKED_FILE, AUTHENTICATION: 'mock', USER_PRINCIPAL: ' ' })).toThrow('AUTHENTICATION=mock signs in as USER_PRINCIPAL');
     });
 
-    it('refuses the mock sign-in against a real landscape until it is built', () => {
-      expect(() => new LocalLaunchOptions({ ...FILE, AUTHENTICATION: 'mock' })).toThrow('needs the mock sign-in, which is not built yet');
-    });
   });
 
   describe('environment', () => {
@@ -116,11 +113,24 @@ describe('LocalLaunchOptions', () => {
       expect(overrides).toEqual(['DYNAMODB_STATISTICS_TABLE_NAME', 'LANDSCAPE_TONE']);
     });
 
-    it('removes the app login/logout headers for public mode', () => {
+    it('removes the app login/logout headers for public mode, with no mock sign-in', () => {
       const { variables, unset } = new LocalLaunchOptions(FILE).environment(LAMBDA);
       expect(variables).not.toHaveProperty('APP_LOGIN_HEADER');
       expect(variables).not.toHaveProperty('APP_LOGOUT_HEADER');
+      expect(variables[LOCAL_MOCK_SIGN_IN]).toBe('false');
       expect(unset).toEqual(['APP_LOGIN_HEADER', 'APP_LOGOUT_HEADER']);
+    });
+
+    it('signs in with the mock sign-in against a real landscape, keeping the Lambda\'s sign-in settings', () => {
+      const { variables, unset } = new LocalLaunchOptions({ ...FILE, AUTHENTICATION: 'mock' }).environment(LAMBDA);
+      expect(variables).toMatchObject({
+        [LOCAL_MOCK_SIGN_IN]: 'true',
+        APP_AUTHORIZATION: 'true',
+        APP_LOGIN_HEADER: 'SHIB-HANDLER',
+        APP_LOGOUT_HEADER: 'SHIB-IDP-LOGOUT',
+        USER_PRINCIPAL: 'jdoe'
+      });
+      expect(unset).toEqual([]);
     });
 
     it('uses no Lambda environment with mocks, and signs in with placeholder headers', () => {
