@@ -22,7 +22,7 @@
     "teardown-dashboard": "sh bin/teardown.sh dashboard",
     "npm-clean": "npm cache clean --force",
     "uninstall-tgz": "npm uninstall integration-huron-person",
-    "install-tgz": "npm install --force integration-huron-person https://simple-npm-package-bucket.s3.us-east-1.amazonaws.com/dynamodb/integration-huron-person-1.0.0.tgz",
+    "install-tgz": "npm install --force integration-huron-person https://simple-npm-package-bucket.s3.us-east-1.amazonaws.com/dynamodb/integration-huron-person-1.0.1.tgz",
     "reinstall-tgz": "npm run uninstall-tgz && npm run install-tgz",
     "reinstall-tgz-clean": "npm run npm-clean && npm run uninstall-tgz && npm run install-tgz",
     "docker-build": "cd docker && sh build.sh",
@@ -83,7 +83,7 @@
     "@aws-sdk/util-dynamodb": "^3.400.0",
     "aws-cdk-lib": "^2.260.0",
     "constructs": "^10.0.0",
-    "integration-huron-person": "https://simple-npm-package-bucket.s3.us-east-1.amazonaws.com/dynamodb/integration-huron-person-1.0.0.tgz",
+    "integration-huron-person": "https://simple-npm-package-bucket.s3.us-east-1.amazonaws.com/dynamodb/integration-huron-person-1.0.1.tgz",
     "stream-json": "^1.8.0"
   },
   "optionalDependencies": {
