@@ -5,7 +5,7 @@
 import { GetFunctionConfigurationCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { mockClient } from 'aws-sdk-client-mock';
 import { dashboardFunctionName } from '../dashboard/lib/DashboardFunctionName';
-import { LambdaFunction } from '../dashboard/scripts/LambdaFunction';
+import { DashboardFunctionNotFoundError, LambdaFunction } from '../dashboard/scripts/LambdaFunction';
 
 const lambdaMock = mockClient(LambdaClient);
 
@@ -40,9 +40,18 @@ describe('LambdaFunction', () => {
 
   it('names the function, landscape and region when the function does not exist', async () => {
     lambdaMock.on(GetFunctionConfigurationCommand).rejects(Object.assign(new Error('Function not found'), { name: 'ResourceNotFoundException' }));
-    await expect(lambdaFunction().getEnvironment()).rejects.toThrow(
+    const failure = lambdaFunction().getEnvironment();
+    await expect(failure).rejects.toThrow(
       'No dashboard Lambda function hp-dashboard-preview-app-function for the preview landscape in us-east-2'
     );
+    await expect(failure).rejects.toBeInstanceOf(DashboardFunctionNotFoundError);
+  });
+
+  it('passes other failures on as AWS gave them', async () => {
+    lambdaMock.on(GetFunctionConfigurationCommand).rejects(Object.assign(new Error('The security token included in the request is expired'), { name: 'ExpiredTokenException' }));
+    const failure = lambdaFunction().getEnvironment();
+    await expect(failure).rejects.toThrow('The security token included in the request is expired');
+    await expect(failure).rejects.not.toBeInstanceOf(DashboardFunctionNotFoundError);
   });
 
   it('leaves out the secret variables for a local run, and masks them when shown', () => {

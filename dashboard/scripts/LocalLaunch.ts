@@ -25,7 +25,7 @@ import { spawn } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { parse } from 'dotenv';
-import { LambdaFunction } from './LambdaFunction';
+import { DashboardFunctionNotFoundError, LambdaFunction } from './LambdaFunction';
 import { LaunchEnvironment, LOCAL_MOCK_SIGN_IN, LocalLaunchOptions } from './LocalLaunchOptions';
 import type { LocalRequestDecorator } from '../src/LocalServer';
 
@@ -46,7 +46,19 @@ const readSettings = (): Record<string, string> => {
   return parse(readFileSync(ENV_FILE));
 };
 
-/** The deployed dashboard Lambda's environment, with a hint at the usual cause of failure */
+/**
+ * Why the Lambda lookup failed, with a hint at the likely cause: the settings when AWS answered that the landscape
+ * has no dashboard function, otherwise (an expired session, missing credentials, no access) the AWS session.
+ */
+export const lookupFailure = (landscape: string | undefined, error: unknown): Error => {
+  const hint = error instanceof DashboardFunctionNotFoundError
+    ? 'Check LANDSCAPE and REGION in LocalLaunch.env, or set MOCKED=true.'
+    : 'Check that your AWS session is current (e.g. aws sso login), or set MOCKED=true.';
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(`Can't look up the ${landscape} dashboard Lambda's environment: ${message}\n${hint}`);
+};
+
+/** The deployed dashboard Lambda's environment */
 const lookUpLambdaEnvironment = async (options: LocalLaunchOptions, awsProfile?: string): Promise<Record<string, string>> => {
   const lambdaFunction = options.lambdaFunction();
   console.log(`Looking up ${lambdaFunction.name} (${lambdaFunction.region})${awsProfile ? ` as AWS_PROFILE=${awsProfile}` : ''}...`);
@@ -54,8 +66,7 @@ const lookUpLambdaEnvironment = async (options: LocalLaunchOptions, awsProfile?:
     return await lambdaFunction.getEnvironment();
   }
   catch (error) {
-    throw new Error(`Can't look up the ${options.landscape} dashboard Lambda's environment: ${(error as Error).message}\n` +
-      'Check that your AWS session is current (e.g. aws sso login), or set MOCKED=true.');
+    throw lookupFailure(options.landscape, error);
   }
 };
 

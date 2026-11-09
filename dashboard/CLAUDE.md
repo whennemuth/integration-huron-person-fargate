@@ -262,7 +262,9 @@ repository's `.env` is never read.
   (`LambdaFunction`, see "Test Harnesses" below), leaves out its secrets (`ORIGIN_VERIFY_SECRET`), and runs
   the server with it: the server reads the landscape's tables, config secret and registry. A redeploy
   that changes the environment is picked up at the next launch. An expired AWS session, or a landscape
-  without a deployed dashboard, stops the launch with a message.
+  without a deployed dashboard, stops the launch with a message. The message hints at the likely cause:
+  `LANDSCAPE`/`REGION` when AWS answered that the function doesn't exist (`DashboardFunctionNotFoundError`),
+  otherwise the AWS session.
 - **Overrides**: any other variable in `LocalLaunch.env` wins over the Lambda's value (the launcher marks
   each one in what it prints). Without a deployed dashboard Lambda, the whole environment can be given there
   by hand.

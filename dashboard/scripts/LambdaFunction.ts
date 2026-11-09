@@ -19,6 +19,17 @@ export type LambdaFunctionParms = {
   client?: LambdaClient;
 }
 
+/**
+ * The landscape has no dashboard Lambda function in the region: its dashboard stack isn't deployed there, or the
+ * landscape or region is wrong. AWS answered, so the credentials are not the cause.
+ */
+export class DashboardFunctionNotFoundError extends Error {
+  constructor(readonly functionName: string, readonly landscape: string, readonly region: string) {
+    super(`No dashboard Lambda function ${functionName} for the ${landscape} landscape in ${region}: is its dashboard stack deployed there?`);
+    this.name = 'DashboardFunctionNotFoundError';
+  }
+}
+
 export class LambdaFunction {
   static readonly DEFAULT_STACK_ID = 'hp-dashboard';
 
@@ -66,7 +77,7 @@ export class LambdaFunction {
   /**
    * The function's environment variables, as configured, secrets included (Lambda's own runtime variables,
    * such as AWS_LAMBDA_FUNCTION_NAME, are not part of it).
-   * @throws if the function doesn't exist, naming the function, landscape and region
+   * @throws DashboardFunctionNotFoundError if the function doesn't exist
    */
   async getEnvironment(): Promise<Record<string, string>> {
     const { name, landscape, region } = this;
@@ -80,7 +91,7 @@ export class LambdaFunction {
     }
     catch (error: unknown) {
       if ((error as { name?: string })?.name === 'ResourceNotFoundException') {
-        throw new Error(`No dashboard Lambda function ${name} for the ${landscape} landscape in ${region}: is its dashboard stack deployed there?`);
+        throw new DashboardFunctionNotFoundError(name, landscape, region);
       }
       throw error;
     }

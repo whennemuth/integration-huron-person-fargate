@@ -1,9 +1,10 @@
 /**
  * Tests what the dashboard's local launcher decides (dashboard/scripts/LocalLaunchOptions.ts) from
  * LocalLaunch.env and the command line: the switches, flags overriding them, the checks before starting, and
- * the environment the local server runs with.
+ * the environment the local server runs with. Then the hint LocalLaunch.ts gives when the Lambda lookup fails.
  */
-import { LambdaFunction } from '../dashboard/scripts/LambdaFunction';
+import { DashboardFunctionNotFoundError, LambdaFunction } from '../dashboard/scripts/LambdaFunction';
+import { lookupFailure } from '../dashboard/scripts/LocalLaunch';
 import { LOCAL_MOCK_SIGN_IN, LocalLaunchOptions, MOCK_SIGN_IN_HEADERS } from '../dashboard/scripts/LocalLaunchOptions';
 
 /** A LocalLaunch.env for a real landscape, signed out (public mode) */
@@ -169,5 +170,22 @@ describe('LocalLaunchOptions', () => {
   it('masks nothing it shows, having no secrets', () => {
     const { variables } = new LocalLaunchOptions(FILE).environment(LAMBDA);
     expect(Object.values(LambdaFunction.masked(variables))).not.toContain(LambdaFunction.MASK);
+  });
+});
+
+describe('lookupFailure', () => {
+  const SESSION_HINT = 'Check that your AWS session is current';
+
+  it('points at the settings, not the AWS session, when the landscape has no dashboard function', () => {
+    const { message } = lookupFailure('nosuch', new DashboardFunctionNotFoundError('hp-dashboard-nosuch-app-function', 'nosuch', 'us-east-2'));
+    expect(message).toContain("Can't look up the nosuch dashboard Lambda's environment: No dashboard Lambda function hp-dashboard-nosuch-app-function");
+    expect(message).toContain('Check LANDSCAPE and REGION in LocalLaunch.env, or set MOCKED=true.');
+    expect(message).not.toContain(SESSION_HINT);
+  });
+
+  it('points at the AWS session for any other failure', () => {
+    const expired = Object.assign(new Error('The security token included in the request is expired'), { name: 'ExpiredTokenException' });
+    expect(lookupFailure('preview', expired).message).toContain(`The security token included in the request is expired\n${SESSION_HINT}`);
+    expect(lookupFailure('preview', 'not an Error').message).toContain(`not an Error\n${SESSION_HINT}`);
   });
 });
