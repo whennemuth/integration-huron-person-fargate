@@ -11,13 +11,12 @@ export const DYNAMODB_PARTITION_KEY = 'integrationTimestamp';
 export const DYNAMODB_SECONDARY_PARTITION_KEY = 'errorType';
 export const DYNAMODB_SORT_KEY = 'eventType';
 export const DYNAMODB_GSI_INDEX_NAME = 'errorType-timestamp-index';
-// Sparse GSI holding exactly one item per run: the RUN marker item, whose distinctRunId copies the table PK
-export const DYNAMODB_RUN_INDEX_NAME = 'distinct-run-index';
-export const DYNAMODB_RUN_INDEX_PARTITION_KEY = 'distinctRunId';
-// Sparse GSI holding the same RUN marker items in one partition, sorted by syncRunId, so the newest runs can be
-// read by key: partition key runList (always RUN_LIST_PARTITION), sort key distinctRunId
+// Sparse GSI holding exactly one item per run, the RUN marker item, all in one partition sorted by syncRunId, so the
+// newest runs can be read by key: partition key runList (always RUN_LIST_PARTITION), sort key distinctRunId (a copy
+// of the table PK). It replaced the scan-only distinct-run-index (partition key distinctRunId), removed 2026-11-10.
 export const DYNAMODB_RUN_LIST_INDEX_NAME = 'run-list-index';
 export const DYNAMODB_RUN_LIST_PARTITION_KEY = 'runList';
+export const DYNAMODB_RUN_LIST_SORT_KEY = 'distinctRunId';
 export const RUN_LIST_PARTITION = 'RUNS';
 export const RUN_MARKER_SORT_KEY = 'RUN';
 
@@ -265,25 +264,11 @@ export class StatisticsTable {
   }
 
   /**
-   * Get the distinct integration timestamps (syncRunIds) in the table - the equivalent of
-   * "SELECT DISTINCT integrationTimestamp". Scans the sparse, KEYS_ONLY distinct-run-index, which
-   * holds exactly one small item per run (see registerRun()), so the cost is proportional to the
-   * number of runs rather than the number of chunks/errors they produced. Prefer the keyed reads of the
-   * run-list-index (getRunIdsPage(), getAllRunIds()); this remains for tables that don't have it yet.
-   *
-   * @returns An array of unique integration timestamps, sorted chronologically (ascending)
-   */
-  public getUniqueIntegrationTimestamps = async (): Promise<string[]> => {
-    const items = await this.table.scanIndex({ indexName: DYNAMODB_RUN_INDEX_NAME });
-    // ISO timestamps sort chronologically as strings; a scan returns them unordered
-    return items.map(item => item[DYNAMODB_PARTITION_KEY] as string).sort();
-  }
-
-  /**
    * A page of syncRunIds from the run-list-index, newest first: up to `limit` runs older than `before` (a
    * syncRunId) when given. One Query of `limit + 1` keys-only items; the extra one says whether older runs
    * remain. syncRunIds are ISO timestamps, so the index's sort order is time order. Throws the Query's
-   * ValidationException if the table has no run-list-index (see isMissingIndexError()).
+   * ValidationException if the table can't serve the run-list-index (see isMissingIndexError() in
+   * src/reporting/RunReporting.ts).
    */
   public getRunIdsPage = async (params: { limit: number, before?: string }): Promise<RunIdPage> => {
     const { limit, before } = params;
@@ -291,7 +276,7 @@ export class StatisticsTable {
       indexName: DYNAMODB_RUN_LIST_INDEX_NAME,
       gsiPartitionKey: DYNAMODB_RUN_LIST_PARTITION_KEY,
       partitionKeyValue: RUN_LIST_PARTITION,
-      ...(before !== undefined && { gsiSortKey: DYNAMODB_RUN_INDEX_PARTITION_KEY, sortKeyValue: before, sortKeyComparison: '<' }),
+      ...(before !== undefined && { gsiSortKey: DYNAMODB_RUN_LIST_SORT_KEY, sortKeyValue: before, sortKeyComparison: '<' }),
       scanIndexForward: false,
       limit: limit + 1
     });
@@ -320,18 +305,18 @@ export class StatisticsTable {
     return syncRunIds;
   }
 
-  /** The RUN marker item for a run: in both run indexes (distinct-run-index and run-list-index) */
+  /** The RUN marker item for a run, the only item carrying the run-list-index's keys */
   private static runMarker(syncRunId: string): Record<string, string> {
     return {
       [DYNAMODB_PARTITION_KEY]: syncRunId,
       [DYNAMODB_SORT_KEY]: RUN_MARKER_SORT_KEY,
-      [DYNAMODB_RUN_INDEX_PARTITION_KEY]: syncRunId,
+      [DYNAMODB_RUN_LIST_SORT_KEY]: syncRunId,
       [DYNAMODB_RUN_LIST_PARTITION_KEY]: RUN_LIST_PARTITION
     };
   }
 
   /**
-   * Write the run's RUN marker item, the only item carrying the run indexes' keys. Idempotent,
+   * Write the run's RUN marker item, the only item carrying the run-list-index's keys. Idempotent,
    * so every write path that can be a run's first item in this table calls it.
    */
   public async registerRun(syncRunId: string): Promise<void> {
@@ -339,7 +324,7 @@ export class StatisticsTable {
   }
 
   /**
-   * One-time backfill of RUN marker items: for runs written before the run indexes existed, and to add the
+   * One-time backfill of RUN marker items: for runs written before the markers existed, and to add the
    * run-list-index key (runList) to markers written before it. Scans the whole base table once.
    *
    * @returns The number of runs registered
@@ -824,7 +809,7 @@ export async function main() {
         }
         break;
       case 'list':
-        const syncList = await statisticsTable.getUniqueIntegrationTimestamps();
+        const syncList = await statisticsTable.getAllRunIds();
         console.log(`Found ${syncList.length} unique integration run(s):`);
         console.log(JSON.stringify(syncList, null, 2));
         break;
@@ -839,7 +824,7 @@ export async function main() {
         break;
       case 'backfill-runs':
         const registered = await statisticsTable.backfillRunMarkers();
-        console.log(`Registered ${registered} run(s) in ${DYNAMODB_RUN_INDEX_NAME} and ${DYNAMODB_RUN_LIST_INDEX_NAME}`);
+        console.log(`Registered ${registered} run(s) in ${DYNAMODB_RUN_LIST_INDEX_NAME}`);
         break;
       case 'delete':
         if(!timestamp) {

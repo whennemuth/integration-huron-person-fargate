@@ -544,11 +544,14 @@ const decodePathSegment = (segment: string): string | undefined => {
 
 /**
  * A ReportingError (bad cursor or limit, or a report the storage mode doesn't keep) is the
- * caller's to fix: 400 with its code. Anything else is a 500, with the message but no stack.
+ * caller's to fix: 400 with its code; except RUN_LIST_UNAVAILABLE (the statistics table's run-list-index
+ * isn't ready), a 503 whose message says what to do. Anything else is a 500, with the message but no stack.
  */
 function runReportingErrorResponse(error: unknown, description: string): LambdaFunctionUrlResult {
   if (error instanceof ReportingError) {
-    return jsonResponse(400, { error: error.message, code: error.code });
+    // The run list's index not being ready is the landscape's state, not the request's fault
+    const status = error.code === 'RUN_LIST_UNAVAILABLE' ? 503 : 400;
+    return jsonResponse(status, { error: error.message, code: error.code });
   }
   console.error(`${description}:`, error);
   return jsonResponse(500, {

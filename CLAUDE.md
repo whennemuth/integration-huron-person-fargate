@@ -247,19 +247,22 @@ env var, which the Docker routers branch on; the runtime factories below then sw
      one chunker task runs the processor scaling check, and exactly one processor task triggers the post-processor
      (see `docs/CONCURRENCY_CONTROL.md`); the boost claim is written in S3 storage mode too
    - Replaces `_metadata.json` and `_flags.json` files from S3 mode
-   - `RUN` marker item (one per run, attributes `distinctRunId` = PK and `runList` = `RUNS`) is the only
-     item in two sparse, KEYS_ONLY GSIs. `run-list-index` (partition key `runList`, sort key `distinctRunId`)
-     holds every run in one partition in time order, so `getRunIdsPage()` reads the newest `limit` runs (or
-     those older than `before`) with one Query (`ScanIndexForward: false`, `Limit: limit + 1`), and
-     `getAllRunIds()` lists them all. `distinct-run-index` (partition key `distinctRunId`) is the older,
-     scan-only form (`getUniqueIntegrationTimestamps()`), kept until a later deploy removes it
-     (CloudFormation changes one GSI per table update). `RunReporting` falls back to it when a table can't serve
-     `run-list-index` yet (`isMissingIndexError()`): it doesn't exist, or it is still backfilling, which it
-     was in preview for some minutes after CloudFormation reported the stack update complete. The marker is written idempotently by `writeFlags()`,
-     `addToMetadataTotals()` (every chunker task, both storage modes) and `writeTerminalError()`; markers
-     written before `runList` existed, and runs that predate the markers, need the harness task
-     `backfill-runs` (one scan of the table), run after the stack update that adds the index and before
-     the dashboard that reads it is deployed
+   - `RUN` marker item (one per run, attributes `runList` = `RUNS` and `distinctRunId` = PK) is the only item in
+     the sparse, KEYS_ONLY `run-list-index` (partition key `runList`, sort key `distinctRunId`), which holds every
+     run in one partition in time order: `getRunIdsPage()` reads the newest `limit` runs (or those older than
+     `before`) with one Query (`ScanIndexForward: false`, `Limit: limit + 1`), and `getAllRunIds()` lists them
+     all. It replaced the scan-only `distinct-run-index` (partition key `distinctRunId`), removed 2026-11-10.
+     When a table can't serve `run-list-index` (`isMissingIndexError()`: it doesn't exist, or it is still
+     backfilling, which it was in preview for some minutes after CloudFormation reported the stack update
+     complete), `RunReporting` fails with `ReportingError` `RUN_LIST_UNAVAILABLE` (a 503 from the dashboard)
+     saying what to do. The marker is written idempotently by `writeFlags()`, `addToMetadataTotals()` (every
+     chunker task, both storage modes) and `writeTerminalError()`; runs whose markers lack `runList` (written
+     before it existed, or before the markers did) need the harness task `backfill-runs` (one scan of the table),
+     run after the stack update that adds the index and before the dashboard that reads it is deployed.
+   - **Change the statistics table's GSIs one per deploy**: CloudFormation refuses an update that adds or removes
+     more than one. As of 2026-11-10, preview and mock have `run-list-index`; staging and migration (pipeline
+     stacks last deployed in July) have no run index yet, so their next pipeline deploy adds `run-list-index`,
+     then needs `backfill-runs`.
    - `STATISTICS-chunk-*` items carry the chunk's `IntegrationResult` counts (success/failure/skipped,
      added/updated/removed) as well as its error counts. Added/updated/removed are the successful pushes
      counted by operation (`pushedChangeCounts()` in `src/processing/ProcessorCommon.ts`), so they sum to

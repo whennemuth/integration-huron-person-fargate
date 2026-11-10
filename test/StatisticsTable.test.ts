@@ -341,47 +341,6 @@ describe('StatisticsTable', () => {
     });
   });
 
-  describe('getUniqueIntegrationTimestamps', () => {
-    it('scans the distinct-run-index and returns its timestamps', async () => {
-      const timestamp1 = '2026-05-14T12:00:00.000Z';
-      const timestamp2 = '2026-05-14T13:00:00.000Z';
-
-      dynamoMock.on(ScanCommand).resolves({ Items: [
-        { integrationTimestamp: timestamp1, eventType: 'RUN', distinctRunId: timestamp1 },
-        { integrationTimestamp: timestamp2, eventType: 'RUN', distinctRunId: timestamp2 }
-      ] });
-
-      const result = await statisticsTable.getUniqueIntegrationTimestamps();
-
-      expect(result).toEqual([timestamp1, timestamp2]);
-      expect(dynamoMock.commandCalls(ScanCommand)[0].args[0].input.IndexName).toBe('distinct-run-index');
-      expect(dynamoMock.commandCalls(QueryCommand)).toHaveLength(0);
-    });
-
-    it('should handle empty results', async () => {
-      dynamoMock.on(ScanCommand).resolves({ Items: [] });
-
-      const result = await statisticsTable.getUniqueIntegrationTimestamps();
-
-      expect(result).toEqual([]);
-    });
-
-    it('should sort timestamps chronologically and follow pagination', async () => {
-      const timestamp1 = '2026-05-14T12:00:00.000Z';
-      const timestamp2 = '2026-05-14T11:00:00.000Z';
-      const timestamp3 = '2026-05-14T13:00:00.000Z';
-
-      dynamoMock.on(ScanCommand)
-        .resolvesOnce({ Items: [{ integrationTimestamp: timestamp1 }, { integrationTimestamp: timestamp3 }], LastEvaluatedKey: { k: 1 } })
-        .resolvesOnce({ Items: [{ integrationTimestamp: timestamp2 }] });
-
-      const result = await statisticsTable.getUniqueIntegrationTimestamps();
-
-      expect(result).toEqual([timestamp2, timestamp1, timestamp3]);
-      expect(dynamoMock.commandCalls(ScanCommand)).toHaveLength(2);
-    });
-  });
-
   describe('the run-list-index reads', () => {
     const runs = ['2026-05-14T13:00:00.000Z', '2026-05-14T12:00:00.000Z', '2026-05-14T11:00:00.000Z'];
     const keys = (ids: string[]) => ids.map(id => ({ integrationTimestamp: id, eventType: 'RUN', distinctRunId: id, runList: 'RUNS' }));

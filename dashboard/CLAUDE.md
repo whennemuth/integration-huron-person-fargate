@@ -155,9 +155,11 @@ through fargate's `src/reporting/RunReporting.ts`; GET only, no `landscape` para
   the response's `before` continues the list and is present only while older runs remain. A run
   with nothing recorded to report on is listed as `{ syncRunId, status: 'UNKNOWN' }`. Built by
   `RunList` (`src/handlers/RunList.ts`): `listRunPage({ limit, before })` (one Query of the statistics
-  table's `run-list-index`, or a scan when the table hasn't got it yet), then that page's reports in
-  parallel. So Overview (`limit=1`) reads one run's key. A bad `limit` is `400` `INVALID_LIMIT`, a bad
-  `before` or `include` is `400`.
+  table's `run-list-index`), then that page's reports in parallel. So Overview (`limit=1`) reads one run's
+  key. A bad `limit` is `400` `INVALID_LIMIT`, a bad `before` or `include` is `400`. A table that can't serve
+  `run-list-index` yet (its pipeline stack not deployed since the index was added, or the index still being
+  built) is `503` `RUN_LIST_UNAVAILABLE`, on this route and `GET /api/runs`, with a message saying what to do,
+  which the run list's error state shows.
 - `GET /api/runs/{syncRunId}/summary` - the run's report (`404` if nothing is recorded)
 - `GET /api/runs/{syncRunId}/chunks` - `{ items }`, per-chunk statistics
 - `GET /api/runs/{syncRunId}/errors?cursor&limit&statusCode` - a page `{ items, cursor? }`
@@ -167,7 +169,8 @@ through fargate's `src/reporting/RunReporting.ts`; GET only, no `landscape` para
 
 `syncRunId` must be an ISO timestamp (URL-encoded or not); `limit` 1-500 (default 100). A
 `ReportingError` maps to `400 { error, code }` (`INVALID_CURSOR`, `INVALID_LIMIT`,
-`UNSUPPORTED_IN_STORAGE_MODE`), anything else to `500 { error, message }`.
+`UNSUPPORTED_IN_STORAGE_MODE`), except `RUN_LIST_UNAVAILABLE` (the landscape's state, not the request's
+fault), which maps to `503 { error, code }`; anything else to `500 { error, message }`.
 
 **Landscape picker data:**
 - `GET /api/landscapes` - `{ current, landscapes: [{ landscape, label, url?, isDefault, current }] }`

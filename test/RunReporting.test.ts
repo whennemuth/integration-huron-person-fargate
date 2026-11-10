@@ -9,7 +9,6 @@ describe('RunReporting', () => {
   const chunkDirectory = `chunks/person-full/${syncRunId}`;
 
   const statisticsTable = () => ({
-    getUniqueIntegrationTimestamps: jest.fn().mockResolvedValue(['a', 'b']),
     getAllRunIds: jest.fn().mockResolvedValue(['a', 'b']),
     getRunIdsPage: jest.fn().mockResolvedValue({ syncRunIds: [], hasOlder: false }),
     readRunSummary: jest.fn().mockResolvedValue(undefined),
@@ -51,28 +50,38 @@ describe('RunReporting', () => {
       expect(await r.listRuns()).toEqual(['a', 'b', 'c']);
       expect(await r.listRunPage({ limit: 1, before: 'c' })).toEqual({ syncRunIds: ['b'], hasOlder: true });
       expect(stats.getRunIdsPage).toHaveBeenCalledWith({ limit: 1, before: 'c' });
-      expect(stats.getUniqueIntegrationTimestamps).not.toHaveBeenCalled();
     });
 
-    it("falls back to a scan of the distinct-run-index when the table hasn't got the run-list-index, and says so once", async () => {
-      const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    it("says the landscape's pipeline stack needs deploying when its table hasn't got the run-list-index", async () => {
       const { reporting: r, stats } = reporting('dynamodb');
       stats.getAllRunIds.mockRejectedValue(missingIndex());
       stats.getRunIdsPage.mockRejectedValue(missingIndex());
-      stats.getUniqueIntegrationTimestamps.mockResolvedValue(['a', 'b', 'c']);
 
-      expect(await r.listRuns()).toEqual(['a', 'b', 'c']);
-      expect(await r.listRunPage({ limit: 2 })).toEqual({ syncRunIds: ['c', 'b'], hasOlder: true });
-      expect(await r.listRunPage({ limit: 2, before: 'b' })).toEqual({ syncRunIds: ['a'], hasOlder: false });
-      expect(warn).toHaveBeenCalledTimes(1);
-      warn.mockRestore();
+      for (const read of [() => r.listRuns(), () => r.listRunPage({ limit: 2 })]) {
+        const failure = read();
+        await expect(failure).rejects.toBeInstanceOf(ReportingError);
+        await expect(failure).rejects.toMatchObject({
+          code: 'RUN_LIST_UNAVAILABLE',
+          message: expect.stringContaining("stats has no run-list-index yet: deploy this landscape's pipeline stack, then run the backfill-runs task")
+        });
+      }
     });
 
-    it('passes any other failure on, without scanning', async () => {
+    it('says to try again shortly while the run-list-index is still being built', async () => {
       const { reporting: r, stats } = reporting('dynamodb');
-      stats.getRunIdsPage.mockRejectedValue(Object.assign(new Error('Rate exceeded'), { name: 'ProvisionedThroughputExceededException' }));
-      await expect(r.listRunPage({ limit: 1 })).rejects.toThrow('Rate exceeded');
-      expect(stats.getUniqueIntegrationTimestamps).not.toHaveBeenCalled();
+      stats.getRunIdsPage.mockRejectedValue(Object.assign(
+        new Error('Cannot read from backfilling global secondary index: run-list-index'), { name: 'ValidationException' }
+      ));
+      await expect(r.listRunPage({ limit: 1 })).rejects.toMatchObject({
+        code: 'RUN_LIST_UNAVAILABLE', message: expect.stringContaining('is still being built')
+      });
+    });
+
+    it('passes any other failure on as it is', async () => {
+      const { reporting: r, stats } = reporting('dynamodb');
+      const throttled = Object.assign(new Error('Rate exceeded'), { name: 'ProvisionedThroughputExceededException' });
+      stats.getRunIdsPage.mockRejectedValue(throttled);
+      await expect(r.listRunPage({ limit: 1 })).rejects.toBe(throttled);
     });
 
     it('cuts a page from a full list as a keyed read would', () => {

@@ -144,6 +144,19 @@ describe('Dashboard run reporting routes', () => {
         status: 500, body: { error: 'Failed to list runs', message: 'table not found' }
       });
     });
+
+    it("returns a run-list-index that isn't ready as 503, saying what to do, on both run list routes", async () => {
+      const unavailable = new ReportingError('RUN_LIST_UNAVAILABLE', "stats has no run-list-index yet: deploy this landscape's pipeline stack");
+      service.listRuns.mockRejectedValueOnce(unavailable);
+      expect(await request('/api/runs', { include: 'report' })).toMatchObject({
+        status: 503, body: { error: unavailable.message, code: 'RUN_LIST_UNAVAILABLE' }
+      });
+      service.listRuns.mockRejectedValueOnce(unavailable);
+      expect(await request('/api/runs')).toMatchObject({ status: 503, body: { code: 'RUN_LIST_UNAVAILABLE' } });
+      // Other reporting errors are still the request's to fix
+      service.listRuns.mockRejectedValueOnce(new ReportingError('INVALID_LIMIT', 'bad limit'));
+      expect((await request('/api/runs')).status).toBe(400);
+    });
   });
 
   describe('validation', () => {

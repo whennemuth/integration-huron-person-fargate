@@ -145,7 +145,7 @@ counts.
 
 `src/reporting/RunReporting.ts` in S3 mode:
 - `listRuns` / `listRunPage`: list run chunk directories (`chunks/<population>/` prefixes) instead of
-  the `RUN` markers in the statistics table's `run-list-index` (`distinct-run-index` until it is removed).
+  the `RUN` markers in the statistics table's `run-list-index`.
 - `getRunReport`, chunk statistics, errors: read `statistics.ndjson`, or the part files if it
   doesn't exist, plus `_metadata.json`, `_flags.json` and `_terminal_error.json` (which it already
   reads from S3 in S3 mode).

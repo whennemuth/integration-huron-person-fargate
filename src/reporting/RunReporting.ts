@@ -12,7 +12,8 @@ export type ChangeType = 'NEW' | 'UPDATED' | 'DELETED';
 
 export type Page<T> = { items: T[]; cursor?: string };
 
-export type ReportingErrorCode = 'INVALID_CURSOR' | 'INVALID_LIMIT' | 'UNSUPPORTED_IN_STORAGE_MODE';
+/** RUN_LIST_UNAVAILABLE is the landscape's state, not the request's fault (a 503); the others are the request's (a 400) */
+export type ReportingErrorCode = 'INVALID_CURSOR' | 'INVALID_LIMIT' | 'UNSUPPORTED_IN_STORAGE_MODE' | 'RUN_LIST_UNAVAILABLE';
 
 export class ReportingError extends Error {
   constructor(public readonly code: ReportingErrorCode, message: string) {
@@ -47,7 +48,7 @@ export type { RunIdPage };
 
 /**
  * The page of a full run list (syncRunIds, oldest first) that a keyed read of the run-list-index returns: up
- * to `limit` runs older than `before`, newest first. For tables without that index, and for the mocks.
+ * to `limit` runs older than `before`, newest first. For the mocks, which keep their runs in a list.
  */
 export const pageOfRunIds = (syncRunIds: string[], params: { limit: number, before?: string }): RunIdPage => {
   const { limit, before } = params;
@@ -63,6 +64,18 @@ export const pageOfRunIds = (syncRunIds: string[], params: { limit: number, befo
 export const isMissingIndexError = (error: unknown): boolean =>
   error instanceof Error && error.name === 'ValidationException'
   && /does not have the specified index|cannot read from backfilling global secondary index/i.test(error.message);
+
+/**
+ * The run list's error when the statistics table can't serve its run-list-index (isMissingIndexError()): the
+ * index is still being built, so try again shortly; or it doesn't exist yet, so the landscape's pipeline stack
+ * needs deploying and its run markers backfilling.
+ */
+export const runListUnavailable = (tableName: string, cause: Error): ReportingError =>
+  /backfilling/i.test(cause.message)
+    ? new ReportingError('RUN_LIST_UNAVAILABLE',
+      `The run list's index on ${tableName} is still being built, which takes some minutes after the pipeline stack update that adds it. Try again shortly.`)
+    : new ReportingError('RUN_LIST_UNAVAILABLE',
+      `${tableName} has no run-list-index yet: deploy this landscape's pipeline stack, then run the backfill-runs task of the STATISTICS_TABLE harness.`);
 
 export type Capabilities = {
   landscape: string;
@@ -86,7 +99,6 @@ export type RunReportingParams = {
 export class RunReporting {
   private statisticsTable: StatisticsTable;
   private personHistoryTable?: PersonHistoryTable;
-  private warnedMissingRunListIndex = false;
 
   constructor(private params: RunReportingParams, deps?: {
     statisticsTable?: StatisticsTable;
@@ -109,10 +121,7 @@ export class RunReporting {
 
   /** @returns syncRunIds, oldest first: every page of the run-list-index */
   public listRuns = async (): Promise<string[]> => {
-    return this.withRunListFallback(
-      () => this.statisticsTable.getAllRunIds(),
-      () => this.statisticsTable.getUniqueIntegrationTimestamps()
-    );
+    return this.readRunList(() => this.statisticsTable.getAllRunIds());
   }
 
   /**
@@ -120,29 +129,22 @@ export class RunReporting {
    * whether older runs remain. One Query of the run-list-index, so Overview's latest run reads one key.
    */
   public listRunPage = async (params: { limit: number, before?: string }): Promise<RunIdPage> => {
-    return this.withRunListFallback(
-      () => this.statisticsTable.getRunIdsPage(params),
-      async () => pageOfRunIds(await this.statisticsTable.getUniqueIntegrationTimestamps(), params)
-    );
+    return this.readRunList(() => this.statisticsTable.getRunIdsPage(params));
   }
 
   /**
-   * A keyed read of the run-list-index, or, if the table can't serve it yet (its pipeline stack not
-   * redeployed since the index was added, or the index still being built), the same answer from a scan of the
-   * distinct-run-index, so a dashboard can be deployed before its pipeline stack without losing the run list.
+   * A read of the run-list-index. When the table can't serve it (the index not added yet, or still being built),
+   * it fails with a ReportingError (RUN_LIST_UNAVAILABLE) that says why and what to do, rather than DynamoDB's
+   * ValidationException. There is no other index to fall back to.
    */
-  private async withRunListFallback<T>(keyed: () => Promise<T>, scan: () => Promise<T>): Promise<T> {
+  private async readRunList<T>(read: () => Promise<T>): Promise<T> {
     try {
-      return await keyed();
+      return await read();
     } catch (error) {
-      if (!isMissingIndexError(error)) {
-        throw error;
+      if (isMissingIndexError(error)) {
+        throw runListUnavailable(this.params.statisticsTableName, error as Error);
       }
-      if (!this.warnedMissingRunListIndex) {
-        console.warn(`${this.params.statisticsTableName} can't serve its run-list-index yet (${(error as Error).message}): listing runs from a scan of the distinct-run-index`);
-        this.warnedMissingRunListIndex = true;
-      }
-      return scan();
+      throw error;
     }
   }
 
