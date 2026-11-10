@@ -59,16 +59,18 @@ describe('getDashboardStackName', () => {
 });
 
 describe('FunctionUrlOrigin', () => {
-  const synth = (storage: 's3' | 'dynamodb', dashboardOverrides: Record<string, any> = {}) => {
+  const synthWithOrigin = (storage: 's3' | 'dynamodb', dashboardOverrides: Record<string, any> = {}) => {
     // No stack is bundled, so the Lambda entry is not built (no esbuild or generated templates needed)
     const app = new App({ context: { 'aws:cdk:bundling-stacks': [] } });
     const stack = new Stack(app, 'test-stack', { env: { account: '111111111111', region: 'us-east-2' } });
     const landscape = makeLandscape(storage);
     const settings = { ...landscape.DASHBOARD, ...dashboardOverrides } as unknown as DashboardSettings;
     const context: DashboardContext = toDashboardContext(landscape, settings);
-    new FunctionUrlOrigin({ stack, context, landscapeResources: landscapeResources(landscape) });
-    return Template.fromStack(stack);
+    const origin = new FunctionUrlOrigin({ stack, context, landscapeResources: landscapeResources(landscape) });
+    return { stack, origin, template: Template.fromStack(stack) };
   };
+  const synth = (storage: 's3' | 'dynamodb', dashboardOverrides: Record<string, any> = {}) =>
+    synthWithOrigin(storage, dashboardOverrides).template;
 
   it('points the Lambda at the landscape resources', () => {
     synth('dynamodb').hasResourceProperties('AWS::Lambda::Function', {
@@ -166,5 +168,32 @@ describe('FunctionUrlOrigin', () => {
     template.hasResourceProperties('AWS::SSM::Parameter', {
       Name: '/cloudfront/huron-person-dashboard/mock/origin-verify-secret'
     });
+  });
+
+  // Assertions compare booleans and lengths, never the value, so a failure cannot print a secret
+  it('makes a long, header-safe origin verify secret, shared by the parameter, Lambda and CloudFront header, new on every synth', () => {
+    const secretOf = ({ stack, origin, template }: ReturnType<typeof synthWithOrigin>) => {
+      const [parameter] = Object.values(template.findResources('AWS::SSM::Parameter', {
+        Properties: { Name: '/cloudfront/huron-person-dashboard/mock/origin-verify-secret' }
+      }));
+      const [fn] = Object.values(template.findResources('AWS::Lambda::Function'));
+      const fromParameter: string = parameter.Properties.Value;
+      const fromLambda: string = fn.Properties.Environment.Variables.ORIGIN_VERIFY_SECRET;
+      // The header is not in the template (no distribution here), so read it from the origin's CloudFront config
+      const headers = (origin.origin.bind(stack, { originId: 'test-origin' }).originProperty?.originCustomHeaders ?? []) as any[];
+      const fromHeader = headers.find(({ headerName }) => headerName === 'X-Origin-Verify')?.headerValue;
+      expect(fromParameter === fromLambda).toBe(true);
+      expect(fromParameter === fromHeader).toBe(true);
+      return fromParameter;
+    };
+    const first = secretOf(synthWithOrigin('dynamodb'));
+    const second = secretOf(synthWithOrigin('dynamodb'));
+
+    for (const secret of [first, second]) {
+      // The prefix and 32 random bytes, base64url encoded (43 characters)
+      expect(secret.length).toBe('cf-origin-verify-'.length + 43);
+      expect(/^cf-origin-verify-[A-Za-z0-9_-]{43}$/.test(secret)).toBe(true);
+    }
+    expect(first === second).toBe(false);
   });
 });

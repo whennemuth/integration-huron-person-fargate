@@ -8,6 +8,7 @@ import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { StringParameter } from "aws-cdk-lib/aws-ssm";
 import { PolicyStatement, Effect } from "aws-cdk-lib/aws-iam";
 import { Construct } from "constructs";
+import { randomBytes } from "crypto";
 import { join } from "path";
 import { JwtTools } from "shibboleth-sp";
 import { AuthenticatedContext, AuthenticationMode, IContext } from "../context/IContext";
@@ -37,8 +38,11 @@ export class FunctionUrlOrigin {
       landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName
     } = landscapeResources;
 
-    // Generate a secure random secret for origin verification
-    this.originVerifySecret = `cf-origin-verify-${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}${Date.now().toString(36)}`;
+    // The origin verification secret: 32 bytes from the cryptographically secure generator, base64url
+    // encoded so the value is safe in an HTTP header (A-Z, a-z, 0-9, '-' and '_'). A new value is made on
+    // every synth, so each dashboard deploy rotates it in the SSM parameter, the Lambda's environment and
+    // CloudFront's origin header together. The prefix only labels the value; nothing reads it.
+    this.originVerifySecret = `cf-origin-verify-${randomBytes(32).toString('base64url')}`;
 
     // The top bar's tint for this landscape: refuse a value that names no tone here, at synth
     const landscapeTone = LandscapeTone.parse(LANDSCAPE_TONE);
