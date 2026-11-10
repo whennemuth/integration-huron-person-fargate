@@ -134,7 +134,8 @@ export class MockRunCatalog {
           trustPreviousStorage: false,
           itemsPerChunk: ITEMS_PER_CHUNK,
           source: MockRunCatalog.source(spec),
-          ...(failed ? {} : { chunkCount: MockRunCatalog.chunkCount(spec), totalRecords: spec.totalRecords })
+          // Its chunker found the end of the source records (every chunk is written); only some are processed
+          ...(failed ? {} : { chunkCount: MockRunCatalog.chunkCount(spec), totalRecords: spec.totalRecords, partialOrEmptyChunkEncountered: true })
         },
         flags: {
           bulkReset: spec.bulkReset,

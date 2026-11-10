@@ -538,6 +538,66 @@ code, pre, kbd, samp {
     color: var(--hp-text-muted);
 }
 
+/*
+ * An unfinished run's percent done (RunView.completion): green once every fetched record is processed and
+ * chunking has finished, amber while it is underway or still fetching (the Incomplete badge's tone), gray for a
+ * run that failed. --completion-color carries the state's color to the percent and its bar.
+ */
+.completion-done { --completion-color: var(--hp-success); }
+.completion-underway,
+.completion-fetching { --completion-color: var(--hp-warning); }
+.completion-failed { --completion-color: var(--hp-text-muted); }
+
+.stat-completion {
+    margin-top: 0.375rem;
+}
+
+.stat-completion-text {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0 0.5rem;
+    font-size: 0.75rem;
+}
+
+.stat-completion-percent {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--completion-color);
+}
+
+.stat-completion-of {
+    color: var(--hp-text-muted);
+}
+
+.stat-completion-bar {
+    height: 4px;
+    margin-top: 0.25rem;
+    overflow: hidden;
+    border-radius: 2px;
+    background-color: var(--hp-surface-muted);
+}
+
+.stat-completion-bar > span {
+    display: block;
+    height: 100%;
+    background-color: var(--completion-color);
+}
+
+/* The percent beside the status in a run list row */
+.completion-note {
+    margin-left: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--completion-color);
+}
+
+/* The progress line's stalled notice, in the Incomplete badge's tone */
+.progress-stalled {
+    color: var(--hp-warning);
+}
+
 /* Data table: hairline rows, a muted header row, figures right-aligned (.num) */
 .data-table {
     --bs-table-bg: transparent;

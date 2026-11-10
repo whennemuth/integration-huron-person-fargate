@@ -131,19 +131,35 @@ class RunFormat {
         if ( ! Number.isFinite(then)) {
             return RunFormat.NONE;
         }
-        const minutes = Math.floor((now - then) / 60000);
+        return now - then < 60000 ? 'just now' : `${RunFormat.span(now - then)} ago`;
+    }
+
+    /** A length of time as a person would say it, to its largest whole unit: 5 min, 3 h, 1 day, 3 days */
+    static span(ms) {
+        const minutes = Math.floor(ms / 60000);
         if (minutes < 1) {
-            return 'just now';
+            return 'under a minute';
         }
         if (minutes < 60) {
-            return `${minutes} min ago`;
+            return `${minutes} min`;
         }
         const hours = Math.floor(minutes / 60);
         if (hours < 24) {
-            return `${hours} h ago`;
+            return `${hours} h`;
         }
         const days = Math.floor(hours / 24);
-        return days === 1 ? '1 day ago' : `${days} days ago`;
+        return days === 1 ? '1 day' : `${days} days`;
+    }
+
+    /** A time of day ("7:45 PM"), with its date when it isn't today */
+    static clockTime(ms, now = Date.now()) {
+        const date = new Date(ms);
+        if (Number.isNaN(date.getTime())) {
+            return RunFormat.NONE;
+        }
+        return date.toDateString() === new Date(now).toDateString()
+            ? date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+            : RunFormat.dateTime(date.toISOString());
     }
 
     static population(population) {
@@ -203,6 +219,8 @@ class RunView {
         this.bulkReset = !!((summary && summary.bulkReset) || metadata.bulkReset || flags.bulkReset);
 
         this.chunkCount = first(summary && summary.chunkCount, metadata.chunkCount);
+        // The chunker has found the end of the source records, so the records fetched won't grow
+        this.chunkingFinished = metadata.partialOrEmptyChunkEncountered === true;
         this.chunksReported = totals ? totals.chunksReported : undefined;
         this.records = first(summary && summary.totalRecords, metadata.totalRecords);
         this.processed = results.processed;
@@ -255,17 +273,108 @@ class RunView {
             : undefined;
     }
 
-    /** How far an unfinished run has got: "12 of 20 chunks processed · last chunk finished 5 min ago" */
-    progressText(now = Date.now()) {
+    /** A run is stalled when no chunk has finished for this many times its average gap between chunks... */
+    static get STALL_FACTOR() {
+        return 10;
+    }
+
+    /** ...and for at least this long */
+    static get MIN_STALL_MS() {
+        return 15 * 60000;
+    }
+
+    /**
+     * How much of an unfinished run is done: processed so far as a percent of the records fetched, rounded down to
+     * one decimal (so it reads 100.0 only when every fetched record is processed) and capped at 100. Its state says
+     * how to read it: done (every fetched record processed, and chunking has finished), underway, fetching (the
+     * chunker hasn't found the end of the source records, so the records fetched are still growing) or failed (a
+     * run marked failed, which won't go on). Undefined for a summarized run, or one without a records figure.
+     */
+    get completion() {
+        if ( ! this.soFar || ! RunFormat.isNumber(this.records) || Number(this.records) <= 0 || ! RunFormat.isNumber(this.processed)) {
+            return undefined;
+        }
+        const records = Number(this.records);
+        const processed = Math.min(Number(this.processed), records);
+        // Whole tenths of a percent, rounded down: integer arithmetic, so no float can round up to 100.0
+        const tenths = Math.floor(processed * 1000 / records);
+        let state = 'underway';
+        if (this.status === 'FAILED') state = 'failed';
+        else if ( ! this.chunkingFinished) state = 'fetching';
+        else if (tenths === 1000) state = 'done';
+        return { percent: tenths / 10, text: (tenths / 10).toFixed(1), processed, records, state };
+    }
+
+    /**
+     * When an unfinished run's processing should finish, or that it has stalled. The rate is the run's so far
+     * (processed ÷ time from its start to its last chunk), applied to the records still to process, from the last
+     * chunk's end. Stalled when no chunk has finished for STALL_FACTOR times the average gap between chunks, and at
+     * least MIN_STALL_MS. Neither for a run that is done or failed, or before any chunk has finished; while chunking
+     * continues a run can stall, but has no estimate, since its total isn't known yet.
+     * @returns {{ kind: 'estimate', at: number, inMs: number } | { kind: 'stalled', sinceMs: number } | undefined}
+     */
+    estimate(now = Date.now()) {
+        const completion = this.completion;
+        if ( ! completion || ! ['underway', 'fetching'].includes(completion.state) || ! this.lastChunkAt) {
+            return undefined;
+        }
+        const started = Date.parse(this.startedAt);
+        const last = Date.parse(this.lastChunkAt);
+        const chunks = Number(this.chunksReported);
+        if ( ! Number.isFinite(started) || ! Number.isFinite(last) || last <= started || ! (chunks > 0) || ! (completion.processed > 0)) {
+            return undefined;
+        }
+        const elapsed = last - started;
+        const sinceLast = now - last;
+        if (sinceLast > Math.max(RunView.MIN_STALL_MS, RunView.STALL_FACTOR * elapsed / chunks)) {
+            return { kind: 'stalled', sinceMs: sinceLast };
+        }
+        if (completion.state === 'fetching') {
+            return undefined;
+        }
+        const at = last + (completion.records - completion.processed) * elapsed / completion.processed;
+        return { kind: 'estimate', at, inMs: Math.max(at - now, 0) };
+    }
+
+    /**
+     * How far an unfinished run has got, as the parts of its progress line, each { text, kind? }: its chunks, when
+     * its last chunk finished (or that it has stalled), and when its processing should finish (or why there is no
+     * estimate). kind marks a part shown differently: 'stalled' or 'estimate'.
+     */
+    progressParts(now = Date.now()) {
         if ( ! this.soFar) {
             return undefined;
         }
         const reported = RunFormat.number(this.chunksReported);
-        const chunks = RunFormat.isNumber(this.chunkCount)
-            ? `${reported} of ${RunFormat.number(this.chunkCount)} chunks processed`
-            : `${reported} ${Number(this.chunksReported) === 1 ? 'chunk' : 'chunks'} processed`;
-        const last = this.lastChunkAt ? `last chunk finished ${RunFormat.ago(this.lastChunkAt, now)}` : 'no chunk has finished yet';
-        return `${chunks} · ${last}`;
+        const parts = [{
+            text: RunFormat.isNumber(this.chunkCount)
+                ? `${reported} of ${RunFormat.number(this.chunkCount)} chunks processed`
+                : `${reported} ${Number(this.chunksReported) === 1 ? 'chunk' : 'chunks'} processed`
+        }];
+        const estimate = this.estimate(now);
+        if (estimate && estimate.kind === 'stalled') {
+            parts.push({ text: `Stalled: no chunk has finished for ${RunFormat.span(estimate.sinceMs)}`, kind: 'stalled' });
+        } else {
+            parts.push({ text: this.lastChunkAt ? `last chunk finished ${RunFormat.ago(this.lastChunkAt, now)}` : 'no chunk has finished yet' });
+        }
+        const completion = this.completion;
+        if (estimate && estimate.kind === 'estimate') {
+            parts.push({
+                text: `processing should finish around ${RunFormat.clockTime(estimate.at, now)} (in about ${RunFormat.duration(estimate.inMs)})`,
+                kind: 'estimate'
+            });
+        } else if (completion && completion.state === 'fetching' && ! estimate) {
+            parts.push({ text: 'still fetching: no estimate until every record is fetched' });
+        } else if (completion && completion.state === 'done') {
+            parts.push({ text: 'post-processing comes next' });
+        }
+        return parts;
+    }
+
+    /** The progress line as text: "12 of 20 chunks processed · last chunk finished 5 min ago · ..." */
+    progressText(now = Date.now()) {
+        const parts = this.progressParts(now);
+        return parts ? parts.map(part => part.text).join(' · ') : undefined;
     }
 
     /** Markers shown beside the population */
@@ -548,9 +657,15 @@ class RunListTable {
         const tags = run.tags.map(Html.tag).join(' ');
         const number = RunFormat.number;
         const figure = run.soFar ? 'num so-far' : 'num';
-        const soFar = run.soFar
-            ? ` <span class="so-far-note" title="${Html.escape(`Summed from the chunks processed so far: ${run.progressText()}`)}">so far</span>`
-            : '';
+        // Beside the status: an unfinished run's percent done, or "so far" when it has no records figure
+        const completion = run.completion;
+        const title = Html.escape(`Summed from the chunks processed so far: ${run.progressText()}`);
+        let soFar = '';
+        if (completion) {
+            soFar = ` <span class="completion-note completion-${completion.state}" title="${title}">${completion.text}%</span>`;
+        } else if (run.soFar) {
+            soFar = ` <span class="so-far-note" title="${title}">so far</span>`;
+        }
         return `
             <tr data-href="${href}">
                 <td><a class="run-link tabular-nums" href="${href}">${Html.escape(RunFormat.dateTime(run.startedAt))}</a></td>
@@ -697,28 +812,66 @@ class RunDetailView {
      */
     static tilesHtml(run, now = Date.now()) {
         const tiles = [
-            ['Processed', run.processed],
+            ['Processed', run.processed, undefined, RunDetailView.completionHtml(run)],
             ['Added', run.added],
             ['Updated', run.updated],
             ['Deactivated', run.deactivated, run.deactivationNote],
             ['Errors', run.errors]
         ];
         const suffix = run.soFar ? ' so far' : '';
-        const progress = run.progressText(now);
+        const progress = RunDetailView.progressHtml(run, now);
         return `
             <section class="page-section" aria-label="Run figures">
                 <div class="stat-grid">
-                    ${tiles.map(([label, value, note]) => `
+                    ${tiles.map(([label, value, note, extra]) => `
                         <div class="stat-tile${run.soFar ? ' stat-tile-so-far' : ''}">
                             <div class="stat-label">${Html.escape(label + suffix)}</div>
                             <div class="stat-value">${RunFormat.number(value)}</div>
+                            ${extra || ''}
                             ${note ? `<div class="stat-note">${Html.escape(note)}</div>` : ''}
                         </div>
                     `).join('')}
                 </div>
-                ${progress ? `<p class="stat-progress">${Html.escape(progress)}</p>` : ''}
+                ${progress}
             </section>
         `;
+    }
+
+    /**
+     * An unfinished run's percent done, for its Processed tile: the percent, of how many records fetched ("so
+     * far" while chunking continues), and a bar, in the color of its state. None without a percent.
+     */
+    static completionHtml(run) {
+        const completion = run.completion;
+        if ( ! completion) {
+            return '';
+        }
+        const fetched = `of ${RunFormat.number(completion.records)} fetched${completion.state === 'fetching' ? ' so far' : ''}`;
+        return `
+            <div class="stat-completion completion-${completion.state}">
+                <div class="stat-completion-text">
+                    <span class="stat-completion-percent">${completion.text}%</span>
+                    <span class="stat-completion-of">${Html.escape(fetched)}</span>
+                </div>
+                <div class="stat-completion-bar" role="progressbar" aria-label="Percent of fetched records processed"
+                     aria-valuemin="0" aria-valuemax="100" aria-valuenow="${completion.text}">
+                    <span style="width: ${completion.text}%"></span>
+                </div>
+            </div>
+        `;
+    }
+
+    /** The progress line under an unfinished run's tiles, its stalled notice and estimate marked; none when summarized */
+    static progressHtml(run, now = Date.now()) {
+        const parts = run.progressParts(now);
+        if ( ! parts) {
+            return '';
+        }
+        const icons = { stalled: 'fa-triangle-exclamation', estimate: 'fa-clock' };
+        const html = parts.map(({ text, kind }) => kind
+            ? `<span class="progress-${kind}"><i class="fas ${icons[kind]} me-1" aria-hidden="true"></i>${Html.escape(text)}</span>`
+            : Html.escape(text));
+        return `<p class="stat-progress">${html.join(' · ')}</p>`;
     }
 
     /** What went wrong, or why the figures are missing: none for a run that succeeded (also the Overview page's) */

@@ -84,7 +84,7 @@ const failedEarly = {
 const underway = {
   syncRunId: '2026-11-06T10:00:00.000Z',
   status: 'INCOMPLETE',
-  metadata: { createdAt: '2026-11-06T10:00:00.000Z', syncPopulation: 'person-full', chunkCount: 15 },
+  metadata: { createdAt: '2026-11-06T10:00:00.000Z', syncPopulation: 'person-full', chunkCount: 15, totalRecords: 14500, partialOrEmptyChunkEncountered: true },
   progress: {
     chunksReported: 6, totalErrors: 0, throttleCount: 0, errorsByStatus: {},
     results: { processed: 6000, succeeded: 6000, failed: 0, skipped: 0, added: 40, updated: 5960, removed: 0 },
@@ -114,6 +114,9 @@ describe.each([false, true])('overview.js and system-status.js (minified: %s)', 
       expect(html).toContain('Added so far');
       expect(html).toContain((6000).toLocaleString());
       expect(html).toContain('6 of 15 chunks processed · last chunk finished 10 min ago');
+      // 6,000 of 14,500, and at its rate so far (6,000 in the 110 minutes to its last chunk) about 2 h 26 min to go
+      expect(html).toContain('<span class="stat-completion-percent">41.3%</span>');
+      expect(html).toContain('(in about 2 h 26 min)');
     });
 
     it('says when a run that has not finished started, and why it failed', () => {

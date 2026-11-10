@@ -592,12 +592,25 @@ landscape's runs from the run reporting routes. Its classes each do one thing:
   (`lastChunkAt`), not to now. Deactivations are the processors' `removed` plus the deletion step's
   `deletedCount`.
 - **An unfinished run's figures** (`soFar`) are marked wherever they show. In the list its Added,
-  Updated, Deactivated, Errors and Duration are muted (`td.so-far`), with "so far" beside its status
-  (Records come from the metadata and aren't marked). Its tiles (`.stat-tile-so-far`, on the run's
-  page and Overview) are labeled "so far" and followed by `RunView.progressText()` ("6 of 15 chunks
-  processed · last chunk finished 9 min ago"); an incomplete full sync's Deactivated tile notes that
-  post-processing adds deletions. A single-person run is named by its BUID only when the report has metadata (the
-  source URL's `buid`): a finished run's summary doesn't record it.
+  Updated, Deactivated, Errors and Duration are muted (`td.so-far`), with its percent done beside its
+  status (or "so far" without a records figure; Records come from the metadata and aren't marked). Its
+  tiles (`.stat-tile-so-far`, on the run's page and Overview) are labeled "so far", the Processed tile
+  also shows the percent done and a bar (`RunDetailView.completionHtml()`), and they are followed by the
+  progress line (`RunDetailView.progressHtml()` over `RunView.progressParts()`: "412 of 735 chunks
+  processed · last chunk finished 1 min ago · processing should finish around 7:45 PM (in about 5 h 06
+  min)"); an incomplete full sync's Deactivated tile notes that post-processing adds deletions.
+- **Percent done** (`RunView.completion`): processed so far ÷ records fetched (METADATA `totalRecords`),
+  rounded down to one decimal and capped at 100, so it reads 100.0 only when every fetched record is
+  processed. Its state colors it (`.completion-<state>`): `done` (green: 100.0, and chunking has finished,
+  METADATA `partialOrEmptyChunkEncountered`), `underway` (amber), `fetching` (amber, "of N fetched so far": the
+  chunker hasn't found the end of the source records, so records fetched still grows), `failed` (gray).
+- **Estimated finish** (`RunView.estimate(now)`, underway runs only): the rate so far (processed ÷ start to last
+  chunk) applied to the records left, from the last chunk's end; it leaves out post-processing. A run is
+  **stalled** (in place of the last-chunk time, amber) when no chunk has finished for more than
+  `RunView.STALL_FACTOR` (10) times its average gap between chunks and at least `RunView.MIN_STALL_MS` (15
+  minutes); a still-fetching run can stall but gets no estimate. All from the browser's clock at each load.
+- A single-person run is named by its BUID only when the report has metadata (the source URL's `buid`): a
+  finished run's summary doesn't record it.
 - `RunHistoryPage` shows the list (`#runs`, 20 runs a page with "Load older runs") or one run
   (`#runs/<syncRunId>`). The list keeps what it has loaded while a run is open; Refresh reloads it.
 - `RunDetailView` is one run: the header (status, population, storage mode, duration, dry run, bulk
