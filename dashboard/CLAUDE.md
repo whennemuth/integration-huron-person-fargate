@@ -101,7 +101,11 @@ The Lambda function serves two primary roles:
 - Multiple route handlers for dashboard and API operations
 
 **Origin Verification Security:**
-- Cryptographically secure secret header
+- Cryptographically secure secret header: `cf-origin-verify-` plus 32 bytes from `crypto.randomBytes`,
+  base64url encoded (`lib/FunctionUrl.ts`). A new value is made at every synth, so each dashboard deploy
+  rotates it in the SSM parameter, the Lambda's `ORIGIN_VERIFY_SECRET` and CloudFront's header together (the
+  deploy's diff shows all three changing). Until CloudFront has rolled the new header out, requests may briefly
+  get 403.
 - Stored in AWS Systems Manager Parameter Store
 - CloudFront injects secret in all origin requests
 - Lambda validates and blocks unauthorized access (403)

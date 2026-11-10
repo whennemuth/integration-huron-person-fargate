@@ -124,7 +124,7 @@ PERSON_DELETE_TYPE=soft
 PERSON_CACHE_BUCKET_NAME=huron-person-chunks-dev
 PERSON_CACHE_KEY=personCache.txt
 
-# ------- Harness Groups for src\statistics\StatisticsTable.ts ------- #
+# ------- Harness Groups for src\dynamodb\StatisticsTable.ts ------- #
 STATISTICS_TABLE_TASK=chunks
 STATISTICS_TABLE_INTEGRATION_TIMESTAMP=2026-05-13T17:23:38.978Z
 
@@ -293,9 +293,13 @@ API_ERROR_TRACKING_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path
 API_ERROR_TRACKING_CACHE_ENABLED=true
 API_ERROR_TRACKING_CACHE_PATH=.
 
-# ------- Harness Groups for src\statistics\StatisticsTable.ts ------- #
-STATISTICS_TABLE_STATISTICS_TABLE_TASK=chunks
+# ------- Harness Groups for src\dynamodb\StatisticsTable.ts ------- #
+# TASK: truncate | statistics | list | chunks | backfill-runs | delete. truncate and delete erase data, so keep a
+# harmless task (list) here: these prefixed values win over unprefixed ones given on the command line.
+# NAME_OVERRIDE names the table directly; without it, the table comes from context/context.json.
+STATISTICS_TABLE_STATISTICS_TABLE_TASK=list
 STATISTICS_TABLE_STATISTICS_TABLE_INTEGRATION_TIMESTAMP=2026-05-13T17:23:38.978Z
+STATISTICS_TABLE_STATISTICS_TABLE_NAME_OVERRIDE=
 STATISTICS_TABLE_TRUNCATE_CHUNK_SIZE=25
 
 # ------- Harness Groups for scrap\EcrChecker.ts ------- #
