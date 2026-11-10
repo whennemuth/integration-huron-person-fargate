@@ -9,7 +9,9 @@ import {
   DYNAMODB_SORT_KEY as statisticsSortKey, 
   DYNAMODB_TABLE_NAME as statisticsTableName,
   DYNAMODB_RUN_INDEX_NAME as statisticsRunIndexName,
-  DYNAMODB_RUN_INDEX_PARTITION_KEY as statisticsRunIndexPartitionKey
+  DYNAMODB_RUN_INDEX_PARTITION_KEY as statisticsRunIndexPartitionKey,
+  DYNAMODB_RUN_LIST_INDEX_NAME as statisticsRunListIndexName,
+  DYNAMODB_RUN_LIST_PARTITION_KEY as statisticsRunListPartitionKey
 } from '../src/dynamodb/StatisticsTable';
 import {
   DYNAMODB_TABLE_NAME as atomicCounterTableName,
@@ -132,8 +134,9 @@ export class DynamoDbTables extends Construct {
    *    - SK = "POST_PROCESSOR_TRIGGER_CLAIM": Exactly one processor task wins the right to send the
    *      post-processor-trigger SQS message; never released
    *
-   * 6. Run marker (SK = "RUN", 1 record per integration run, attribute `distinctRunId` = PK):
-   *    - The only item type in the distinct-run-index GSI (see below)
+   * 6. Run marker (SK = "RUN", 1 record per integration run, attributes `distinctRunId` = PK and
+   *    `runList` = "RUNS"):
+   *    - The only item type in the distinct-run-index and run-list-index GSIs (see below)
    * 
    * Access Patterns:
    * 1. Get all data for a specific run: Query by PK = integrationTimestamp
@@ -144,7 +147,7 @@ export class DynamoDbTables extends Construct {
    * 6. Get specific error type for a run: Query by PK = integrationTimestamp, SK begins_with "ERROR:429"
    * 7. Query errors by type across all runs: Use GSI1 (errorType-timestamp-index)
    * 8. Query time-series statistics: Scan with filter (or use GSI for chronological queries)
-   * 9. List distinct integration runs: Scan GSI2 (distinct-run-index)
+   * 9. List distinct integration runs: Query GSI3 (run-list-index), newest first; or Scan GSI2 (distinct-run-index)
    * 
    * GSI1 (errorType-timestamp-index):
    * - PK: `errorType` - Error classification (e.g., "ERROR:429", "ERROR:500", "STATISTICS")
@@ -154,6 +157,10 @@ export class DynamoDbTables extends Construct {
    * GSI2 (distinct-run-index, sparse, KEYS_ONLY):
    * - PK: `distinctRunId` - set only on run marker items, so the index holds one item per run
    * - Use case: "SELECT DISTINCT integrationTimestamp" without reading per-chunk/per-error items
+   *
+   * GSI3 (run-list-index, sparse, KEYS_ONLY):
+   * - PK: `runList` - always "RUNS", set only on run marker items; SK: `distinctRunId` (the syncRunId)
+   * - Use case: the newest N runs, or those older than a given run, by Query (ScanIndexForward false)
    */
   private createStatisticsTable = () => {
     const { context, tags } = this.params.props;
@@ -197,6 +204,21 @@ export class DynamoDbTables extends Construct {
     this.statisticsTable.addGlobalSecondaryIndex({
       indexName: statisticsRunIndexName,
       partitionKey: {
+        name: statisticsRunIndexPartitionKey,
+        type: AttributeType.STRING,
+      },
+      projectionType: ProjectionType.KEYS_ONLY,
+    });
+
+    // The same run markers in one partition, sorted by syncRunId, so a page of the newest runs is one Query.
+    // CloudFormation adds or removes one GSI per table update: distinct-run-index is removed in a later deploy.
+    this.statisticsTable.addGlobalSecondaryIndex({
+      indexName: statisticsRunListIndexName,
+      partitionKey: {
+        name: statisticsRunListPartitionKey,
+        type: AttributeType.STRING,
+      },
+      sortKey: {
         name: statisticsRunIndexPartitionKey,
         type: AttributeType.STRING,
       },

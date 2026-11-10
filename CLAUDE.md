@@ -247,11 +247,18 @@ env var, which the Docker routers branch on; the runtime factories below then sw
      one chunker task runs the processor scaling check, and exactly one processor task triggers the post-processor
      (see `docs/CONCURRENCY_CONTROL.md`); the boost claim is written in S3 storage mode too
    - Replaces `_metadata.json` and `_flags.json` files from S3 mode
-   - `RUN` marker item (one per run, attribute `distinctRunId` = PK) is the only item in the sparse,
-     KEYS_ONLY `distinct-run-index` GSI, so `getUniqueIntegrationTimestamps()` ("select distinct
-     syncRunId") scans one tiny item per run instead of every STATISTICS/chunk item. It is written
-     idempotently by `writeFlags()`, `addToMetadataTotals()` (every chunker task, both storage modes)
-     and `writeTerminalError()`; runs that predate the index need the harness task `backfill-runs`
+   - `RUN` marker item (one per run, attributes `distinctRunId` = PK and `runList` = `RUNS`) is the only
+     item in two sparse, KEYS_ONLY GSIs. `run-list-index` (partition key `runList`, sort key `distinctRunId`)
+     holds every run in one partition in time order, so `getRunIdsPage()` reads the newest `limit` runs (or
+     those older than `before`) with one Query (`ScanIndexForward: false`, `Limit: limit + 1`), and
+     `getAllRunIds()` lists them all. `distinct-run-index` (partition key `distinctRunId`) is the older,
+     scan-only form (`getUniqueIntegrationTimestamps()`), kept until a later deploy removes it
+     (CloudFormation changes one GSI per table update). `RunReporting` falls back to it when a table has no
+     `run-list-index` yet (`isMissingIndexError()`). The marker is written idempotently by `writeFlags()`,
+     `addToMetadataTotals()` (every chunker task, both storage modes) and `writeTerminalError()`; markers
+     written before `runList` existed, and runs that predate the markers, need the harness task
+     `backfill-runs` (one scan of the table), run after the stack update that adds the index and before
+     the dashboard that reads it is deployed
    - `STATISTICS-chunk-*` items carry the chunk's `IntegrationResult` counts (success/failure/skipped,
      added/updated/removed) as well as its error counts. Added/updated/removed are the successful pushes
      counted by operation (`pushedChangeCounts()` in `src/processing/ProcessorCommon.ts`), so they sum to
@@ -268,7 +275,7 @@ env var, which the Docker routers branch on; the runtime factories below then sw
      METADATA's `chunkDirectory`), with their `progress`: the STATISTICS-chunk items written so far, summed by
      `sumChunkStatistics()`, the same function `buildRunSummary()` sums them with (so the figures shown while a
      run is underway and its summary can't disagree), plus the latest chunk's end time.
-   - `src/reporting/RunReporting.ts` is the read side (no transport): `listRuns`, `getRunReport`,
+   - `src/reporting/RunReporting.ts` is the read side (no transport): `listRuns`, `listRunPage`, `getRunReport`,
      `getRunChunkStatistics`, paged `getRunErrors` and `getRunChanges` (person-history changes,
      DynamoDB mode only; S3 mode keeps no per-person change record per run). Page cursors are
      base64url `LastEvaluatedKey`s, rejected unless their key attributes match the requested run

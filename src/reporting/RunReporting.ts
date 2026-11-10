@@ -2,7 +2,7 @@ import { Config } from 'integration-huron-person';
 import { MetadataForS3 } from '../chunking/metadata/MetadataForS3';
 import { Flags, TerminalError } from '../chunking/metadata/IMetadataStorage';
 import { PersonHistoryRecord, PersonHistoryTable } from '../dynamodb/PersonHistoryTable';
-import { ChunkTotals, RunSummary, RunSummaryStatus, StatisticsTable, sumChunkStatistics } from '../dynamodb/StatisticsTable';
+import { ChunkTotals, RunIdPage, RunSummary, RunSummaryStatus, StatisticsTable, sumChunkStatistics } from '../dynamodb/StatisticsTable';
 import { StatisticsItem } from '../ApiErrorTracking';
 
 export const DEFAULT_PAGE_LIMIT = 100;
@@ -43,6 +43,22 @@ export type RunReport = {
   progress?: RunProgress;
 };
 
+export type { RunIdPage };
+
+/**
+ * The page of a full run list (syncRunIds, oldest first) that a keyed read of the run-list-index returns: up
+ * to `limit` runs older than `before`, newest first. For tables without that index, and for the mocks.
+ */
+export const pageOfRunIds = (syncRunIds: string[], params: { limit: number, before?: string }): RunIdPage => {
+  const { limit, before } = params;
+  const older = syncRunIds.filter(id => before === undefined || id < before);
+  return { syncRunIds: older.slice(Math.max(older.length - limit, 0)).reverse(), hasOlder: older.length > limit };
+};
+
+/** Whether DynamoDB refused a Query because the table has no such index */
+export const isMissingIndexError = (error: unknown): boolean =>
+  error instanceof Error && error.name === 'ValidationException' && /does not have the specified index/i.test(error.message);
+
 export type Capabilities = {
   landscape: string;
   storageMode: string;
@@ -65,6 +81,7 @@ export type RunReportingParams = {
 export class RunReporting {
   private statisticsTable: StatisticsTable;
   private personHistoryTable?: PersonHistoryTable;
+  private warnedMissingRunListIndex = false;
 
   constructor(private params: RunReportingParams, deps?: {
     statisticsTable?: StatisticsTable;
@@ -85,9 +102,43 @@ export class RunReporting {
     return { landscape, storageMode, changesSupported: this.isDynamoDbMode && !!this.personHistoryTable };
   }
 
-  /** @returns syncRunIds, oldest first */
+  /** @returns syncRunIds, oldest first: every page of the run-list-index */
   public listRuns = async (): Promise<string[]> => {
-    return this.statisticsTable.getUniqueIntegrationTimestamps();
+    return this.withRunListFallback(
+      () => this.statisticsTable.getAllRunIds(),
+      () => this.statisticsTable.getUniqueIntegrationTimestamps()
+    );
+  }
+
+  /**
+   * A page of syncRunIds, newest first: up to `limit` runs older than `before` (a syncRunId) when given, and
+   * whether older runs remain. One Query of the run-list-index, so Overview's latest run reads one key.
+   */
+  public listRunPage = async (params: { limit: number, before?: string }): Promise<RunIdPage> => {
+    return this.withRunListFallback(
+      () => this.statisticsTable.getRunIdsPage(params),
+      async () => pageOfRunIds(await this.statisticsTable.getUniqueIntegrationTimestamps(), params)
+    );
+  }
+
+  /**
+   * A keyed read of the run-list-index, or, if the table doesn't have it yet (its pipeline stack not
+   * redeployed since the index was added), the same answer from a scan of the distinct-run-index, so a
+   * dashboard can be deployed before its pipeline stack without losing the run list.
+   */
+  private async withRunListFallback<T>(keyed: () => Promise<T>, scan: () => Promise<T>): Promise<T> {
+    try {
+      return await keyed();
+    } catch (error) {
+      if (!isMissingIndexError(error)) {
+        throw error;
+      }
+      if (!this.warnedMissingRunListIndex) {
+        console.warn(`${this.params.statisticsTableName} has no run-list-index yet: listing runs from a scan of the distinct-run-index`);
+        this.warnedMissingRunListIndex = true;
+      }
+      return scan();
+    }
   }
 
   /**

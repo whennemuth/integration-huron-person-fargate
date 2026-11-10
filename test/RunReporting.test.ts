@@ -1,6 +1,6 @@
 import { MetadataForS3 } from '../src/chunking/metadata/MetadataForS3';
 import { sumChunkStatistics } from '../src/dynamodb/StatisticsTable';
-import { decodeCursor, encodeCursor, ReportingError, RunReporting } from '../src/reporting/RunReporting';
+import { decodeCursor, encodeCursor, isMissingIndexError, pageOfRunIds, ReportingError, RunReporting } from '../src/reporting/RunReporting';
 
 jest.mock('../src/chunking/metadata/MetadataForS3');
 
@@ -10,6 +10,8 @@ describe('RunReporting', () => {
 
   const statisticsTable = () => ({
     getUniqueIntegrationTimestamps: jest.fn().mockResolvedValue(['a', 'b']),
+    getAllRunIds: jest.fn().mockResolvedValue(['a', 'b']),
+    getRunIdsPage: jest.fn().mockResolvedValue({ syncRunIds: [], hasOlder: false }),
     readRunSummary: jest.fn().mockResolvedValue(undefined),
     readMetadata: jest.fn().mockResolvedValue(undefined),
     readFlags: jest.fn().mockResolvedValue(undefined),
@@ -36,8 +38,57 @@ describe('RunReporting', () => {
     expect(reporting('s3').reporting.getCapabilities().changesSupported).toBe(false);
   });
 
-  it('lists runs from the distinct-run index', async () => {
-    expect(await reporting('dynamodb').reporting.listRuns()).toEqual(['a', 'b']);
+  describe('the run list', () => {
+    const missingIndex = () => Object.assign(
+      new Error('The table does not have the specified index: run-list-index'), { name: 'ValidationException' }
+    );
+
+    it('lists runs and pages them by key from the run-list-index', async () => {
+      const { reporting: r, stats } = reporting('dynamodb');
+      stats.getAllRunIds.mockResolvedValue(['a', 'b', 'c']);
+      stats.getRunIdsPage.mockResolvedValue({ syncRunIds: ['b'], hasOlder: true });
+
+      expect(await r.listRuns()).toEqual(['a', 'b', 'c']);
+      expect(await r.listRunPage({ limit: 1, before: 'c' })).toEqual({ syncRunIds: ['b'], hasOlder: true });
+      expect(stats.getRunIdsPage).toHaveBeenCalledWith({ limit: 1, before: 'c' });
+      expect(stats.getUniqueIntegrationTimestamps).not.toHaveBeenCalled();
+    });
+
+    it("falls back to a scan of the distinct-run-index when the table hasn't got the run-list-index, and says so once", async () => {
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { reporting: r, stats } = reporting('dynamodb');
+      stats.getAllRunIds.mockRejectedValue(missingIndex());
+      stats.getRunIdsPage.mockRejectedValue(missingIndex());
+      stats.getUniqueIntegrationTimestamps.mockResolvedValue(['a', 'b', 'c']);
+
+      expect(await r.listRuns()).toEqual(['a', 'b', 'c']);
+      expect(await r.listRunPage({ limit: 2 })).toEqual({ syncRunIds: ['c', 'b'], hasOlder: true });
+      expect(await r.listRunPage({ limit: 2, before: 'b' })).toEqual({ syncRunIds: ['a'], hasOlder: false });
+      expect(warn).toHaveBeenCalledTimes(1);
+      warn.mockRestore();
+    });
+
+    it('passes any other failure on, without scanning', async () => {
+      const { reporting: r, stats } = reporting('dynamodb');
+      stats.getRunIdsPage.mockRejectedValue(Object.assign(new Error('Rate exceeded'), { name: 'ProvisionedThroughputExceededException' }));
+      await expect(r.listRunPage({ limit: 1 })).rejects.toThrow('Rate exceeded');
+      expect(stats.getUniqueIntegrationTimestamps).not.toHaveBeenCalled();
+    });
+
+    it('cuts a page from a full list as a keyed read would', () => {
+      const ids = ['a', 'b', 'c', 'd'];
+      expect(pageOfRunIds(ids, { limit: 2 })).toEqual({ syncRunIds: ['d', 'c'], hasOlder: true });
+      expect(pageOfRunIds(ids, { limit: 2, before: 'c' })).toEqual({ syncRunIds: ['b', 'a'], hasOlder: false });
+      expect(pageOfRunIds(ids, { limit: 10 })).toEqual({ syncRunIds: ['d', 'c', 'b', 'a'], hasOlder: false });
+      expect(pageOfRunIds(ids, { limit: 1, before: 'a' })).toEqual({ syncRunIds: [], hasOlder: false });
+    });
+
+    it('recognizes only the missing-index refusal', () => {
+      expect(isMissingIndexError(missingIndex())).toBe(true);
+      expect(isMissingIndexError(Object.assign(new Error('One or more parameter values were invalid'), { name: 'ValidationException' }))).toBe(false);
+      expect(isMissingIndexError(new Error('The table does not have the specified index: x'))).toBe(false);
+      expect(isMissingIndexError('not an error')).toBe(false);
+    });
   });
 
   describe('getRunReport', () => {

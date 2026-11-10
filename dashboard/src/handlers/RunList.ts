@@ -15,9 +15,9 @@ export type RunListPage = { items: RunListItem[]; before?: string };
 
 /**
  * Pages through a landscape's runs newest first, each with its report, so a page of the run history costs
- * one request rather than one per run (GET /api/runs?include=report). RunReportingService lists every
- * syncRunId; a page is the `limit` newest of those older than `before`, whose reports are read in parallel.
- * syncRunIds are ISO timestamps, so comparing them as strings orders them in time.
+ * one request rather than one per run (GET /api/runs?include=report). RunReportingService reads the page's
+ * syncRunIds by key (the `limit` newest older than `before`: one Query of the run-list-index), and the
+ * page's reports are read in parallel.
  */
 export class RunList {
   constructor(private readonly reporting: RunReportingService) {}
@@ -27,14 +27,13 @@ export class RunList {
     if (!Number.isInteger(limit) || limit < 1 || limit > RUN_LIST_MAX_LIMIT) {
       throw new RangeError(`limit must be an integer from 1 to ${RUN_LIST_MAX_LIMIT}`);
     }
-    const older = (await this.reporting.listRuns()).filter(id => before === undefined || id < before);
-    const ids = older.slice(-limit).reverse();
-    const items = await Promise.all(ids.map(async (syncRunId): Promise<RunListItem> =>
+    const { syncRunIds, hasOlder } = await this.reporting.listRunPage({ limit, before });
+    const items = await Promise.all(syncRunIds.map(async (syncRunId): Promise<RunListItem> =>
       (await this.reporting.getRunReport(syncRunId)) ?? { syncRunId, status: 'UNKNOWN' }
     ));
     return {
       items,
-      ...(older.length > ids.length ? { before: ids[ids.length - 1] } : {})
+      ...(hasOlder && syncRunIds.length > 0 ? { before: syncRunIds[syncRunIds.length - 1] } : {})
     };
   }
 }

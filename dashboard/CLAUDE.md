@@ -150,8 +150,10 @@ through fargate's `src/reporting/RunReporting.ts`; GET only, no `landscape` para
   `{ items, before? }`. Up to `limit` runs (1-50, default 20) older than `before` (a syncRunId);
   the response's `before` continues the list and is present only while older runs remain. A run
   with nothing recorded to report on is listed as `{ syncRunId, status: 'UNKNOWN' }`. Built by
-  `RunList` (`src/handlers/RunList.ts`): `listRuns()`, then that page's reports in parallel. A bad
-  `limit` is `400` `INVALID_LIMIT`, a bad `before` or `include` is `400`.
+  `RunList` (`src/handlers/RunList.ts`): `listRunPage({ limit, before })` (one Query of the statistics
+  table's `run-list-index`, or a scan when the table hasn't got it yet), then that page's reports in
+  parallel. So Overview (`limit=1`) reads one run's key. A bad `limit` is `400` `INVALID_LIMIT`, a bad
+  `before` or `include` is `400`.
 - `GET /api/runs/{syncRunId}/summary` - the run's report (`404` if nothing is recorded)
 - `GET /api/runs/{syncRunId}/chunks` - `{ items }`, per-chunk statistics
 - `GET /api/runs/{syncRunId}/errors?cursor&limit&statusCode` - a page `{ items, cursor? }`

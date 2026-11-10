@@ -2,7 +2,7 @@ import { CrudOperation } from 'integration-core';
 import { PersonPushRequest } from "integration-huron-person";
 import { StatisticsItem } from '../../../src/ApiErrorTracking';
 import { PersonHistoryRecord } from '../../../src/dynamodb/PersonHistoryTable';
-import { Capabilities, ChangeType, Page, RunReport } from '../../../src/reporting/RunReporting';
+import { Capabilities, ChangeType, Page, RunIdPage, RunReport } from '../../../src/reporting/RunReporting';
 
 // Service Interfaces
 export type PersonLookupParams = {
@@ -38,6 +38,7 @@ export interface SystemStatusService {
 export interface RunReportingService {
   getCapabilities(): Capabilities;
   listRuns(): Promise<string[]>;
+  listRunPage(params: { limit: number; before?: string }): Promise<RunIdPage>;
   getRunReport(syncRunId: string): Promise<RunReport | undefined>;
   getRunChunkStatistics(syncRunId: string): Promise<StatisticsItem[]>;
   getRunErrors(syncRunId: string, page?: { statusCode?: number; limit?: number; cursor?: string }): Promise<Page<Record<string, any>>>;

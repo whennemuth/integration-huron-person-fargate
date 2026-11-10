@@ -5,7 +5,7 @@
 import { handler } from '../dashboard/src/handlers/DashboardHandler';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
 import { ServiceProvider } from '../dashboard/src/services/ServiceProvider';
-import { MAX_PAGE_LIMIT, ReportingError } from '../src/reporting/RunReporting';
+import { MAX_PAGE_LIMIT, pageOfRunIds, ReportingError } from '../src/reporting/RunReporting';
 
 const syncRunId = '2026-10-01T02:00:00.000Z';
 
@@ -22,9 +22,12 @@ const request = async (path: string, queryStringParameters?: Record<string, stri
 };
 
 describe('Dashboard run reporting routes', () => {
+  const listRuns = jest.fn<Promise<string[]>, []>().mockResolvedValue([syncRunId]);
   const service = {
     getCapabilities: jest.fn().mockReturnValue({ landscape: 'mock', storageMode: 's3', changesSupported: false }),
-    listRuns: jest.fn().mockResolvedValue([syncRunId]),
+    listRuns,
+    // A keyed page of the runs listRuns() gives, as RunReporting reads it from the run-list-index
+    listRunPage: jest.fn(async (params: { limit: number; before?: string }) => pageOfRunIds(await listRuns(), params)),
     getRunReport: jest.fn().mockResolvedValue({ syncRunId, status: 'SUCCEEDED' }),
     getRunChunkStatistics: jest.fn().mockResolvedValue([{ eventType: 'STATISTICS-chunk-0000' }]),
     getRunErrors: jest.fn().mockResolvedValue({ items: [{ statusCode: 500 }], cursor: 'next' }),
@@ -97,6 +100,8 @@ describe('Dashboard run reporting routes', () => {
       expect(body.items[0]).toEqual({ syncRunId: ids[44], status: 'SUCCEEDED' });
       expect(body.before).toBe(ids[25]);
       expect(service.getRunReport).toHaveBeenCalledTimes(20);
+      // The page is read by key, not cut from the whole list
+      expect(service.listRunPage).toHaveBeenCalledWith({ limit: 20, before: undefined });
     });
 
     it('pages back with before until no older runs remain', async () => {

@@ -13,7 +13,9 @@
  * MOCK_STORAGE_MODE (dynamodb, the default, or s3) selects the storage mode the mocks report. In S3 mode no
  * per-person change list is kept, so getRunChanges() refuses, as RunReporting does.
  */
-import { Capabilities, ChangeType, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, Page, ReportingError, RunReport } from '../../../src/reporting/RunReporting';
+import {
+  Capabilities, ChangeType, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, Page, pageOfRunIds, ReportingError, RunIdPage, RunReport
+} from '../../../src/reporting/RunReporting';
 import { DeletionOutcome, RunSummary, RunSummaryStatus, sumChunkStatistics } from '../../../src/dynamodb/StatisticsTable';
 import { StatisticsItem } from '../../../src/ApiErrorTracking';
 import { PersonHistoryRecord } from '../../../src/dynamodb/PersonHistoryTable';
@@ -467,6 +469,10 @@ export class MockRunReportingService implements RunReportingService {
 
   async listRuns(): Promise<string[]> {
     return this.catalog.syncRunIds();
+  }
+
+  async listRunPage(params: { limit: number; before?: string }): Promise<RunIdPage> {
+    return pageOfRunIds(this.catalog.syncRunIds(), params);
   }
 
   async getRunReport(syncRunId: string): Promise<RunReport | undefined> {

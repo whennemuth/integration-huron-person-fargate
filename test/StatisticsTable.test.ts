@@ -382,8 +382,50 @@ describe('StatisticsTable', () => {
     });
   });
 
+  describe('the run-list-index reads', () => {
+    const runs = ['2026-05-14T13:00:00.000Z', '2026-05-14T12:00:00.000Z', '2026-05-14T11:00:00.000Z'];
+    const keys = (ids: string[]) => ids.map(id => ({ integrationTimestamp: id, eventType: 'RUN', distinctRunId: id, runList: 'RUNS' }));
+
+    it('reads a page of the newest runs by key, one more than asked for to tell whether older ones remain', async () => {
+      dynamoMock.on(QueryCommand).resolves({ Items: keys(runs) });
+
+      expect(await statisticsTable.getRunIdsPage({ limit: 2 })).toEqual({ syncRunIds: runs.slice(0, 2), hasOlder: true });
+      expect(dynamoMock.commandCalls(QueryCommand)[0].args[0].input).toMatchObject({
+        IndexName: 'run-list-index',
+        KeyConditionExpression: '#pk = :pkValue',
+        ExpressionAttributeNames: { '#pk': 'runList' },
+        ExpressionAttributeValues: { ':pkValue': 'RUNS' },
+        ScanIndexForward: false,
+        Limit: 3
+      });
+      expect(dynamoMock.commandCalls(ScanCommand)).toHaveLength(0);
+    });
+
+    it('reads the runs older than before, and says none older remain when the page is short', async () => {
+      dynamoMock.on(QueryCommand).resolves({ Items: keys(runs.slice(1)) });
+
+      expect(await statisticsTable.getRunIdsPage({ limit: 2, before: runs[0] })).toEqual({ syncRunIds: runs.slice(1), hasOlder: false });
+      expect(dynamoMock.commandCalls(QueryCommand)[0].args[0].input).toMatchObject({
+        KeyConditionExpression: '#pk = :pkValue AND #sk < :skValue',
+        ExpressionAttributeNames: { '#pk': 'runList', '#sk': 'distinctRunId' },
+        ExpressionAttributeValues: { ':pkValue': 'RUNS', ':skValue': runs[0] }
+      });
+    });
+
+    it('lists every run oldest first, following the pages', async () => {
+      dynamoMock.on(QueryCommand)
+        .resolvesOnce({ Items: keys([runs[2]]), LastEvaluatedKey: { k: 1 } })
+        .resolvesOnce({ Items: keys([runs[1], runs[0]]) });
+
+      expect(await statisticsTable.getAllRunIds()).toEqual([runs[2], runs[1], runs[0]]);
+      const [first, second] = dynamoMock.commandCalls(QueryCommand).map(call => call.args[0].input);
+      expect(first.ScanIndexForward).toBeUndefined();
+      expect(second.ExclusiveStartKey).toEqual({ k: 1 });
+    });
+  });
+
   describe('run marker', () => {
-    const runMarker = { integrationTimestamp, eventType: 'RUN', distinctRunId: integrationTimestamp };
+    const runMarker = { integrationTimestamp, eventType: 'RUN', distinctRunId: integrationTimestamp, runList: 'RUNS' };
     const putItems = () => dynamoMock.commandCalls(BatchWriteCommand)
       .flatMap(call => Object.values(call.args[0].input.RequestItems!)[0] as any[])
       .map(request => request.PutRequest?.Item);
@@ -424,7 +466,7 @@ describe('StatisticsTable', () => {
       expect(count).toBe(2);
       expect(putItems()).toEqual([
         runMarker,
-        { integrationTimestamp: other, eventType: 'RUN', distinctRunId: other }
+        { integrationTimestamp: other, eventType: 'RUN', distinctRunId: other, runList: 'RUNS' }
       ]);
     });
   });
