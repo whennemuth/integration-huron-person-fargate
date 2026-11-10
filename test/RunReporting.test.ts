@@ -83,8 +83,12 @@ describe('RunReporting', () => {
       expect(pageOfRunIds(ids, { limit: 1, before: 'a' })).toEqual({ syncRunIds: [], hasOlder: false });
     });
 
-    it('recognizes only the missing-index refusal', () => {
+    it('recognizes only the refusals of an index that is missing or still being built', () => {
       expect(isMissingIndexError(missingIndex())).toBe(true);
+      // As preview's table answered while the index was being built after the stack update
+      expect(isMissingIndexError(Object.assign(
+        new Error('Cannot read from backfilling global secondary index: run-list-index'), { name: 'ValidationException' }
+      ))).toBe(true);
       expect(isMissingIndexError(Object.assign(new Error('One or more parameter values were invalid'), { name: 'ValidationException' }))).toBe(false);
       expect(isMissingIndexError(new Error('The table does not have the specified index: x'))).toBe(false);
       expect(isMissingIndexError('not an error')).toBe(false);

@@ -55,9 +55,14 @@ export const pageOfRunIds = (syncRunIds: string[], params: { limit: number, befo
   return { syncRunIds: older.slice(Math.max(older.length - limit, 0)).reverse(), hasOlder: older.length > limit };
 };
 
-/** Whether DynamoDB refused a Query because the table has no such index */
+/**
+ * Whether DynamoDB refused a Query because the index can't be read yet: the table has no such index, or it is
+ * still being built ("backfilling"), which it is for some minutes after the stack update that adds it, even
+ * once CloudFormation reports the update complete.
+ */
 export const isMissingIndexError = (error: unknown): boolean =>
-  error instanceof Error && error.name === 'ValidationException' && /does not have the specified index/i.test(error.message);
+  error instanceof Error && error.name === 'ValidationException'
+  && /does not have the specified index|cannot read from backfilling global secondary index/i.test(error.message);
 
 export type Capabilities = {
   landscape: string;
@@ -122,9 +127,9 @@ export class RunReporting {
   }
 
   /**
-   * A keyed read of the run-list-index, or, if the table doesn't have it yet (its pipeline stack not
-   * redeployed since the index was added), the same answer from a scan of the distinct-run-index, so a
-   * dashboard can be deployed before its pipeline stack without losing the run list.
+   * A keyed read of the run-list-index, or, if the table can't serve it yet (its pipeline stack not
+   * redeployed since the index was added, or the index still being built), the same answer from a scan of the
+   * distinct-run-index, so a dashboard can be deployed before its pipeline stack without losing the run list.
    */
   private async withRunListFallback<T>(keyed: () => Promise<T>, scan: () => Promise<T>): Promise<T> {
     try {
@@ -134,7 +139,7 @@ export class RunReporting {
         throw error;
       }
       if (!this.warnedMissingRunListIndex) {
-        console.warn(`${this.params.statisticsTableName} has no run-list-index yet: listing runs from a scan of the distinct-run-index`);
+        console.warn(`${this.params.statisticsTableName} can't serve its run-list-index yet (${(error as Error).message}): listing runs from a scan of the distinct-run-index`);
         this.warnedMissingRunListIndex = true;
       }
       return scan();

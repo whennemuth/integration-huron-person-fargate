@@ -253,8 +253,9 @@ env var, which the Docker routers branch on; the runtime factories below then sw
      those older than `before`) with one Query (`ScanIndexForward: false`, `Limit: limit + 1`), and
      `getAllRunIds()` lists them all. `distinct-run-index` (partition key `distinctRunId`) is the older,
      scan-only form (`getUniqueIntegrationTimestamps()`), kept until a later deploy removes it
-     (CloudFormation changes one GSI per table update). `RunReporting` falls back to it when a table has no
-     `run-list-index` yet (`isMissingIndexError()`). The marker is written idempotently by `writeFlags()`,
+     (CloudFormation changes one GSI per table update). `RunReporting` falls back to it when a table can't serve
+     `run-list-index` yet (`isMissingIndexError()`): it doesn't exist, or it is still backfilling, which it
+     was in preview for some minutes after CloudFormation reported the stack update complete. The marker is written idempotently by `writeFlags()`,
      `addToMetadataTotals()` (every chunker task, both storage modes) and `writeTerminalError()`; markers
      written before `runList` existed, and runs that predate the markers, need the harness task
      `backfill-runs` (one scan of the table), run after the stack update that adds the index and before
