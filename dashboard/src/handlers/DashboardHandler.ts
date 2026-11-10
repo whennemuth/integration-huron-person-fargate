@@ -7,7 +7,8 @@ import { DashboardCache } from './DashboardCache';
 import { LambdaFunctionUrlEvent, LambdaFunctionUrlResult } from './DashboardTypes';
 import { OriginHeader } from './OriginVerification';
 import { CrudOperation, Status } from 'integration-core';
-import { LandscapeListing, PersonSyncResult } from '../services/ServiceTypes';
+import { BulkSyncRequestBody, LandscapeListing, PersonSyncResult } from '../services/ServiceTypes';
+import { BulkSyncError } from '../services/BulkSync';
 import { buildNavigationBar } from './NavigationBar';
 import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
 import { PageNavigation } from './PageNavigation';
@@ -97,7 +98,7 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
         return await handlePersonSync({requestBody: body, cache });
       
       case '/api/bulk-sync':
-        return await handleBulkSync({requestBody: body, cache });
+        return await handleBulkSync({ method: request.method, requestBody: body, cache });
       
       case '/api/status':
         return await getSystemStatus();
@@ -368,29 +369,40 @@ async function handlePersonSync(params: { requestBody: string | null, cache: Das
 }
 
 /**
- * Handle bulk synchronization operations
+ * Starting a sync run in this landscape (BulkSync):
+ * - GET: what a start would do and whether one is allowed now (BulkSyncState)
+ * - POST: start one, from a BulkSyncRequestBody; 202 with the BulkSyncResult once the chunker has accepted it
+ * A refused start is a BulkSyncError, answered with its status (400 invalid, 403 production landscape, 409 a run
+ * underway or stalled or a subscriber in DRY_RUN, 503 not configured) and { error, code }.
  */
-async function handleBulkSync(params: { requestBody: string | null, cache: DashboardCache }): Promise<LambdaFunctionUrlResult> {
-  const { requestBody, cache } = params;
-  if (!requestBody) {
-    return createResponse(400, 'application/json', JSON.stringify({ error: 'Request body required' }));
+async function handleBulkSync(params: { method: string, requestBody: string | null, cache: DashboardCache }): Promise<LambdaFunctionUrlResult> {
+  const { method, requestBody, cache } = params;
+  if (method !== 'GET' && method !== 'POST') {
+    const response = jsonResponse(405, { error: 'Method not allowed' });
+    return { ...response, headers: { ...response.headers, Allow: 'GET, POST' } };
   }
-
   try {
-    const { operation, batchSize, filters } = JSON.parse(requestBody);
-    
-    // TODO: Implement actual bulk sync
     const config = await serviceConfiguration(cache);
     const bulkSyncService = ServiceProvider.getBulkSyncService(config);
-    const mockResult = await bulkSyncService.start(operation, batchSize, filters);
-
-    return createResponse(200, 'application/json', JSON.stringify(mockResult));
+    if (method === 'GET') {
+      return jsonResponse(200, await bulkSyncService.describe());
+    }
+    let body: BulkSyncRequestBody;
+    try {
+      body = JSON.parse(requestBody || '');
+    } catch {
+      return jsonResponse(400, { error: 'The request body must be JSON', code: 'INVALID_REQUEST' });
+    }
+    return jsonResponse(202, await bulkSyncService.start(body));
   } catch (error) {
+    if (error instanceof BulkSyncError) {
+      return jsonResponse(error.status, { error: error.message, code: error.code });
+    }
     console.error('Error in bulk sync:', error);
-    return createResponse(500, 'application/json', JSON.stringify({ 
-      error: 'Bulk sync failed', 
-      message: error instanceof Error ? error.message : 'Unknown error' 
-    }));
+    return jsonResponse(500, {
+      error: method === 'GET' ? 'Bulk sync state could not be read' : 'Bulk sync failed',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 }
 

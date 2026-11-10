@@ -144,7 +144,11 @@ The Lambda function serves two primary roles:
 **API Operations:**
 - `POST /api/person-lookup` - Look up individual person by BUID or HRN
 - `POST /api/person-sync` - Sync individual person record
-- `POST /api/bulk-sync` - Start bulk synchronization operation
+- `GET /api/bulk-sync` - what starting a run would do and whether it's allowed now (`BulkSyncState`)
+- `POST /api/bulk-sync` - start a sync run, as the EventBridge schedule does (`BulkSync`,
+  `src/services/BulkSync.ts`): `{ population, bulkReset?, trustPreviousStorage?, buid?, overrideStalled? }`;
+  `202` with what was started, or a `BulkSyncError` as `{ error, code }` (400 invalid, 403 production,
+  409 a run underway or stalled or a subscriber in `DRY_RUN`, 503 not configured)
 - `GET /api/status` - Get system health status and metrics
 
 **Run reporting** (this landscape's sync runs, read in-process from its tables and chunks bucket
@@ -386,8 +390,10 @@ characters: the Shibboleth construct names a bucket `<stack name>-context-config
 - No secret of its own: the Lambda reads the landscape's integration config secret
   (`integrationSecretName()` in fargate `lib/Secrets.ts`), and has read-only grants on the
   statistics table, the person history table (DynamoDB mode) and the chunks bucket
-  (`lib/LandscapeResources.ts`). All by deterministic name - no CloudFormation imports from the
-  pipeline stack.
+  (`lib/LandscapeResources.ts`). To start a run (Bulk sync) it may also invoke the chunker subscriber
+  (`chunker-subscriber-<landscape>`, which resets the chunker's counters for a run's start) and read its and
+  the processor subscriber's configuration (their `DRY_RUN`); it writes nothing. All by deterministic name -
+  no CloudFormation imports from the pipeline stack.
 
 **Commands** (from the fargate root; `npm run deploy` deploys the pipeline and dashboard stacks):
 ```bash

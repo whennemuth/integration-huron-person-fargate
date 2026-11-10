@@ -1,4 +1,4 @@
-import { Duration, Fn, RemovalPolicy, Stack } from "aws-cdk-lib";
+import { ArnFormat, Duration, Fn, RemovalPolicy, Stack } from "aws-cdk-lib";
 import { OriginProtocolPolicy } from "aws-cdk-lib/aws-cloudfront";
 import { HttpOrigin, HttpOriginProps } from "aws-cdk-lib/aws-cloudfront-origins";
 import { FunctionUrl, FunctionUrlAuthType, Runtime } from "aws-cdk-lib/aws-lambda";
@@ -35,7 +35,9 @@ export class FunctionUrlOrigin {
       LANDSCAPE_TONE,
     } } = this.params;
     const {
-      landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName
+      landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName,
+      chunkerFunctionName, processorSubscriberFunctionName, chunksPerTask,
+      bulkReset, trustPreviousStorage
     } = landscapeResources;
 
     // The origin verification secret: 32 bytes from the cryptographically secure generator, base64url
@@ -61,6 +63,12 @@ export class FunctionUrlOrigin {
       CHUNKS_BUCKET: chunksBucketName,
       ...(personHistoryTableName && { DYNAMODB_PERSON_HISTORY_TABLE_NAME: personHistoryTableName }),
       ...(landscapeTone && { LANDSCAPE_TONE: landscapeTone.name }),
+      // Starting a run (BulkSync, dashboard/src/services/BulkSync.ts), as the EventBridge schedule does
+      CHUNKER_FUNCTION_NAME: chunkerFunctionName,
+      PROCESSOR_SUBSCRIBER_FUNCTION_NAME: processorSubscriberFunctionName,
+      CHUNKS_PER_TASK: String(chunksPerTask),
+      BULK_RESET_DEFAULT: String(bulkReset),
+      TRUST_PREVIOUS_STORAGE_DEFAULT: String(trustPreviousStorage),
     } as any;
 
     // Add authentication-related environment variables if applicable
@@ -130,6 +138,20 @@ export class FunctionUrlOrigin {
       effect: Effect.ALLOW,
       actions: ['s3:GetObject', 's3:ListBucket'],
       resources: [`arn:${Stack.of(stack).partition}:s3:::${chunksBucketName}`, `arn:${Stack.of(stack).partition}:s3:::${chunksBucketName}/*`],
+    }));
+
+    // Starting a run (BulkSync): invoke the chunker subscriber (which resets the chunker's counters for a run's
+    // start), and read both subscribers' DRY_RUN
+    const functionArn = (name: string) => Stack.of(stack).formatArn({ service: 'lambda', resource: 'function', resourceName: name, arnFormat: ArnFormat.COLON_RESOURCE_NAME });
+    this.lambda.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['lambda:InvokeFunction'],
+      resources: [functionArn(chunkerFunctionName)],
+    }));
+    this.lambda.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['lambda:GetFunctionConfiguration'],
+      resources: [functionArn(chunkerFunctionName), functionArn(processorSubscriberFunctionName)],
     }));
 
     // Lambda function url for the web app.

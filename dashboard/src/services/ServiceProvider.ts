@@ -80,9 +80,9 @@ export class ServiceProvider {
    */
   static getBulkSyncService(config:Config): BulkSyncService {
     if (this.shouldUseMocks()) {
-      return new MockBulkSyncService();
+      return new MockBulkSyncService({ runs: this.getRunReportingService() });
     } else {
-      return new BulkSync(config);
+      return BulkSync.fromEnvironment(config, this.getRunReportingService());
     }
   }
 

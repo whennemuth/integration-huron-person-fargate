@@ -27,14 +27,19 @@
  * 7. Task reads message from queue and processes the data
  * 8. Queue depth decreases, service scales back down
  * 
+ * An API event that starts a run (the schedule's, the dashboard's Bulk sync) first resets the chunker's counters
+ * (resetCountersForRunStart()), so every run that starts through this Lambda starts them from zero.
+ *
  * Environment Variables:
  * - CHUNKER_QUEUE_URL: URL of the SQS queue for chunker tasks
  * - REGION: AWS region (e.g., 'us-east-2')
  * - DRY_RUN: If set to 'true', the function will not send messages (default: 'false')
+ * - STACK_ID, LANDSCAPE: name the landscape's atomic counter table, for the counter reset
  */
 
 import { handleS3Event } from './filedrop/ChunkerS3Subscriber';
 import { handleApiEvent } from './fetch/ChunkerApiSubscriber';
+import { isRunStartEvent, resetRunCounters, RunCounterLocation } from './RunCounters';
 import { SourceEndpoint, SyncPopulation } from '../../docker/chunkTypes';
 
 /**
@@ -81,8 +86,37 @@ export interface ApiChunkerEvent {
 }
 
 /**
+ * Before an API event that starts a run (isRunStartEvent()) is queued, reset the chunker's counters, as the manual
+ * Runner does before it sends one. Here rather than in handleApiEvent(), which the Runner's queue seeding calls
+ * for every seeded message, taking their offsets from the counter it has just reset. Skipped in DRY_RUN (nothing
+ * starts), and, with a warning, when the environment doesn't name the counter table (a Lambda deployed before
+ * this). A failed reset fails the invocation, so the run isn't queued against stale counters.
+ *
+ * @returns Whether the counters were reset
+ */
+export async function resetCountersForRunStart(
+  event: ApiChunkerEvent,
+  env: NodeJS.ProcessEnv = process.env,
+  reset: (location: RunCounterLocation) => Promise<void> = resetRunCounters
+): Promise<boolean> {
+  if (!isRunStartEvent(event)) {
+    return false;
+  }
+  const { STACK_ID, LANDSCAPE, REGION, DRY_RUN = 'false' } = env;
+  if (DRY_RUN.toLowerCase() === 'true') {
+    return false;
+  }
+  if (!STACK_ID || !LANDSCAPE || !REGION) {
+    console.warn("Not resetting the chunker's counters for this run's start: STACK_ID, LANDSCAPE or REGION isn't set");
+    return false;
+  }
+  await reset({ stackId: STACK_ID, region: REGION, landscape: LANDSCAPE });
+  return true;
+}
+
+/**
  * The Lambda handler function that dispatches based on event type.
- * 
+ *
  * @param event - Either an S3ChunkerEvent or ApiChunkerEvent
  * @returns Response with status code and message
  */
@@ -92,6 +126,7 @@ export async function handler(event: S3ChunkerEvent | ApiChunkerEvent): Promise<
   // Determine event type by checking for API-specific fields
   if (isApiEvent(event)) {
     console.log('Event type: API-based chunking');
+    await resetCountersForRunStart(event as ApiChunkerEvent);
     return await handleApiEvent(event as ApiChunkerEvent);
   } else if (isS3Event(event)) {
     console.log('Event type: S3-based chunking');

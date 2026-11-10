@@ -131,6 +131,19 @@ stop-at-first-partial behavior. Consequences:
   eventually returning an empty batch (true of the depleting real API and SourceSimulator).
   The safety cutoff below bounds the damage if it never does.
 
+**A run starts with the chunker's counters at zero**: the source offset its chained messages take
+(`chunker-offset-counter`) and chunk ordinals (`chunker-chunk-ordinal-counter`), both in the landscape's
+atomic counter table. `resetRunCounters()` (`src/chunking/RunCounters.ts`) resets them, called from:
+- the chunker subscriber Lambda's `handler()`, before it queues an API event that starts a run (offset 0, no
+  `chunkDirectory`: `resetCountersForRunStart()` in `src/chunking/ChunkerSubscriber.ts`). That covers the
+  EventBridge schedule's runs (which until 2026-11-10 never reset them) and the dashboard's Bulk sync. The Lambda
+  has `STACK_ID`/`LANDSCAPE` in its environment and `UpdateItem` on that one table. Skipped in `DRY_RUN`; a
+  failed reset fails the invocation.
+- the manual Runner (`AbstractRunner.resetAtomicCounters()`), which calls `handleApiEvent()` in-process rather than
+  through the Lambda.
+Never in `handleApiEvent()` itself: the Runner's queue seeding calls it for every seeded message, taking their
+offsets from the counter it has just reset (`QueueSeeder` resets its own).
+
 **Glitched-source safety cutoff (`maxTotalRecords`)**: If the source never returns an empty
 batch, chunking would never end - an endless fetch loop when `iterationLimit=0`, or endless
 chunker message/task chaining when `iterationLimit>0`. `IContext`

@@ -290,8 +290,8 @@ describe('Dashboard routes with mock services (LOCALHOST_WITH_MOCKS)', () => {
         .toMatchObject({ status: 200, body: { data: { personId: 'U1234567' } } });
       expect(await post('/api/person-sync', { personId: 'U1234567', operation: 'update' }))
         .toMatchObject({ status: 200, body: { personId: 'U1234567', status: 'success' } });
-      expect(await post('/api/bulk-sync', { operation: 'full' }))
-        .toMatchObject({ status: 200, body: { operation: 'full', status: 'started' } });
+      expect(await post('/api/bulk-sync', { population: 'person-full' }))
+        .toMatchObject({ status: 202, body: { status: 'started', run: { population: 'person-full' } } });
     } finally {
       if (savedArn !== undefined) process.env.INTEGRATION_SECRETS_ARN = savedArn;
     }

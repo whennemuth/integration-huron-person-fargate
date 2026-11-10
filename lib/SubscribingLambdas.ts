@@ -78,6 +78,7 @@ export class SubscribingLambdas extends Construct {
       inputBucketName: ctx.S3.inputBucket,
       region: ctx.REGION,
       landscape: ctx.TAGS.Landscape.toLowerCase(),
+      stackId: ctx.STACK_ID,
       timeoutSeconds: ctx.LAMBDA.chunkerSubscriber.timeoutSeconds,
       memorySizeMb: ctx.LAMBDA.chunkerSubscriber.memorySizeMb,
       dryRun: ctx.DRY_RUN?.lambda?.chunker,

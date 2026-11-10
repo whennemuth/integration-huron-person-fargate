@@ -7,14 +7,20 @@ import {
   PersonLookupResult,
   PersonSyncResult,
   BulkSyncResult,
+  BulkSyncRequestBody,
+  BulkSyncState,
   SystemStatusResult,
   PersonLookupParams,
   LandscapeListingService,
-  LandscapeListing
+  LandscapeListing,
+  RunReportingService
 } from '../services/ServiceTypes';
 import { CrudOperation } from 'integration-core';
-import { PersonPushRequest } from 'integration-huron-person';
+import { Config, PersonPushRequest } from 'integration-huron-person';
+import type { ApiChunkerEvent } from '../../../src/chunking/ChunkerSubscriber';
+import { BulkSync, BulkSyncSettings } from '../services/BulkSync';
 import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
+import { MockRunReportingService } from './MockRunReporting';
 
 export class MockPersonLookupService implements PersonLookupService {
   async lookup(params: PersonLookupParams): Promise<PersonLookupResult> {
@@ -92,17 +98,57 @@ export class MockPersonSyncService implements PersonSyncService {
   }
 }
 
+/** The source endpoints a mock start reads from the (mock) integration config */
+export const MOCK_SOURCE_CONFIG = {
+  dataSource: {
+    people: { endpointConfig: { baseUrl: 'https://cdm.example.bu.edu' }, fetchPath: '/api/people' },
+    person: { endpointConfig: { baseUrl: 'https://cdm.example.bu.edu' }, fetchPath: '/api/person' }
+  }
+} as unknown as Config;
+
+/**
+ * The real BulkSync over the mock run history, with an in-memory stand-in for the chunker Lambda:
+ * the request is validated and the guards are checked as in a landscape, and a start records the chunker event it
+ * would have sent (invoked) instead of starting anything.
+ */
 export class MockBulkSyncService implements BulkSyncService {
-  async start(operation: string, batchSize?: number, filters?: any): Promise<BulkSyncResult> {
-    return {
-      operation,
-      status: 'started',
-      batchSize: batchSize || 100,
-      filters: filters || {},
-      estimatedRecords: 1500,
-      startTime: new Date().toISOString(),
-      jobId: `bulk-${Date.now()}`
-    };
+  /** The chunker events this instance's starts would have sent, oldest first */
+  readonly invoked: ApiChunkerEvent[] = [];
+  private readonly service: BulkSync;
+
+  constructor(params: {
+    runs?: Pick<RunReportingService, 'listRunPage' | 'getRunReport'>;
+    settings?: Partial<BulkSyncSettings>;
+    dryRun?: string[];
+    now?: () => number;
+  } = {}) {
+    const { runs = new MockRunReportingService(), settings = {}, dryRun = [], now } = params;
+    this.service = new BulkSync({
+      config: MOCK_SOURCE_CONFIG,
+      settings: {
+        landscape: LOCAL_LANDSCAPE,
+        chunkerFunctionName: `chunker-subscriber-${LOCAL_LANDSCAPE}`,
+        processorSubscriberFunctionName: `processor-subscriber-${LOCAL_LANDSCAPE}`,
+        chunksPerTask: 0,
+        bulkReset: false,
+        trustPreviousStorage: true,
+        ...settings
+      },
+      runs,
+      functions: {
+        isDryRun: async functionName => dryRun.includes(functionName),
+        invokeAsync: async (_functionName, event) => { this.invoked.push(event); }
+      },
+      now
+    });
+  }
+
+  describe(): Promise<BulkSyncState> {
+    return this.service.describe();
+  }
+
+  start(request: BulkSyncRequestBody): Promise<BulkSyncResult> {
+    return this.service.start(request);
   }
 }
 
@@ -162,13 +208,6 @@ export class MockPersonLookup {
   static lookup(personId: string, system: 'source' | 'target') {
     const service = new MockPersonLookupService();
     return service.lookup({ personId, system } as PersonLookupParams);
-  }
-}
-
-export class MockBulkSync {
-  static start(operation: string, batchSize?: number, filters?: any) {
-    const service = new MockBulkSyncService();
-    return service.start(operation, batchSize, filters);
   }
 }
 

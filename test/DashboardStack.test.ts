@@ -37,7 +37,19 @@ describe('landscapeResources', () => {
       statisticsTableName: 'huron-person-fargate-processor-statistics-mock',
       personHistoryTableName: 'huron-person-fargate-processor-person-history-mock',
       chunksBucketName: 'huron-person-chunks-mock',
+      chunkerFunctionName: 'chunker-subscriber-mock',
+      processorSubscriberFunctionName: 'processor-subscriber-mock',
+      chunksPerTask: 0,
+      bulkReset: false,
+      trustPreviousStorage: false,
     });
+  });
+
+  it("takes a start's settings from the context, as the schedule does", () => {
+    const resources = landscapeResources({
+      ...makeLandscape('dynamodb'), ECS: { chunkerService: { chunksPerTask: 3 } }, BULK_RESET: true, TRUST_PREVIOUS_STORAGE: true
+    } as any);
+    expect(resources).toMatchObject({ chunksPerTask: 3, bulkReset: true, trustPreviousStorage: true });
   });
 
   it('has no person history table in S3 mode', () => {
@@ -107,12 +119,40 @@ describe('FunctionUrlOrigin', () => {
     expect(actions).toEqual(expect.arrayContaining([
       'secretsmanager:GetSecretValue', 'dynamodb:Query', 'dynamodb:GetItem', 's3:GetObject', 's3:ListBucket'
     ]));
+    // No writes: starting a run invokes the chunker subscriber, which resets the chunker's counters itself
     expect(actions.some((a: string) => /^(dynamodb:(Put|Update|Delete|BatchWrite)|s3:(Put|Delete))/.test(a))).toBe(false);
 
     const resources = JSON.stringify(statements.map((s: any) => s.Resource));
     expect(resources).toContain('table/huron-person-fargate-processor-statistics-mock/index/*');
     expect(resources).toContain('table/huron-person-fargate-processor-person-history-mock');
     expect(resources).toContain(':::huron-person-chunks-mock/*');
+    expect(resources).not.toContain('atomic-counter');
+  });
+
+  it('may start a run as the schedule does: invoke the chunker subscriber, read both subscribers, nothing else', () => {
+    const template = synth('dynamodb');
+    const statements = Object.values(template.findResources('AWS::IAM::Policy'))
+      .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement)
+      .filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('lambda:')));
+    const resourcesOf = (action: string) => JSON.stringify(statements.filter((s: any) => [s.Action].flat().includes(action)).map((s: any) => s.Resource));
+
+    expect(resourcesOf('lambda:InvokeFunction')).toContain('function:chunker-subscriber-mock');
+    expect(resourcesOf('lambda:InvokeFunction')).not.toContain('processor-subscriber');
+    expect(resourcesOf('lambda:GetFunctionConfiguration')).toContain('function:chunker-subscriber-mock');
+    expect(resourcesOf('lambda:GetFunctionConfiguration')).toContain('function:processor-subscriber-mock');
+    expect(statements.flatMap((s: any) => [s.Action].flat()).every((a: string) => ['lambda:InvokeFunction', 'lambda:GetFunctionConfiguration'].includes(a))).toBe(true);
+
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: {
+        Variables: Match.objectLike({
+          CHUNKER_FUNCTION_NAME: 'chunker-subscriber-mock',
+          PROCESSOR_SUBSCRIBER_FUNCTION_NAME: 'processor-subscriber-mock',
+          CHUNKS_PER_TASK: '0',
+          BULK_RESET_DEFAULT: 'false',
+          TRUST_PREVIOUS_STORAGE_DEFAULT: 'false'
+        })
+      }
+    });
   });
 
   it('registers the landscape in the landscape registry, with values derived from the context', () => {

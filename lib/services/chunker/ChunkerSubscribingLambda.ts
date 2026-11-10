@@ -1,4 +1,4 @@
-import { Duration, RemovalPolicy, Tags } from 'aws-cdk-lib';
+import { Duration, RemovalPolicy, Stack, Tags } from 'aws-cdk-lib';
 import { IVpc } from 'aws-cdk-lib/aws-ec2';
 import { Effect, ManagedPolicy, PolicyStatement, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import { Runtime } from 'aws-cdk-lib/aws-lambda';
@@ -6,6 +6,8 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { FUNCTION_BASE_NAME } from '../../../src/chunking/fetch/ChunkerApiSubscriber';
+import { DYNAMODB_TABLE_NAME as atomicCounterTableName } from '../../../src/dynamodb/AtomicCounter';
+import { IContext } from '../../../context/IContext';
 
 export interface ChunkerSubscribingLambdaProps {
   vpc: IVpc;
@@ -13,6 +15,8 @@ export interface ChunkerSubscribingLambdaProps {
   inputBucketName: string;
   region: string;
   landscape: string;
+  /** The pipeline stack's STACK_ID, which names the atomic counter table it resets when a run starts */
+  stackId: string;
   timeoutSeconds: number;
   memorySizeMb: number;
   dryRun?: boolean;
@@ -81,6 +85,9 @@ export class ChunkerSubscribingLambda extends Construct {
         REGION: props.region,
         CHUNKER_QUEUE_URL: props.chunkerQueueUrl,
         DRY_RUN: props.dryRun ? 'true' : 'false',
+        // Name the atomic counter table, whose counters a run's first event resets (resetCountersForRunStart())
+        STACK_ID: props.stackId,
+        LANDSCAPE: props.landscape,
         DESCRIPTION1: 
           `Analyzes incoming event (S3 or API) and delegates to appropriate handler (ChunkerS3Subscriber 
           or ChunkerApiSubscriber). Both handlers send SQS messages to trigger Fargate tasks that create 
@@ -102,6 +109,18 @@ export class ChunkerSubscribingLambda extends Construct {
           'sqs:SendMessage',
         ],
         resources: [queueArn],
+      })
+    );
+
+    // Reset the chunker's counters when a run starts: UpdateItem on the landscape's atomic counter table only
+    this.function.addToRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['dynamodb:UpdateItem'],
+        resources: [Stack.of(this).formatArn({
+          service: 'dynamodb', resource: 'table',
+          resourceName: atomicCounterTableName({ STACK_ID: props.stackId, TAGS: { Landscape: props.landscape } } as IContext)
+        })],
       })
     );
 
