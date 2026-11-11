@@ -6,6 +6,7 @@ import {
   SystemStatusService,
   PersonLookupResult,
   PersonSyncResult,
+  BulkSyncPlan,
   BulkSyncResult,
   BulkSyncRequestBody,
   BulkSyncState,
@@ -129,9 +130,10 @@ export class MockBulkSyncService implements BulkSyncService {
         landscape: LOCAL_LANDSCAPE,
         chunkerFunctionName: `chunker-subscriber-${LOCAL_LANDSCAPE}`,
         processorSubscriberFunctionName: `processor-subscriber-${LOCAL_LANDSCAPE}`,
-        chunksPerTask: 0,
-        bulkReset: false,
-        trustPreviousStorage: true,
+        region: 'us-east-2',
+        stackId: 'huron-person',
+        secretName: `huron-person-integration-config-${LOCAL_LANDSCAPE}`,
+        itemsPerChunk: 200,
         ...settings
       },
       runs,
@@ -145,6 +147,10 @@ export class MockBulkSyncService implements BulkSyncService {
 
   describe(): Promise<BulkSyncState> {
     return this.service.describe();
+  }
+
+  plan(request: BulkSyncRequestBody): Promise<BulkSyncPlan> {
+    return this.service.plan(request);
   }
 
   start(request: BulkSyncRequestBody): Promise<BulkSyncResult> {

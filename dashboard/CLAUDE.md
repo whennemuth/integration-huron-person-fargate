@@ -119,7 +119,8 @@ The Lambda function serves two primary roles:
 
 ### Dashboard Operations
 - **Individual Person Sync**: Lookup and sync single person records by BUID or HRN
-- **Bulk Operations**: Large-scale batch synchronization jobs
+- **Bulk sync**: start a sync run in the landscape, as its schedule does (full or delta, bulk reset, or a one-person
+  test), after a review of what will run and the event the chunker will be sent
 - **Overview** (the landing page): the latest run and the service health checks
 - **Run History**: The landscape's sync runs, newest first, and each run's figures, chunks, errors and changes
 - **System Status**: Health monitoring of BU CDM and Huron services
@@ -144,11 +145,19 @@ The Lambda function serves two primary roles:
 **API Operations:**
 - `POST /api/person-lookup` - Look up individual person by BUID or HRN
 - `POST /api/person-sync` - Sync individual person record
-- `GET /api/bulk-sync` - what starting a run would do and whether it's allowed now (`BulkSyncState`)
+- `GET /api/bulk-sync` - what starting a run would do and whether it's allowed now (`BulkSyncState`: the form's
+  defaults, the latest run, and `blocked` with the refusal a start would get, `NOT_CONFIGURED` included, so the
+  page shows even where starting isn't configured)
+- `POST /api/bulk-sync/plan` - review a run: the same checks as a start, then what it would send (`BulkSyncPlan`:
+  the choices, the `ApiChunkerEvent`, and every setting of the run, named as the manual Runner's `RunnerEnv`, each
+  with its source: `form`, `landscape`, `fixed` or `unused`; the page shows the choices and the event, not the
+  settings); `200`, nothing is started
 - `POST /api/bulk-sync` - start a sync run, as the EventBridge schedule does (`BulkSync`,
-  `src/services/BulkSync.ts`): `{ population, bulkReset?, trustPreviousStorage?, buid?, overrideStalled? }`;
-  `202` with what was started, or a `BulkSyncError` as `{ error, code }` (400 invalid, 403 production,
-  409 a run underway or stalled or a subscriber in `DRY_RUN`, 503 not configured)
+  `src/services/BulkSync.ts`): `{ runType: 'full' | 'full-no-deactivations' | 'test', buid? (a test's,
+  and only a test's), bulkReset?, iterationLimit? (0-50, 0 a single task; default 10), parallelStart?,
+  overrideStalled? }`; `202` with what was started. A refused review
+  or start is a `BulkSyncError` as `{ error, code }` (400 invalid, 403 production, 409 a run underway or stalled or a
+  subscriber in `DRY_RUN`, 503 not configured)
 - `GET /api/status` - Get system health status and metrics
 
 **Run reporting** (this landscape's sync runs, read in-process from its tables and chunks bucket
@@ -641,8 +650,51 @@ run page's note and stat tiles, figures so far for a run without a summary, and 
 the `ServiceStatusTable` of `public/js/system-status.js`, which the Status page uses too). The two
 load independently, so one failing (the real `SystemStatus` service isn't implemented yet) leaves
 the other shown. Scripts load in dependency order: `page-state.js`, `run-history.js`,
-`system-status.js`, `overview.js`, then `dashboard.js`, which creates the pages. Tests:
+`system-status.js`, `overview.js`, `bulk-sync.js`, then `dashboard.js`, which creates the pages. Tests:
 `test/DashboardOverview.test.ts`.
+
+### Bulk sync page
+
+The `bulk` page (`templates/partials/bulk-tab.mustache`, `public/js/bulk-sync.js`) starts a sync run in this
+landscape the way its schedule does (`GET`/`POST /api/bulk-sync`, `POST /api/bulk-sync/plan`, `BulkSync`; see the
+routes above).
+- **The options** (`BulkSyncRequest`): a run type (Full sync (with deactivations), `person-full`, the default; Full
+  sync (no deactivations), `person-delta`; a disabled Delta sync, since a source of only the people who changed
+  doesn't exist yet; Test, one person by BUID through the person endpoint, `person-delta`), Bulk reset, and Custom
+  settings: chunker tasks ("Chunks per task", 1-50, default 10, `BulkSyncRequest.CHUNKS_PER_TASK_DEFAULT`; or
+  "Single task", sent as `iterationLimit: 0`; a test ignores it) and parallel start (0-20 chunker messages, standing for the Runner's `MESSAGES_TO_PREPOPULATE` and
+  `DESIRED_COUNT`; read-only at 0, and refused otherwise, until shared queue seeding is built:
+  `BulkSyncRequest.PARALLEL_START_ENABLED`). The defaults are the scheduled run's (`ScheduledRun`,
+  fargate `src/chunking/ScheduledRun.ts`).
+- **Bulk reset is one choice for both previous-state flags** (`ScheduledRun.previousStateFlags()`): checked sends
+  `bulkReset: true, trustPreviousStorage: false`, unchecked `false, true`. The pipeline only acts on their
+  combination, and a missing `trustPreviousStorage` reads as `false` (a reset), so both are always sent.
+- **Not offered** (command line only, or not yet): addons, `CHUNKING_ONLY` / `MESSAGING_ONLY` (they switch the
+  subscribers' `DRY_RUN`, which stays switched), skipping the counter reset (the chunker subscriber always resets),
+  `ITEMS_PER_CHUNK` (the chunker task's environment, set at deploy), and in mock landscapes the target reset and the
+  source simulator (later). The plan route's settings list them with their fixed values; the page doesn't show
+  that list.
+- **The page's words are for people who don't know the pipeline**: bulk reset is explained as a fingerprint of
+  each person's record rather than as hashes, and the page doesn't mention the schedule (a later page will
+  describe what the schedule does).
+- `BulkSyncView` is the words and markup. `formHtml(state, values)` starts at the defaults and keeps what was
+  entered; choosing Test shows the BUID box and what a test is, checking Custom settings shows those fields, and
+  "Chunks per task" shows its dropdown. A start
+  the server would refuse now (`state.blocked`, not configured included) is said above Review run, which is
+  disabled then; a stalled newest run instead offers the "Start despite the stalled run" checkbox
+  (`overrideStalled`). Warnings (a mock landscape's real source) show first. `requestError()` catches an invalid
+  request before it is sent, `summaryLines()` spells out what will run, and `confirmationHtml(plan)` shows the
+  review: the summary, then a table of the event the chunker subscriber will receive.
+- `BulkSyncPage` loads the state each time the page is shown and on Refresh. Review run locks the fields and asks
+  the server for the review (`POST /api/bulk-sync/plan`), which a refusal answers under the fields (unlocked); Back
+  unlocks them. So what is started is what was reviewed. Start posts the same request (`postSectionData()` in
+  `dashboard.js`, which also carries the server's error `code`); a refusal is shown under the review. After a start,
+  the status panel says when and what, and on Refresh links to the newest run once its syncRunId is no earlier than
+  the start (less `CLOCK_SLACK_MS`), since the chunker, not the page, creates it.
+- The Lambda's environment carries what the review shows: `PIPELINE_STACK_ID`, `ITEMS_PER_CHUNK`, and the config
+  secret's name (`lib/FunctionUrl.ts`).
+Tests: `test/DashboardBulkSyncPage.test.ts` (the script in a vm, as written and minified, and once over the
+mock routes); the service: `test/DashboardBulkSync.test.ts`.
 
 ## Dependencies
 

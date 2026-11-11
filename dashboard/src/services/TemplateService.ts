@@ -79,7 +79,8 @@ export class TemplateService {
         'mappingExperimentCard': assets['mapping-experiment-card'] || '',
         'runHistory': assets['run-history'] || '',
         'systemStatus': assets['system-status'] || '',
-        'overview': assets['overview'] || ''
+        'overview': assets['overview'] || '',
+        'bulkSync': assets['bulk-sync'] || ''
       };
     } else {
       const jsPath = join(__dirname, '../../public/js');
@@ -90,7 +91,8 @@ export class TemplateService {
         'mappingExperimentCard': readFileSync(join(jsPath, 'mapping-experiment-card.js'), 'utf-8'),
         'runHistory': readFileSync(join(jsPath, 'run-history.js'), 'utf-8'),
         'systemStatus': readFileSync(join(jsPath, 'system-status.js'), 'utf-8'),
-        'overview': readFileSync(join(jsPath, 'overview.js'), 'utf-8')
+        'overview': readFileSync(join(jsPath, 'overview.js'), 'utf-8'),
+        'bulkSync': readFileSync(join(jsPath, 'bulk-sync.js'), 'utf-8')
       };
     }
   }

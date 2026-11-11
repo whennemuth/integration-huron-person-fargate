@@ -13,6 +13,7 @@ import { getDashboardStackName } from '../dashboard/lib/DashboardStacks';
 
 const makeLandscape = (storage: 's3' | 'dynamodb', withDashboard = true): LandscapeContext => ({
   STACK_ID: 'huron-person-fargate-processor',
+  ITEMS_PER_CHUNK: 200,
   ACCOUNT: '111111111111',
   REGION: 'us-east-2',
   S3: { chunksBucket: 'huron-person-chunks' },
@@ -39,17 +40,18 @@ describe('landscapeResources', () => {
       chunksBucketName: 'huron-person-chunks-mock',
       chunkerFunctionName: 'chunker-subscriber-mock',
       processorSubscriberFunctionName: 'processor-subscriber-mock',
-      chunksPerTask: 0,
-      bulkReset: false,
-      trustPreviousStorage: false,
+      pipelineStackId: 'huron-person-fargate-processor',
+      itemsPerChunk: 200,
     });
   });
 
-  it("takes a start's settings from the context, as the schedule does", () => {
+  it("takes none of a start's choices from the context: not its chunksPerTask, nor its previous-state flags", () => {
     const resources = landscapeResources({
       ...makeLandscape('dynamodb'), ECS: { chunkerService: { chunksPerTask: 3 } }, BULK_RESET: true, TRUST_PREVIOUS_STORAGE: true
     } as any);
-    expect(resources).toMatchObject({ chunksPerTask: 3, bulkReset: true, trustPreviousStorage: true });
+    expect(resources).not.toHaveProperty('chunksPerTask');
+    expect(resources).not.toHaveProperty('bulkReset');
+    expect(resources).not.toHaveProperty('trustPreviousStorage');
   });
 
   it('has no person history table in S3 mode', () => {
@@ -147,9 +149,8 @@ describe('FunctionUrlOrigin', () => {
         Variables: Match.objectLike({
           CHUNKER_FUNCTION_NAME: 'chunker-subscriber-mock',
           PROCESSOR_SUBSCRIBER_FUNCTION_NAME: 'processor-subscriber-mock',
-          CHUNKS_PER_TASK: '0',
-          BULK_RESET_DEFAULT: 'false',
-          TRUST_PREVIOUS_STORAGE_DEFAULT: 'false'
+          PIPELINE_STACK_ID: 'huron-person-fargate-processor',
+          ITEMS_PER_CHUNK: '200'
         })
       }
     });

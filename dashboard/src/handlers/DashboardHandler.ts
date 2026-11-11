@@ -99,6 +99,9 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
       
       case '/api/bulk-sync':
         return await handleBulkSync({ method: request.method, requestBody: body, cache });
+
+      case '/api/bulk-sync/plan':
+        return await handleBulkSync({ method: request.method, requestBody: body, cache, plan: true });
       
       case '/api/status':
         return await getSystemStatus();
@@ -370,16 +373,20 @@ async function handlePersonSync(params: { requestBody: string | null, cache: Das
 
 /**
  * Starting a sync run in this landscape (BulkSync):
- * - GET: what a start would do and whether one is allowed now (BulkSyncState)
- * - POST: start one, from a BulkSyncRequestBody; 202 with the BulkSyncResult once the chunker has accepted it
- * A refused start is a BulkSyncError, answered with its status (400 invalid, 403 production landscape, 409 a run
- * underway or stalled or a subscriber in DRY_RUN, 503 not configured) and { error, code }.
+ * - GET /api/bulk-sync: what a start would do and whether one is allowed now (BulkSyncState)
+ * - POST /api/bulk-sync/plan (plan): what a start from a BulkSyncRequestBody would send, and every setting of the
+ *   run (BulkSyncPlan), after the same checks; 200, and nothing is started
+ * - POST /api/bulk-sync: start one, from a BulkSyncRequestBody; 202 with the BulkSyncResult once the chunker has
+ *   accepted it
+ * A refused review or start is a BulkSyncError, answered with its status (400 invalid, 403 production landscape,
+ * 409 a run underway or stalled or a subscriber in DRY_RUN, 503 not configured) and { error, code }.
  */
-async function handleBulkSync(params: { method: string, requestBody: string | null, cache: DashboardCache }): Promise<LambdaFunctionUrlResult> {
-  const { method, requestBody, cache } = params;
-  if (method !== 'GET' && method !== 'POST') {
+async function handleBulkSync(params: { method: string, requestBody: string | null, cache: DashboardCache, plan?: boolean }): Promise<LambdaFunctionUrlResult> {
+  const { method, requestBody, cache, plan = false } = params;
+  const allowed = plan ? ['POST'] : ['GET', 'POST'];
+  if (!allowed.includes(method)) {
     const response = jsonResponse(405, { error: 'Method not allowed' });
-    return { ...response, headers: { ...response.headers, Allow: 'GET, POST' } };
+    return { ...response, headers: { ...response.headers, Allow: allowed.join(', ') } };
   }
   try {
     const config = await serviceConfiguration(cache);
@@ -393,14 +400,16 @@ async function handleBulkSync(params: { method: string, requestBody: string | nu
     } catch {
       return jsonResponse(400, { error: 'The request body must be JSON', code: 'INVALID_REQUEST' });
     }
-    return jsonResponse(202, await bulkSyncService.start(body));
+    return plan
+      ? jsonResponse(200, await bulkSyncService.plan(body))
+      : jsonResponse(202, await bulkSyncService.start(body));
   } catch (error) {
     if (error instanceof BulkSyncError) {
       return jsonResponse(error.status, { error: error.message, code: error.code });
     }
     console.error('Error in bulk sync:', error);
     return jsonResponse(500, {
-      error: method === 'GET' ? 'Bulk sync state could not be read' : 'Bulk sync failed',
+      error: method === 'GET' ? 'Bulk sync state could not be read' : plan ? 'The run could not be reviewed' : 'Bulk sync failed',
       message: error instanceof Error ? error.message : 'Unknown error'
     });
   }

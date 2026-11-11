@@ -36,8 +36,7 @@ export class FunctionUrlOrigin {
     } } = this.params;
     const {
       landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName,
-      chunkerFunctionName, processorSubscriberFunctionName, chunksPerTask,
-      bulkReset, trustPreviousStorage
+      chunkerFunctionName, processorSubscriberFunctionName, pipelineStackId, itemsPerChunk
     } = landscapeResources;
 
     // The origin verification secret: 32 bytes from the cryptographically secure generator, base64url
@@ -66,9 +65,9 @@ export class FunctionUrlOrigin {
       // Starting a run (BulkSync, dashboard/src/services/BulkSync.ts), as the EventBridge schedule does
       CHUNKER_FUNCTION_NAME: chunkerFunctionName,
       PROCESSOR_SUBSCRIBER_FUNCTION_NAME: processorSubscriberFunctionName,
-      CHUNKS_PER_TASK: String(chunksPerTask),
-      BULK_RESET_DEFAULT: String(bulkReset),
-      TRUST_PREVIOUS_STORAGE_DEFAULT: String(trustPreviousStorage),
+      // Shown in a run's review: the pipeline stack and the chunker task's chunk size
+      PIPELINE_STACK_ID: pipelineStackId,
+      ...(itemsPerChunk !== undefined && { ITEMS_PER_CHUNK: String(itemsPerChunk) }),
     } as any;
 
     // Add authentication-related environment variables if applicable

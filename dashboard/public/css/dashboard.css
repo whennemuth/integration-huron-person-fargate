@@ -1043,6 +1043,120 @@ code, pre, kbd, samp {
     color: var(--hp-text-secondary);
 }
 
+/* Bulk sync page (bulk-sync.js): the form, its confirmation, and the status panel */
+[data-bulk-form] .run-note {
+    margin-bottom: 1rem;
+}
+
+[data-bulk-form] fieldset legend.form-label {
+    font-size: inherit;
+}
+
+/* The form's fields, locked while the confirmation shows */
+.bulk-fields {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+[data-bulk-form] .form-check + .form-check {
+    margin-top: 0.5rem;
+}
+
+.bulk-buid {
+    max-width: 16rem;
+    font-family: var(--hp-font-mono);
+}
+
+/* A test's explanation and BUID box, and the custom settings: each set off under the choice that shows it */
+.bulk-test,
+.bulk-custom {
+    margin-left: 1.5rem;
+    padding: 0 0 0 0.875rem;
+    border: 0;
+    border-left: 2px solid var(--hp-border);
+    min-width: 0;
+}
+
+.bulk-test-note {
+    margin: 0 0 0.5rem;
+    font-size: 0.875rem;
+    color: var(--hp-text-muted);
+}
+
+.bulk-number {
+    max-width: 8rem;
+}
+
+/* Chunks per task's dropdown, under its choice */
+.bulk-chunks {
+    margin: 0.25rem 0 0.5rem 1.5rem;
+}
+
+/* The review's table: the event the chunker subscriber will receive */
+.bulk-settings {
+    margin-bottom: 0.75rem;
+    background-color: var(--hp-surface);
+    border: 1px solid var(--hp-border);
+    border-radius: var(--hp-radius);
+}
+
+.bulk-settings table {
+    margin-bottom: 0;
+    font-size: 0.8125rem;
+}
+
+.bulk-settings caption {
+    caption-side: top;
+    padding: 0.5rem 0.75rem;
+    font-weight: 600;
+    color: var(--hp-text);
+}
+
+.bulk-form-error {
+    margin: 0 0 0.75rem;
+    font-size: 0.875rem;
+    color: var(--hp-danger);
+}
+
+.bulk-confirm {
+    padding: 0.875rem 1rem;
+    background-color: var(--hp-surface-muted);
+    border: 1px solid var(--hp-border);
+    border-radius: var(--hp-radius);
+}
+
+.bulk-confirm-title {
+    margin: 0 0 0.5rem;
+    font-weight: 600;
+}
+
+.bulk-confirm-list {
+    margin: 0 0 0.75rem;
+    padding-left: 1.25rem;
+    font-size: 0.875rem;
+}
+
+.bulk-confirm-list li + li {
+    margin-top: 0.25rem;
+}
+
+.bulk-confirm-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.bulk-status-line {
+    margin: 0;
+}
+
+.bulk-status-hint {
+    margin: 0.375rem 0 0;
+    font-size: 0.875rem;
+    color: var(--hp-text-muted);
+}
+
 /* The sections block follows the tiles, or the note when there is one */
 .run-detail-sections {
     margin-top: 2rem;

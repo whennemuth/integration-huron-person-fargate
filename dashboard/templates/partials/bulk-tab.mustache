@@ -1,59 +1,32 @@
-<!-- Bulk sync page -->
+<!-- Bulk sync page: start a sync run in this landscape, as its schedule does (public/js/bulk-sync.js fills it) -->
 <div class="tab-pane fade {{#bulkActive}}show active{{/bulkActive}}" id="bulk" role="tabpanel" aria-labelledby="bulk-tab">
     <div class="page">
         <header class="page-header">
             <div>
                 <h1 class="page-title">Bulk sync</h1>
-                <p class="page-description">Start a sync of many people at once.</p>
+                <p class="page-description">Start a sync run in this landscape, the way its schedule starts one.</p>
+            </div>
+            <div class="page-actions">
+                <span class="refresh-stamp" data-refresh-stamp="bulk"></span>
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-action="refresh-bulk">
+                    <i class="fas fa-rotate-right me-1"></i>Refresh
+                </button>
             </div>
         </header>
 
         <div class="page-columns">
             <section class="page-section" aria-labelledby="bulkSyncHeading">
                 <div class="section-heading">
-                    <h2 class="section-title" id="bulkSyncHeading">New bulk sync</h2>
+                    <h2 class="section-title" id="bulkSyncHeading">New run</h2>
                 </div>
-                <div class="surface">
-                    <form id="bulkSyncForm">
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="syncType" class="form-label">Sync type</label>
-                                <select class="form-select" id="syncType" required>
-                                    <option value="">Choose...</option>
-                                    <option value="full">Full population</option>
-                                    <option value="delta">Changed records only</option>
-                                    <option value="failed">Retry failed</option>
-                                </select>
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <label for="batchSize" class="form-label">Batch size</label>
-                                <input type="number" class="form-control" id="batchSize" value="100" min="1" max="1000">
-                            </div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="filters" class="form-label">Filters <span class="text-muted">(optional)</span></label>
-                            <textarea class="form-control font-monospace" id="filters" rows="3" placeholder="JSON filters, e.g., {&quot;department&quot;: &quot;Engineering&quot;}"></textarea>
-                        </div>
-                        <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-play me-2"></i>Start bulk sync
-                        </button>
-                    </form>
-                </div>
+                <div class="surface" data-bulk-form></div>
             </section>
 
             <section class="page-section" aria-labelledby="bulkStatusHeading">
                 <div class="section-heading">
-                    <h2 class="section-title" id="bulkStatusHeading">Current status</h2>
+                    <h2 class="section-title" id="bulkStatusHeading">Status</h2>
                 </div>
-                <!-- The empty state's markup, as page-state.js builds it -->
-                <div class="surface surface-flush" id="bulkStatus">
-                    <div class="page-state page-state-empty" data-state="empty">
-                        <i class="fas fa-inbox page-state-icon" aria-hidden="true"></i>
-                        <div class="page-state-text">
-                            <p class="page-state-title">No active operations</p>
-                        </div>
-                    </div>
-                </div>
+                <div class="surface" data-bulk-status></div>
             </section>
         </div>
     </div>

@@ -21,10 +21,9 @@ export type LandscapeResources = {
   chunkerFunctionName: string;
   /** Starting a run: the processor subscriber, whose DRY_RUN it checks */
   processorSubscriberFunctionName: string;
-  /** Starting a run: the context's values the schedule uses (ECS.chunkerService.chunksPerTask, BULK_RESET, TRUST_PREVIOUS_STORAGE) */
-  chunksPerTask: number;
-  bulkReset: boolean;
-  trustPreviousStorage: boolean;
+  /** A run's review shows these: the pipeline stack's STACK_ID, and the chunker task's ITEMS_PER_CHUNK */
+  pipelineStackId: string;
+  itemsPerChunk?: number;
 };
 
 export const landscapeResources = (context: LandscapeContext): LandscapeResources => {
@@ -41,8 +40,7 @@ export const landscapeResources = (context: LandscapeContext): LandscapeResource
     chunksBucketName: `${chunksBucket}-${landscape}`,
     chunkerFunctionName: `${chunkerSubscriberBaseName}-${landscape}`,
     processorSubscriberFunctionName: `${processorSubscriberBaseName}-${landscape}`,
-    chunksPerTask: context.ECS?.chunkerService?.chunksPerTask ?? 0,
-    bulkReset: context.BULK_RESET ?? false,
-    trustPreviousStorage: context.TRUST_PREVIOUS_STORAGE ?? false
+    pipelineStackId: context.STACK_ID,
+    itemsPerChunk: context.ITEMS_PER_CHUNK
   };
 }

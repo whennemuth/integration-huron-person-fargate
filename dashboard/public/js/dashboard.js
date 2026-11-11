@@ -7,6 +7,7 @@ let mappingExperimentCard;
 let searchTypeManager;
 let runHistoryPage;
 let overviewPage;
+let bulkSyncPage;
 
 // Tab management - use 'load' event instead of 'DOMContentLoaded' for Lambda compatibility
 window.addEventListener('load', function() {
@@ -30,6 +31,10 @@ window.addEventListener('load', function() {
     const overviewRoot = document.getElementById('overview');
     if (overviewRoot) {
         overviewPage = new OverviewPage({ api: runsApi, getJson: fetchSectionData, root: overviewRoot });
+    }
+    const bulkRoot = document.getElementById('bulk');
+    if (bulkRoot) {
+        bulkSyncPage = new BulkSyncPage({ getJson: fetchSectionData, postJson: postSectionData, runs: runsApi, root: bulkRoot });
     }
 
     // Initialize mapping experiment form
@@ -157,6 +162,8 @@ function onPageShown(page) {
         overviewPage.load();
     } else if (page === 'runs' && runHistoryPage) {
         runHistoryPage.show(detailFromFragment('runs'));
+    } else if (page === 'bulk' && bulkSyncPage) {
+        bulkSyncPage.load();
     } else if (page === 'system') {
         loadSystemStatus();
     }
@@ -599,7 +606,20 @@ function statusBadge(status) {
 
 /** Fetch a section's JSON, throwing an Error carrying the server's message when the response isn't OK */
 async function fetchSectionData(path) {
-    const response = await fetch(`${API_BASE}${path}`);
+    return readSectionResponse(await fetch(`${API_BASE}${path}`));
+}
+
+/** POST JSON to a route and read its JSON answer, failing as fetchSectionData() does */
+async function postSectionData(path, body) {
+    return readSectionResponse(await fetch(`${API_BASE}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    }));
+}
+
+/** A response's JSON, or an Error carrying the server's message, its status and its code (if any) */
+async function readSectionResponse(response) {
     let data = {};
     try {
         data = await response.json();
@@ -609,6 +629,7 @@ async function fetchSectionData(path) {
     if ( ! response.ok) {
         const error = new Error(data.message || data.error || `The server answered ${response.status}`);
         error.status = response.status;
+        error.code = data.code;
         throw error;
     }
     return data;
