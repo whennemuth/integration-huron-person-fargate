@@ -2,8 +2,8 @@
  * Tests starting a sync run from the dashboard (dashboard/src/services/BulkSync.ts): the request it accepts, how
  * it reads the newest run (underway, stalled, finished), the guards, the chunker event it sends (the chunker
  * subscriber resets the counters for it), the review (plan) with every run setting, the real Lambda port against a
- * mocked client, and the routes (GET and POST /api/bulk-sync, POST /api/bulk-sync/plan) under mocks. Also the
- * scheduled run's definition the form's defaults take (src/chunking/ScheduledRun.ts).
+ * mocked client, and the routes (GET and POST /api/bulk-sync, POST /api/bulk-sync/plan) under mocks. The form's
+ * defaults are the scheduled run's (src/chunking/ScheduledRun.ts; test/ScheduledRun.test.ts).
  */
 import { GetFunctionConfigurationCommand, InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { mockClient } from 'aws-sdk-client-mock';
@@ -11,7 +11,6 @@ import { handler } from '../dashboard/src/handlers/DashboardHandler';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
 import { MOCK_SOURCE_CONFIG, MockBulkSyncService } from '../dashboard/src/handlers/DashboardMocks';
 import { BulkSync, BulkSyncError, BulkSyncRequest, LambdaChunkerFunctions, RunActivity } from '../dashboard/src/services/BulkSync';
-import { ScheduledRun } from '../src/chunking/ScheduledRun';
 import { RunReport } from '../src/reporting/RunReporting';
 
 const MIN = 60_000;
@@ -37,17 +36,6 @@ const runsEndingWith = (newest?: RunReport) => ({
 
 const finishedRun = report('2026-11-09T02:00:00.000Z', { summary: true });
 const stalledRun = report('2026-11-06T17:12:48.824Z', { chunks: 734, lastChunkAt: '2026-11-07T04:59:44.820Z' });
-
-describe('ScheduledRun', () => {
-  it('is a full sync without a bulk reset, stored hashes trusted', () => {
-    expect(ScheduledRun.POPULATION).toBe('person-full');
-    expect(ScheduledRun.previousStateFlags(ScheduledRun.BULK_RESET)).toEqual({ bulkReset: false, trustPreviousStorage: true });
-  });
-
-  it('sets the two previous-state flags as one choice', () => {
-    expect(ScheduledRun.previousStateFlags(true)).toEqual({ bulkReset: true, trustPreviousStorage: false });
-  });
-});
 
 describe('BulkSyncRequest', () => {
   it('takes omitted options from the scheduled run, 10 chunks per task, and one message', () => {

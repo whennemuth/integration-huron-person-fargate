@@ -4,7 +4,7 @@ import { Schedule, ScheduleExpression, ScheduleTargetInput } from 'aws-cdk-lib/a
 import { LambdaInvoke } from 'aws-cdk-lib/aws-scheduler-targets';
 import { Construct } from 'constructs';
 import { ConfigManager } from 'integration-huron-person';
-import { SyncPopulation } from '../../../docker/chunkTypes';
+import { ScheduledRun } from '../../../src/chunking/ScheduledRun';
 import { AbstractService, AbstractServiceProps } from '../AbstractService';
 
 export const SERVICE_LOGICAL_ID = 'Chunker';
@@ -28,7 +28,8 @@ export interface ChunkerServiceProps extends AbstractServiceProps {
  * 
  * Also optionally creates an EventBridge schedule to trigger API-based chunking:
  * - Schedule only created if HURON_PERSON_CONFIG.dataSource.people.fetchSchedule is configured
- * - Schedule triggers ChunkerSubscriber Lambda with API parameters
+ * - Schedule triggers ChunkerSubscriber Lambda with API parameters: a full sync with stored hashes trusted
+ *   (ScheduledRun, src/chunking/ScheduledRun.ts, which the dashboard's Bulk sync defaults also take)
  * - Lambda sends message to chunker queue to trigger Fargate task
  */
 export class ChunkerService extends AbstractService {
@@ -60,7 +61,6 @@ export class ChunkerService extends AbstractService {
   private createApiChunkingSchedule(props: ChunkerServiceProps): void {
     const { chunkerLambda, chunksPerTask: iterationLimit = 0 } = props;
     const context = this.props.context;
-    const trustPreviousStorage = context?.TRUST_PREVIOUS_STORAGE ?? false;
 
     if (!chunkerLambda || !context) {
       console.log('[ChunkerService] Skipping EventBridge schedule: chunkerLambda or context not provided');
@@ -110,21 +110,9 @@ export class ChunkerService extends AbstractService {
       schedule: ScheduleExpression.expression(cronExpression),
       enabled: cronEnabled,
       target: new LambdaInvoke(chunkerLambda, {
-        input: ScheduleTargetInput.fromObject({
-          baseUrl,
-          fetchPath,
-          populationType: SyncPopulation.PersonDelta,
-          iterationLimit, 
-          offset: 0,
-          bulkReset: false, // Default value; can be overridden by message parameters if needed
-          trustPreviousStorage,
-          personRecordProcessorAddons,
-          processingMetadata: {
-            // processedAt: new Date().toISOString(),
-            processedAt: 'Placeholder. Override at runtime with ISO timestamp',
-            processorVersion: '1.0.0'
-          }
-        })
+        input: ScheduleTargetInput.fromObject(
+          ScheduledRun.scheduleInput({ baseUrl, fetchPath, iterationLimit, personRecordProcessorAddons })
+        )
       })
     });
 

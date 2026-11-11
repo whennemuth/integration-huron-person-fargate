@@ -131,6 +131,26 @@ stop-at-first-partial behavior. Consequences:
   eventually returning an empty batch (true of the depleting real API and SourceSimulator).
   The safety cutoff below bounds the damage if it never does.
 
+**The scheduled run is a full sync with stored hashes trusted** (`ScheduledRun`, `src/chunking/ScheduledRun.ts`, since
+2026-11-11): the EventBridge schedule's input (`ChunkerService.createApiChunkingSchedule()`, built by
+`ScheduledRun.scheduleInput()`) is `populationType: person-full`, `bulkReset: false`, `trustPreviousStorage: true`,
+with the people endpoint, `iterationLimit` = the context's `ECS.chunkerService.chunksPerTask` and `offset: 0`.
+- No source endpoint returns only the people who changed yet, so a scheduled run fetches everyone. Trusting the
+  stored hashes keeps people whose hash matches from reaching the target, which is the effect a delta run would
+  have; the full sync then deactivates people missing from the source. Before, the schedule sent `person-delta`
+  (no deactivations) with `trustPreviousStorage` from the context (`false` everywhere), so every scheduled run
+  looked every person up in the target and deactivated no one.
+- A source glitch that looks like a normal end (an empty batch mid-population) would deactivate the people after
+  it, until the next good run reactivates them (decided 2026-11-10: no deactivation ceiling). A change made in
+  the target outside the integration isn't put right for a person whose source record hasn't changed, until a
+  bulk reset (the dashboard's Bulk sync) runs.
+- The two previous-state flags only ever act together (`bulkReset || !trustPreviousStorage`), so
+  `ScheduledRun.previousStateFlags(bulkReset)` sets them as one choice, for the schedule and the dashboard alike.
+  The context's `BULK_RESET` / `TRUST_PREVIOUS_STORAGE` play no part in either; they remain only as the chunker
+  task's environment fallback, which a message carrying both flags never needs. Consolidating the flags into one
+  setting is a TODO in integration-huron-person (`src/delta-strategy/TODO.md`).
+- A landscape gets this at its next pipeline deploy (a `lib/` change).
+
 **A run starts with the chunker's counters at zero**: the source offset its chained messages take
 (`chunker-offset-counter`) and chunk ordinals (`chunker-chunk-ordinal-counter`), both in the landscape's
 atomic counter table. `resetRunCounters()` (`src/chunking/RunCounters.ts`) resets them, called from:
