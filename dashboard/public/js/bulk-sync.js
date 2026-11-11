@@ -298,7 +298,7 @@ class BulkSyncView {
                 <p class="bulk-status-line">
                     ${Html.escape(when)}:
                     <a class="run-link" href="${Html.escape(RunHistoryPage.detailHref(run.syncRunId))}">Run of ${Html.escape(RunFormat.dateTime(run.startedAt))}</a>
-                    ${RunFormat.statusBadge(run.status)}
+                    ${run.statusBadgeHtml ? run.statusBadgeHtml(now) : RunFormat.statusBadge(run.status)}
                 </p>
                 <p class="bulk-status-hint">${Html.escape(what)}. Follow it in Run history or on Overview.</p>
             `;

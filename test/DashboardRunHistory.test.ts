@@ -356,11 +356,53 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       expect(RunDetailView.progressHtml(new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: {} } }), NOW)).toBe('');
     });
 
-    it("shows a row's percent beside its status in the color of its state, and none for a summarized run", () => {
-      expect(RunListTable.rowHtml(unfinished({ processed: 146473, records: 146673 })))
-        .toContain('<span class="completion-note completion-underway"');
-      expect(RunListTable.rowHtml(unfinished({ processed: 14500 }))).toContain('completion-done');
+    it("shows a row's percent beside its phase, none while post-processing, and none for a summarized run", () => {
+      // The row is drawn at the real time, long after these runs' last chunk, so they read as stalled
+      const underway = RunListTable.rowHtml(unfinished({ processed: 146473, records: 146673 }));
+      expect(underway).toContain('<span class="completion-note completion-underway"');
+      expect(underway).toContain('>Stalled</span>');
+      expect(underway).not.toContain('Incomplete');
+      const done = RunListTable.rowHtml(unfinished({ processed: 14500 }));
+      expect(done).toContain('>Stalled</span>');
+      expect(done).toContain('>100.0%</span>');
       expect(RunListTable.rowHtml(new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: {} } }))).not.toContain('completion-note');
+    });
+
+    describe('phase', () => {
+      const last = Date.parse('2026-11-06T02:21:00.000Z');
+
+      it('says what an unfinished run is doing, with its percent except while post-processing', () => {
+        expect(unfinished({ processed: 6000, chunkingFinished: false }).phase(NOW)).toEqual({ label: 'Fetching', tone: 'warning', percent: '41.3' });
+        expect(unfinished({ processed: 6000 }).phase(NOW)).toEqual({ label: 'Processing', tone: 'warning', percent: '41.3' });
+        expect(unfinished({ processed: 14500 }).phase(NOW)).toEqual({ label: 'Post-processing', tone: 'warning' });
+        // 6 chunks in 21 minutes: stalled after 35 minutes without one
+        expect(unfinished({ processed: 6000 }).phase(last + 36 * MIN)).toEqual({ label: 'Stalled', tone: 'warning', percent: '41.3' });
+      });
+
+      it('calls a run waiting on post-processing stalled by the same rule, so a run never post-processed stops reading Post-processing', () => {
+        const done = unfinished({ processed: 14500 });
+        expect(done.phase(last + 34 * MIN)?.label).toBe('Post-processing');
+        expect(done.phase(last + 36 * MIN)).toEqual({ label: 'Stalled', tone: 'warning', percent: '100.0' });
+        expect(done.progressText(last + 3 * 24 * 60 * MIN))
+          .toBe("6 of 15 chunks processed · Stalled: post-processing hasn't finished 3 days after the last chunk");
+        // No estimate for it either way
+        expect(done.estimate(last + 36 * MIN)).toBeUndefined();
+      });
+
+      it('leaves a finished or failed run, or one without a percent, to its status', () => {
+        expect(new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: {} } }).phase(NOW)).toBeUndefined();
+        expect(unfinished({ processed: 6000, status: 'FAILED' }).phase(NOW)).toBeUndefined();
+        expect(new RunView({ ...incomplete, metadata: { ...incomplete.metadata, totalRecords: undefined } }).phase(NOW)).toBeUndefined();
+      });
+
+      it('draws the phase as the status badge, never green while unfinished', () => {
+        expect(unfinished({ processed: 14500 }).statusBadgeHtml(NOW)).toContain('status-badge-warning');
+        expect(unfinished({ processed: 14500 }).statusBadgeHtml(NOW)).toContain('>Post-processing<');
+        expect(unfinished({ processed: 6000, status: 'FAILED' }).statusBadgeHtml(NOW)).toContain('>Failed<');
+        expect(new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: {} } }).statusBadgeHtml(NOW)).toContain('status-badge-success');
+        const withoutRecords = new RunView({ ...incomplete, metadata: { ...incomplete.metadata, totalRecords: undefined } });
+        expect(withoutRecords.statusBadgeHtml(NOW)).toContain('>Incomplete<');
+      });
     });
 
     it('says a length of time and a time of day as a person would', () => {

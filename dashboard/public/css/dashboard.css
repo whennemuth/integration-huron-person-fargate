@@ -539,11 +539,12 @@ code, pre, kbd, samp {
 }
 
 /*
- * An unfinished run's percent done (RunView.completion): green once every fetched record is processed and
- * chunking has finished, amber while it is underway or still fetching (the Incomplete badge's tone), gray for a
- * run that failed. --completion-color carries the state's color to the percent and its bar.
+ * An unfinished run's percent done (RunView.completion): amber, the tone of its phase badge (RunView.phase()),
+ * including once every fetched record is processed (done), since the run still waits on post-processing: green is
+ * kept for a finished run. Gray for a run that failed. --completion-color carries the state's color to the percent
+ * and its bar.
  */
-.completion-done { --completion-color: var(--hp-success); }
+.completion-done,
 .completion-underway,
 .completion-fetching { --completion-color: var(--hp-warning); }
 .completion-failed { --completion-color: var(--hp-text-muted); }

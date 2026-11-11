@@ -75,7 +75,7 @@ class OverviewPage {
                 <div>
                     <p class="latest-run-title">
                         <a class="run-link" href="${href}">Run of ${Html.escape(RunFormat.dateTime(run.startedAt))}</a>
-                        ${RunFormat.statusBadge(run.status)}
+                        ${run.statusBadgeHtml(now)}
                     </p>
                     <p class="latest-run-facts">${[...run.facts, when].map(Html.escape).join(' &middot; ')}</p>
                 </div>

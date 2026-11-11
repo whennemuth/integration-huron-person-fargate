@@ -315,25 +315,76 @@ class RunView {
      */
     estimate(now = Date.now()) {
         const completion = this.completion;
-        if ( ! completion || ! ['underway', 'fetching'].includes(completion.state) || ! this.lastChunkAt) {
+        if ( ! completion || ! ['underway', 'fetching'].includes(completion.state) || ! (completion.processed > 0)) {
+            return undefined;
+        }
+        const stalledFor = this.stalledFor(now);
+        if (stalledFor !== undefined) {
+            return { kind: 'stalled', sinceMs: stalledFor };
+        }
+        if (completion.state === 'fetching' || ! this.lastChunkAt) {
+            return undefined;
+        }
+        const started = Date.parse(this.startedAt);
+        const last = Date.parse(this.lastChunkAt);
+        if ( ! Number.isFinite(started) || ! Number.isFinite(last) || last <= started) {
+            return undefined;
+        }
+        const at = last + (completion.records - completion.processed) * (last - started) / completion.processed;
+        return { kind: 'estimate', at, inMs: Math.max(at - now, 0) };
+    }
+
+    /**
+     * How long an unfinished run has gone without a chunk finishing, when that is longer than the stall rule allows
+     * (STALL_FACTOR times its average gap between chunks, and at least MIN_STALL_MS); undefined otherwise. Applies to
+     * a run waiting on post-processing too, so one whose post-processor never ran is called stalled. The rule
+     * RunActivity applies on the server for Bulk sync's guard (dashboard/src/services/BulkSync.ts). Never for a
+     * summarized or failed run, or before a chunk has finished.
+     */
+    stalledFor(now = Date.now()) {
+        if ( ! this.soFar || this.status === 'FAILED' || ! this.lastChunkAt) {
             return undefined;
         }
         const started = Date.parse(this.startedAt);
         const last = Date.parse(this.lastChunkAt);
         const chunks = Number(this.chunksReported);
-        if ( ! Number.isFinite(started) || ! Number.isFinite(last) || last <= started || ! (chunks > 0) || ! (completion.processed > 0)) {
+        if ( ! Number.isFinite(started) || ! Number.isFinite(last) || last <= started || ! (chunks > 0)) {
             return undefined;
         }
-        const elapsed = last - started;
         const sinceLast = now - last;
-        if (sinceLast > Math.max(RunView.MIN_STALL_MS, RunView.STALL_FACTOR * elapsed / chunks)) {
-            return { kind: 'stalled', sinceMs: sinceLast };
+        return sinceLast > Math.max(RunView.MIN_STALL_MS, RunView.STALL_FACTOR * (last - started) / chunks) ? sinceLast : undefined;
+    }
+
+    /**
+     * What an unfinished run is doing, shown as its status in place of "Incomplete": Fetching (the chunker hasn't
+     * found the end of the source), Processing, Post-processing (every fetched record processed; deactivations and
+     * the summary come next) or Stalled; with its percent done, except while post-processing. All amber: green is
+     * kept for a finished run. Undefined for a summarized or failed run, or one without a percent (no records
+     * figure), which keep their status.
+     * @returns {{ label: string, tone: string, percent?: string } | undefined}
+     */
+    phase(now = Date.now()) {
+        const completion = this.completion;
+        if (this.hasSummary || this.status !== 'INCOMPLETE' || ! completion) {
+            return undefined;
+        }
+        const tone = 'warning';
+        if (this.stalledFor(now) !== undefined) {
+            return { label: 'Stalled', tone, percent: completion.text };
         }
         if (completion.state === 'fetching') {
-            return undefined;
+            return { label: 'Fetching', tone, percent: completion.text };
         }
-        const at = last + (completion.records - completion.processed) * elapsed / completion.processed;
-        return { kind: 'estimate', at, inMs: Math.max(at - now, 0) };
+        if (completion.state === 'done') {
+            return { label: 'Post-processing', tone };
+        }
+        return { label: 'Processing', tone, percent: completion.text };
+    }
+
+    /** The run's status badge: its phase while unfinished, else its status */
+    statusBadgeHtml(now = Date.now()) {
+        const phase = this.phase(now);
+        return phase ? Html.badge(phase.label, phase.tone) : RunFormat.statusBadge(this.status);
     }
 
     /**
@@ -352,12 +403,18 @@ class RunView {
                 : `${reported} ${Number(this.chunksReported) === 1 ? 'chunk' : 'chunks'} processed`
         }];
         const estimate = this.estimate(now);
+        const completion = this.completion;
+        const stalledFor = this.stalledFor(now);
+        const waitingOnPostProcessing = completion && completion.state === 'done';
+        if (stalledFor !== undefined && waitingOnPostProcessing) {
+            parts.push({ text: `Stalled: post-processing hasn't finished ${RunFormat.span(stalledFor)} after the last chunk`, kind: 'stalled' });
+            return parts;
+        }
         if (estimate && estimate.kind === 'stalled') {
             parts.push({ text: `Stalled: no chunk has finished for ${RunFormat.span(estimate.sinceMs)}`, kind: 'stalled' });
         } else {
             parts.push({ text: this.lastChunkAt ? `last chunk finished ${RunFormat.ago(this.lastChunkAt, now)}` : 'no chunk has finished yet' });
         }
-        const completion = this.completion;
         if (estimate && estimate.kind === 'estimate') {
             parts.push({
                 text: `processing should finish around ${RunFormat.clockTime(estimate.at, now)} (in about ${RunFormat.duration(estimate.inMs)})`,
@@ -657,19 +714,21 @@ class RunListTable {
         const tags = run.tags.map(Html.tag).join(' ');
         const number = RunFormat.number;
         const figure = run.soFar ? 'num so-far' : 'num';
-        // Beside the status: an unfinished run's percent done, or "so far" when it has no records figure
+        // Beside the status (an unfinished run's phase): its percent done, except while post-processing, or "so far"
+        // when it has no records figure
         const completion = run.completion;
+        const phase = run.phase();
         const title = Html.escape(`Summed from the chunks processed so far: ${run.progressText()}`);
         let soFar = '';
-        if (completion) {
+        if (completion && ( ! phase || phase.percent)) {
             soFar = ` <span class="completion-note completion-${completion.state}" title="${title}">${completion.text}%</span>`;
-        } else if (run.soFar) {
+        } else if (run.soFar && ! phase) {
             soFar = ` <span class="so-far-note" title="${title}">so far</span>`;
         }
         return `
             <tr data-href="${href}">
                 <td><a class="run-link tabular-nums" href="${href}">${Html.escape(RunFormat.dateTime(run.startedAt))}</a></td>
-                <td>${RunFormat.statusBadge(run.status)}${soFar}</td>
+                <td>${run.statusBadgeHtml()}${soFar}</td>
                 <td>${Html.escape(run.populationLabel)}${tags ? ` ${tags}` : ''}</td>
                 <td class="num">${number(run.records)}</td>
                 <td class="${figure}">${number(run.added)}</td>
@@ -791,7 +850,7 @@ class RunDetailView {
                 <div>
                     <h1 class="page-title run-title">
                         <span>Run of ${Html.escape(RunFormat.dateTime(run.startedAt))}</span>
-                        ${RunFormat.statusBadge(run.status)}
+                        ${run.statusBadgeHtml()}
                     </h1>
                     <p class="page-description">${run.facts.map(Html.escape).join(' &middot; ')}</p>
                     <p class="run-id">Run ID <code>${Html.escape(run.syncRunId)}</code></p>
