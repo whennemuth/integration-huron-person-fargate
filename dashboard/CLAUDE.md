@@ -154,7 +154,7 @@ The Lambda function serves two primary roles:
   settings); `200`, nothing is started
 - `POST /api/bulk-sync` - start a sync run, as the EventBridge schedule does (`BulkSync`,
   `src/services/BulkSync.ts`): `{ runType: 'full' | 'full-no-deactivations' | 'test', buid? (a test's,
-  and only a test's), bulkReset?, iterationLimit? (0-50, 0 a single task; default 10; always 0 for a test), parallelStart?,
+  and only a test's), bulkReset?, iterationLimit? (0-50, 0 a single task; default 10; always 0 for a test), parallelStart? (0 to the chunker service's most tasks, at most 20; refused for a test or a single task),
   overrideStalled? }`; `202` with what was started. A refused review
   or start is a `BulkSyncError` as `{ error, code }` (400 invalid, 403 production, 409 a run underway or stalled or a
   subscriber in `DRY_RUN`, 503 not configured)
@@ -401,7 +401,7 @@ characters: the Shibboleth construct names a bucket `<stack name>-context-config
   statistics table, the person history table (DynamoDB mode) and the chunks bucket
   (`lib/LandscapeResources.ts`). To start a run (Bulk sync) it may also invoke the chunker subscriber
   (`chunker-subscriber-<landscape>`, which resets the chunker's counters for a run's start) and read its and
-  the processor subscriber's configuration (their `DRY_RUN`); it writes nothing. All by deterministic name -
+  the processor subscriber's configuration (their `DRY_RUN`), and read the chunker service's most tasks (its scalable target, for Parallel start); it writes nothing. All by deterministic name -
   no CloudFormation imports from the pipeline stack.
 
 **Commands** (from the fargate root; `npm run deploy` deploys the pipeline and dashboard stacks):
@@ -687,10 +687,24 @@ routes above).
   sync (no deactivations), `person-delta`; a disabled Delta sync, since a source of only the people who changed
   doesn't exist yet; Test, one person by BUID through the person endpoint, `person-delta`), Bulk reset, and Custom
   settings: chunker tasks ("Chunks per task", 1-50, default 10, `BulkSyncRequest.CHUNKS_PER_TASK_DEFAULT`; or
-  "Single task", sent as `iterationLimit: 0`; a test is always a single task, whatever the form sends, since a chained chunker task would fetch the same person again: with bulk reset it got ahead of the first while that built the person cache, and the person was chunked twice, preview 2026-11-12; `BulkSyncRequest.parse()`; on the page, choosing Test checks Single task and locks both chunk modes, and choosing another run type unlocks them and restores the mode chosen before, kept on the fieldset as `data-chosen-mode`: `BulkSyncPage.lockChunkMode()`) and parallel start (0-20 chunker messages, standing for the Runner's `MESSAGES_TO_PREPOPULATE` and
-  `DESIRED_COUNT`; read-only at 0, and refused otherwise, until shared queue seeding is built:
-  `BulkSyncRequest.PARALLEL_START_ENABLED`). The defaults are the scheduled run's (`ScheduledRun`,
-  fargate `src/chunking/ScheduledRun.ts`).
+  "Single task", sent as `iterationLimit: 0`; a test is always a single task, whatever the form sends, since a chained chunker task would fetch the same person again: with bulk reset it got ahead of the first while that built the person cache, and the person was chunked twice, preview 2026-11-12; `BulkSyncRequest.parse()`; on the page, choosing Test checks Single task and locks both chunk modes, and choosing another run type unlocks them and restores the mode chosen before, kept on the fieldset as `data-chosen-mode`: `BulkSyncPage.lockChunkMode()`) and Parallel start (below). The
+  defaults are the scheduled run's (`ScheduledRun`, fargate `src/chunking/ScheduledRun.ts`).
+- **Parallel start** (`parallelStart`, 0 by default): how many chunker tasks start the run at once, standing for the
+  Runner's `MESSAGES_TO_PREPOPULATE` and `DESIRED_COUNT` together. 0 sends the chunker subscriber one message, and
+  auto-scaling adds tasks. N above 0 goes on the event, and the subscriber seeds the queue with N messages (offsets
+  a task's chunks apart) and sets the chunker service's desired count to N once its scale-in alarm has settled
+  (fargate `src/chunking/ParallelStart.ts`, shared with the Runner's queue seeding), so the start takes up to a few
+  minutes, which the review and the status panel say.
+  - **Its most** is the chunker service's most tasks (`DesiredCount.getMax()`, its scalable target's
+    `MaxCapacity`), capped at 20 (`parallelStartMax()`): `describe()` offers 0 to it, and `plan()`/`start()` refuse
+    more (`INVALID_REQUEST`). The Lambda has `application-autoscaling:DescribeScalableTargets` and the chunker
+    cluster and service names (`CHUNKER_CLUSTER_NAME`, `CHUNKER_SERVICE_NAME`, `lib/LandscapeResources.ts`) for
+    this; it changes nothing on the service itself. If the maximum can't be read, 20 is offered and the subscriber
+    refuses what the service can't run.
+  - **Refused** for a test (one person, one task) and with a single task (`iterationLimit` 0: seeded offsets are a
+    task's chunks apart). On the page it's held at 0 and locked while Test or Single task is chosen, and the value
+    chosen before is restored afterward (kept on its wrapper as `data-chosen-parallel`:
+    `BulkSyncPage.lockParallelStart()`); `readRequest()` sends 0 then whatever the select says.
 - **Bulk reset is one choice for both previous-state flags** (`ScheduledRun.previousStateFlags()`): checked sends
   `bulkReset: true, trustPreviousStorage: false`, unchecked `false, true`. The pipeline only acts on their
   combination, and a missing `trustPreviousStorage` reads as `false` (a reset), so both are always sent.
