@@ -39,7 +39,12 @@ export class BulkSyncError extends Error {
  * without them (person-delta, the pipeline's name for a run that deactivates no one; a source of only the people
  * who changed doesn't exist yet), or a test (one person, by BUID). A test is always person-delta: a run with
  * deactivations deactivates everyone missing from its source, and a one-person run's source holds only that person.
- * Bulk reset is one choice that sets both previous-state flags (ScheduledRun.previousStateFlags()).
+ * A test is also always a single chunker task (iterationLimit 0, as RunnerForSinglePerson sends): with chunks per task
+ * the chunker hands on to a next task at the next offset, which the person endpoint ignores, so the next task fetches
+ * the same person again. Without bulk reset the first task's chunk usually marks the end before the next task starts,
+ * and it cancels; with bulk reset the first task builds the person cache first, the next task gets ahead, and the
+ * person is chunked twice (preview, 2026-11-12). Bulk reset is one choice that sets both previous-state flags
+ * (ScheduledRun.previousStateFlags()).
  */
 export class BulkSyncRequest {
   private constructor(
@@ -100,8 +105,10 @@ export class BulkSyncRequest {
     if (parallelStart !== 0 && !BulkSyncRequest.PARALLEL_START_ENABLED) {
       throw invalid("parallelStart must be 0: starting with several chunker messages isn't available until shared queue seeding is built");
     }
+    // A test is a single chunker task, whatever chunks per task the form sent (see the class's comment)
+    const chunksPerTask = runType === 'test' ? 0 : iterationLimit as number;
     return new BulkSyncRequest(
-      runType as BulkSyncRunType, person, bulkReset as boolean, iterationLimit as number, parallelStart as number,
+      runType as BulkSyncRunType, person, bulkReset as boolean, chunksPerTask, parallelStart as number,
       overrideStalled as boolean
     );
   }
@@ -375,7 +382,7 @@ export class BulkSync implements BulkSyncService {
         : "The pipeline's name for a run that deactivates no one"),
       populationScope: form(request.buid ? 'single' : 'standard'),
       iterationLimit: form(request.iterationLimit, request.buid
-        ? 'Chunks per chunker task: not used by a test, whose source is one person'
+        ? 'A test is a single chunker task: a second task would fetch the same person again'
         : request.iterationLimit === 0
           ? 'A single chunker task fetches every chunk'
           : 'Chunks each chunker task fetches before it hands the rest on to a new task'),

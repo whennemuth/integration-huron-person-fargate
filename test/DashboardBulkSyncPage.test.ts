@@ -167,6 +167,22 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       expect(single).toContain('<option value="10" selected>10</option>');
     });
 
+    it('draws a test as a single task that can\'t be changed, keeping the chunk mode chosen for other runs', () => {
+      // Chunks per task (7) chosen, then Test: Single task checked and locked, the dropdown hidden but kept at 7
+      const test = BulkSyncView.formHtml(state(), { runType: 'test', buid: 'U1', custom: true, iterationLimit: 7 });
+      expect(test).toMatch(/value="perTask" disabled/);
+      expect(test).toMatch(/value="single" checked disabled/);
+      expect(test).toMatch(/data-bulk-chunks hidden/);
+      expect(test).toContain('<option value="7" selected>7</option>');
+      expect(test).toContain('data-chosen-mode="perTask"');
+      expect(test).toContain('A test reads one person, so it is always a single task.');
+      // Any other run type: both modes open, the chosen one checked
+      const full = BulkSyncView.formHtml(state(), { runType: 'full', custom: true, iterationLimit: 7 });
+      expect(full).toMatch(/value="perTask" checked>/);
+      expect(full).toMatch(/value="single">/);
+      expect(full).not.toMatch(/data-bulk-chunks hidden/);
+    });
+
     it('explains bulk reset in plain words', () => {
       const html = BulkSyncView.formHtml(state());
       expect(html).toContain('keeps a fingerprint of their record');
@@ -345,8 +361,9 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
         }
       });
       expect(BulkSyncPage.readRequest(fields({ runType: 'full', buid: 'U9' }))).toEqual({ runType: 'full', bulkReset: true, custom: false });
+      // A test is always a single task (iterationLimit 0), whatever the chunk mode and dropdown say
       expect(BulkSyncPage.readRequest(fields({ runType: 'test', buid: ' u123 ', custom: true, chunksPerTask: '3', overrideStalled: true }))).toEqual({
-        runType: 'test', buid: 'U123', bulkReset: true, iterationLimit: 3, parallelStart: 0, overrideStalled: true, custom: true
+        runType: 'test', buid: 'U123', bulkReset: true, iterationLimit: 0, parallelStart: 0, overrideStalled: true, custom: true
       });
       // A single task is iterationLimit 0, whatever the dropdown says
       expect(BulkSyncPage.readRequest(fields({ runType: 'full-no-deactivations', custom: true, chunkMode: 'single', chunksPerTask: '25' })))
@@ -371,6 +388,35 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       expect(custom.hidden).toBe(true);
       bulkPage.onChange({ target: { form, name: 'custom', checked: true } });
       expect(custom.hidden).toBe(false);
+    });
+
+    it("locks Single task while Test is chosen, and restores the user's chunk mode when another run type is", () => {
+      const { bulkPage } = page();
+      const chunks = new FakeElement();
+      const modes = new FakeElement();
+      modes.dataset.chosenMode = 'perTask';
+      const radios = [{ value: 'perTask', checked: true, disabled: false }, { value: 'single', checked: false, disabled: false }];
+      const form = {
+        elements: { chunkMode: radios },
+        querySelector: (selector: string) => ({ '[data-bulk-test]': new FakeElement(), '[data-bulk-chunks]': chunks, '[data-bulk-chunk-mode]': modes } as any)[selector]
+      };
+      const state = () => radios.map(radio => `${radio.value}:${radio.checked ? 'on' : 'off'}${radio.disabled ? ':locked' : ''}`);
+
+      bulkPage.onChange({ target: { form, name: 'runType', value: 'test' } });
+      expect(state()).toEqual(['perTask:off:locked', 'single:on:locked']);
+      expect(chunks.hidden).toBe(true);
+
+      bulkPage.onChange({ target: { form, name: 'runType', value: 'full' } });
+      expect(state()).toEqual(['perTask:on', 'single:off']);
+      expect(chunks.hidden).toBe(false);
+
+      // A mode the user chooses is the one restored after a test
+      bulkPage.onChange({ target: { form, name: 'chunkMode', value: 'single' } });
+      expect(modes.dataset.chosenMode).toBe('single');
+      bulkPage.onChange({ target: { form, name: 'runType', value: 'test' } });
+      bulkPage.onChange({ target: { form, name: 'runType', value: 'full-no-deactivations' } });
+      expect(state()).toEqual(['perTask:off', 'single:on']);
+      expect(chunks.hidden).toBe(true);
     });
   });
 });

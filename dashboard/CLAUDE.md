@@ -154,7 +154,7 @@ The Lambda function serves two primary roles:
   settings); `200`, nothing is started
 - `POST /api/bulk-sync` - start a sync run, as the EventBridge schedule does (`BulkSync`,
   `src/services/BulkSync.ts`): `{ runType: 'full' | 'full-no-deactivations' | 'test', buid? (a test's,
-  and only a test's), bulkReset?, iterationLimit? (0-50, 0 a single task; default 10), parallelStart?,
+  and only a test's), bulkReset?, iterationLimit? (0-50, 0 a single task; default 10; always 0 for a test), parallelStart?,
   overrideStalled? }`; `202` with what was started. A refused review
   or start is a `BulkSyncError` as `{ error, code }` (400 invalid, 403 production, 409 a run underway or stalled or a
   subscriber in `DRY_RUN`, 503 not configured)
@@ -687,7 +687,7 @@ routes above).
   sync (no deactivations), `person-delta`; a disabled Delta sync, since a source of only the people who changed
   doesn't exist yet; Test, one person by BUID through the person endpoint, `person-delta`), Bulk reset, and Custom
   settings: chunker tasks ("Chunks per task", 1-50, default 10, `BulkSyncRequest.CHUNKS_PER_TASK_DEFAULT`; or
-  "Single task", sent as `iterationLimit: 0`; a test ignores it) and parallel start (0-20 chunker messages, standing for the Runner's `MESSAGES_TO_PREPOPULATE` and
+  "Single task", sent as `iterationLimit: 0`; a test is always a single task, whatever the form sends, since a chained chunker task would fetch the same person again: with bulk reset it got ahead of the first while that built the person cache, and the person was chunked twice, preview 2026-11-12; `BulkSyncRequest.parse()`; on the page, choosing Test checks Single task and locks both chunk modes, and choosing another run type unlocks them and restores the mode chosen before, kept on the fieldset as `data-chosen-mode`: `BulkSyncPage.lockChunkMode()`) and parallel start (0-20 chunker messages, standing for the Runner's `MESSAGES_TO_PREPOPULATE` and
   `DESIRED_COUNT`; read-only at 0, and refused otherwise, until shared queue seeding is built:
   `BulkSyncRequest.PARALLEL_START_ENABLED`). The defaults are the scheduled run's (`ScheduledRun`,
   fargate `src/chunking/ScheduledRun.ts`).

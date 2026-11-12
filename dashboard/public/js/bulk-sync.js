@@ -93,13 +93,18 @@ class BulkSyncView {
     /**
      * The form, from the state (BulkSyncState) and the values last entered (so a refresh keeps them). A start the
      * server would refuse now is said above the button, which is then disabled; a stalled run instead offers the
-     * override. A test shows the BUID box; Custom settings shows the custom fields.
+     * override. A test shows the BUID box; Custom settings shows the custom fields. A test is always a single chunker
+     * task, so while Test is chosen, Single task is checked and the chunk mode can't be changed (the server makes a
+     * test a single task whatever is sent: BulkSyncRequest.parse()). The fieldset keeps the mode the user chose
+     * (data-chosen-mode), to restore when another run type is chosen.
      */
     static formHtml(state, values) {
         const {
             latestRun = {}, blocked, warnings = [], iterationLimit: chunks = { max: 50 }, parallelStart: parallel = { max: 20, enabled: false }
         } = state;
         const form = BulkSyncView.formValues(state, values);
+        const test = form.runType === 'test';
+        const single = form.singleTask || test;
         const stalled = latestRun.kind === 'stalled';
         const refused = blocked && blocked.code !== 'RUN_STALLED' ? blocked : undefined;
         const options = (from, to, selected) => {
@@ -151,23 +156,23 @@ class BulkSyncView {
                     hint: `How the run's work is divided up and started. Unchecked, the defaults are used: ${state.defaults.iterationLimit} chunks per task, and a start with one message.`
                 })}
                 <fieldset class="bulk-custom mb-3" data-bulk-custom aria-label="Custom settings"${form.custom ? '' : ' hidden'}>
-                    <fieldset class="mb-3">
+                    <fieldset class="mb-3" data-bulk-chunk-mode data-chosen-mode="${form.singleTask ? 'single' : 'perTask'}">
                         <legend class="form-label">Chunker tasks</legend>
                         <div class="form-text mt-0 mb-2">
-                            The source is read a chunk of people at a time, by chunker tasks. A test reads one person, so this doesn't apply to it.
+                            The source is read a chunk of people at a time, by chunker tasks. A test reads one person, so it is always a single task.
                         </div>
                         ${BulkSyncView.radioHtml({
-                            name: 'chunkMode', value: 'perTask', label: 'Chunks per task', checked: ! form.singleTask,
+                            name: 'chunkMode', value: 'perTask', label: 'Chunks per task', checked: ! single, disabled: test,
                             hint: 'Each task reads this many chunks, then hands the rest on to a new task, so several tasks share the work.'
                         })}
-                        <div class="bulk-chunks" data-bulk-chunks${form.singleTask ? ' hidden' : ''}>
+                        <div class="bulk-chunks" data-bulk-chunks${single ? ' hidden' : ''}>
                             <label class="visually-hidden" for="bulk-chunksPerTask">Chunks per task</label>
                             <select class="form-select bulk-number" name="chunksPerTask" id="bulk-chunksPerTask">
                                 ${options(1, chunks.max, form.chunksPerTask)}
                             </select>
                         </div>
                         ${BulkSyncView.radioHtml({
-                            name: 'chunkMode', value: 'single', label: 'Single task', checked: form.singleTask,
+                            name: 'chunkMode', value: 'single', label: 'Single task', checked: single, disabled: test,
                             hint: 'One task reads every chunk itself. With no other task to share the work, reading the source takes much longer.'
                         })}
                     </fieldset>
@@ -351,8 +356,8 @@ class BulkSyncPage {
 
     /**
      * The request a form's fields make. A BUID is sent only for a test, and the custom settings only when Custom
-     * settings is checked (otherwise the server uses its defaults). A single task is iterationLimit 0. custom says
-     * which, for redrawing the form.
+     * settings is checked (otherwise the server uses its defaults). A single task is iterationLimit 0, and a test is
+     * always a single task. custom says which, for redrawing the form.
      */
     static readRequest(form) {
         const fields = form.elements;
@@ -365,7 +370,7 @@ class BulkSyncPage {
             ...(runType === 'test' ? { buid } : {}),
             bulkReset: !! fields.bulkReset.checked,
             ...(custom ? {
-                iterationLimit: checked('chunkMode') === 'single' ? 0 : Number(fields.chunksPerTask.value),
+                iterationLimit: runType === 'test' || checked('chunkMode') === 'single' ? 0 : Number(fields.chunksPerTask.value),
                 parallelStart: Number(fields.parallelStart.value)
             } : {}),
             ...(fields.overrideStalled ? { overrideStalled: !! fields.overrideStalled.checked } : {}),
@@ -373,7 +378,11 @@ class BulkSyncPage {
         };
     }
 
-    /** Show the BUID box for a test, the custom fields while Custom settings is checked, and the chunks per task for that choice */
+    /**
+     * Show the BUID box for a test, the custom fields while Custom settings is checked, and the chunks per task for
+     * that choice. Choosing Test checks Single task and locks the chunk mode; choosing another run type unlocks it and
+     * restores the mode the user chose.
+     */
     onChange(event) {
         const form = event.target.form;
         if ( ! form) {
@@ -382,15 +391,34 @@ class BulkSyncPage {
         if (event.target.name === 'runType') {
             const test = form.querySelector('[data-bulk-test]');
             if (test) test.hidden = event.target.value !== 'test';
+            BulkSyncPage.lockChunkMode(form, event.target.value === 'test');
         }
         if (event.target.name === 'chunkMode') {
             const chunks = form.querySelector('[data-bulk-chunks]');
             if (chunks) chunks.hidden = event.target.value !== 'perTask';
+            const modes = form.querySelector('[data-bulk-chunk-mode]');
+            if (modes) modes.dataset.chosenMode = event.target.value;
         }
         if (event.target.name === 'custom') {
             const custom = form.querySelector('[data-bulk-custom]');
             if (custom) custom.hidden = ! event.target.checked;
         }
+    }
+
+    /**
+     * For a test, check Single task and lock both chunk modes (a test is always a single chunker task); otherwise
+     * unlock them and restore the mode the user chose (the fieldset's data-chosen-mode), with its dropdown.
+     */
+    static lockChunkMode(form, test) {
+        const radios = form.elements ? [...(form.elements.chunkMode || [])] : [];
+        const modes = form.querySelector('[data-bulk-chunk-mode]');
+        const chunks = form.querySelector('[data-bulk-chunks]');
+        const mode = test ? 'single' : ((modes && modes.dataset.chosenMode) || 'perTask');
+        for (const radio of radios) {
+            radio.disabled = test;
+            radio.checked = radio.value === mode;
+        }
+        if (chunks) chunks.hidden = mode !== 'perTask';
     }
 
     /** Load what a start would do, and, after a start, look for the run it started. Resolves true once shown */

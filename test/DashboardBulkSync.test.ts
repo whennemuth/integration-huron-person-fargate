@@ -55,6 +55,15 @@ describe('BulkSyncRequest', () => {
       .toMatchObject({ runType: 'test', population: 'person-delta', buid: 'U12345678' });
   });
 
+  it('makes a test a single chunker task, whatever chunks per task were sent', () => {
+    // A chained task would fetch the same person again; with bulk reset it got ahead of the first (preview, 2026-11-12)
+    expect(BulkSyncRequest.parse({ runType: 'test', buid: 'U12345678' }).iterationLimit).toBe(0);
+    expect(BulkSyncRequest.parse({ runType: 'test', buid: 'U12345678', iterationLimit: 10, bulkReset: true }).choices())
+      .toMatchObject({ iterationLimit: 0, bulkReset: true });
+    // An invalid value is still refused, as for any run type
+    expect(() => BulkSyncRequest.parse({ runType: 'test', buid: 'U12345678', iterationLimit: 51 })).toThrow('iterationLimit must be');
+  });
+
   it.each([
     [{}, "runType must be one of 'full', 'full-no-deactivations', 'test'"],
     [{ runType: 'delta' }, "runType must be one of 'full', 'full-no-deactivations', 'test'"],
@@ -146,12 +155,13 @@ describe('BulkSync', () => {
     });
   });
 
-  it('starts a test through the person endpoint, with a bulk reset and a custom iteration limit', async () => {
+  it('starts a test through the person endpoint, with a bulk reset, as a single chunker task whatever the form sent', async () => {
     const { bulkSync, functions } = service();
     const result = await bulkSync.start({ runType: 'test', buid: 'U12345678', bulkReset: true, iterationLimit: 4 });
+    // A next chunker task would fetch the same person again (the person endpoint ignores offsets), so none is chained
     expect(functions.invokeAsync).toHaveBeenCalledWith('chunker-subscriber-preview', expect.objectContaining({
       fetchPath: '/api/person?buid=U12345678', populationType: 'person-delta', bulkReset: true, trustPreviousStorage: false,
-      iterationLimit: 4
+      iterationLimit: 0
     }));
     expect(result.run.buid).toBe('U12345678');
   });
@@ -229,9 +239,12 @@ describe('BulkSync', () => {
       expect(plan.choices).toMatchObject({ runType: 'test', buid: 'U0000042', bulkReset: true, trustPreviousStorage: false });
       expect(plan.event).toEqual({
         baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/person?buid=U0000042', populationType: 'person-delta',
-        bulkReset: true, trustPreviousStorage: false, iterationLimit: 10, offset: 0,
+        bulkReset: true, trustPreviousStorage: false, iterationLimit: 0, offset: 0,
         processingMetadata: { processedAt: 'set when the run is started', processorVersion: '1.0.0' }
       });
+      // The review says why a test is one task
+      const iterationLimit = plan.settings.find(row => row.name === 'iterationLimit');
+      expect(iterationLimit).toMatchObject({ value: 0, source: 'form', note: 'A test is a single chunker task: a second task would fetch the same person again' });
     });
 
     it("lists every setting the manual Runner prints, then the deployed ones, each with where it's from", async () => {
