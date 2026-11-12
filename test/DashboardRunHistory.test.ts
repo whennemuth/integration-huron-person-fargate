@@ -154,8 +154,8 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       expect(run.durationMs).toBe(21 * 60_000);
       expect(run.facts).toEqual(['Full sync', '21 min so far']);
       expect(run.deactivationNote).toBe('Post-processing adds deletions');
-      // No end-of-chunking flag in its metadata, so it is still fetching: no estimate yet
-      expect(run.progressText(NOW)).toBe('6 of 15 chunks processed · last chunk finished 9 min ago · still fetching: no estimate until every record is fetched');
+      // No end-of-chunking flag in its metadata, so it is still fetching: no percent or estimate yet
+      expect(run.progressText(NOW)).toBe('6 chunks processed · last chunk finished 9 min ago · still fetching: no percent or estimate until every record is fetched');
     });
 
     it('says no chunk has finished, and gives no duration, for an unfinished run with none processed', () => {
@@ -163,7 +163,7 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
         progress: { chunksReported: 0, results: {}, totalErrors: 0, throttleCount: 0, errorsByStatus: {} } });
       expect(run.durationMs).toBeUndefined();
       expect(run.facts).toEqual(['Full sync']);
-      expect(run.progressText(NOW)).toBe('0 chunks processed · no chunk has finished yet');
+      expect(run.progressText(NOW)).toBe('0 chunks processed · no chunk has finished yet · still fetching: no percent or estimate until every record is fetched');
     });
 
     it('notes deletions to come only for an incomplete full sync, and ignores progress beside a summary', () => {
@@ -259,12 +259,15 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
 
   describe('percent done and estimated finish', () => {
     const MIN = 60_000;
-    /** An unfinished full sync that started at 02:00 (NOW is 02:30): processed of records, in chunks, the last at lastChunkAt */
+    /**
+     * An unfinished full sync that started at 02:00 (NOW is 02:30): chunks of its chunkCount processed, the last at
+     * lastChunkAt; processed is the people its processors sent to Huron (those that changed), which the percent ignores
+     */
     const unfinished = (params: {
-      processed: number; records?: number; chunks?: number; chunkCount?: number; lastChunkAt?: string; chunkingFinished?: boolean; status?: string
-    }) => {
+      processed?: number; records?: number; chunks?: number; chunkCount?: number; lastChunkAt?: string; chunkingFinished?: boolean; status?: string
+    } = {}) => {
       const {
-        processed, records = 14500, chunks = 6, chunkCount = 15, lastChunkAt = '2026-11-06T02:21:00.000Z', chunkingFinished = true, status = 'INCOMPLETE'
+        processed = 200, records = 14500, chunks = 6, chunkCount = 15, lastChunkAt = '2026-11-06T02:21:00.000Z', chunkingFinished = true, status = 'INCOMPLETE'
       } = params;
       return new RunView({
         syncRunId: '2026-11-06T02:00:00.000Z',
@@ -277,131 +280,158 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       });
     };
     const percent = (params: Parameters<typeof unfinished>[0]) => unfinished(params).completion;
+    /** Fetching is over, but the chunks written were never recorded */
+    const withoutChunkCount = () => new RunView({ ...incomplete, metadata: { ...incomplete.metadata, chunkCount: undefined, partialOrEmptyChunkEncountered: true } });
 
-    it('rounds the percent down to one decimal, so it reads 100.0 only when every fetched record is processed', () => {
-      expect(percent({ processed: 146473, records: 146673 })).toMatchObject({ text: '99.8', percent: 99.8, state: 'underway' });
-      expect(percent({ processed: 146672, records: 146673 })).toMatchObject({ text: '99.9', state: 'underway' });
-      expect(percent({ processed: 146673, records: 146673 })).toMatchObject({ text: '100.0', state: 'done' });
-      expect(percent({ processed: 150000, records: 146673 })).toMatchObject({ text: '100.0', processed: 146673 });
-      expect(percent({ processed: 1, records: 3 })).toMatchObject({ text: '33.3' });
-      expect(percent({ processed: 0, records: 3 })).toMatchObject({ text: '0.0' });
+    it('counts chunks processed of chunks written, rounded down to one decimal, so it reads 100.0 only when every chunk is processed', () => {
+      expect(percent({ chunks: 734, chunkCount: 735 })).toEqual({ percent: 99.8, text: '99.8', reported: 734, chunks: 735, state: 'underway' });
+      expect(percent({ chunks: 15 })).toMatchObject({ text: '100.0', state: 'done' });
+      expect(percent({ chunks: 16 })).toMatchObject({ text: '100.0', reported: 15 });
+      expect(percent({ chunks: 1, chunkCount: 3 })).toMatchObject({ text: '33.3' });
+      expect(percent({ chunks: 0 })).toMatchObject({ text: '0.0' });
     });
 
-    it("is never done while chunking continues, is failed for a failed run, and isn't given without records or for a summarized run", () => {
-      expect(percent({ processed: 14500, chunkingFinished: false })).toMatchObject({ text: '100.0', state: 'fetching' });
-      expect(percent({ processed: 1000, status: 'FAILED' })).toMatchObject({ state: 'failed' });
-      expect(percent({ processed: 1000, records: 0 })).toBeUndefined();
-      expect(new RunView({ ...incomplete, metadata: { ...incomplete.metadata, totalRecords: undefined } }).completion).toBeUndefined();
-      expect(new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: { processed: 14500 }, totalRecords: 14500 } }).completion).toBeUndefined();
+    it('counts a chunk once it is processed, however few of its people changed', () => {
+      // Preview's Test of one unchanged person: its one chunk processed, no one sent to Huron
+      expect(percent({ processed: 0, records: 1, chunks: 1, chunkCount: 1 })).toMatchObject({ text: '100.0', state: 'done' });
+      expect(percent({ processed: 0, chunks: 6 })).toMatchObject({ text: '40.0', state: 'underway' });
     });
 
-    it("estimates the finish from the run's rate so far, from its last chunk", () => {
-      // 6,000 in the 21 minutes to the last chunk; 8,500 to go at that rate is 29.75 minutes after it
-      const run = unfinished({ processed: 6000 });
-      const at = Date.parse('2026-11-06T02:50:45.000Z');
-      expect(run.estimate(NOW)).toEqual({ kind: 'estimate', at, inMs: 20.75 * MIN });
+    it("gives no percent while fetching, is failed for a failed run, and isn't given without chunk figures or for a summarized run", () => {
+      // The chunks written lag the chunks processed until fetching is over
+      expect(percent({ chunks: 16, chunkingFinished: false })).toEqual({ state: 'fetching', reported: 16 });
+      expect(percent({ status: 'FAILED' })).toMatchObject({ text: '40.0', state: 'failed' });
+      expect(percent({ status: 'FAILED', chunkingFinished: false })).toMatchObject({ text: '40.0', state: 'failed' });
+      expect(percent({ chunkCount: 0 })).toBeUndefined();
+      expect(withoutChunkCount().completion).toBeUndefined();
+      expect(new RunView({ ...incomplete, progress: { ...incomplete.progress, chunksReported: undefined } }).completion).toBeUndefined();
+      expect(new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: { processed: 14500 }, chunkCount: 15, chunksReported: 15 } }).completion).toBeUndefined();
+    });
+
+    it("estimates the finish from the run's chunk rate so far, from its last chunk", () => {
+      // 6 chunks in the 21 minutes to the last chunk; 9 to go at that rate is 31.5 minutes after it
+      const run = unfinished();
+      const at = Date.parse('2026-11-06T02:52:30.000Z');
+      expect(run.estimate(NOW)).toEqual({ kind: 'estimate', at, inMs: 22.5 * MIN });
       expect(run.progressText(NOW)).toBe(
-        `6 of 15 chunks processed · last chunk finished 9 min ago · processing should finish around ${RunFormat.clockTime(at, NOW)} (in about 21 min)`
+        `6 of 15 chunks processed · last chunk finished 9 min ago · processing should finish around ${RunFormat.clockTime(at, NOW)} (in about ${RunFormat.duration(22.5 * MIN)})`
       );
+      // However few people changed
+      expect(unfinished({ processed: 0 }).estimate(NOW)).toEqual({ kind: 'estimate', at, inMs: 22.5 * MIN });
     });
 
     it('calls a run stalled when no chunk has finished for 10 times its average gap, and at least 15 minutes', () => {
       const last = Date.parse('2026-11-06T02:21:00.000Z');
       // 6 chunks in 21 minutes: 3.5 minutes apart, so stalled after 35 minutes
-      expect(unfinished({ processed: 6000 }).estimate(last + 34 * MIN)?.kind).toBe('estimate');
-      expect(unfinished({ processed: 6000 }).estimate(last + 36 * MIN)).toEqual({ kind: 'stalled', sinceMs: 36 * MIN });
+      expect(unfinished().estimate(last + 34 * MIN)?.kind).toBe('estimate');
+      expect(unfinished().estimate(last + 36 * MIN)).toEqual({ kind: 'stalled', sinceMs: 36 * MIN });
       // 21 chunks in 21 minutes: 1 minute apart, but never stalled before 15 minutes
-      expect(unfinished({ processed: 6000, chunks: 21 }).estimate(last + 14 * MIN)?.kind).toBe('estimate');
-      expect(unfinished({ processed: 6000, chunks: 21 }).estimate(last + 16 * MIN)?.kind).toBe('stalled');
+      expect(unfinished({ chunks: 21, chunkCount: 40 }).estimate(last + 14 * MIN)?.kind).toBe('estimate');
+      expect(unfinished({ chunks: 21, chunkCount: 40 }).estimate(last + 16 * MIN)?.kind).toBe('stalled');
       // Preview's Nov 6 run: 734 of 735 chunks, the last 3 days before
       const nov6 = unfinished({ processed: 146473, records: 146673, chunks: 734, chunkCount: 735 });
       expect(nov6.progressText(last + 3 * 24 * 60 * MIN)).toBe('734 of 735 chunks processed · Stalled: no chunk has finished for 3 days');
+      expect(nov6.phase(last + 3 * 24 * 60 * MIN)).toEqual({ label: 'Stalled', tone: 'warning', percent: '99.8' });
     });
 
-    it('gives no estimate while still fetching, though such a run can stall', () => {
-      const fetching = unfinished({ processed: 6000, chunkingFinished: false });
+    it('gives no percent or estimate while still fetching, though such a run can stall', () => {
+      const fetching = unfinished({ chunks: 16, chunkingFinished: false });
       expect(fetching.estimate(NOW)).toBeUndefined();
-      expect(fetching.progressText(NOW)).toContain('still fetching: no estimate until every record is fetched');
+      expect(fetching.progressText(NOW)).toBe('16 chunks processed · last chunk finished 9 min ago · still fetching: no percent or estimate until every record is fetched');
       const stalled = fetching.progressText(Date.parse('2026-11-07T02:21:00.000Z'));
       expect(stalled).toContain('Stalled: no chunk has finished for 1 day');
       expect(stalled).not.toContain('still fetching');
     });
 
-    it('gives none once every fetched record is processed, for a failed run, or before a chunk has finished', () => {
-      const done = unfinished({ processed: 14500 });
+    it('gives none once every chunk is processed, for a failed run, or before a chunk has finished', () => {
+      const done = unfinished({ chunks: 15 });
       expect(done.estimate(NOW)).toBeUndefined();
-      expect(done.progressText(NOW)).toBe('6 of 15 chunks processed · last chunk finished 9 min ago · post-processing comes next');
-      const failed = unfinished({ processed: 6000, status: 'FAILED' });
+      expect(done.progressText(NOW)).toBe('15 of 15 chunks processed · last chunk finished 9 min ago · post-processing comes next');
+      const failed = unfinished({ status: 'FAILED' });
       expect(failed.estimate(Date.parse('2026-11-09T02:21:00.000Z'))).toBeUndefined();
       expect(failed.progressText(NOW)).toBe('6 of 15 chunks processed · last chunk finished 9 min ago');
-      expect(unfinished({ processed: 0, chunks: 0, lastChunkAt: undefined as any }).estimate(NOW)).toBeUndefined();
+      expect(unfinished({ chunks: 0, lastChunkAt: undefined as any }).estimate(NOW)).toBeUndefined();
     });
 
     it('shows the percent in the Processed tile in the color of its state, and marks the stalled notice and the estimate', () => {
-      const underway = RunDetailView.completionHtml(unfinished({ processed: 146473, records: 146673 }));
+      const underway = RunDetailView.completionHtml(unfinished({ chunks: 734, chunkCount: 735 }));
       expect(underway).toContain('stat-completion completion-underway');
       expect(underway).toContain('<span class="stat-completion-percent">99.8%</span>');
-      expect(underway).toContain(`of ${(146673).toLocaleString()} fetched</span>`);
+      expect(underway).toContain('of 735 chunks</span>');
+      expect(underway).toContain('aria-label="Percent of chunks processed"');
       expect(underway).toContain('aria-valuenow="99.8"');
       expect(underway).toContain('style="width: 99.8%"');
-      expect(RunDetailView.completionHtml(unfinished({ processed: 14500 }))).toContain('completion-done');
-      expect(RunDetailView.completionHtml(unfinished({ processed: 1, status: 'FAILED' }))).toContain('completion-failed');
+      expect(RunDetailView.completionHtml(unfinished({ chunks: 0, chunkCount: 1 }))).toContain('of 1 chunk</span>');
+      expect(RunDetailView.completionHtml(unfinished({ chunks: 15 }))).toContain('completion-done');
+      expect(RunDetailView.completionHtml(unfinished({ status: 'FAILED' }))).toContain('completion-failed');
+      expect(RunDetailView.completionHtml(unfinished({ chunkingFinished: false }))).toBe('');
       expect(RunDetailView.completionHtml(new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: {} } }))).toBe('');
 
       const last = Date.parse('2026-11-06T02:21:00.000Z');
-      expect(RunDetailView.progressHtml(unfinished({ processed: 6000 }), last + 3 * 24 * 60 * MIN)).toContain(
+      expect(RunDetailView.progressHtml(unfinished(), last + 3 * 24 * 60 * MIN)).toContain(
         '<span class="progress-stalled"><i class="fas fa-triangle-exclamation me-1" aria-hidden="true"></i>Stalled: no chunk has finished for 3 days</span>'
       );
-      expect(RunDetailView.progressHtml(unfinished({ processed: 6000 }), NOW)).toContain('<span class="progress-estimate"><i class="fas fa-clock me-1"');
+      expect(RunDetailView.progressHtml(unfinished(), NOW)).toContain('<span class="progress-estimate"><i class="fas fa-clock me-1"');
       expect(RunDetailView.progressHtml(new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: {} } }), NOW)).toBe('');
     });
 
-    it("shows a row's percent beside its phase, none while post-processing, and none for a summarized run", () => {
+    it("shows a row's percent beside its phase, none while fetching or post-processing, and none for a summarized run", () => {
       // The row is drawn at the real time, long after these runs' last chunk, so they read as stalled
-      const underway = RunListTable.rowHtml(unfinished({ processed: 146473, records: 146673 }));
+      const underway = RunListTable.rowHtml(unfinished({ chunks: 734, chunkCount: 735 }));
       expect(underway).toContain('<span class="completion-note completion-underway"');
+      expect(underway).toContain('>99.8%</span>');
       expect(underway).toContain('>Stalled</span>');
       expect(underway).not.toContain('Incomplete');
-      const done = RunListTable.rowHtml(unfinished({ processed: 14500 }));
+      const done = RunListTable.rowHtml(unfinished({ chunks: 15 }));
       expect(done).toContain('>Stalled</span>');
       expect(done).toContain('>100.0%</span>');
+      const fetching = RunListTable.rowHtml(unfinished({ chunkingFinished: false }));
+      expect(fetching).toContain('>Stalled</span>');
+      expect(fetching).not.toContain('completion-note');
+      expect(fetching).not.toContain('so-far-note');
       expect(RunListTable.rowHtml(new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: {} } }))).not.toContain('completion-note');
     });
 
     describe('phase', () => {
       const last = Date.parse('2026-11-06T02:21:00.000Z');
 
-      it('says what an unfinished run is doing, with its percent except while post-processing', () => {
-        expect(unfinished({ processed: 6000, chunkingFinished: false }).phase(NOW)).toEqual({ label: 'Fetching', tone: 'warning', percent: '41.3' });
-        expect(unfinished({ processed: 6000 }).phase(NOW)).toEqual({ label: 'Processing', tone: 'warning', percent: '41.3' });
-        expect(unfinished({ processed: 14500 }).phase(NOW)).toEqual({ label: 'Post-processing', tone: 'warning' });
-        // 6 chunks in 21 minutes: stalled after 35 minutes without one
-        expect(unfinished({ processed: 6000 }).phase(last + 36 * MIN)).toEqual({ label: 'Stalled', tone: 'warning', percent: '41.3' });
+      it('says what an unfinished run is doing, with its percent while processing', () => {
+        expect(unfinished({ chunkingFinished: false }).phase(NOW)).toEqual({ label: 'Fetching', tone: 'warning' });
+        expect(unfinished().phase(NOW)).toEqual({ label: 'Processing', tone: 'warning', percent: '40.0' });
+        expect(unfinished({ chunks: 15 }).phase(NOW)).toEqual({ label: 'Post-processing', tone: 'warning' });
+        // 6 chunks in 21 minutes: stalled after 35 minutes without one; no percent if it stalled while fetching
+        expect(unfinished().phase(last + 36 * MIN)).toEqual({ label: 'Stalled', tone: 'warning', percent: '40.0' });
+        expect(unfinished({ chunkingFinished: false }).phase(last + 36 * MIN)).toEqual({ label: 'Stalled', tone: 'warning' });
+      });
+
+      it('reads Post-processing once the last chunk is processed, though no one changed', () => {
+        expect(unfinished({ processed: 0, records: 1, chunks: 1, chunkCount: 1 }).phase(NOW)).toEqual({ label: 'Post-processing', tone: 'warning' });
+        expect(unfinished({ processed: 0, chunks: 15 }).phase(NOW)).toEqual({ label: 'Post-processing', tone: 'warning' });
       });
 
       it('calls a run waiting on post-processing stalled by the same rule, so a run never post-processed stops reading Post-processing', () => {
-        const done = unfinished({ processed: 14500 });
+        // 6 chunks in 21 minutes, all processed: stalled after 35 minutes
+        const done = unfinished({ chunks: 6, chunkCount: 6 });
         expect(done.phase(last + 34 * MIN)?.label).toBe('Post-processing');
         expect(done.phase(last + 36 * MIN)).toEqual({ label: 'Stalled', tone: 'warning', percent: '100.0' });
         expect(done.progressText(last + 3 * 24 * 60 * MIN))
-          .toBe("6 of 15 chunks processed · Stalled: post-processing hasn't finished 3 days after the last chunk");
+          .toBe("6 of 6 chunks processed · Stalled: post-processing hasn't finished 3 days after the last chunk");
         // No estimate for it either way
         expect(done.estimate(last + 36 * MIN)).toBeUndefined();
       });
 
-      it('leaves a finished or failed run, or one without a percent, to its status', () => {
+      it('leaves a finished or failed run, or one without chunk figures, to its status', () => {
         expect(new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: {} } }).phase(NOW)).toBeUndefined();
-        expect(unfinished({ processed: 6000, status: 'FAILED' }).phase(NOW)).toBeUndefined();
-        expect(new RunView({ ...incomplete, metadata: { ...incomplete.metadata, totalRecords: undefined } }).phase(NOW)).toBeUndefined();
+        expect(unfinished({ status: 'FAILED' }).phase(NOW)).toBeUndefined();
+        expect(withoutChunkCount().phase(NOW)).toBeUndefined();
       });
 
       it('draws the phase as the status badge, never green while unfinished', () => {
-        expect(unfinished({ processed: 14500 }).statusBadgeHtml(NOW)).toContain('status-badge-warning');
-        expect(unfinished({ processed: 14500 }).statusBadgeHtml(NOW)).toContain('>Post-processing<');
-        expect(unfinished({ processed: 6000, status: 'FAILED' }).statusBadgeHtml(NOW)).toContain('>Failed<');
+        expect(unfinished({ chunks: 15 }).statusBadgeHtml(NOW)).toContain('status-badge-warning');
+        expect(unfinished({ chunks: 15 }).statusBadgeHtml(NOW)).toContain('>Post-processing<');
+        expect(unfinished({ status: 'FAILED' }).statusBadgeHtml(NOW)).toContain('>Failed<');
         expect(new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: {} } }).statusBadgeHtml(NOW)).toContain('status-badge-success');
-        const withoutRecords = new RunView({ ...incomplete, metadata: { ...incomplete.metadata, totalRecords: undefined } });
-        expect(withoutRecords.statusBadgeHtml(NOW)).toContain('>Incomplete<');
+        expect(withoutChunkCount().statusBadgeHtml(NOW)).toContain('>Incomplete<');
       });
     });
 
@@ -455,14 +485,17 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
 
     it("mutes an unfinished run's figures in its row and says they are so far, leaving its records alone", () => {
       const row = RunListTable.rowHtml(new RunView(incomplete));
-      // Its percent done (6,000 of 14,500 fetched so far) beside the status, the progress line as its hover text
-      expect(row).toContain('class="completion-note completion-fetching"');
-      expect(row).toContain('>41.3%</span>');
-      expect(row).toContain('Summed from the chunks processed so far: 6 of 15 chunks processed');
-      // Without a records figure there is no percent, so it says "so far"
-      const withoutRecords = RunListTable.rowHtml(new RunView({ ...incomplete, metadata: { ...incomplete.metadata, totalRecords: undefined } }));
-      expect(withoutRecords).toContain('class="so-far-note"');
-      expect(withoutRecords).not.toContain('completion-note');
+      // Still fetching, so no percent beside its phase
+      expect(row).not.toContain('completion-note');
+      // Once fetching is over: its percent done (6 of 15 chunks), the progress line as its hover text
+      const processing = RunListTable.rowHtml(new RunView({ ...incomplete, metadata: { ...incomplete.metadata, partialOrEmptyChunkEncountered: true } }));
+      expect(processing).toContain('class="completion-note completion-underway"');
+      expect(processing).toContain('>40.0%</span>');
+      expect(processing).toContain('Summed from the chunks processed so far: 6 of 15 chunks processed');
+      // Without chunk figures there is no phase or percent, so it says "so far"
+      const withoutChunks = RunListTable.rowHtml(new RunView({ ...incomplete, progress: { ...incomplete.progress, chunksReported: undefined } }));
+      expect(withoutChunks).toContain('class="so-far-note"');
+      expect(withoutChunks).not.toContain('completion-note');
       expect(row.match(/class="num so-far"/g)).toHaveLength(5);
       expect(row).toContain(`<td class="num">${(14500).toLocaleString()}</td>`);
       expect(row).toContain('<td class="num so-far">21 min</td>');
@@ -477,9 +510,12 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       expect(tiles).toContain('Processed so far');
       expect(tiles).toContain('Deactivated so far');
       expect(tiles).toContain('<div class="stat-note">Post-processing adds deletions</div>');
-      expect(tiles).toContain('<p class="stat-progress">6 of 15 chunks processed · last chunk finished 9 min ago · still fetching');
-      expect(tiles).toContain(`of ${(14500).toLocaleString()} fetched so far`);
-      expect(tiles.match(/stat-completion /g)).toHaveLength(1);
+      expect(tiles).toContain('<p class="stat-progress">6 chunks processed · last chunk finished 9 min ago · still fetching');
+      // No percent while fetching; once fetching is over, of how many chunks
+      expect(tiles).not.toContain('stat-completion');
+      const processing = RunDetailView.tilesHtml(new RunView({ ...incomplete, metadata: { ...incomplete.metadata, partialOrEmptyChunkEncountered: true } }), NOW);
+      expect(processing).toContain('of 15 chunks</span>');
+      expect(processing.match(/stat-completion /g)).toHaveLength(1);
       expect(RunDetailView.noteHtml(new RunView(incomplete))).toContain('summed from the chunks processed so far');
 
       const finished = RunDetailView.tilesHtml(new RunView({ ...incomplete, status: 'SUCCEEDED', summary: { results: {} } }), NOW);
@@ -490,9 +526,14 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
     it("lists an unfinished run's known facts: chunks processed, last chunk, duration so far", () => {
       const view = Object.assign(Object.create(RunDetailView.prototype), { run: new RunView(incomplete), capabilities: {} });
       const facts = Object.fromEntries(view.summaryFacts());
+      // Still fetching: the chunks written lag those processed, so only those processed so far
       expect(facts).toMatchObject({
-        Chunks: '6 of 15 processed', Duration: '21 min so far', Succeeded: (5990).toLocaleString(), 'Throttled requests': '4'
+        Chunks: '6 processed so far', Duration: '21 min so far', Succeeded: (5990).toLocaleString(), 'Throttled requests': '4'
       });
+      const processing = Object.assign(Object.create(RunDetailView.prototype), {
+        run: new RunView({ ...incomplete, metadata: { ...incomplete.metadata, partialOrEmptyChunkEncountered: true } }), capabilities: {}
+      });
+      expect(Object.fromEntries(processing.summaryFacts()).Chunks).toBe('6 of 15 processed');
       expect(facts['Last chunk finished']).toBe(RunFormat.dateTime('2026-11-06T02:21:00.000Z', { seconds: true }));
       expect(facts).not.toHaveProperty('Dry run');
     });
@@ -552,6 +593,10 @@ describe('run-history.js against the dashboard routes and mock run history', () 
     const sum = (field: string) => chunks.reduce((total: number, chunk: any) => total + (chunk[field] ?? 0), 0);
     expect([underway.processed, underway.added, underway.updated, underway.errors])
       .toEqual([sum('totalRecords'), sum('addedCount'), sum('updatedCount'), sum('totalErrors')]);
+    // As in a real nightly run, few of its people changed (all a processor counts), but its percent counts chunks
+    expect(underway.processed).toBeLessThan(underway.records / 10);
+    expect(underway.completion).toMatchObject({ state: 'underway', reported: chunks.length, chunks: underway.chunkCount });
+    expect(underway.completion.percent).toBeGreaterThan(50);
     const page = await api.run(underway.syncRunId);
     expect([page.processed, page.added, page.updated, page.deactivated, page.errors, page.durationMs])
       .toEqual([underway.processed, underway.added, underway.updated, underway.deactivated, underway.errors, underway.durationMs]);

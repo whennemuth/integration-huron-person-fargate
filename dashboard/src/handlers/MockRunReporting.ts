@@ -191,8 +191,9 @@ export class MockRunCatalog {
         .filter(([, count]) => (count as number) > 0)) as Record<number, number>;
       const totalErrors = Object.values(errorsByStatus).reduce((sum, count) => sum + count, 0);
       const throttleCount = errorsByStatus[429] ?? 0;
-      const totalRecords = share(spec.totalRecords, chunk);
       const failureCount = totalErrors - throttleCount;
+      // As a processor reports it: only the people sent to Huron (those that changed), not everyone in the chunk
+      const totalRecords = share(spec.added, chunk) + share(spec.updated, chunk) + failureCount;
       return {
         integrationTimestamp: syncRunId,
         eventType: `STATISTICS-chunk-${chunkId}`,

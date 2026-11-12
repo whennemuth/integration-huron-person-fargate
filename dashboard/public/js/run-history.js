@@ -299,38 +299,48 @@ class RunView {
     }
 
     /**
-     * How much of an unfinished run is done: processed so far as a percent of the records fetched, rounded down to
-     * one decimal (so it reads 100.0 only when every fetched record is processed) and capped at 100. Its state says
-     * how to read it: done (every fetched record processed, and chunking has finished), underway, fetching (the
-     * chunker hasn't found the end of the source records, so the records fetched are still growing) or failed (a
-     * run marked failed, which won't go on). Undefined for a summarized run, or one without a records figure.
+     * How much of an unfinished run is done, counted in chunks: those processed as a percent of those written,
+     * rounded down to one decimal (so it reads 100.0 only when every chunk is processed) and capped at 100. A chunk
+     * counts once its processor finishes, however many of its people changed: the processors' own figure counts
+     * only the people sent to Huron, so a run where few people changed would never look done by it. Its state says
+     * how to read it: done (every chunk processed, and chunking has finished), underway, fetching or failed (a run
+     * marked failed, which won't go on). While fetching there is no percent (no percent, text or chunks): the total
+     * isn't known, and the chunks written are added up only as each chunker task finishes, so they lag the chunks
+     * processed. Undefined for a summarized run, or once fetching is over without a chunks-written figure.
+     * @returns {{ state: string, reported: number, percent?: number, text?: string, chunks?: number } | undefined}
      */
     get completion() {
-        if ( ! this.soFar || ! RunFormat.isNumber(this.records) || Number(this.records) <= 0 || ! RunFormat.isNumber(this.processed)) {
+        if ( ! this.soFar || ! RunFormat.isNumber(this.chunksReported)) {
             return undefined;
         }
-        const records = Number(this.records);
-        const processed = Math.min(Number(this.processed), records);
+        const failed = this.status === 'FAILED';
+        if ( ! failed && ! this.chunkingFinished) {
+            return { state: 'fetching', reported: Number(this.chunksReported) };
+        }
+        if ( ! RunFormat.isNumber(this.chunkCount) || Number(this.chunkCount) <= 0) {
+            return undefined;
+        }
+        const chunks = Number(this.chunkCount);
+        const reported = Math.min(Number(this.chunksReported), chunks);
         // Whole tenths of a percent, rounded down: integer arithmetic, so no float can round up to 100.0
-        const tenths = Math.floor(processed * 1000 / records);
+        const tenths = Math.floor(reported * 1000 / chunks);
         let state = 'underway';
-        if (this.status === 'FAILED') state = 'failed';
-        else if ( ! this.chunkingFinished) state = 'fetching';
+        if (failed) state = 'failed';
         else if (tenths === 1000) state = 'done';
-        return { percent: tenths / 10, text: (tenths / 10).toFixed(1), processed, records, state };
+        return { percent: tenths / 10, text: (tenths / 10).toFixed(1), reported, chunks, state };
     }
 
     /**
      * When an unfinished run's processing should finish, or that it has stalled. The rate is the run's so far
-     * (processed ÷ time from its start to its last chunk), applied to the records still to process, from the last
-     * chunk's end. Stalled when no chunk has finished for STALL_FACTOR times the average gap between chunks, and at
+     * (chunks processed ÷ time from its start to its last chunk), applied to the chunks still to process, from the
+     * last chunk's end. Stalled when no chunk has finished for STALL_FACTOR times the average gap between chunks, and at
      * least MIN_STALL_MS. Neither for a run that is done or failed, or before any chunk has finished; while chunking
      * continues a run can stall, but has no estimate, since its total isn't known yet.
      * @returns {{ kind: 'estimate', at: number, inMs: number } | { kind: 'stalled', sinceMs: number } | undefined}
      */
     estimate(now = Date.now()) {
         const completion = this.completion;
-        if ( ! completion || ! ['underway', 'fetching'].includes(completion.state) || ! (completion.processed > 0)) {
+        if ( ! completion || ! ['underway', 'fetching'].includes(completion.state) || ! (completion.reported > 0)) {
             return undefined;
         }
         const stalledFor = this.stalledFor(now);
@@ -345,7 +355,7 @@ class RunView {
         if ( ! Number.isFinite(started) || ! Number.isFinite(last) || last <= started) {
             return undefined;
         }
-        const at = last + (completion.records - completion.processed) * (last - started) / completion.processed;
+        const at = last + (completion.chunks - completion.reported) * (last - started) / completion.reported;
         return { kind: 'estimate', at, inMs: Math.max(at - now, 0) };
     }
 
@@ -372,10 +382,10 @@ class RunView {
 
     /**
      * What an unfinished run is doing, shown as its status in place of "Incomplete": Fetching (the chunker hasn't
-     * found the end of the source), Processing, Post-processing (every fetched record processed; deactivations and
-     * the summary come next) or Stalled; with its percent done, except while post-processing. All amber: green is
-     * kept for a finished run. Undefined for a summarized or failed run, or one without a percent (no records
-     * figure), which keep their status.
+     * found the end of the source), Processing, Post-processing (every chunk processed; deactivations and the
+     * summary come next) or Stalled; with its percent done while processing, or stalled after fetching. All amber:
+     * green is kept for a finished run. Undefined for a summarized or failed run, or one without a completion (no
+     * chunk figures), which keep their status.
      * @returns {{ label: string, tone: string, percent?: string } | undefined}
      */
     phase(now = Date.now()) {
@@ -385,10 +395,10 @@ class RunView {
         }
         const tone = 'warning';
         if (this.stalledFor(now) !== undefined) {
-            return { label: 'Stalled', tone, percent: completion.text };
+            return completion.text ? { label: 'Stalled', tone, percent: completion.text } : { label: 'Stalled', tone };
         }
         if (completion.state === 'fetching') {
-            return { label: 'Fetching', tone, percent: completion.text };
+            return { label: 'Fetching', tone };
         }
         if (completion.state === 'done') {
             return { label: 'Post-processing', tone };
@@ -412,13 +422,14 @@ class RunView {
             return undefined;
         }
         const reported = RunFormat.number(this.chunksReported);
+        const completion = this.completion;
+        // Of how many only once fetching is over: until then the chunks written lag the chunks processed
         const parts = [{
-            text: RunFormat.isNumber(this.chunkCount)
-                ? `${reported} of ${RunFormat.number(this.chunkCount)} chunks processed`
+            text: completion && RunFormat.isNumber(completion.chunks)
+                ? `${reported} of ${RunFormat.number(completion.chunks)} chunks processed`
                 : `${reported} ${Number(this.chunksReported) === 1 ? 'chunk' : 'chunks'} processed`
         }];
         const estimate = this.estimate(now);
-        const completion = this.completion;
         const stalledFor = this.stalledFor(now);
         const waitingOnPostProcessing = completion && completion.state === 'done';
         if (stalledFor !== undefined && waitingOnPostProcessing) {
@@ -436,7 +447,7 @@ class RunView {
                 kind: 'estimate'
             });
         } else if (completion && completion.state === 'fetching' && ! estimate) {
-            parts.push({ text: 'still fetching: no estimate until every record is fetched' });
+            parts.push({ text: 'still fetching: no percent or estimate until every record is fetched' });
         } else if (completion && completion.state === 'done') {
             parts.push({ text: 'post-processing comes next' });
         }
@@ -730,13 +741,13 @@ class RunListTable {
         const tags = run.tags.map(Html.tag).join(' ');
         const number = RunFormat.number;
         const figure = run.soFar ? 'num so-far' : 'num';
-        // Beside the status (an unfinished run's phase): its percent done, except while post-processing, or "so far"
-        // when it has no records figure
+        // Beside the status (an unfinished run's phase): its percent done, except while fetching or post-processing,
+        // or "so far" when it has no chunk figures
         const completion = run.completion;
         const phase = run.phase();
         const title = Html.escape(`Summed from the chunks processed so far: ${run.progressText()}`);
         let soFar = '';
-        if (completion && ( ! phase || phase.percent)) {
+        if (completion && completion.text && ( ! phase || phase.percent)) {
             soFar = ` <span class="completion-note completion-${completion.state}" title="${title}">${completion.text}%</span>`;
         } else if (run.soFar && ! phase) {
             soFar = ` <span class="so-far-note" title="${title}">so far</span>`;
@@ -914,22 +925,22 @@ class RunDetailView {
     }
 
     /**
-     * An unfinished run's percent done, for its Processed tile: the percent, of how many records fetched ("so
-     * far" while chunking continues), and a bar, in the color of its state. None without a percent.
+     * An unfinished run's percent done, for its Processed tile: the percent, of how many chunks, and a bar, in the
+     * color of its state. None without a percent (while fetching, too).
      */
     static completionHtml(run) {
         const completion = run.completion;
-        if ( ! completion) {
+        if ( ! completion || ! completion.text) {
             return '';
         }
-        const fetched = `of ${RunFormat.number(completion.records)} fetched${completion.state === 'fetching' ? ' so far' : ''}`;
+        const of = `of ${RunFormat.number(completion.chunks)} ${completion.chunks === 1 ? 'chunk' : 'chunks'}`;
         return `
             <div class="stat-completion completion-${completion.state}">
                 <div class="stat-completion-text">
                     <span class="stat-completion-percent">${completion.text}%</span>
-                    <span class="stat-completion-of">${Html.escape(fetched)}</span>
+                    <span class="stat-completion-of">${Html.escape(of)}</span>
                 </div>
-                <div class="stat-completion-bar" role="progressbar" aria-label="Percent of fetched records processed"
+                <div class="stat-completion-bar" role="progressbar" aria-label="Percent of chunks processed"
                      aria-valuemin="0" aria-valuemax="100" aria-valuenow="${completion.text}">
                     <span style="width: ${completion.text}%"></span>
                 </div>
@@ -1079,9 +1090,14 @@ class RunDetailView {
     summaryFacts() {
         const run = this.run;
         const number = RunFormat.number;
-        const chunks = RunFormat.isNumber(run.chunksReported) && RunFormat.isNumber(run.chunkCount)
-            ? `${number(run.chunksReported)} of ${number(run.chunkCount)} ${run.soFar ? 'processed' : 'reported'}`
-            : number(run.chunkCount);
+        // While fetching, the chunks written lag the chunks processed: only those processed so far
+        const fetching = run.completion && run.completion.state === 'fetching';
+        let chunks = number(run.chunkCount);
+        if (fetching) {
+            chunks = `${number(run.chunksReported)} processed so far`;
+        } else if (RunFormat.isNumber(run.chunksReported) && RunFormat.isNumber(run.chunkCount)) {
+            chunks = `${number(run.chunksReported)} of ${number(run.chunkCount)} ${run.soFar ? 'processed' : 'reported'}`;
+        }
         const facts = [
             ['Started', RunFormat.dateTime(run.startedAt, { seconds: true })],
             ['Completed', run.completedAt ? RunFormat.dateTime(run.completedAt, { seconds: true }) : 'Not recorded'],

@@ -114,9 +114,11 @@ describe.each([false, true])('overview.js and system-status.js (minified: %s)', 
       expect(html).toContain('Added so far');
       expect(html).toContain((6000).toLocaleString());
       expect(html).toContain('6 of 15 chunks processed · last chunk finished 10 min ago');
-      // 6,000 of 14,500, and at its rate so far (6,000 in the 110 minutes to its last chunk) about 2 h 26 min to go
-      expect(html).toContain('<span class="stat-completion-percent">41.3%</span>');
-      expect(html).toContain('(in about 2 h 26 min)');
+      // 6 of 15 chunks, and at its rate so far (6 chunks in the 110 minutes to its last chunk) the other 9 take
+      // 165 minutes from it: about 2 h 35 min to go
+      expect(html).toContain('<span class="stat-completion-percent">40.0%</span>');
+      expect(html).toContain('of 15 chunks</span>');
+      expect(html).toContain('(in about 2 h 35 min)');
     });
 
     it('says when a run that has not finished started, and why it failed', () => {
