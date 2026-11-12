@@ -216,12 +216,16 @@ In each `context/context.<landscape>.json` (switch the active one with `./contex
 - `isDefault` (optional, default `false`) marks the default landscape, whose dashboard stack also
   redirects the dashboard domain to it. Set it on one landscape only. `LABEL` (optional) is the
   landscape's name in the landscape picker.
+- `LANDSCAPE_TONE` (optional) tints the landscape's name in the dashboard's top bar, so it's clear
+  which landscape you're in: `production` (red), `test` (amber) or `mock` (gray). When it's unset, a
+  mock landscape (`mock`, `mock1`, ...) is gray and any other landscape is untinted.
 
 Synth (`npm run synth`, or any deploy) checks these and fails when:
 - the subdomain doesn't start with the landscape name;
 - the subdomain isn't within the hosted zone, or the hosted zone or certificate is missing;
 - the default landscape's certificate doesn't cover the dashboard domain;
-- `isDefault` is `true` while another landscape is already the default.
+- `isDefault` is `true` while another landscape is already the default;
+- `LANDSCAPE_TONE` is set to anything but `production`, `test` or `mock`.
 
 If an A record for a hostname already exists and this stack didn't create it (its
 `/route53/arecords/<name>` SSM parameter names another stack, or there is none), synth warns and

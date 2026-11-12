@@ -13,6 +13,7 @@ import { getDashboardStackName } from '../dashboard/lib/DashboardStacks';
 
 const makeLandscape = (storage: 's3' | 'dynamodb', withDashboard = true): LandscapeContext => ({
   STACK_ID: 'huron-person-fargate-processor',
+  ITEMS_PER_CHUNK: 200,
   ACCOUNT: '111111111111',
   REGION: 'us-east-2',
   S3: { chunksBucket: 'huron-person-chunks' },
@@ -37,7 +38,20 @@ describe('landscapeResources', () => {
       statisticsTableName: 'huron-person-fargate-processor-statistics-mock',
       personHistoryTableName: 'huron-person-fargate-processor-person-history-mock',
       chunksBucketName: 'huron-person-chunks-mock',
+      chunkerFunctionName: 'chunker-subscriber-mock',
+      processorSubscriberFunctionName: 'processor-subscriber-mock',
+      pipelineStackId: 'huron-person-fargate-processor',
+      itemsPerChunk: 200,
     });
+  });
+
+  it("takes none of a start's choices from the context: not its chunksPerTask, nor its previous-state flags", () => {
+    const resources = landscapeResources({
+      ...makeLandscape('dynamodb'), ECS: { chunkerService: { chunksPerTask: 3 } }, BULK_RESET: true, TRUST_PREVIOUS_STORAGE: true
+    } as any);
+    expect(resources).not.toHaveProperty('chunksPerTask');
+    expect(resources).not.toHaveProperty('bulkReset');
+    expect(resources).not.toHaveProperty('trustPreviousStorage');
   });
 
   it('has no person history table in S3 mode', () => {
@@ -59,16 +73,18 @@ describe('getDashboardStackName', () => {
 });
 
 describe('FunctionUrlOrigin', () => {
-  const synth = (storage: 's3' | 'dynamodb', dashboardOverrides: Record<string, any> = {}) => {
+  const synthWithOrigin = (storage: 's3' | 'dynamodb', dashboardOverrides: Record<string, any> = {}) => {
     // No stack is bundled, so the Lambda entry is not built (no esbuild or generated templates needed)
     const app = new App({ context: { 'aws:cdk:bundling-stacks': [] } });
     const stack = new Stack(app, 'test-stack', { env: { account: '111111111111', region: 'us-east-2' } });
     const landscape = makeLandscape(storage);
     const settings = { ...landscape.DASHBOARD, ...dashboardOverrides } as unknown as DashboardSettings;
     const context: DashboardContext = toDashboardContext(landscape, settings);
-    new FunctionUrlOrigin({ stack, context, landscapeResources: landscapeResources(landscape) });
-    return Template.fromStack(stack);
+    const origin = new FunctionUrlOrigin({ stack, context, landscapeResources: landscapeResources(landscape) });
+    return { stack, origin, template: Template.fromStack(stack) };
   };
+  const synth = (storage: 's3' | 'dynamodb', dashboardOverrides: Record<string, any> = {}) =>
+    synthWithOrigin(storage, dashboardOverrides).template;
 
   it('points the Lambda at the landscape resources', () => {
     synth('dynamodb').hasResourceProperties('AWS::Lambda::Function', {
@@ -105,12 +121,39 @@ describe('FunctionUrlOrigin', () => {
     expect(actions).toEqual(expect.arrayContaining([
       'secretsmanager:GetSecretValue', 'dynamodb:Query', 'dynamodb:GetItem', 's3:GetObject', 's3:ListBucket'
     ]));
+    // No writes: starting a run invokes the chunker subscriber, which resets the chunker's counters itself
     expect(actions.some((a: string) => /^(dynamodb:(Put|Update|Delete|BatchWrite)|s3:(Put|Delete))/.test(a))).toBe(false);
 
     const resources = JSON.stringify(statements.map((s: any) => s.Resource));
     expect(resources).toContain('table/huron-person-fargate-processor-statistics-mock/index/*');
     expect(resources).toContain('table/huron-person-fargate-processor-person-history-mock');
     expect(resources).toContain(':::huron-person-chunks-mock/*');
+    expect(resources).not.toContain('atomic-counter');
+  });
+
+  it('may start a run as the schedule does: invoke the chunker subscriber, read both subscribers, nothing else', () => {
+    const template = synth('dynamodb');
+    const statements = Object.values(template.findResources('AWS::IAM::Policy'))
+      .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement)
+      .filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('lambda:')));
+    const resourcesOf = (action: string) => JSON.stringify(statements.filter((s: any) => [s.Action].flat().includes(action)).map((s: any) => s.Resource));
+
+    expect(resourcesOf('lambda:InvokeFunction')).toContain('function:chunker-subscriber-mock');
+    expect(resourcesOf('lambda:InvokeFunction')).not.toContain('processor-subscriber');
+    expect(resourcesOf('lambda:GetFunctionConfiguration')).toContain('function:chunker-subscriber-mock');
+    expect(resourcesOf('lambda:GetFunctionConfiguration')).toContain('function:processor-subscriber-mock');
+    expect(statements.flatMap((s: any) => [s.Action].flat()).every((a: string) => ['lambda:InvokeFunction', 'lambda:GetFunctionConfiguration'].includes(a))).toBe(true);
+
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: {
+        Variables: Match.objectLike({
+          CHUNKER_FUNCTION_NAME: 'chunker-subscriber-mock',
+          PROCESSOR_SUBSCRIBER_FUNCTION_NAME: 'processor-subscriber-mock',
+          PIPELINE_STACK_ID: 'huron-person-fargate-processor',
+          ITEMS_PER_CHUNK: '200'
+        })
+      }
+    });
   });
 
   it('registers the landscape in the landscape registry, with values derived from the context', () => {
@@ -142,6 +185,14 @@ describe('FunctionUrlOrigin', () => {
     expect(fn.Properties.Environment.Variables.DASHBOARD_DOMAIN).toBeUndefined();
   });
 
+  it('passes the landscape tone to the Lambda only when set, and refuses one that names no tone', () => {
+    const variables = (template: Template) => Object.values(template.findResources('AWS::Lambda::Function'))[0].Properties.Environment.Variables;
+    expect(variables(synth('dynamodb', { LANDSCAPE_TONE: 'production' })).LANDSCAPE_TONE).toBe('production');
+    // The mock-landscape default is applied by the Lambda, from LANDSCAPE: nothing is baked in for it
+    expect(variables(synth('dynamodb')).LANDSCAPE_TONE).toBeUndefined();
+    expect(() => synth('dynamodb', { LANDSCAPE_TONE: 'prod' })).toThrow("LANDSCAPE_TONE must be one of production, test, mock (got 'prod')");
+  });
+
   it('grants read-only access to the registry path', () => {
     const statements = Object.values(synth('dynamodb').findResources('AWS::IAM::Policy'))
       .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
@@ -158,5 +209,32 @@ describe('FunctionUrlOrigin', () => {
     template.hasResourceProperties('AWS::SSM::Parameter', {
       Name: '/cloudfront/huron-person-dashboard/mock/origin-verify-secret'
     });
+  });
+
+  // Assertions compare booleans and lengths, never the value, so a failure cannot print a secret
+  it('makes a long, header-safe origin verify secret, shared by the parameter, Lambda and CloudFront header, new on every synth', () => {
+    const secretOf = ({ stack, origin, template }: ReturnType<typeof synthWithOrigin>) => {
+      const [parameter] = Object.values(template.findResources('AWS::SSM::Parameter', {
+        Properties: { Name: '/cloudfront/huron-person-dashboard/mock/origin-verify-secret' }
+      }));
+      const [fn] = Object.values(template.findResources('AWS::Lambda::Function'));
+      const fromParameter: string = parameter.Properties.Value;
+      const fromLambda: string = fn.Properties.Environment.Variables.ORIGIN_VERIFY_SECRET;
+      // The header is not in the template (no distribution here), so read it from the origin's CloudFront config
+      const headers = (origin.origin.bind(stack, { originId: 'test-origin' }).originProperty?.originCustomHeaders ?? []) as any[];
+      const fromHeader = headers.find(({ headerName }) => headerName === 'X-Origin-Verify')?.headerValue;
+      expect(fromParameter === fromLambda).toBe(true);
+      expect(fromParameter === fromHeader).toBe(true);
+      return fromParameter;
+    };
+    const first = secretOf(synthWithOrigin('dynamodb'));
+    const second = secretOf(synthWithOrigin('dynamodb'));
+
+    for (const secret of [first, second]) {
+      // The prefix and 32 random bytes, base64url encoded (43 characters)
+      expect(secret.length).toBe('cf-origin-verify-'.length + 43);
+      expect(/^cf-origin-verify-[A-Za-z0-9_-]{43}$/.test(secret)).toBe(true);
+    }
+    expect(first === second).toBe(false);
   });
 });

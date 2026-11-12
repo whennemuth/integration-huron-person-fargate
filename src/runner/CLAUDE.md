@@ -55,7 +55,9 @@ Design intent: avoid immediate desired-count reversal due to stale scale-in alar
 - `RunnerForSingleMessage.ts`
   - Default gradual ramp-up mode.
   - Sends one API chunker event to queue.
-  - Resets chunker atomic counter before send when stack/region/landscape are available.
+  - Resets chunker atomic counter before send when stack/region/landscape are available (through the shared
+    `resetRunCounters()` in `src/chunking/RunCounters.ts`, which the chunker subscriber Lambda also calls for a
+    run's first event; see "A run starts with the chunker's counters at zero" in the project CLAUDE.md).
 
 - `RunnerForQueueSeeding.ts`
   - High-parallel-start mode.

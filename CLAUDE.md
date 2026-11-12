@@ -131,6 +131,55 @@ stop-at-first-partial behavior. Consequences:
   eventually returning an empty batch (true of the depleting real API and SourceSimulator).
   The safety cutoff below bounds the damage if it never does.
 
+**The scheduled run is a full sync with stored hashes trusted** (`ScheduledRun`, `src/chunking/ScheduledRun.ts`, since
+2026-11-11): the EventBridge schedule's input (`ChunkerService.createApiChunkingSchedule()`, built by
+`ScheduledRun.scheduleInput()`) is `populationType: person-full`, `bulkReset: false`, `trustPreviousStorage: true`,
+with the people endpoint, `iterationLimit` = the context's `ECS.chunkerService.chunksPerTask` and `offset: 0`.
+- No source endpoint returns only the people who changed yet, so a scheduled run fetches everyone. Trusting the
+  stored hashes keeps people whose hash matches from reaching the target, which is the effect a delta run would
+  have; the full sync then deactivates people missing from the source. Before, the schedule sent `person-delta`
+  (no deactivations) with `trustPreviousStorage` from the context (`false` everywhere), so every scheduled run
+  looked every person up in the target and deactivated no one.
+- A source glitch that looks like a normal end (an empty batch mid-population) would deactivate the people after
+  it, until the next good run reactivates them (decided 2026-11-10: no deactivation ceiling). A change made in
+  the target outside the integration isn't put right for a person whose source record hasn't changed, until a
+  bulk reset (the dashboard's Bulk sync) runs.
+- The two previous-state flags only ever act together (`bulkReset || !trustPreviousStorage`), so
+  `ScheduledRun.previousStateFlags(bulkReset)` sets them as one choice, for the schedule and the dashboard alike.
+  The context's `BULK_RESET` / `TRUST_PREVIOUS_STORAGE` play no part in either; they remain only as the chunker
+  task's environment fallback, which a message carrying both flags never needs. Consolidating the flags into one
+  setting is a TODO in integration-huron-person (`src/delta-strategy/TODO.md`).
+- A landscape gets this at its next pipeline deploy (a `lib/` change).
+
+**Who started a run is recorded with it** (`startedBy`, `src/chunking/StartedBy.ts`, since 2026-11-11), for the
+dashboard's Run history: `{ by: 'dashboard', principal? }` (Bulk sync, with the signed-in user's `buPrincipal`),
+`{ by: 'schedule' }` (`ScheduledRun.scheduleInput()`) or `{ by: 'runner' }` (`RunnerForSingleMessage`,
+`RunnerForSinglePerson`, `QueueSeeder`). Structured, so a principal can't be mistaken for a keyword; `RunStarter.from()`
+reads one back, keeping only the known fields.
+- **Its path**, like `termsEndpoint`'s: `ApiChunkerEvent.startedBy` -> the chunker subscriber's queue message
+  (`handleApiEvent()`) -> `TaskParameters` (`ChunkFromAPI`, `getStartedBy()`) -> each chained chunker message
+  (`ChunkerQueue.sendNextChunkingMessage()`) -> `Flags.startedBy` (`docker/chunker.ts`; the FLAGS item, or
+  `_flags.json` in S3 mode; written once per run, by its first chunker task) -> `RunSummary.startedBy`
+  (`AbstractPostProcessor.writeRunSummary()` reads the flags in either storage mode, since a summarized run's
+  report is its summary alone).
+- Runs from before it was recorded, and the S3 file drop, have none. The principal is stored with the run in the
+  statistics table, so anyone who can read Run history sees it.
+- Tests: `test/StartedBy.test.ts` (and the path's own tests: `ChunkerQueueChainStop`, `MetadataForDynamoDb`,
+  `StatisticsTable`, `ScheduledRun`).
+
+**A run starts with the chunker's counters at zero**: the source offset its chained messages take
+(`chunker-offset-counter`) and chunk ordinals (`chunker-chunk-ordinal-counter`), both in the landscape's
+atomic counter table. `resetRunCounters()` (`src/chunking/RunCounters.ts`) resets them, called from:
+- the chunker subscriber Lambda's `handler()`, before it queues an API event that starts a run (offset 0, no
+  `chunkDirectory`: `resetCountersForRunStart()` in `src/chunking/ChunkerSubscriber.ts`). That covers the
+  EventBridge schedule's runs (which until 2026-11-10 never reset them) and the dashboard's Bulk sync. The Lambda
+  has `STACK_ID`/`LANDSCAPE` in its environment and `UpdateItem` on that one table. Skipped in `DRY_RUN`; a
+  failed reset fails the invocation.
+- the manual Runner (`AbstractRunner.resetAtomicCounters()`), which calls `handleApiEvent()` in-process rather than
+  through the Lambda.
+Never in `handleApiEvent()` itself: the Runner's queue seeding calls it for every seeded message, taking their
+offsets from the counter it has just reset (`QueueSeeder` resets its own).
+
 **Glitched-source safety cutoff (`maxTotalRecords`)**: If the source never returns an empty
 batch, chunking would never end - an endless fetch loop when `iterationLimit=0`, or endless
 chunker message/task chaining when `iterationLimit>0`. `IContext`
@@ -247,13 +296,34 @@ env var, which the Docker routers branch on; the runtime factories below then sw
      one chunker task runs the processor scaling check, and exactly one processor task triggers the post-processor
      (see `docs/CONCURRENCY_CONTROL.md`); the boost claim is written in S3 storage mode too
    - Replaces `_metadata.json` and `_flags.json` files from S3 mode
-   - `RUN` marker item (one per run, attribute `distinctRunId` = PK) is the only item in the sparse,
-     KEYS_ONLY `distinct-run-index` GSI, so `getUniqueIntegrationTimestamps()` ("select distinct
-     syncRunId") scans one tiny item per run instead of every STATISTICS/chunk item. It is written
-     idempotently by `writeFlags()`, `addToMetadataTotals()` (every chunker task, both storage modes)
-     and `writeTerminalError()`; runs that predate the index need the harness task `backfill-runs`
+   - `RUN` marker item (one per run, attributes `runList` = `RUNS` and `distinctRunId` = PK) is the only item in
+     the sparse, KEYS_ONLY `run-list-index` (partition key `runList`, sort key `distinctRunId`), which holds every
+     run in one partition in time order: `getRunIdsPage()` reads the newest `limit` runs (or those older than
+     `before`) with one Query (`ScanIndexForward: false`, `Limit: limit + 1`), and `getAllRunIds()` lists them
+     all. It replaced the scan-only `distinct-run-index` (partition key `distinctRunId`), removed 2026-11-10.
+     When a table can't serve `run-list-index` (`isMissingIndexError()`: it doesn't exist, or it is still
+     backfilling, which it was in preview for some minutes after CloudFormation reported the stack update
+     complete), `RunReporting` fails with `ReportingError` `RUN_LIST_UNAVAILABLE` (a 503 from the dashboard)
+     saying what to do. The marker is written idempotently by `writeFlags()`, `addToMetadataTotals()` (every
+     chunker task, both storage modes) and `writeTerminalError()`; runs whose markers lack `runList` (written
+     before it existed, or before the markers did) need the harness task `backfill-runs` (one scan of the table),
+     run after the stack update that adds the index and before the dashboard that reads it is deployed.
+   - **Change the statistics table's GSIs one per deploy**: CloudFormation refuses an update that adds or removes
+     more than one. As of 2026-11-12, preview and mock have `run-list-index`, and so does staging, whose pipeline
+     stack was recreated that day: a table created with the index needs no `backfill-runs`. Migration has no run
+     index yet. Its pipeline stack is still July's, which can't be updated in place: that stack had a Merger service,
+     and its ECS log groups have since moved to new logical IDs under the same names, so CloudFormation would try to
+     create them before deleting the old ones and fail with "already exists". Recreated as staging was, its table
+     gets the index at creation.
    - `STATISTICS-chunk-*` items carry the chunk's `IntegrationResult` counts (success/failure/skipped,
-     added/updated/removed) as well as its error counts.
+     added/updated/removed) as well as its error counts. Added/updated/removed are the successful pushes
+     counted by operation (`pushedChangeCounts()` in `src/processing/ProcessorCommon.ts`), so they sum to
+     the successes; `IntegrationResult`'s own are the delta's sizes before the push, which also count the
+     failed pushes. Items written before 2026-11-09 hold the delta's counts, so a run with failures shows
+     too many added/updated. Their `totalRecords` (and `chunkSize`) is `IntegrationResult.totalProcessed`, the
+     people in the chunk's delta (those whose record changed), not the people in the chunk: people skipped as
+     unchanged are never counted. So it can't measure a run's progress; the dashboard counts chunks instead
+     (`chunksReported` ÷ METADATA `chunkCount`, `dashboard/CLAUDE.md` "Percent done").
    - `RUN_SUMMARY` (one per run) is written by `AbstractPostProcessor.main()`'s `finally` block, in both
      storage modes: METADATA plus the summed chunk statistics plus the deletion outcome
      (`DeletionOutcome`, returned by `runDeferredDeletes()`: COMPLETED with counts, SKIPPED with a
@@ -261,8 +331,10 @@ env var, which the Docker routers branch on; the runtime factories below then sw
      terminal error) or `POST_PROCESSING_FAILED`. Writing it never fails post-processing. Runs that
      never reach the post-processor have no summary; `src/reporting/RunReporting.ts` reports them as
      FAILED/INCOMPLETE from METADATA, FLAGS and the terminal error (S3 files in S3 mode, located via
-     METADATA's `chunkDirectory`).
-   - `src/reporting/RunReporting.ts` is the read side (no transport): `listRuns`, `getRunReport`,
+     METADATA's `chunkDirectory`), with their `progress`: the STATISTICS-chunk items written so far, summed by
+     `sumChunkStatistics()`, the same function `buildRunSummary()` sums them with (so the figures shown while a
+     run is underway and its summary can't disagree), plus the latest chunk's end time.
+   - `src/reporting/RunReporting.ts` is the read side (no transport): `listRuns`, `listRunPage`, `getRunReport`,
      `getRunChunkStatistics`, paged `getRunErrors` and `getRunChanges` (person-history changes,
      DynamoDB mode only; S3 mode keeps no per-person change record per run). Page cursors are
      base64url `LastEvaluatedKey`s, rejected unless their key attributes match the requested run

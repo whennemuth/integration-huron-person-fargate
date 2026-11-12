@@ -22,6 +22,7 @@ cdk.context.json
 # exclude environment files
 .env
 .env.*
+**/*.env
 
 # exclude test data files
 test-data/*
@@ -32,6 +33,8 @@ HuronIRB*.json
 
 # Cache files
 *-cache.json
+# integration-huron-person's FileSystemCache (integration-cache-<landscape>.json): holds cached API tokens
+integration-cache*.json
 
 TODO.txt
 

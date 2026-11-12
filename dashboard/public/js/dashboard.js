@@ -5,6 +5,9 @@ const API_BASE = window.location.origin;
 let personCard;
 let mappingExperimentCard;
 let searchTypeManager;
+let runHistoryPage;
+let overviewPage;
+let bulkSyncPage;
 
 // Tab management - use 'load' event instead of 'DOMContentLoaded' for Lambda compatibility
 window.addEventListener('load', function() {
@@ -20,7 +23,20 @@ window.addEventListener('load', function() {
     personCard = new PersonCard('personResults');
     mappingExperimentCard = new MappingExperimentCard('mappingExperimentContainer');
     searchTypeManager = new SearchTypeManager();
-    
+    const runsApi = new RunsApi(fetchSectionData);
+    const runsPage = document.getElementById('runs');
+    if (runsPage) {
+        runHistoryPage = new RunHistoryPage({ api: runsApi, root: runsPage });
+    }
+    const overviewRoot = document.getElementById('overview');
+    if (overviewRoot) {
+        overviewPage = new OverviewPage({ api: runsApi, getJson: fetchSectionData, root: overviewRoot });
+    }
+    const bulkRoot = document.getElementById('bulk');
+    if (bulkRoot) {
+        bulkSyncPage = new BulkSyncPage({ getJson: fetchSectionData, postJson: postSectionData, runs: runsApi, root: bulkRoot });
+    }
+
     // Initialize mapping experiment form
     mappingExperimentCard.renderForm();
 
@@ -46,27 +62,121 @@ window.addEventListener('load', function() {
         personLookupForm.addEventListener('submit', handlePersonLookupSubmit);
     }
     
-    // Add tab change listeners
-    document.querySelectorAll('[data-bs-toggle="tab"]').forEach(tab => {
-        tab.addEventListener('shown.bs.tab', function (event) {
-            const target = event.target.getAttribute('data-bs-target');
-            if (target === '#history') {
-                loadHistory();
-            } else if (target === '#system') {
-                loadSystemStatus();
+    initializePageNavigation();
+});
+
+/**
+ * Sidebar page navigation.
+ * The server renders one page active (?tab=<id>, else the default). A URL fragment takes precedence,
+ * since the server never sees it: #<page>, optionally followed by /<detail> (e.g. #runs/<syncRunId>), so a
+ * page can be linked to and a refresh stays on it. Choosing a page records its fragment in the browser
+ * history, so back and forward move between pages.
+ */
+function initializePageNavigation() {
+    const navItems = Array.from(document.querySelectorAll('#dashboardTabs [data-page]'));
+    const navItemFor = (page) => navItems.find(item => item.dataset.page === page);
+    // The page the server rendered: where going back to a URL with no fragment returns to
+    const renderedItem = navItems.find(item => item.classList.contains('active'));
+    const renderedPage = renderedItem && renderedItem.dataset.page;
+
+    // True while a page is being shown because the URL changed (back/forward, initial fragment): that
+    // URL is already in the browser history, and pushing another entry would cut off "forward"
+    let followingUrl = false;
+
+    navItems.forEach(item => {
+        item.addEventListener('shown.bs.tab', function () {
+            const page = this.dataset.page;
+            if ( ! followingUrl && pageFromFragment() !== page) {
+                history.pushState(null, '', `#${page}`);
+            }
+            followingUrl = false;
+            closeSidebarMenu();
+            onPageShown(page);
+        });
+        // Choosing the page already shown, while it shows a detail (e.g. one run): back to the page itself
+        item.addEventListener('click', function () {
+            const page = this.dataset.page;
+            if (this.classList.contains('active') && pageFromFragment() === page && detailFromFragment(page)) {
+                history.pushState(null, '', `#${page}`);
+                closeSidebarMenu();
+                onPageShown(page);
             }
         });
     });
-    
-    // Load initial tab content
-    const activeTab = new URLSearchParams(window.location.search).get('tab') || 'individual';
-    
-    if (activeTab === 'history') {
-        loadHistory();
-    } else if (activeTab === 'system') {
+
+    // Back/forward, or a fragment link followed from within the page. The page may already be shown, with
+    // another detail (e.g. from the run list to a run): a page with details is then told about the new one.
+    // (A fragment change fires both popstate and hashchange, so this runs twice: those pages ignore a repeat.)
+    const showPageFromFragment = () => {
+        const item = navItemFor(pageFromFragment()) || navItemFor(renderedPage);
+        if ( ! item) {
+            return;
+        }
+        if (item.classList.contains('active')) {
+            if (PAGES_WITH_DETAILS.includes(item.dataset.page)) {
+                onPageShown(item.dataset.page);
+            }
+        } else {
+            followingUrl = true;
+            bootstrap.Tab.getOrCreateInstance(item).show();
+        }
+    };
+    window.addEventListener('popstate', showPageFromFragment);
+    window.addEventListener('hashchange', showPageFromFragment);
+
+    // Initial page: the fragment's, else the one the server rendered active
+    const requested = navItemFor(pageFromFragment());
+    if (requested && !requested.classList.contains('active')) {
+        followingUrl = true;
+        bootstrap.Tab.getOrCreateInstance(requested).show(); // fires shown.bs.tab, which loads the page
+    } else if (renderedPage) {
+        onPageShown(renderedPage);
+    }
+}
+
+/** Pages whose fragment can name a detail within them (#runs/<syncRunId>) */
+const PAGES_WITH_DETAILS = ['runs'];
+
+/** The page named by the URL fragment (#<page>[/<detail>]), if any */
+function pageFromFragment() {
+    const fragment = decodeURIComponent(window.location.hash.replace(/^#/, ''));
+    return fragment.split('/')[0] || undefined;
+}
+
+/** The detail the URL fragment names within a page (#<page>/<detail>), if it names that page */
+function detailFromFragment(page) {
+    const fragment = decodeURIComponent(window.location.hash.replace(/^#/, ''));
+    const slash = fragment.indexOf('/');
+    if (slash < 0 || fragment.slice(0, slash) !== page) {
+        return undefined;
+    }
+    return fragment.slice(slash + 1) || undefined;
+}
+
+/**
+ * Load the content of a page that fetches its data when shown. A page with details is called again when the
+ * fragment changes while it is shown, and shows the detail now named.
+ */
+function onPageShown(page) {
+    if (page === 'overview' && overviewPage) {
+        overviewPage.load();
+    } else if (page === 'runs' && runHistoryPage) {
+        runHistoryPage.show(detailFromFragment('runs'));
+    } else if (page === 'bulk' && bulkSyncPage) {
+        bulkSyncPage.load();
+    } else if (page === 'system') {
         loadSystemStatus();
     }
-});
+}
+
+/** Below the lg breakpoint the sidebar is an off-canvas menu: close it once a page is chosen */
+function closeSidebarMenu() {
+    const sidebar = document.getElementById('appSidebar');
+    const menu = sidebar && bootstrap.Offcanvas.getInstance(sidebar);
+    if (menu) {
+        menu.hide();
+    }
+}
 
 // Person Lookup Handler
 async function handlePersonLookupSubmit(e) {
@@ -484,79 +594,82 @@ function createSyncResultModal() {
     return modal;
 }
 
-// Load activity history
-async function loadHistory() {
+/** Escape a value for use in HTML built from a template literal (Html, page-state.js) */
+function escapeHtml(value) {
+    return Html.escape(value);
+}
+
+/** A status badge (dot and word), tinted by what the status means (Html, page-state.js) */
+function statusBadge(status) {
+    return Html.statusBadge(status);
+}
+
+/** Fetch a section's JSON, throwing an Error carrying the server's message when the response isn't OK */
+async function fetchSectionData(path) {
+    return readSectionResponse(await fetch(`${API_BASE}${path}`));
+}
+
+/** POST JSON to a route and read its JSON answer, failing as fetchSectionData() does */
+async function postSectionData(path, body) {
+    return readSectionResponse(await fetch(`${API_BASE}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    }));
+}
+
+/** A response's JSON, or an Error carrying the server's message, its status and its code (if any) */
+async function readSectionResponse(response) {
+    let data = {};
     try {
-        const response = await fetch(`${API_BASE}/api/history`);
-        const data = await response.json();
-        
-        if (response.ok && data.history) {
-            const historyHtml = data.history.map(item => `
-                <div class="border-bottom pb-2 mb-2">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span><strong>${item.operation}</strong> - ${item.recordsProcessed} records</span>
-                        <span class="badge bg-${item.status === 'completed' ? 'success' : 'danger'}">${item.status}</span>
-                    </div>
-                    <small class="text-muted">${new Date(item.timestamp).toLocaleString()} (${item.duration})</small>
-                </div>
-            `).join('');
-            
-            document.getElementById('historyContent').innerHTML = historyHtml || '<p class="text-muted">No history available</p>';
-        }
-    } catch (error) {
-        document.getElementById('historyContent').innerHTML = '<div class="alert alert-danger">Error loading history</div>';
-        console.error('History load error:', error);
+        data = await response.json();
+    } catch (parseError) {
+        // A response with no JSON body: the status line says enough
     }
+    if ( ! response.ok) {
+        const error = new Error(data.message || data.error || `The server answered ${response.status}`);
+        error.status = response.status;
+        error.code = data.code;
+        throw error;
+    }
+    return data;
 }
 
 // Load system status
 async function loadSystemStatus() {
+    const servicesContainer = document.getElementById('serviceStatus');
+    const metricsContainer = document.getElementById('systemMetrics');
+    PageState.loading(servicesContainer, 'Checking services');
+    PageState.loading(metricsContainer, 'Loading sync figures', { compact: true });
     try {
-        const response = await fetch(`${API_BASE}/api/status`);
-        const data = await response.json();
-        
-        if (response.ok) {
-            // Service status
-            const servicesHtml = Object.entries(data.services).map(([service, status]) => `
-                <div class="d-flex justify-content-between align-items-center mb-2 p-2 border rounded">
-                    <span><span class="status-indicator status-${status.status}"></span>${service}</span>
-                    <span class="text-muted">${status.responseTime}ms</span>
-                </div>
-            `).join('');
-            
-            document.getElementById('serviceStatus').innerHTML = servicesHtml;
-            
-            // Metrics
-            const metricsHtml = `
-                <div class="text-center">
-                    <div class="metric-card p-3 mb-2 bg-light rounded">
-                        <h4>${data.metrics.dailySyncs}</h4>
-                        <small>Daily Syncs</small>
+        const data = await fetchSectionData('/api/status');
+
+        ServiceStatusTable.show(servicesContainer, data.services);
+
+        const metrics = data.metrics || {};
+        const tiles = [
+            ['Syncs today', metrics.dailySyncs],
+            ['Errors this week', metrics.weeklyErrors],
+            ['Average processing time', metrics.avgProcessingTime]
+        ];
+        RefreshStamp.set(document.getElementById('systemRefreshed'));
+        metricsContainer.innerHTML = `
+            <div class="stat-grid">
+                ${tiles.map(([label, value]) => `
+                    <div class="stat-tile">
+                        <div class="stat-label">${escapeHtml(label)}</div>
+                        <div class="stat-value">${escapeHtml(value === undefined ? '-' : value)}</div>
                     </div>
-                    <div class="metric-card p-3 mb-2 bg-light rounded">
-                        <h4>${data.metrics.weeklyErrors}</h4>
-                        <small>Weekly Errors</small>
-                    </div>
-                    <div class="metric-card p-3 bg-light rounded">
-                        <h4>${data.metrics.avgProcessingTime}</h4>
-                        <small>Avg Processing Time</small>
-                    </div>
-                </div>
-            `;
-            
-            document.getElementById('systemMetrics').innerHTML = metricsHtml;
-        }
+                `).join('')}
+            </div>
+        `;
     } catch (error) {
-        document.getElementById('serviceStatus').innerHTML = '<div class="alert alert-danger">Error loading status</div>';
+        PageState.error(servicesContainer, 'Service status could not be loaded', error.message);
+        metricsContainer.replaceChildren();
         console.error('Status load error:', error);
     }
 }
 
-// Refresh functions
-function refreshHistory() {
-    document.getElementById('historyContent').innerHTML = '<div class="text-center"><div class="spinner-border text-primary"></div></div>';
-    loadHistory();
-}
 // Coming back to this page from the browser's history shows the landscape it was left for:
 // select this landscape again
 window.addEventListener('pageshow', function() {

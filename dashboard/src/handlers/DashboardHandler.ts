@@ -7,8 +7,12 @@ import { DashboardCache } from './DashboardCache';
 import { LambdaFunctionUrlEvent, LambdaFunctionUrlResult } from './DashboardTypes';
 import { OriginHeader } from './OriginVerification';
 import { CrudOperation, Status } from 'integration-core';
-import { LandscapeListing, PersonSyncResult } from '../services/ServiceTypes';
+import { BulkSyncRequestBody, LandscapeListing, PersonSyncResult } from '../services/ServiceTypes';
+import { BulkSync, BulkSyncError } from '../services/BulkSync';
 import { buildNavigationBar } from './NavigationBar';
+import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
+import { PageNavigation } from './PageNavigation';
+import { RUN_LIST_DEFAULT_LIMIT, RUN_LIST_MAX_LIMIT, RunList } from './RunList';
 import { areTheSame } from '../Utils';
 import { ChangeType, ReportingError } from '../../../src/reporting/RunReporting';
 import { Config } from 'integration-huron-person';
@@ -94,16 +98,16 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
         return await handlePersonSync({requestBody: body, cache });
       
       case '/api/bulk-sync':
-        return await handleBulkSync({requestBody: body, cache });
-      
-      case '/api/history':
-        return await getHistory({ queryParams });
+        return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user });
+
+      case '/api/bulk-sync/plan':
+        return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user, plan: true });
       
       case '/api/status':
         return await getSystemStatus();
 
       case '/api/runs':
-        return await handleListRuns(request.method);
+        return await handleListRuns(request.method, queryParams);
 
       case '/api/capabilities':
         return handleCapabilities(request.method);
@@ -127,12 +131,14 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
 };
 
 /**
- * Render the main dashboard HTML with tabs
+ * Render the dashboard page: the sidebar and top bar, with the requested page (`?tab=<id>`) shown
  */
 async function renderDashboard(request: Request, activeTab?: string): Promise<LambdaFunctionUrlResult> {
   try {
     const navigationBar = buildNavigationBar({
       listing: await landscapeListingOrNone(),
+      landscape: process.env.LANDSCAPE || LOCAL_LANDSCAPE,
+      landscapeTone: process.env.LANDSCAPE_TONE,
       signInRequired: request.signInRequired,
       user: request.user
     });
@@ -143,20 +149,7 @@ async function renderDashboard(request: Request, activeTab?: string): Promise<La
     
     const data = {
       title: 'Integration Dashboard - Boston University Person → Huron',
-      activeTab: activeTab || 'individual',
-      tabs: [
-        { id: 'individual', label: 'Individual Sync', active: (activeTab || 'individual') === 'individual' },
-        { id: 'mapping', label: 'Person Mapping', active: activeTab === 'mapping' },
-        { id: 'bulk', label: 'Bulk Operations', active: activeTab === 'bulk' },
-        { id: 'history', label: 'Activity History', active: activeTab === 'history' },
-        { id: 'system', label: 'System Status', active: activeTab === 'system' }
-      ],
-      individualActive: (activeTab || 'individual') === 'individual',
-      mappingActive: activeTab === 'mapping',
-      bulkActive: activeTab === 'bulk',
-      historyActive: activeTab === 'history',
-      systemActive: activeTab === 'system',
-      currentTime: new Date().toISOString(),
+      ...new PageNavigation().templateData(activeTab),
       ...navigationBar,
       cssAssets,
       jsAssets
@@ -190,7 +183,6 @@ async function renderLoginPage(): Promise<LambdaFunctionUrlResult> {
     
     const data = {
       title: 'Integration Dashboard - Boston University Person → Huron',
-      currentTime: new Date().toISOString(),
       cssAssets
     };
     
@@ -380,51 +372,50 @@ async function handlePersonSync(params: { requestBody: string | null, cache: Das
 }
 
 /**
- * Handle bulk synchronization operations
+ * Starting a sync run in this landscape (BulkSync):
+ * - GET /api/bulk-sync: what a start would do and whether one is allowed now (BulkSyncState)
+ * - POST /api/bulk-sync/plan (plan): what a start from a BulkSyncRequestBody would send, and every setting of the
+ *   run (BulkSyncPlan), after the same checks; 200, and nothing is started
+ * - POST /api/bulk-sync: start one, from a BulkSyncRequestBody; 202 with the BulkSyncResult once the chunker has
+ *   accepted it
+ * A refused review or start is a BulkSyncError, answered with its status (400 invalid, 403 production landscape,
+ * 409 a run underway or stalled or a subscriber in DRY_RUN, 503 not configured) and { error, code }.
  */
-async function handleBulkSync(params: { requestBody: string | null, cache: DashboardCache }): Promise<LambdaFunctionUrlResult> {
-  const { requestBody, cache } = params;
-  if (!requestBody) {
-    return createResponse(400, 'application/json', JSON.stringify({ error: 'Request body required' }));
+async function handleBulkSync(params: {
+  method: string, requestBody: string | null, cache: DashboardCache, user?: any, plan?: boolean
+}): Promise<LambdaFunctionUrlResult> {
+  const { method, requestBody, cache, user, plan = false } = params;
+  const allowed = plan ? ['POST'] : ['GET', 'POST'];
+  if (!allowed.includes(method)) {
+    const response = jsonResponse(405, { error: 'Method not allowed' });
+    return { ...response, headers: { ...response.headers, Allow: allowed.join(', ') } };
   }
-
   try {
-    const { operation, batchSize, filters } = JSON.parse(requestBody);
-    
-    // TODO: Implement actual bulk sync
     const config = await serviceConfiguration(cache);
     const bulkSyncService = ServiceProvider.getBulkSyncService(config);
-    const mockResult = await bulkSyncService.start(operation, batchSize, filters);
-
-    return createResponse(200, 'application/json', JSON.stringify(mockResult));
+    if (method === 'GET') {
+      return jsonResponse(200, await bulkSyncService.describe());
+    }
+    let body: BulkSyncRequestBody;
+    try {
+      body = JSON.parse(requestBody || '');
+    } catch {
+      return jsonResponse(400, { error: 'The request body must be JSON', code: 'INVALID_REQUEST' });
+    }
+    // Who is starting it: the signed-in user, from the request's sign-in token
+    const startedBy = BulkSync.startedBy(user);
+    return plan
+      ? jsonResponse(200, await bulkSyncService.plan(body, startedBy))
+      : jsonResponse(202, await bulkSyncService.start(body, startedBy));
   } catch (error) {
+    if (error instanceof BulkSyncError) {
+      return jsonResponse(error.status, { error: error.message, code: error.code });
+    }
     console.error('Error in bulk sync:', error);
-    return createResponse(500, 'application/json', JSON.stringify({ 
-      error: 'Bulk sync failed', 
-      message: error instanceof Error ? error.message : 'Unknown error' 
-    }));
-  }
-}
-
-/**
- * Get activity history from S3 or database
- */
-async function getHistory(params: { queryParams: any }): Promise<LambdaFunctionUrlResult> {
-  const { queryParams } = params;
-  try {
-    const { startDate, endDate, limit = 50 } = queryParams;
-    
-    // TODO: Implement actual S3 history retrieval
-    const historyService = ServiceProvider.getHistoryService();
-    const historyData = await historyService.getHistory(startDate, endDate, limit);
-
-    return createResponse(200, 'application/json', JSON.stringify(historyData));
-  } catch (error) {
-    console.error('Error getting history:', error);
-    return createResponse(500, 'application/json', JSON.stringify({ 
-      error: 'Failed to retrieve history', 
-      message: error instanceof Error ? error.message : 'Unknown error' 
-    }));
+    return jsonResponse(500, {
+      error: method === 'GET' ? 'Bulk sync state could not be read' : plan ? 'The run could not be reviewed' : 'Bulk sync failed',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 }
 
@@ -454,13 +445,34 @@ const SYNC_RUN_ID = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 const CHANGE_TYPES: ChangeType[] = ['NEW', 'UPDATED', 'DELETED'];
 
 /**
- * List this landscape's sync runs (syncRunIds, oldest first)
+ * List this landscape's sync runs. Without `include`: { runs }, every syncRunId, oldest first. With
+ * `include=report`: a page of runs with their reports, newest first ({ items, before? }), of up to `limit`
+ * runs (default 20, at most 50) older than `before` (a syncRunId: the previous page's `before`).
  */
-async function handleListRuns(method: string): Promise<LambdaFunctionUrlResult> {
+async function handleListRuns(method: string, queryParams: { [key: string]: string } = {}): Promise<LambdaFunctionUrlResult> {
   if (method !== 'GET') return methodNotAllowed();
+  const { include, limit, before } = queryParams;
+  if (include !== undefined && include !== 'report') {
+    return jsonResponse(400, { error: "include must be 'report'" });
+  }
+  if (include === undefined) {
+    try {
+      const runs = await ServiceProvider.getRunReportingService().listRuns();
+      return jsonResponse(200, { runs });
+    } catch (error) {
+      return runReportingErrorResponse(error, 'Failed to list runs');
+    }
+  }
+
+  const limitValue = limit === undefined ? RUN_LIST_DEFAULT_LIMIT : Number(limit);
+  if (!/^\d+$/.test(limit ?? `${RUN_LIST_DEFAULT_LIMIT}`) || limitValue < 1 || limitValue > RUN_LIST_MAX_LIMIT) {
+    return jsonResponse(400, { error: `limit must be an integer from 1 to ${RUN_LIST_MAX_LIMIT}`, code: 'INVALID_LIMIT' });
+  }
+  if (before !== undefined && !SYNC_RUN_ID.test(before)) {
+    return jsonResponse(400, { error: 'before must be a syncRunId (an ISO timestamp, e.g. 2026-10-01T02:00:00.000Z)' });
+  }
   try {
-    const runs = await ServiceProvider.getRunReportingService().listRuns();
-    return jsonResponse(200, { runs });
+    return jsonResponse(200, await new RunList(ServiceProvider.getRunReportingService()).page({ limit: limitValue, before }));
   } catch (error) {
     return runReportingErrorResponse(error, 'Failed to list runs');
   }
@@ -557,11 +569,14 @@ const decodePathSegment = (segment: string): string | undefined => {
 
 /**
  * A ReportingError (bad cursor or limit, or a report the storage mode doesn't keep) is the
- * caller's to fix: 400 with its code. Anything else is a 500, with the message but no stack.
+ * caller's to fix: 400 with its code; except RUN_LIST_UNAVAILABLE (the statistics table's run-list-index
+ * isn't ready), a 503 whose message says what to do. Anything else is a 500, with the message but no stack.
  */
 function runReportingErrorResponse(error: unknown, description: string): LambdaFunctionUrlResult {
   if (error instanceof ReportingError) {
-    return jsonResponse(400, { error: error.message, code: error.code });
+    // The run list's index not being ready is the landscape's state, not the request's fault
+    const status = error.code === 'RUN_LIST_UNAVAILABLE' ? 503 : 400;
+    return jsonResponse(status, { error: error.message, code: error.code });
   }
   console.error(`${description}:`, error);
   return jsonResponse(500, {

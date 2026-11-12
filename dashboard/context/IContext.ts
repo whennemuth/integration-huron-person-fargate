@@ -17,6 +17,12 @@ type CoreInfrastructureProperties = Pick<
   /** The landscape's name in the landscape picker (default: the landscape) */
   LABEL?: string;
   /**
+   * How the top bar tints this landscape's name: production (red), test (amber) or mock (gray).
+   * Default: mock for a mock landscape (mock, mock1, ...), otherwise no tint. Synth refuses any other
+   * value. See dashboard/src/handlers/LandscapeTone.ts.
+   */
+  LANDSCAPE_TONE?: 'production' | 'test' | 'mock';
+  /**
    * Whether this is the default landscape (the one the bare hostname redirects to). At most one
    * landscape may be: synth fails if another landscape's registry parameter already claims it.
    */

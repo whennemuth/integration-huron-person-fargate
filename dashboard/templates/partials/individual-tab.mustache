@@ -1,46 +1,47 @@
-<!-- Individual Sync Tab -->
-<div class="tab-pane fade {{#individualActive}}show active{{/individualActive}}" 
-     id="individual" 
-     role="tabpanel" 
+<!-- Lookup and sync page -->
+<div class="tab-pane fade {{#individualActive}}show active{{/individualActive}}"
+     id="individual"
+     role="tabpanel"
      aria-labelledby="individual-tab">
-    <div class="row mt-4 justify-content-center">
-        <div class="col-auto" style="min-width: 80%; max-width: 100%;">
-            <div class="card">
-                <div class="card-header">
-                    <h5><i class="fas fa-user me-2"></i>Person Lookup & Sync</h5>
-                </div>
-                <div class="card-body">
-                    <form id="personLookupForm">
-                        <div class="mb-3">
-                            <div class="d-flex align-items-center justify-content-between mb-2">
-                                <label for="personId" class="form-label mb-0">Person ID</label>
-                                <div class="form-check-inline">
-                                    <input class="form-check-input" type="radio" name="systemType" id="buidRadio" value="source" checked>
-                                    <label class="form-check-label me-3" for="buidRadio">Boston University</label>
-                                    <input class="form-check-input" type="radio" name="systemType" id="hrnRadio" value="target">
-                                    <label class="form-check-label" for="hrnRadio">Huron</label>
-                                </div>
-                            </div>
-                            <!-- Container for dynamic search type options -->
-                            <div id="searchTypeContainer" class="mb-2" style="display: none;"></div>
-                            <div id="inputFieldContainer">
-                                <div class="input-group">
-                                    <input type="text" 
-                                           class="form-control" 
-                                           id="personId" 
-                                           placeholder="Enter BUID here..."
-                                           required>
-                                    <button class="btn btn-primary" type="submit">
-                                        <span class="loading-spinner spinner-border spinner-border-sm me-2"></span>
-                                        <i class="fa-solid fa-magnifying-glass"></i> Lookup
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </form>
-                    <div id="personResults"></div>
-                </div>
+    <div class="page">
+        <header class="page-header">
+            <div>
+                <h1 class="page-title">Lookup and sync</h1>
+                <p class="page-description">Find a person in Boston University's source data or in Huron, compare the two records, then preview or run a sync of that person.</p>
             </div>
-        </div>
+        </header>
+
+        <section class="page-section" aria-label="Person lookup">
+            <div class="surface">
+                <form id="personLookupForm">
+                    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+                        <label for="personId" class="form-label mb-0">Person ID</label>
+                        <div class="form-check-inline me-0">
+                            <input class="form-check-input" type="radio" name="systemType" id="buidRadio" value="source" checked>
+                            <label class="form-check-label me-3" for="buidRadio">Boston University</label>
+                            <input class="form-check-input" type="radio" name="systemType" id="hrnRadio" value="target">
+                            <label class="form-check-label" for="hrnRadio">Huron</label>
+                        </div>
+                    </div>
+                    <!-- Container for dynamic search type options -->
+                    <div id="searchTypeContainer" class="mb-2" style="display: none;"></div>
+                    <div id="inputFieldContainer">
+                        <div class="input-group">
+                            <input type="text"
+                                   class="form-control"
+                                   id="personId"
+                                   placeholder="Enter BUID here..."
+                                   required>
+                            <button class="btn btn-primary" type="submit">
+                                <span class="loading-spinner spinner-border spinner-border-sm me-2"></span>
+                                <i class="fa-solid fa-magnifying-glass"></i> Lookup
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <div id="personResults"></div>
     </div>
 </div>

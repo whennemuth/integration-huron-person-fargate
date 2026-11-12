@@ -14,6 +14,7 @@ import { BigJsonFetch, BigJsonFetchConfig, ChunkOrdinalAllocator } from "./BigJs
 import { ChunkConfigOverride } from "./ChunkConfigOverride";
 import { ProcessorServiceBooster } from './ProcessorServiceBooster';
 import { SourceSimulatorFunctionURL } from './SourceSimulator';
+import { RunStarter, StartedBy } from '../StartedBy';
 
 export type TaskParameters = {
   baseUrl: string,
@@ -28,6 +29,8 @@ export type TaskParameters = {
   personRecordProcessorAddons?: string;
   /** Terms endpoint override for this run's processor tasks (see Flags.termsEndpoint) */
   termsEndpoint?: SourceEndpoint;
+  /** Who or what started the run (see Flags.startedBy) */
+  startedBy?: StartedBy;
 };
 
 /**
@@ -242,6 +245,7 @@ export class ChunkFromAPI implements IChunkFromSource {
     const trustPreviousStorage = messageBody.trustPreviousStorage;
     const personRecordProcessorAddons = messageBody.personRecordProcessorAddons;
     const termsEndpoint = messageBody.termsEndpoint;
+    const startedBy = RunStarter.from(messageBody.startedBy);
 
     this.taskParameters = { 
       baseUrl, 
@@ -255,7 +259,8 @@ export class ChunkFromAPI implements IChunkFromSource {
         ? trustPreviousStorage
         : trustPreviousStorage === 'true',
       personRecordProcessorAddons,
-      termsEndpoint
+      termsEndpoint,
+      ...(startedBy ? { startedBy } : {})
     };
 
     if (this.taskParameters.chunkDirectory) {
@@ -416,6 +421,13 @@ export class ChunkFromAPI implements IChunkFromSource {
    */
   public getTermsEndpoint = (): SourceEndpoint | undefined => {
     return this.taskParameters?.termsEndpoint;
+  }
+
+  /**
+   * Get who or what started the run, from task parameters, if the event said (see Flags.startedBy).
+   */
+  public getStartedBy = (): StartedBy | undefined => {
+    return this.taskParameters?.startedBy;
   }
 
   /**

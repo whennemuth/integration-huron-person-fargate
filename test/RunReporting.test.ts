@@ -1,5 +1,6 @@
 import { MetadataForS3 } from '../src/chunking/metadata/MetadataForS3';
-import { decodeCursor, encodeCursor, ReportingError, RunReporting } from '../src/reporting/RunReporting';
+import { sumChunkStatistics } from '../src/dynamodb/StatisticsTable';
+import { decodeCursor, encodeCursor, isMissingIndexError, pageOfRunIds, ReportingError, RunReporting } from '../src/reporting/RunReporting';
 
 jest.mock('../src/chunking/metadata/MetadataForS3');
 
@@ -8,7 +9,8 @@ describe('RunReporting', () => {
   const chunkDirectory = `chunks/person-full/${syncRunId}`;
 
   const statisticsTable = () => ({
-    getUniqueIntegrationTimestamps: jest.fn().mockResolvedValue(['a', 'b']),
+    getAllRunIds: jest.fn().mockResolvedValue(['a', 'b']),
+    getRunIdsPage: jest.fn().mockResolvedValue({ syncRunIds: [], hasOlder: false }),
     readRunSummary: jest.fn().mockResolvedValue(undefined),
     readMetadata: jest.fn().mockResolvedValue(undefined),
     readFlags: jest.fn().mockResolvedValue(undefined),
@@ -35,8 +37,71 @@ describe('RunReporting', () => {
     expect(reporting('s3').reporting.getCapabilities().changesSupported).toBe(false);
   });
 
-  it('lists runs from the distinct-run index', async () => {
-    expect(await reporting('dynamodb').reporting.listRuns()).toEqual(['a', 'b']);
+  describe('the run list', () => {
+    const missingIndex = () => Object.assign(
+      new Error('The table does not have the specified index: run-list-index'), { name: 'ValidationException' }
+    );
+
+    it('lists runs and pages them by key from the run-list-index', async () => {
+      const { reporting: r, stats } = reporting('dynamodb');
+      stats.getAllRunIds.mockResolvedValue(['a', 'b', 'c']);
+      stats.getRunIdsPage.mockResolvedValue({ syncRunIds: ['b'], hasOlder: true });
+
+      expect(await r.listRuns()).toEqual(['a', 'b', 'c']);
+      expect(await r.listRunPage({ limit: 1, before: 'c' })).toEqual({ syncRunIds: ['b'], hasOlder: true });
+      expect(stats.getRunIdsPage).toHaveBeenCalledWith({ limit: 1, before: 'c' });
+    });
+
+    it("says the landscape's pipeline stack needs deploying when its table hasn't got the run-list-index", async () => {
+      const { reporting: r, stats } = reporting('dynamodb');
+      stats.getAllRunIds.mockRejectedValue(missingIndex());
+      stats.getRunIdsPage.mockRejectedValue(missingIndex());
+
+      for (const read of [() => r.listRuns(), () => r.listRunPage({ limit: 2 })]) {
+        const failure = read();
+        await expect(failure).rejects.toBeInstanceOf(ReportingError);
+        await expect(failure).rejects.toMatchObject({
+          code: 'RUN_LIST_UNAVAILABLE',
+          message: expect.stringContaining("stats has no run-list-index yet: deploy this landscape's pipeline stack, then run the backfill-runs task")
+        });
+      }
+    });
+
+    it('says to try again shortly while the run-list-index is still being built', async () => {
+      const { reporting: r, stats } = reporting('dynamodb');
+      stats.getRunIdsPage.mockRejectedValue(Object.assign(
+        new Error('Cannot read from backfilling global secondary index: run-list-index'), { name: 'ValidationException' }
+      ));
+      await expect(r.listRunPage({ limit: 1 })).rejects.toMatchObject({
+        code: 'RUN_LIST_UNAVAILABLE', message: expect.stringContaining('is still being built')
+      });
+    });
+
+    it('passes any other failure on as it is', async () => {
+      const { reporting: r, stats } = reporting('dynamodb');
+      const throttled = Object.assign(new Error('Rate exceeded'), { name: 'ProvisionedThroughputExceededException' });
+      stats.getRunIdsPage.mockRejectedValue(throttled);
+      await expect(r.listRunPage({ limit: 1 })).rejects.toBe(throttled);
+    });
+
+    it('cuts a page from a full list as a keyed read would', () => {
+      const ids = ['a', 'b', 'c', 'd'];
+      expect(pageOfRunIds(ids, { limit: 2 })).toEqual({ syncRunIds: ['d', 'c'], hasOlder: true });
+      expect(pageOfRunIds(ids, { limit: 2, before: 'c' })).toEqual({ syncRunIds: ['b', 'a'], hasOlder: false });
+      expect(pageOfRunIds(ids, { limit: 10 })).toEqual({ syncRunIds: ['d', 'c', 'b', 'a'], hasOlder: false });
+      expect(pageOfRunIds(ids, { limit: 1, before: 'a' })).toEqual({ syncRunIds: [], hasOlder: false });
+    });
+
+    it('recognizes only the refusals of an index that is missing or still being built', () => {
+      expect(isMissingIndexError(missingIndex())).toBe(true);
+      // As preview's table answered while the index was being built after the stack update
+      expect(isMissingIndexError(Object.assign(
+        new Error('Cannot read from backfilling global secondary index: run-list-index'), { name: 'ValidationException' }
+      ))).toBe(true);
+      expect(isMissingIndexError(Object.assign(new Error('One or more parameter values were invalid'), { name: 'ValidationException' }))).toBe(false);
+      expect(isMissingIndexError(new Error('The table does not have the specified index: x'))).toBe(false);
+      expect(isMissingIndexError('not an error')).toBe(false);
+    });
   });
 
   describe('getRunReport', () => {
@@ -56,7 +121,8 @@ describe('RunReporting', () => {
       stats.readTerminalError.mockResolvedValue({ errorMessage: 'boom' });
 
       expect(await r.getRunReport(syncRunId)).toEqual({
-        syncRunId, status: 'FAILED', metadata: { chunkDirectory }, flags: { bulkReset: false }, terminalError: { errorMessage: 'boom' }
+        syncRunId, status: 'FAILED', metadata: { chunkDirectory }, flags: { bulkReset: false }, terminalError: { errorMessage: 'boom' },
+        progress: sumChunkStatistics([])
       });
     });
 
@@ -65,6 +131,44 @@ describe('RunReporting', () => {
       stats.readMetadata.mockResolvedValue({ chunkDirectory });
 
       expect((await r.getRunReport(syncRunId))?.status).toBe('INCOMPLETE');
+    });
+
+    it('gives a run without a summary its progress, summed from the chunks reported so far', async () => {
+      const { reporting: r, stats } = reporting('dynamodb');
+      stats.readMetadata.mockResolvedValue({ chunkDirectory, chunkCount: 3 });
+      stats.getAllChunkStatistics.mockResolvedValue([
+        { totalRecords: 200, successCount: 199, failureCount: 1, addedCount: 50, updatedCount: 149, totalErrors: 1, throttleCount: 0,
+          errorsByStatus: { 500: 1 }, endTimestamp: '2026-10-01T00:05:00.000Z' },
+        { totalRecords: 200, successCount: 200, addedCount: 10, updatedCount: 190, totalErrors: 0, throttleCount: 0,
+          errorsByStatus: {}, endTimestamp: '2026-10-01T00:07:00.000Z' }
+      ]);
+
+      const report = await r.getRunReport(syncRunId);
+
+      expect(stats.getAllChunkStatistics).toHaveBeenCalledWith(syncRunId);
+      expect(report?.progress).toEqual({
+        chunksReported: 2,
+        results: { processed: 400, succeeded: 399, failed: 1, skipped: 0, added: 60, updated: 339, removed: 0 },
+        totalErrors: 1,
+        throttleCount: 0,
+        errorsByStatus: { '500': 1 },
+        lastChunkAt: '2026-10-01T00:07:00.000Z'
+      });
+    });
+
+    it('reports a run whose only records are chunk statistics', async () => {
+      const { reporting: r, stats } = reporting('dynamodb');
+      stats.getAllChunkStatistics.mockResolvedValue([{ totalRecords: 200, endTimestamp: '2026-10-01T00:05:00.000Z' }]);
+
+      expect(await r.getRunReport(syncRunId)).toMatchObject({ status: 'INCOMPLETE', progress: { chunksReported: 1 } });
+    });
+
+    it('makes no chunk query for a summarized run', async () => {
+      const { reporting: r, stats } = reporting('dynamodb');
+      stats.readRunSummary.mockResolvedValue({ syncRunId, status: 'SUCCEEDED' });
+
+      expect(await r.getRunReport(syncRunId)).not.toHaveProperty('progress');
+      expect(stats.getAllChunkStatistics).not.toHaveBeenCalled();
     });
 
     it('reads flags and the terminal error from S3 files in S3 mode', async () => {

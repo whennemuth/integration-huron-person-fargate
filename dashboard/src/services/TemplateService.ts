@@ -41,10 +41,11 @@ export class TemplateService {
     } else {
       const partialsPath = join(__dirname, '../../templates/partials');
       return {
+        'overview-tab': readFileSync(join(partialsPath, 'overview-tab.mustache'), 'utf-8'),
         'individual-tab': readFileSync(join(partialsPath, 'individual-tab.mustache'), 'utf-8'),
         'mapping-tab': readFileSync(join(partialsPath, 'mapping-tab.mustache'), 'utf-8'),
         'bulk-tab': readFileSync(join(partialsPath, 'bulk-tab.mustache'), 'utf-8'),
-        'history-tab': readFileSync(join(partialsPath, 'history-tab.mustache'), 'utf-8'),
+        'runs-tab': readFileSync(join(partialsPath, 'runs-tab.mustache'), 'utf-8'),
         'system-tab': readFileSync(join(partialsPath, 'system-tab.mustache'), 'utf-8')
       };
     }
@@ -73,15 +74,25 @@ export class TemplateService {
       // Convert hyphenated keys to camelCase for template compatibility
       return {
         'dashboard': assets['dashboard'] || '',
+        'pageState': assets['page-state'] || '',
         'personCard': assets['person-card'] || '',
-        'mappingExperimentCard': assets['mapping-experiment-card'] || ''
+        'mappingExperimentCard': assets['mapping-experiment-card'] || '',
+        'runHistory': assets['run-history'] || '',
+        'systemStatus': assets['system-status'] || '',
+        'overview': assets['overview'] || '',
+        'bulkSync': assets['bulk-sync'] || ''
       };
     } else {
       const jsPath = join(__dirname, '../../public/js');
       return {
         'dashboard': readFileSync(join(jsPath, 'dashboard.js'), 'utf-8'),
+        'pageState': readFileSync(join(jsPath, 'page-state.js'), 'utf-8'),
         'personCard': readFileSync(join(jsPath, 'person-card.js'), 'utf-8'),
-        'mappingExperimentCard': readFileSync(join(jsPath, 'mapping-experiment-card.js'), 'utf-8')
+        'mappingExperimentCard': readFileSync(join(jsPath, 'mapping-experiment-card.js'), 'utf-8'),
+        'runHistory': readFileSync(join(jsPath, 'run-history.js'), 'utf-8'),
+        'systemStatus': readFileSync(join(jsPath, 'system-status.js'), 'utf-8'),
+        'overview': readFileSync(join(jsPath, 'overview.js'), 'utf-8'),
+        'bulkSync': readFileSync(join(jsPath, 'bulk-sync.js'), 'utf-8')
       };
     }
   }

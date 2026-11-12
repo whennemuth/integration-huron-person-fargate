@@ -12,6 +12,17 @@ import {
 
 export type QueryPage = { items: any[], lastEvaluatedKey?: Record<string, any> };
 
+/** How a GSI query compares the sort key with sortKeyValue */
+export type SortKeyComparison = '=' | '<' | '<=' | '>' | '>=';
+
+export type QueryGSIPageParams = {
+  indexName: string, gsiPartitionKey: string, partitionKeyValue: string,
+  gsiSortKey?: string, sortKeyValue?: string, sortKeyComparison?: SortKeyComparison,
+  /** false reads in descending sort key order */
+  scanIndexForward?: boolean,
+  limit: number, exclusiveStartKey?: Record<string, any>
+};
+
 export type AbstractDynamoDbTable = {
   truncateTable: (chunkSize?: number) => Promise<void>;
   scanAll: () => Promise<any[]>;
@@ -46,10 +57,7 @@ export type AbstractDynamoDbTable = {
   queryPage: (parms: {
     partitionKeyValue: string, sortKeyPrefix?: string, limit: number, exclusiveStartKey?: Record<string, any>
   }) => Promise<QueryPage>;
-  queryGSIPage: (parms: {
-    indexName: string, gsiPartitionKey: string, partitionKeyValue: string,
-    gsiSortKey?: string, sortKeyValue?: string, limit: number, exclusiveStartKey?: Record<string, any>
-  }) => Promise<QueryPage>;
+  queryGSIPage: (parms: QueryGSIPageParams) => Promise<QueryPage>;
   batchWrite: ({ items, operation }: { items: any[], operation?: 'put' | 'delete' }) => Promise<void>;
   putItem: (item: any) => Promise<void>;
 }
@@ -454,20 +462,22 @@ export class DynamoDBTable implements AbstractDynamoDbTable {
   }
 
   /**
-   * Query one page of a GSI by partition key (optional exact-match sort key). Paging works as in queryPage().
+   * Query one page of a GSI by partition key, optionally with a condition on its sort key: the sort key
+   * compared with sortKeyValue by sortKeyComparison (default `=`). Items come in sort key order, ascending
+   * unless scanIndexForward is false. Paging works as in queryPage().
    */
-  public async queryGSIPage(parms: {
-    indexName: string, gsiPartitionKey: string, partitionKeyValue: string,
-    gsiSortKey?: string, sortKeyValue?: string, limit: number, exclusiveStartKey?: Record<string, any>
-  }): Promise<QueryPage> {
+  public async queryGSIPage(parms: QueryGSIPageParams): Promise<QueryPage> {
     const { client, params: { tableName } } = this;
-    const { indexName, gsiPartitionKey, partitionKeyValue, gsiSortKey, sortKeyValue, limit, exclusiveStartKey } = parms;
+    const {
+      indexName, gsiPartitionKey, partitionKeyValue, gsiSortKey, sortKeyValue, sortKeyComparison = '=',
+      scanIndexForward, limit, exclusiveStartKey
+    } = parms;
     const useSortKey = !!(gsiSortKey && sortKeyValue);
 
     const result: QueryCommandOutput = await client.send(new QueryCommand({
       TableName: tableName,
       IndexName: indexName,
-      KeyConditionExpression: useSortKey ? `#pk = :pkValue AND #sk = :skValue` : `#pk = :pkValue`,
+      KeyConditionExpression: useSortKey ? `#pk = :pkValue AND #sk ${sortKeyComparison} :skValue` : `#pk = :pkValue`,
       ExpressionAttributeNames: {
         '#pk': gsiPartitionKey,
         ...(useSortKey && { '#sk': gsiSortKey })
@@ -476,6 +486,7 @@ export class DynamoDBTable implements AbstractDynamoDbTable {
         ':pkValue': partitionKeyValue,
         ...(useSortKey && { ':skValue': sortKeyValue })
       },
+      ...(scanIndexForward !== undefined && { ScanIndexForward: scanIndexForward }),
       Limit: limit,
       ExclusiveStartKey: exclusiveStartKey
     }));

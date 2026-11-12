@@ -1,4 +1,4 @@
-import { Duration, Fn, RemovalPolicy, Stack } from "aws-cdk-lib";
+import { ArnFormat, Duration, Fn, RemovalPolicy, Stack } from "aws-cdk-lib";
 import { OriginProtocolPolicy } from "aws-cdk-lib/aws-cloudfront";
 import { HttpOrigin, HttpOriginProps } from "aws-cdk-lib/aws-cloudfront-origins";
 import { FunctionUrl, FunctionUrlAuthType, Runtime } from "aws-cdk-lib/aws-lambda";
@@ -8,10 +8,13 @@ import { Secret } from "aws-cdk-lib/aws-secretsmanager";
 import { StringParameter } from "aws-cdk-lib/aws-ssm";
 import { PolicyStatement, Effect } from "aws-cdk-lib/aws-iam";
 import { Construct } from "constructs";
+import { randomBytes } from "crypto";
 import { join } from "path";
 import { JwtTools } from "shibboleth-sp";
 import { AuthenticatedContext, AuthenticationMode, IContext } from "../context/IContext";
 import { CACHE_SECRET } from "../src/handlers/DashboardCache";
+import { LandscapeTone } from "../src/handlers/LandscapeTone";
+import { dashboardFunctionName } from "./DashboardFunctionName";
 import { LandscapeResources } from "./LandscapeResources";
 import { registerLandscape } from "./LandscapeRegistration";
 
@@ -29,13 +32,21 @@ export class FunctionUrlOrigin {
       AUTHENTICATION_MODE,
       LAMBDA_TIMEOUT_SECONDS,
       LAMBDA_MEMORY_SIZE_MB,
+      LANDSCAPE_TONE,
     } } = this.params;
     const {
-      landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName
+      landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName,
+      chunkerFunctionName, processorSubscriberFunctionName, pipelineStackId, itemsPerChunk
     } = landscapeResources;
 
-    // Generate a secure random secret for origin verification
-    this.originVerifySecret = `cf-origin-verify-${Math.random().toString(36).substring(2, 15)}${Math.random().toString(36).substring(2, 15)}${Date.now().toString(36)}`;
+    // The origin verification secret: 32 bytes from the cryptographically secure generator, base64url
+    // encoded so the value is safe in an HTTP header (A-Z, a-z, 0-9, '-' and '_'). A new value is made on
+    // every synth, so each dashboard deploy rotates it in the SSM parameter, the Lambda's environment and
+    // CloudFront's origin header together. The prefix only labels the value; nothing reads it.
+    this.originVerifySecret = `cf-origin-verify-${randomBytes(32).toString('base64url')}`;
+
+    // The top bar's tint for this landscape: refuse a value that names no tone here, at synth
+    const landscapeTone = LandscapeTone.parse(LANDSCAPE_TONE);
 
     // Start with base environment variable(s)
     const {env: { arn, region } } = CACHE_SECRET;
@@ -50,6 +61,13 @@ export class FunctionUrlOrigin {
       DYNAMODB_STATISTICS_TABLE_NAME: statisticsTableName,
       CHUNKS_BUCKET: chunksBucketName,
       ...(personHistoryTableName && { DYNAMODB_PERSON_HISTORY_TABLE_NAME: personHistoryTableName }),
+      ...(landscapeTone && { LANDSCAPE_TONE: landscapeTone.name }),
+      // Starting a run (BulkSync, dashboard/src/services/BulkSync.ts), as the EventBridge schedule does
+      CHUNKER_FUNCTION_NAME: chunkerFunctionName,
+      PROCESSOR_SUBSCRIBER_FUNCTION_NAME: processorSubscriberFunctionName,
+      // Shown in a run's review: the pipeline stack and the chunker task's chunk size
+      PIPELINE_STACK_ID: pipelineStackId,
+      ...(itemsPerChunk !== undefined && { ITEMS_PER_CHUNK: String(itemsPerChunk) }),
     } as any;
 
     // Add authentication-related environment variables if applicable
@@ -71,7 +89,7 @@ export class FunctionUrlOrigin {
       };
     }
 
-    const functionName = `${STACK_ID}-${TAGS.Landscape}-app-function`;
+    const functionName = dashboardFunctionName(STACK_ID, TAGS.Landscape);
     
     // Store secret in Systems Manager Parameter Store (per landscape: STACK_ID is shared by every landscape)
     new StringParameter(stack, 'secret', {
@@ -119,6 +137,20 @@ export class FunctionUrlOrigin {
       effect: Effect.ALLOW,
       actions: ['s3:GetObject', 's3:ListBucket'],
       resources: [`arn:${Stack.of(stack).partition}:s3:::${chunksBucketName}`, `arn:${Stack.of(stack).partition}:s3:::${chunksBucketName}/*`],
+    }));
+
+    // Starting a run (BulkSync): invoke the chunker subscriber (which resets the chunker's counters for a run's
+    // start), and read both subscribers' DRY_RUN
+    const functionArn = (name: string) => Stack.of(stack).formatArn({ service: 'lambda', resource: 'function', resourceName: name, arnFormat: ArnFormat.COLON_RESOURCE_NAME });
+    this.lambda.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['lambda:InvokeFunction'],
+      resources: [functionArn(chunkerFunctionName)],
+    }));
+    this.lambda.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['lambda:GetFunctionConfiguration'],
+      resources: [functionArn(chunkerFunctionName), functionArn(processorSubscriberFunctionName)],
     }));
 
     // Lambda function url for the web app.

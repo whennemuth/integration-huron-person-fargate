@@ -5,7 +5,7 @@
 import { handler } from '../dashboard/src/handlers/DashboardHandler';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
 import { ServiceProvider } from '../dashboard/src/services/ServiceProvider';
-import { MAX_PAGE_LIMIT, ReportingError } from '../src/reporting/RunReporting';
+import { MAX_PAGE_LIMIT, pageOfRunIds, ReportingError } from '../src/reporting/RunReporting';
 
 const syncRunId = '2026-10-01T02:00:00.000Z';
 
@@ -22,9 +22,12 @@ const request = async (path: string, queryStringParameters?: Record<string, stri
 };
 
 describe('Dashboard run reporting routes', () => {
+  const listRuns = jest.fn<Promise<string[]>, []>().mockResolvedValue([syncRunId]);
   const service = {
     getCapabilities: jest.fn().mockReturnValue({ landscape: 'mock', storageMode: 's3', changesSupported: false }),
-    listRuns: jest.fn().mockResolvedValue([syncRunId]),
+    listRuns,
+    // A keyed page of the runs listRuns() gives, as RunReporting reads it from the run-list-index
+    listRunPage: jest.fn(async (params: { limit: number; before?: string }) => pageOfRunIds(await listRuns(), params)),
     getRunReport: jest.fn().mockResolvedValue({ syncRunId, status: 'SUCCEEDED' }),
     getRunChunkStatistics: jest.fn().mockResolvedValue([{ eventType: 'STATISTICS-chunk-0000' }]),
     getRunErrors: jest.fn().mockResolvedValue({ items: [{ statusCode: 500 }], cursor: 'next' }),
@@ -75,6 +78,85 @@ describe('Dashboard run reporting routes', () => {
   it('passes the change type and page through', async () => {
     await request(`/api/runs/${syncRunId}/changes`, { changeType: 'UPDATED', limit: '10' });
     expect(service.getRunChanges).toHaveBeenCalledWith(syncRunId, 'UPDATED', { cursor: undefined, limit: 10 });
+  });
+
+  describe('the run list with reports (include=report)', () => {
+    /** Runs a day apart, oldest first, as listRuns() returns them */
+    const ids = Array.from({ length: 45 }, (_, n) => new Date(Date.UTC(2026, 8, 1 + n, 2)).toISOString());
+
+    beforeEach(() => {
+      service.listRuns.mockResolvedValue(ids);
+      service.getRunReport.mockImplementation(async (id: string) => ({ syncRunId: id, status: 'SUCCEEDED' }));
+    });
+    afterEach(() => {
+      service.listRuns.mockResolvedValue([syncRunId]);
+      service.getRunReport.mockResolvedValue({ syncRunId, status: 'SUCCEEDED' });
+    });
+
+    it('returns the newest 20 runs with their reports, and the marker for the next page', async () => {
+      const { status, body } = await request('/api/runs', { include: 'report' });
+      expect(status).toBe(200);
+      expect(body.items.map((item: any) => item.syncRunId)).toEqual(ids.slice(-20).reverse());
+      expect(body.items[0]).toEqual({ syncRunId: ids[44], status: 'SUCCEEDED' });
+      expect(body.before).toBe(ids[25]);
+      expect(service.getRunReport).toHaveBeenCalledTimes(20);
+      // The page is read by key, not cut from the whole list
+      expect(service.listRunPage).toHaveBeenCalledWith({ limit: 20, before: undefined });
+    });
+
+    it('pages back with before until no older runs remain', async () => {
+      const second = (await request('/api/runs', { include: 'report', before: ids[25] })).body;
+      expect(second.items.map((item: any) => item.syncRunId)).toEqual(ids.slice(5, 25).reverse());
+      const last = (await request('/api/runs', { include: 'report', before: second.before })).body;
+      expect(last.items.map((item: any) => item.syncRunId)).toEqual(ids.slice(0, 5).reverse());
+      expect(last.before).toBeUndefined();
+    });
+
+    it('honors limit, and has no marker when the page holds every remaining run', async () => {
+      expect((await request('/api/runs', { include: 'report', limit: '1' })).body).toEqual({
+        items: [{ syncRunId: ids[44], status: 'SUCCEEDED' }], before: ids[44]
+      });
+      expect((await request('/api/runs', { include: 'report', limit: '50' })).body.before).toBeUndefined();
+      expect((await request('/api/runs', { include: 'report', before: ids[0] })).body).toEqual({ items: [] });
+    });
+
+    it('lists a run with nothing recorded to report on as UNKNOWN', async () => {
+      service.getRunReport.mockImplementation(async (id: string) => id === ids[44] ? undefined : { syncRunId: id, status: 'SUCCEEDED' });
+      expect((await request('/api/runs', { include: 'report', limit: '1' })).body.items).toEqual([{ syncRunId: ids[44], status: 'UNKNOWN' }]);
+    });
+
+    it.each([
+      ['an unknown include', { include: 'everything' }, undefined],
+      ['a limit of 0', { include: 'report', limit: '0' }, 'INVALID_LIMIT'],
+      ['a limit over 50', { include: 'report', limit: '51' }, 'INVALID_LIMIT'],
+      ['a non-numeric limit', { include: 'report', limit: 'ten' }, 'INVALID_LIMIT'],
+      ['a before that is not a syncRunId', { include: 'report', before: 'yesterday' }, undefined],
+    ])('rejects %s with 400', async (_label, query, code) => {
+      const response = await request('/api/runs', query);
+      expect(response.status).toBe(400);
+      expect(response.body.code).toBe(code);
+      expect(service.listRuns).not.toHaveBeenCalled();
+    });
+
+    it('returns a failure to read the runs as 500', async () => {
+      service.listRuns.mockRejectedValueOnce(new Error('table not found'));
+      expect(await request('/api/runs', { include: 'report' })).toMatchObject({
+        status: 500, body: { error: 'Failed to list runs', message: 'table not found' }
+      });
+    });
+
+    it("returns a run-list-index that isn't ready as 503, saying what to do, on both run list routes", async () => {
+      const unavailable = new ReportingError('RUN_LIST_UNAVAILABLE', "stats has no run-list-index yet: deploy this landscape's pipeline stack");
+      service.listRuns.mockRejectedValueOnce(unavailable);
+      expect(await request('/api/runs', { include: 'report' })).toMatchObject({
+        status: 503, body: { error: unavailable.message, code: 'RUN_LIST_UNAVAILABLE' }
+      });
+      service.listRuns.mockRejectedValueOnce(unavailable);
+      expect(await request('/api/runs')).toMatchObject({ status: 503, body: { code: 'RUN_LIST_UNAVAILABLE' } });
+      // Other reporting errors are still the request's to fix
+      service.listRuns.mockRejectedValueOnce(new ReportingError('INVALID_LIMIT', 'bad limit'));
+      expect((await request('/api/runs')).status).toBe(400);
+    });
   });
 
   describe('validation', () => {
@@ -156,10 +238,34 @@ describe('Dashboard routes with mock services (LOCALHOST_WITH_MOCKS)', () => {
     const { body: { runs } } = await request('/api/runs');
     expect(runs.length).toBeGreaterThan(0);
     expect(await request(`/api/runs/${runs[0]}/summary`)).toMatchObject({ status: 200, body: { status: 'SUCCEEDED' } });
-    expect(await request(`/api/runs/${runs[0]}/changes`, { changeType: 'NEW' })).toMatchObject({
-      status: 200, body: { items: [{ changeType: 'NEW' }] }
-    });
+    const changes = await request(`/api/runs/${runs[0]}/changes`, { changeType: 'NEW' });
+    expect(changes.status).toBe(200);
+    expect(changes.body.items.length).toBeGreaterThan(0);
+    expect(changes.body.items.every((change: any) => change.changeType === 'NEW')).toBe(true);
     expect(await request('/api/landscapes')).toMatchObject({ status: 200, body: { current: 'local' } });
+  });
+
+  it('pages through every mock run, newest first, with its report', async () => {
+    const { body: { runs } } = await request('/api/runs');
+    const listed: any[] = [];
+    let before: string | undefined;
+    do {
+      const { status, body } = await request('/api/runs', { include: 'report', ...(before ? { before } : {}) });
+      expect(status).toBe(200);
+      listed.push(...body.items);
+      before = body.before;
+    } while (before);
+    expect(listed.map(item => item.syncRunId)).toEqual([...runs].reverse());
+    expect(listed.every(item => item.status !== 'UNKNOWN')).toBe(true);
+  });
+
+  it('carries an unfinished run\'s progress in the run list and in its summary, the same in both', async () => {
+    const { body: { items } } = await request('/api/runs', { include: 'report', limit: '50' });
+    const unfinished = items.find((item: any) => item.status === 'INCOMPLETE');
+    expect(unfinished.progress.chunksReported).toBeGreaterThan(0);
+    const { body: report } = await request(`/api/runs/${unfinished.syncRunId}/summary`);
+    expect(report.progress).toEqual(unfinished.progress);
+    expect(items.filter((item: any) => item.summary).every((item: any) => item.progress === undefined)).toBe(true);
   });
 
   it('serves the person and bulk sync routes from the mocks without reading the config secret', async () => {
@@ -184,8 +290,8 @@ describe('Dashboard routes with mock services (LOCALHOST_WITH_MOCKS)', () => {
         .toMatchObject({ status: 200, body: { data: { personId: 'U1234567' } } });
       expect(await post('/api/person-sync', { personId: 'U1234567', operation: 'update' }))
         .toMatchObject({ status: 200, body: { personId: 'U1234567', status: 'success' } });
-      expect(await post('/api/bulk-sync', { operation: 'full' }))
-        .toMatchObject({ status: 200, body: { operation: 'full', status: 'started' } });
+      expect(await post('/api/bulk-sync', { runType: 'full' }))
+        .toMatchObject({ status: 202, body: { status: 'started', run: { population: 'person-full' } } });
     } finally {
       if (savedArn !== undefined) process.env.INTEGRATION_SECRETS_ARN = savedArn;
     }

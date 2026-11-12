@@ -93,61 +93,33 @@ class PersonCard {
         // Clear global cache
         window.cachedSourceData = null;
         window.cachedTargetData = null;
-        
-        const alert = document.createElement('div');
-        alert.className = 'alert alert-warning';
-        
-        const icon = document.createElement('i');
-        icon.className = 'fas fa-exclamation-triangle me-2';
-        
-        alert.appendChild(icon);
-        alert.appendChild(document.createTextNode('Person not found in either source or target systems'));
-        
-        this.container.appendChild(alert);
+
+        this.container.appendChild(PageState.element('empty', {
+            title: 'Person not found',
+            message: 'No record matches in either Boston University\'s source data or Huron.'
+        }));
     }
 
     /**
      * Render waiting/loading message
      */
     renderWaiting() {
-        this.container.innerHTML = '';
-        
         // Clear global cache while waiting
         window.cachedSourceData = null;
         window.cachedTargetData = null;
-        
-        const alert = document.createElement('div');
-        alert.className = 'alert alert-info';
-        
-        const icon = document.createElement('i');
-        icon.className = 'fas fa-search me-2';
-        
-        alert.appendChild(icon);
-        alert.appendChild(document.createTextNode('Looking up person...'));
-        
-        this.container.appendChild(alert);
+
+        PageState.loading(this.container, 'Looking up person');
     }
 
     /**
      * Render error message
      */
     renderError(message = 'Error looking up person') {
-        this.container.innerHTML = '';
-        
         // Clear global cache on error
         window.cachedSourceData = null;
         window.cachedTargetData = null;
-        
-        const alert = document.createElement('div');
-        alert.className = 'alert alert-danger';
-        
-        const icon = document.createElement('i');
-        icon.className = 'fas fa-exclamation-circle me-2';
-        
-        alert.appendChild(icon);
-        alert.appendChild(document.createTextNode(message));
-        
-        this.container.appendChild(alert);
+
+        PageState.error(this.container, message);
     }
 
     /**
@@ -224,12 +196,7 @@ class PersonCard {
         
         // Add copy button
         const copyBtn = document.createElement('button');
-        copyBtn.className = 'btn btn-sm btn-outline-warning ms-2';
-        copyBtn.style.padding = '0.15rem 0.5rem';
-        copyBtn.style.fontSize = '0.75rem';
-        copyBtn.style.backgroundColor = '#f8f5e0';
-        copyBtn.style.borderColor = '#d4a843';
-        copyBtn.style.color = '#856404';
+        copyBtn.className = 'btn btn-sm btn-outline-secondary btn-compact ms-2';
         copyBtn.title = 'Copy source JSON to clipboard';
         copyBtn.innerHTML = '<i class="fas fa-copy"></i> Copy to clipboard';
         copyBtn.onclick = () => this.copyToClipboard(window.cachedSourceData, 'source');
@@ -272,12 +239,7 @@ class PersonCard {
         
         // Add copy button
         const copyBtn = document.createElement('button');
-        copyBtn.className = 'btn btn-sm btn-outline-warning ms-2';
-        copyBtn.style.padding = '0.15rem 0.5rem';
-        copyBtn.style.fontSize = '0.75rem';
-        copyBtn.style.backgroundColor = '#f8f5e0';
-        copyBtn.style.borderColor = '#d4a843';
-        copyBtn.style.color = '#856404';
+        copyBtn.className = 'btn btn-sm btn-outline-secondary btn-compact ms-2';
         copyBtn.title = 'Copy target JSON to clipboard';
         copyBtn.innerHTML = '<i class="fas fa-copy"></i> Copy to clipboard';
         copyBtn.onclick = () => this.copyToClipboard(window.cachedTargetData, 'target');
@@ -667,10 +629,7 @@ class PersonCard {
         
         // Create Preview button
         const previewButton = document.createElement('button');
-        previewButton.className = 'btn btn-sm btn-outline-warning';
-        previewButton.style.backgroundColor = '#f8f5e0';
-        previewButton.style.borderColor = '#d4a843';
-        previewButton.style.color = '#856404';
+        previewButton.className = 'btn btn-sm btn-outline-secondary';
         
         const previewIcon = document.createElement('i');
         previewIcon.className = 'fas fa-eye me-1';

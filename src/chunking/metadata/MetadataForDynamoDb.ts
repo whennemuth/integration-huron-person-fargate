@@ -154,6 +154,7 @@ export class MetadataForDynamoDb implements IMetadataStorage {
       runFailureTimestamp,
       personRecordProcessorAddons,
       termsEndpoint,
+      startedBy,
       dryRun = false,
       replace = false
     } = params;
@@ -180,6 +181,9 @@ export class MetadataForDynamoDb implements IMetadataStorage {
     }
     if (termsEndpoint !== undefined) {
       flags.termsEndpoint = termsEndpoint;
+    }
+    if (startedBy !== undefined) {
+      flags.startedBy = startedBy;
     }
 
     if (dryRun) {

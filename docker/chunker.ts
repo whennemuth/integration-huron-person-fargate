@@ -396,6 +396,9 @@ export async function main() {
       console.log(`Terms endpoint for this run: ${termsEndpoint.baseUrl}${termsEndpoint.fetchPath}`);
     }
 
+    // Who or what started the run (the dashboard, the schedule, the Runner), for Run history
+    const startedBy = chunker.getStartedBy?.();
+
     // Write flags file BEFORE chunking starts so processor tasks can read it immediately
     await metadataBroker.writeFlags({
       bucketName: chunksBucket,
@@ -405,6 +408,7 @@ export async function main() {
       syncPopulation,
       personRecordProcessorAddons,
       termsEndpoint,
+      startedBy,
       dryRun: dryRun === 'true',
       region
     });

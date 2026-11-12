@@ -1,7 +1,7 @@
 # integration-huron-person-dashboard: Serverless Management Dashboard
 
 ## Project Purpose
-A serverless dashboard for managing integration operations between BU CDM and Huron systems. Provides web-based UI for individual person sync, bulk operations, activity history, and system status monitoring. Deployed via AWS CDK with Lambda function serving both as HTML dashboard server and data synchronization engine.
+A serverless dashboard for managing integration operations between BU CDM and Huron systems. Provides web-based UI for individual person sync, bulk operations, run history, and system status monitoring. Deployed via AWS CDK with Lambda function serving both as HTML dashboard server and data synchronization engine.
 
 ## Repository Relationship Model
 
@@ -81,12 +81,12 @@ The Lambda function serves two primary roles:
 **1. HTML Dashboard Server:**
 - Serves Mustache-rendered HTML with inline CSS/JS assets
 - Handles static dashboard routes
-- Provides responsive Bootstrap UI with tabbed interface
+- Provides a responsive Bootstrap UI: a sidebar of grouped pages and a top bar
 
 **2. Data Synchronization Engine:**
 - Executes person sync operations (individual and bulk)
 - Interfaces with BU CDM data sources and Huron data targets
-- Processes API requests for person lookup, sync, history, and status
+- Processes API requests for person lookup, sync, run reporting, and status
 
 ### Infrastructure Components
 
@@ -101,7 +101,11 @@ The Lambda function serves two primary roles:
 - Multiple route handlers for dashboard and API operations
 
 **Origin Verification Security:**
-- Cryptographically secure secret header
+- Cryptographically secure secret header: `cf-origin-verify-` plus 32 bytes from `crypto.randomBytes`,
+  base64url encoded (`lib/FunctionUrl.ts`). A new value is made at every synth, so each dashboard deploy
+  rotates it in the SSM parameter, the Lambda's `ORIGIN_VERIFY_SECRET` and CloudFront's header together (the
+  deploy's diff shows all three changing). Until CloudFront has rolled the new header out, requests may briefly
+  get 403.
 - Stored in AWS Systems Manager Parameter Store
 - CloudFront injects secret in all origin requests
 - Lambda validates and blocks unauthorized access (403)
@@ -115,8 +119,10 @@ The Lambda function serves two primary roles:
 
 ### Dashboard Operations
 - **Individual Person Sync**: Lookup and sync single person records by BUID or HRN
-- **Bulk Operations**: Large-scale batch synchronization jobs
-- **Activity History**: Logs and audit trail of integration activities
+- **Bulk sync**: start a sync run in the landscape, as its schedule does (full or delta, bulk reset, or a one-person
+  test), after a review of what will run and the event the chunker will be sent
+- **Overview** (the landing page): the latest run and the service health checks
+- **Run History**: The landscape's sync runs, newest first, and each run's figures, chunks, errors and changes
 - **System Status**: Health monitoring of BU CDM and Huron services
 
 ### Security Features
@@ -139,13 +145,34 @@ The Lambda function serves two primary roles:
 **API Operations:**
 - `POST /api/person-lookup` - Look up individual person by BUID or HRN
 - `POST /api/person-sync` - Sync individual person record
-- `POST /api/bulk-sync` - Start bulk synchronization operation
-- `GET /api/history` - Get activity history and logs
+- `GET /api/bulk-sync` - what starting a run would do and whether it's allowed now (`BulkSyncState`: the form's
+  defaults, the latest run, and `blocked` with the refusal a start would get, `NOT_CONFIGURED` included, so the
+  page shows even where starting isn't configured)
+- `POST /api/bulk-sync/plan` - review a run: the same checks as a start, then what it would send (`BulkSyncPlan`:
+  the choices, the `ApiChunkerEvent`, and every setting of the run, named as the manual Runner's `RunnerEnv`, each
+  with its source: `form`, `landscape`, `fixed` or `unused`; the page shows the choices and the event, not the
+  settings); `200`, nothing is started
+- `POST /api/bulk-sync` - start a sync run, as the EventBridge schedule does (`BulkSync`,
+  `src/services/BulkSync.ts`): `{ runType: 'full' | 'full-no-deactivations' | 'test', buid? (a test's,
+  and only a test's), bulkReset?, iterationLimit? (0-50, 0 a single task; default 10), parallelStart?,
+  overrideStalled? }`; `202` with what was started. A refused review
+  or start is a `BulkSyncError` as `{ error, code }` (400 invalid, 403 production, 409 a run underway or stalled or a
+  subscriber in `DRY_RUN`, 503 not configured)
 - `GET /api/status` - Get system health status and metrics
 
 **Run reporting** (this landscape's sync runs, read in-process from its tables and chunks bucket
 through fargate's `src/reporting/RunReporting.ts`; GET only, no `landscape` parameter):
 - `GET /api/runs` - `{ runs }`, the syncRunIds, oldest first
+- `GET /api/runs?include=report&limit&before` - a page of runs with their reports, newest first:
+  `{ items, before? }`. Up to `limit` runs (1-50, default 20) older than `before` (a syncRunId);
+  the response's `before` continues the list and is present only while older runs remain. A run
+  with nothing recorded to report on is listed as `{ syncRunId, status: 'UNKNOWN' }`. Built by
+  `RunList` (`src/handlers/RunList.ts`): `listRunPage({ limit, before })` (one Query of the statistics
+  table's `run-list-index`), then that page's reports in parallel. So Overview (`limit=1`) reads one run's
+  key. A bad `limit` is `400` `INVALID_LIMIT`, a bad `before` or `include` is `400`. A table that can't serve
+  `run-list-index` yet (its pipeline stack not deployed since the index was added, or the index still being
+  built) is `503` `RUN_LIST_UNAVAILABLE`, on this route and `GET /api/runs`, with a message saying what to do,
+  which the run list's error state shows.
 - `GET /api/runs/{syncRunId}/summary` - the run's report (`404` if nothing is recorded)
 - `GET /api/runs/{syncRunId}/chunks` - `{ items }`, per-chunk statistics
 - `GET /api/runs/{syncRunId}/errors?cursor&limit&statusCode` - a page `{ items, cursor? }`
@@ -155,12 +182,13 @@ through fargate's `src/reporting/RunReporting.ts`; GET only, no `landscape` para
 
 `syncRunId` must be an ISO timestamp (URL-encoded or not); `limit` 1-500 (default 100). A
 `ReportingError` maps to `400 { error, code }` (`INVALID_CURSOR`, `INVALID_LIMIT`,
-`UNSUPPORTED_IN_STORAGE_MODE`), anything else to `500 { error, message }`.
+`UNSUPPORTED_IN_STORAGE_MODE`), except `RUN_LIST_UNAVAILABLE` (the landscape's state, not the request's
+fault), which maps to `503 { error, code }`; anything else to `500 { error, message }`.
 
 **Landscape picker data:**
 - `GET /api/landscapes` - `{ current, landscapes: [{ landscape, label, url?, isDefault, current }] }`
   from the landscape registry (see "Landscape registry" below). The dashboard page's own
-  navigator doesn't call it (see "Navigation bar" below)
+  navigator doesn't call it (see "Page frame: sidebar and top bar" below)
 
 ## Key Patterns
 
@@ -171,7 +199,6 @@ Centralized registry for managing service instances:
 - PersonLookup service
 - PersonSync service
 - BulkSync service
-- History service
 - SystemStatus service
 - RunReporting service (`RunReports.ts`: fargate's `RunReporting` built from the Lambda environment)
 - LandscapeListing service (`LandscapeRegistry.ts`)
@@ -193,9 +220,19 @@ Provides mock implementations when `LOCALHOST_WITH_MOCKS=true` (ignored in Lambd
 - Mock BU CDM data source responses
 - Mock Huron data target operations
 - Simulated sync execution
-- Fake history and status data
-- Fake run reports and a fake landscape registry ("local", plus `mock` and `Staging` at
-  example.com urls). This `mock` is unrelated to the deployed mock landscape.
+- Fake status data
+- A fake landscape registry ("local", plus `mock` and `Staging` at example.com urls). This `mock`
+  is unrelated to the deployed mock landscape.
+- Run reporting (`src/handlers/MockRunReporting.ts`): a deterministic history of 40 runs ending
+  with the nightly run of 2026-11-04. `MockRunCatalog` defines them: nightly delta syncs, a full
+  sync every seventh night, and at fixed positions from the newest the special cases (an incomplete
+  run, a terminal error, a failed and a post-processing-failed run, a dry run, a bulk reset, two
+  single-person runs). The newest run has 260 errors across 400/404/429/500 and 130/240/12
+  NEW/UPDATED/DELETED changes, enough for several pages. Chunk statistics, errors and changes agree
+  with each run's summary. `MockRunReportingService` pages them with offset cursors (`OffsetPager`)
+  under RunReporting's limits and `ReportingError` codes. `MOCK_STORAGE_MODE` (`dynamodb`, the
+  default, or `s3`) sets the storage mode it reports; in S3 mode change lists are refused with
+  `UNSUPPORTED_IN_STORAGE_MODE`. Tests: `test/DashboardMockRunReporting.test.ts`.
 
 **Benefit**: Enables full local testing without AWS credentials or external service access. The
 mocks ignore the integration config, so the person and bulk sync routes don't read it when they
@@ -233,31 +270,58 @@ Request validation security layer:
 ```bash
 npm install
 npm run dashboard:build:templates  # Build Mustache templates with inline assets
-npm run dashboard:dev              # Start local server at http://localhost:3000/dashboard
-npm run dashboard:dev:watch        # Watch mode with hot reload
-npm run dashboard:dev:signed-in    # As a signed-in landscape shows it (see below)
-npm run dashboard:dev:signed-in:mocks  # The same with the mock services: no AWS access
+npm run dashboard:dev              # Start the local server at http://localhost:3000/dashboard
+npm run dashboard:dev -- --mocks   # The same with the mock services for one run (flags: see below)
 ```
 
-`dashboard:dev` loads no `.env` and sets no app login/logout headers, so it runs in public mode
-with no landscape navigator (no region to read the registry with) and no sign-out control.
-The two `signed-in` scripts build the templates, then run `dashboard/scripts/LocalLaunch.ts`
-(`--signed-in`, plus `--mocks` for the second), which sets the environment and then loads
-`LocalServer.ts`. It always sets `NODE_ENV=development`; its variables take precedence over `.env`.
-- `--signed-in` sets placeholder `APP_LOGIN_HEADER`/`APP_LOGOUT_HEADER` names, which turn off
-  public mode and so show the sign-out control.
-- Without `--mocks` it loads `.env` (dotenv), which supplies `AWS_PROFILE`, `REGION` and
-  `LANDSCAPE`: the navigator lists the real registry and selects `LANDSCAPE` (it is left out if the
-  registry can't be read, e.g. with an expired AWS session).
-- `--mocks` sets `LOCALHOST_WITH_MOCKS=true` and skips `.env`: the navigator lists the mock
-  registry's made-up landscapes.
+`dashboard:dev` builds the templates, then runs `scripts/LocalLaunch.ts`, which starts
+`LocalServer.ts` as a landscape's dashboard Lambda would run. Its settings are in
+`scripts/LocalLaunch.env` (git-ignored; copy the committed `scripts/LocalLaunch.env.example`). The
+repository's `.env` is never read.
+- **The landscape**: `LANDSCAPE`, `REGION` and optional `STACK_ID` name the deployed dashboard Lambda to
+  run as; `AWS_PROFILE` gives the credentials the server uses in place of the Lambda's role.
+- **Without mocks** (`MOCKED=false`) the launcher looks up that Lambda's environment at every launch
+  (`LambdaFunction`, see "Test Harnesses" below), leaves out its secrets (`ORIGIN_VERIFY_SECRET`), and runs
+  the server with it: the server reads the landscape's tables, config secret and registry. A redeploy
+  that changes the environment is picked up at the next launch. An expired AWS session, or a landscape
+  without a deployed dashboard, stops the launch with a message. The message hints at the likely cause:
+  `LANDSCAPE`/`REGION` when AWS answered that the function doesn't exist (`DashboardFunctionNotFoundError`),
+  otherwise the AWS session.
+- **Overrides**: any other variable in `LocalLaunch.env` wins over the Lambda's value (the launcher marks
+  each one in what it prints). Without a deployed dashboard Lambda, the whole environment can be given there
+  by hand.
+- **Switches**: `MOCKED` (`LOCALHOST_WITH_MOCKS`; no lookup and no AWS access), `AUTHENTICATION` (`none`:
+  public mode, the app login/logout headers removed; `mock`: signed in as `USER_PRINCIPAL`, see below),
+  `WATCH` (nodemon restarts the server on a change under `dashboard/`; the environment is looked up once and
+  handed to each restart through `LOCAL_LAUNCH_RESOLVED`), `MOCK_STORAGE_MODE` (`dynamodb` | `s3`, the
+  storage mode the mock run reporting reports), `PORT` (default 3000).
+- **Flags** override a switch for one run, after `--`: `--mocks`, `--no-mocks`, `--auth <none|mock>`,
+  `--watch`, `--no-watch`, `--storage-mode <dynamodb|s3>` (mocks only), `--allow-production`.
+- **Production guard**: without mocks the launcher refuses a landscape whose `LANDSCAPE_TONE` (the Lambda's,
+  or an override) is `production`, since Sync and Bulk sync would write to its real target from local code,
+  unless `ALLOW_PRODUCTION=true` or `--allow-production`. A local run also uses your profile's permissions,
+  not the Lambda role's.
+- **Mock sign-in** (`AUTHENTICATION=mock`, `MockSignIn` in `scripts/MockSignIn.ts`): stands in for the sign-in
+  edge functions, so every request arrives signed in as `USER_PRINCIPAL` without an IdP. The Lambda's own
+  sign-in settings are kept (`APP_AUTHORIZATION`, the login/logout header names, `AUTH_COOKIE_NAME`), so
+  `Authenticator` runs as deployed. Before the handler sees a request, `MockSignIn` adds the `authenticated:
+  true` header and presents the JWT cookie, made as the edge functions make it: `JwtTools` signs
+  `{ sub, user: <claims> }` (RS256) with a key pair generated when the server starts (`publicKey` keeps the
+  public half), the claims array-valued as the IdP sends them (`buPrincipal`, and `eduPersonPrincipalName`,
+  `mail`, `givenName`, `sn` from `USER_EPPN`, `USER_MAIL`, `USER_GIVEN_NAME`, `USER_SURNAME`). The top bar shows
+  the user. `/logout` is answered locally with a page saying the mock user can't sign out. Under mocks, with no
+  Lambda to take them from, placeholder login/logout header names are set. The launcher passes
+  `LOCAL_MOCK_SIGN_IN=true` in the environment, so each watch restart puts it back in front of the handler.
+  `LocalServer.ts` takes it through `startLocalServer({ requestDecorator })` (`LocalRequestDecorator`:
+  `decorate(event)` and an optional `respond(path)`), and imports nothing from `scripts/`. Tests:
+  `test/DashboardMockSignIn.test.ts`.
 
-Neither shows a user name (no JWT cookie on localhost), and `/logout` is a 404 there: only the
-edge functions answer it. The launcher sets the variables itself, rather than the npm script
-doing it with `VAR=value` or calling a shell script, so it runs from any shell: npm runs scripts
-in `cmd.exe` on Windows, where neither works (`sh` is on the `PATH` only inside Git Bash).
+`LocalLaunchOptions` (`scripts/LocalLaunchOptions.ts`) decides all of this from the file and the flags
+without side effects; `LocalLaunch.ts` reads, looks up, prints the environment (secrets masked) and starts.
+Tests: `test/DashboardLocalLaunch.test.ts`. The launcher is TypeScript, not a shell script, because npm
+runs scripts in `cmd.exe` on Windows, where neither `VAR=value` prefixes nor `sh` work.
 
-**Environment Variables:**
+**Environment Variables** (set by the launcher, or in `LocalLaunch.env`):
 - `NODE_ENV=development` - Enables local mode, bypasses origin verification
 - `PORT=3000` - Local server port (default)
 - `LOCALHOST_WITH_MOCKS=true` - Enables mock services
@@ -274,7 +338,7 @@ pipeline harness's.
 
 - `src/services/ServiceProvider.ts` (`DASHBOARD_SERVICE_PROVIDER`) - gets a service from the
   provider and calls it as `DashboardHandler` does, read only. `TASK`: `capabilities`, `runs`,
-  `summary`, `chunks`, `errors`, `changes`, `landscapes`, `lookup`, `preview`, `history`,
+  `summary`, `chunks`, `errors`, `changes`, `landscapes`, `lookup`, `preview`,
   `status`. The landscape's Lambda environment (`LANDSCAPE`, `REGION`, table names, ...) is
   given with the prefix; `LOCALHOST_WITH_MOCKS=true` uses the mocks without loading any config.
 
@@ -301,6 +365,19 @@ DASHBOARD_SERVICE_PROVIDER_TASK=summary npx ts-node -r dotenv/config dashboard/s
 DASHBOARD_SHIBBOLETH_SECRET_TASK=read npx ts-node -r dotenv/config dashboard/src/ShibbolethSecret.ts
 ```
 
+- `scripts/LambdaFunction.ts` (`DASHBOARD_LAMBDA_FUNCTION`) - a landscape's deployed dashboard Lambda
+  (`LambdaFunction`, found by `dashboardFunctionName()` in `lib/DashboardFunctionName.ts`, which
+  `lib/FunctionUrl.ts` names the function with). Read only. `TASK`: `show` (its environment, with its
+  secret variables masked: what the local launcher looks up). `LANDSCAPE`, `REGION` and `STACK_ID`
+  default to the active context's. `LambdaFunction.SECRET_VARIABLES` (`ORIGIN_VERIFY_SECRET`, read only in
+  Lambda) are what a local run leaves out (`withoutSecrets()`) and any display masks (`masked()`). Tests:
+  `test/DashboardLambdaFunction.test.ts`. The launcher's own settings are in `scripts/LocalLaunch.env`
+  (git-ignored), documented by the committed `scripts/LocalLaunch.env.example`.
+
+```bash
+DASHBOARD_LAMBDA_FUNCTION_TASK=show npx ts-node -r dotenv/config dashboard/scripts/LambdaFunction.ts
+```
+
 ## CDK Deployment
 
 One dashboard stack per landscape, `${DASHBOARD.STACK_ID}-${landscape}` (e.g. `hp-dashboard-mock`),
@@ -322,8 +399,10 @@ characters: the Shibboleth construct names a bucket `<stack name>-context-config
 - No secret of its own: the Lambda reads the landscape's integration config secret
   (`integrationSecretName()` in fargate `lib/Secrets.ts`), and has read-only grants on the
   statistics table, the person history table (DynamoDB mode) and the chunks bucket
-  (`lib/LandscapeResources.ts`). All by deterministic name - no CloudFormation imports from the
-  pipeline stack.
+  (`lib/LandscapeResources.ts`). To start a run (Bulk sync) it may also invoke the chunker subscriber
+  (`chunker-subscriber-<landscape>`, which resets the chunker's counters for a run's start) and read its and
+  the processor subscriber's configuration (their `DRY_RUN`); it writes nothing. All by deterministic name -
+  no CloudFormation imports from the pipeline stack.
 
 **Commands** (from the fargate root; `npm run deploy` deploys the pipeline and dashboard stacks):
 ```bash
@@ -365,8 +444,9 @@ destroying a stack that's already gone does nothing.
 **Context Configuration:**
 - `../context/context*.json` `DASHBOARD` section - Infrastructure parameters
 - `context/IContext.ts` - Dashboard context types (`DashboardSettings`), including the optional
-  `LABEL` (picker label, default: the landscape), `isDefault` (the default landscape) and
-  `sharedSignIn` (see "Shared sign-in" below)
+  `LABEL` (picker label, default: the landscape), `isDefault` (the default landscape),
+  `LANDSCAPE_TONE` (the top bar's tint, see "Landscape tone" below) and `sharedSignIn` (see
+  "Shared sign-in" below)
 - Setting up the hosted zone and certificate, and which context keys take them: the fargate
   `README.md`, "Dashboard DNS and Certificates"
 
@@ -429,22 +509,221 @@ the edge functions, which set, clear and read the JWT cookie with them.
   `cookieName`/`cookieDomain`, or in public mode. Tests: `test/DashboardSharedSignIn.test.ts`.
 - Setting up a landscape: the fargate `README.md`, "Dashboard DNS and Certificates", step 4.
 
-### Navigation bar
+### Page frame: sidebar and top bar
 
-`renderDashboard()` builds the navbar's data with `buildNavigationBar()` (`src/handlers/NavigationBar.ts`).
-Tests: `test/DashboardNavigation.test.ts`.
+The dashboard page (`templates/dashboard.mustache`) is a left sidebar of grouped page links, and a
+main column with a top bar above the pages. The login page has the same top bar and no sidebar. Colors, type and
+shape come from the theme tokens at the top of `public/css/dashboard.css` (`--hp-*`), which
+Bootstrap's own `--bs-*` variables point at. Change the look there, not per component.
+- **Sidebar** (`PageNavigation`, `src/handlers/PageNavigation.ts`): the page groups and their
+  items (id, label, Font Awesome icon). A group without a label is listed with no heading: the
+  Overview, at the top, is the default page, so a bare URL opens it. `renderDashboard()` passes its `templateData(?tab)`: the
+  `navigation` groups plus a `<page>Active` flag per page, which the page partials use. An unknown
+  `?tab` falls back to the default page rather than showing none. Each item is a Bootstrap pill
+  (`data-bs-toggle="pill"`) for the tab pane of the same id. At `lg` and up the sidebar is a static
+  column. Below, it's an off-canvas menu (`offcanvas-lg`) opened from the top bar, which
+  `dashboard.js` closes once a page is chosen. Tests: `test/DashboardPageNavigation.test.ts` and
+  the sidebar render tests in `test/DashboardNavigation.test.ts`.
+- **Page fragments** (`initializePageNavigation()` in `public/js/dashboard.js`): choosing a page
+  sets the URL fragment `#<page>` (a history entry, so back and forward move between pages), and a
+  fragment, which the server never sees, takes precedence over the server-rendered page on load.
+  Only the fragment's first segment names the page (`#<page>/<detail>`), leaving room for detail
+  views. A page shown by following the URL (load, back, forward) adds no history entry. Pages that
+  fetch data when shown are loaded from `onPageShown()`. A page with details (`PAGES_WITH_DETAILS`,
+  e.g. `#runs/<syncRunId>`) is called again when the fragment changes while it is shown, and must
+  ignore a repeat call (a fragment change fires both `popstate` and `hashchange`). Choosing such a
+  page in the sidebar while it shows a detail returns to the page itself. The panes have
+  `scroll-margin-top`, so the browser's jump to the pane a fragment names stays clear of the sticky
+  top bar.
+- **Top bar**: built by `buildNavigationBar()` (`src/handlers/NavigationBar.ts`). Tests:
+  `test/DashboardNavigation.test.ts`. Its parts are described below.
 - **Landscape navigator**: a select over the landscape registry, rendered server-side from the
   `LandscapeRegistry`'s per-instance cache (no SSM read per page, and no `/api/landscapes` call
   from the page), with this landscape selected. Choosing one sends the browser to its `url`
   (`public/js/dashboard.js`). An entry without a `url` is listed but disabled. When the registry
   doesn't list this landscape (e.g. run locally), it's added, selected. If the registry can't be
-  read, the page renders without the navigator.
+  read or lists no landscape, a badge naming this landscape (`LANDSCAPE`, else `local`) takes the
+  navigator's place.
+- **Landscape tone** (`LandscapeTone`, `src/handlers/LandscapeTone.ts`): with no colored banner, the
+  navigator (or badge) is tinted so it's obvious which landscape you're in: red for `production`,
+  amber for `test`, gray for `mock`. The tone comes from the optional context setting
+  `LANDSCAPE_TONE`, which `lib/FunctionUrl.ts` validates at synth (any other value fails it) and
+  passes to the Lambda as the `LANDSCAPE_TONE` environment variable. When it's unset, a mock landscape
+  (`isMockLandscape()`) is marked `mock` and any other landscape gets no tint.
+  `buildNavigationBar()` resolves it at render time, ignoring an invalid value with a warning. A
+  local run reads `LANDSCAPE_TONE` from the environment (or `.env`). The tone is also given as text
+  for screen readers ("Production landscape"). Tests: `test/DashboardLandscapeTone.test.ts`,
+  the navigation bar tests in `test/DashboardNavigation.test.ts`, and the synth test in
+  `test/DashboardStack.test.ts`.
 - **Sign-out**: a link to `SIGN_OUT_PATH` (`/logout`), shown unless the dashboard is public. The
   edge functions answer `/logout` themselves, so the Lambda never sees it: they expire the JWT
   cookie (with its Domain, so with `sharedSignIn` every landscape is signed out), then redirect to
   `/logout?target=idp`, which sends the browser to `SHIBBOLETH.logoutUrl` to end the IdP session.
-  The browser ends on the IdP's page. The navbar also shows the JWT's `eduPersonPrincipalName`
+  The browser ends on the IdP's page. The top bar also shows the JWT's `eduPersonPrincipalName`
   (else `buPrincipal`).
+
+### Page patterns
+
+Every page (`templates/partials/*-tab.mustache`) is built from the same parts, styled in the
+"Page patterns" section of `public/css/dashboard.css`. Reuse them for new pages rather than adding
+page-specific styles:
+- **Page header**: `.page` > `header.page-header` with an `h1.page-title`, a one-line
+  `.page-description`, and `.page-actions` (e.g. Refresh) on the right.
+- **Sections**: `section.page-section`, with an optional `.section-heading` (`h2.section-title`)
+  over a white `.surface`. Use `.surface-flush` when a table runs to its edges, and `.page-columns`
+  for a main section beside a narrower one (stacked below `lg`). Cards are only for a bounded
+  object shown as one unit (a person record, a mapping result), not for every section.
+- **Stat tiles**: `.stat-grid` of `.stat-tile` (`.stat-label` over `.stat-value`).
+- **Data tables**: `table.table.data-table` inside `.table-responsive`. Cells stay on one line and
+  the table scrolls sideways on a narrow screen; mark prose cells `.wrap` and figures `.num`.
+  Outcomes use `.status-badge` (`-success`, `-warning`, `-danger`), from `Html.statusBadge()`
+  (or `Html.badge(label, tone)`). No fixed-height inner scroll boxes: pages scroll as a whole.
+- **States** (`PageState`, `public/js/page-state.js`): the one pattern for a section with nothing to
+  show: `loading`, `empty`, `error` and `redacted` (the viewer's role doesn't allow the content).
+  `PageState.loading(target, title)` and friends replace a container's content;
+  `PageState.element(kind, { title, message, compact })` builds one to place yourself. Text is set
+  as text, so a message may carry server output. `dashboard.js`, `person-card.js` and
+  `mapping-experiment-card.js` all render their states through it, so it loads before them. A
+  section's data load goes through `fetchSectionData()` (`dashboard.js`), which throws an `Error`
+  carrying the server's message and `status`. Tests: `test/DashboardPageState.test.ts` (in a vm
+  with a stand-in DOM, since jest runs without one).
+- **Markup** (`Html`, `public/js/page-state.js`): HTML built from template literals escapes every
+  value with `Html.escape()`, and draws badges and tags with `Html`. `dashboard.js`'s `escapeHtml()`
+  and `statusBadge()` delegate to it.
+- **Refresh stamp** (`RefreshStamp`, `public/js/page-state.js`): a `.refresh-stamp` in
+  `.page-actions`, beside Refresh, set to "Refreshed HH:MM" once a page's data loads. Pages refresh
+  only when asked: there is no polling (an incomplete run may never finish).
+- **Paged lists** (`PagedTable` and `CursorPager`, `public/js/run-history.js`): a data table filled a
+  page at a time from a cursor-paged route, with a `.table-footer` saying how many rows are shown and
+  offering the next page, or explaining a failed page and offering to try again. `.filter-chip`
+  buttons (`aria-pressed`, with a count) over a list choose what it lists.
+
+### Run history page
+
+The `runs` page (`templates/partials/runs-tab.mustache`, `public/js/run-history.js`) shows the
+landscape's runs from the run reporting routes. Its classes each do one thing:
+- `RunsApi` calls the routes (`/api/runs?include=report`, `/api/runs/{id}/summary|chunks|errors|changes`,
+  `/api/capabilities`) through `fetchSectionData()`, and `RunView` reduces a run's report to what the
+  page shows: the summary's figures when the post-processor wrote one, else what the metadata, flags
+  and terminal error say, with the report's `progress` (the chunk statistics summed so far) as the
+  figures (`soFar`). An unfinished run's duration runs from its start to its last chunk
+  (`lastChunkAt`), not to now. Deactivations are the processors' `removed` plus the deletion step's
+  `deletedCount`.
+- **An unfinished run's status is its phase** (`RunView.phase(now)`, drawn by `RunView.statusBadgeHtml(now)` in
+  the list's Status, the run page's header, Overview and Bulk sync's status panel), in place of "Incomplete":
+  **Fetching** (the chunker hasn't found the end of the source; no percent), **Processing**, **Post-processing**
+  (every chunk processed; deactivations and the summary come next; no percent) or **Stalled**
+  (`RunView.stalledFor(now)`: the stall rule below, applied to a run waiting on post-processing too, so one whose
+  post-processor never ran doesn't read "Post-processing" forever; the rule `RunActivity` applies for Bulk sync's
+  guard; with its percent unless it stalled while fetching). All amber; green is kept for a finished run. A run
+  without chunk figures keeps "Incomplete", a failed one "Failed".
+- **An unfinished run's figures** (`soFar`) are marked wherever they show. In the list its Added,
+  Updated, Deactivated, Errors and Duration are muted (`td.so-far`), with its percent done beside its
+  phase (none while fetching or post-processing, or "so far" without chunk figures; Records come from the metadata
+  and aren't marked). Its
+  tiles (`.stat-tile-so-far`, on the run's page and Overview) are labeled "so far", the Processed tile
+  also shows the percent done ("of 735 chunks") and a bar (`RunDetailView.completionHtml()`), and they are followed
+  by the progress line (`RunDetailView.progressHtml()` over `RunView.progressParts()`: "412 of 735 chunks
+  processed · last chunk finished 1 min ago · processing should finish around 7:45 PM (in about 5 h 06
+  min)"; while fetching, "412 chunks processed", with no "of"); an incomplete full sync's Deactivated tile notes
+  that post-processing adds deletions.
+- **Percent done** (`RunView.completion`): chunks processed ÷ chunks written (`chunksReported` ÷ METADATA
+  `chunkCount`), rounded down to one decimal and capped at 100, so it reads 100.0 only when every chunk is
+  processed. Counted in chunks because the processors' own figure (`results.processed`, each chunk's
+  `totalRecords`) counts only the people sent to Huron, those whose record changed: by it, a run where few people
+  changed (a nightly full sync trusting stored fingerprints, or a Test of an unchanged person) never looked done,
+  and never reached Post-processing (found in preview 2026-11-12; phase 5d step 5). Chunks hold the same number of
+  people bar the last, so it is the share of people processed too, at chunk granularity. It measures processing,
+  not chunking. Its state (`.completion-<state>`): `done` (100.0, and chunking has finished, METADATA
+  `partialOrEmptyChunkEncountered`), `underway`, `fetching` (no percent: the total isn't known, and `chunkCount` is
+  added as each chunker task finishes, so it lags the chunks processed and could read 100% mid-fetch), all amber,
+  since the run isn't finished until its summary (`done` was green until 2026-11-11, which read as contradicting
+  "Incomplete" beside it); `failed` (gray).
+- **Estimated finish** (`RunView.estimate(now)`, underway runs only): the chunk rate so far (chunks processed ÷
+  start to last chunk) applied to the chunks left, from the last chunk's end; it leaves out post-processing. A run is
+  **stalled** (in place of the last-chunk time, amber) when no chunk has finished for more than
+  `RunView.STALL_FACTOR` (10) times its average gap between chunks and at least `RunView.MIN_STALL_MS` (15
+  minutes); a still-fetching run can stall but gets no estimate. A run waiting on post-processing stalls by the
+  same rule ("Stalled: post-processing hasn't finished 3 days after the last chunk"). All from the browser's clock
+  at each load.
+- **Started by** (`RunView.startedByLabel()`): a column after Started, and the first of a run's facts ("Started by
+  jdoe"): the signed-in user's `buPrincipal` for a start from Bulk sync ("Dashboard" without one), "Schedule" or
+  "Runner", from the summary's `startedBy` or else the flags' (fargate `src/chunking/StartedBy.ts`); a dash for a run
+  from before it was recorded. The mock catalog's newest 30 runs have one (`MockRunCatalog.STARTED_BY_RECORDED_FOR`):
+  the schedule's nightly runs, two single-person runs and the incomplete run from Bulk sync, the bulk reset from the
+  Runner.
+- A single-person run is named by its BUID only when the report has metadata (the source URL's `buid`): a
+  finished run's summary doesn't record it.
+- `RunHistoryPage` shows the list (`#runs`, 20 runs a page with "Load older runs") or one run
+  (`#runs/<syncRunId>`). The list keeps what it has loaded while a run is open; Refresh reloads it.
+- `RunDetailView` is one run: the header (status, population, storage mode, duration, dry run, bulk
+  reset), stat tiles, a note when the run failed, failed post-processing or has no summary yet (for
+  a run with `progress`, saying its figures are summed from the chunks processed so far), and
+  four tabs, each loaded when first opened: **Overview** (summary, deletion outcome, flags),
+  **Chunks** (per-chunk statistics with totals), **Errors** (filtered by status code, with counts
+  from the summary or else the chunk statistics) and **Changes** (by type; in S3 mode, where
+  `changesSupported` is false, it says why there are none).
+Tests: `test/DashboardRunHistory.test.ts` runs the script in a vm (as written and minified) and drives
+`RunsApi` through the handler with the mock run history.
+
+### Overview page
+
+The `overview` page (`templates/partials/overview-tab.mustache`, `public/js/overview.js`) is the
+landing page. `OverviewPage` loads, each time the page is shown and on Refresh, the latest run
+(`/api/runs?include=report&limit=1`: its status, facts, how long ago it finished or started, the
+run page's note and stat tiles, figures so far for a run without a summary, and a link to its page) and the service checks (`/api/status`, in
+the `ServiceStatusTable` of `public/js/system-status.js`, which the Status page uses too). The two
+load independently, so one failing (the real `SystemStatus` service isn't implemented yet) leaves
+the other shown. Scripts load in dependency order: `page-state.js`, `run-history.js`,
+`system-status.js`, `overview.js`, `bulk-sync.js`, then `dashboard.js`, which creates the pages. Tests:
+`test/DashboardOverview.test.ts`.
+
+### Bulk sync page
+
+The `bulk` page (`templates/partials/bulk-tab.mustache`, `public/js/bulk-sync.js`) starts a sync run in this
+landscape the way its schedule does (`GET`/`POST /api/bulk-sync`, `POST /api/bulk-sync/plan`, `BulkSync`; see the
+routes above).
+- **The options** (`BulkSyncRequest`): a run type (Full sync (with deactivations), `person-full`, the default; Full
+  sync (no deactivations), `person-delta`; a disabled Delta sync, since a source of only the people who changed
+  doesn't exist yet; Test, one person by BUID through the person endpoint, `person-delta`), Bulk reset, and Custom
+  settings: chunker tasks ("Chunks per task", 1-50, default 10, `BulkSyncRequest.CHUNKS_PER_TASK_DEFAULT`; or
+  "Single task", sent as `iterationLimit: 0`; a test ignores it) and parallel start (0-20 chunker messages, standing for the Runner's `MESSAGES_TO_PREPOPULATE` and
+  `DESIRED_COUNT`; read-only at 0, and refused otherwise, until shared queue seeding is built:
+  `BulkSyncRequest.PARALLEL_START_ENABLED`). The defaults are the scheduled run's (`ScheduledRun`,
+  fargate `src/chunking/ScheduledRun.ts`).
+- **Bulk reset is one choice for both previous-state flags** (`ScheduledRun.previousStateFlags()`): checked sends
+  `bulkReset: true, trustPreviousStorage: false`, unchecked `false, true`. The pipeline only acts on their
+  combination, and a missing `trustPreviousStorage` reads as `false` (a reset), so both are always sent.
+- **Not offered** (command line only, or not yet): addons, `CHUNKING_ONLY` / `MESSAGING_ONLY` (they switch the
+  subscribers' `DRY_RUN`, which stays switched), skipping the counter reset (the chunker subscriber always resets),
+  `ITEMS_PER_CHUNK` (the chunker task's environment, set at deploy), and in mock landscapes the target reset and the
+  source simulator (later). The plan route's settings list them with their fixed values; the page doesn't show
+  that list.
+- **The page's words are for people who don't know the pipeline**: bulk reset is explained as a fingerprint of
+  each person's record rather than as hashes, and the page doesn't mention the schedule (a later page will
+  describe what the schedule does).
+- `BulkSyncView` is the words and markup. `formHtml(state, values)` starts at the defaults and keeps what was
+  entered; choosing Test shows the BUID box and what a test is, checking Custom settings shows those fields, and
+  "Chunks per task" shows its dropdown. A start
+  the server would refuse now (`state.blocked`, not configured included) is said above Review run, which is
+  disabled then; a stalled newest run instead offers the "Start despite the stalled run" checkbox
+  (`overrideStalled`). Warnings (a mock landscape's real source) show first. `requestError()` catches an invalid
+  request before it is sent, `summaryLines()` spells out what will run, and `confirmationHtml(plan)` shows the
+  review: the summary, then a table of the event the chunker subscriber will receive.
+- `BulkSyncPage` loads the state each time the page is shown and on Refresh. Review run locks the fields and asks
+  the server for the review (`POST /api/bulk-sync/plan`), which a refusal answers under the fields (unlocked); Back
+  unlocks them. So what is started is what was reviewed. Start posts the same request (`postSectionData()` in
+  `dashboard.js`, which also carries the server's error `code`); a refusal is shown under the review. After a start,
+  the status panel says when and what, and on Refresh links to the newest run once its syncRunId is no earlier than
+  the start (less `CLOCK_SLACK_MS`), since the chunker, not the page, creates it.
+- The Lambda's environment carries what the review shows: `PIPELINE_STACK_ID`, `ITEMS_PER_CHUNK`, and the config
+  secret's name (`lib/FunctionUrl.ts`).
+- **Who starts it**: the handler passes the request's signed-in user (`Request.user`, the sign-in token's claims) to
+  `plan()` and `start()`, and `BulkSync.startedBy(user)` makes `{ by: 'dashboard', principal: <buPrincipal> }` of it
+  (no principal in a public dashboard). It goes on the event, so the review shows it and the run records it (Run
+  history's Started by). Never taken from the request body.
+Tests: `test/DashboardBulkSyncPage.test.ts` (the script in a vm, as written and minified, and once over the
+mock routes); the service: `test/DashboardBulkSync.test.ts`.
 
 ## Dependencies
 
@@ -475,7 +754,14 @@ Tests: `test/DashboardNavigation.test.ts`.
 1. Modify CSS/JS in `public/` directory
 2. Run `npm run dashboard:build:templates` to minify and embed
 3. Generated constants appear in `src/handlers/TemplateConstants.ts`
-4. Templates in `templates/` use `{{{ inlineCss }}}` and `{{{ inlineJs }}}` placeholders
+4. Templates use `{{{cssAssets.dashboard}}}` and `{{{jsAssets.<name>}}}`. A new JS file must also be
+   added to `TemplateService.getJsAssets()` (both branches) and given a `<script>` in
+   `templates/dashboard.mustache`. A new partial must be added to `TemplateService.getPartials()` and
+   to `partialFiles` in `scripts/BuildTemplates.ts`.
+5. The Lambda serves the minified assets, the local server the files as written, so a local run can't
+   catch a minifier break. The minifier is regex-based: it deletes everything after `//` on a line
+   (including inside strings and regexes) and joins lines, so end every statement with a semicolon.
+   `test/DashboardPageState.test.ts` checks that every script still parses once minified.
 
 ## Common Issues & Debugging
 
@@ -492,7 +778,18 @@ Tests: `test/DashboardNavigation.test.ts`.
 4. Review minification errors in build output
 
 ### Local Development Issues
-1. Set `NODE_ENV=development` to bypass origin verification
-2. Set `LOCALHOST_WITH_MOCKS=true` to use mock services
-3. Check Express server logs for route errors
-4. Verify port 3000 is available
+The launcher (`npm run dashboard:dev`, see "Local Development") sets `NODE_ENV=development`, which bypasses
+origin verification, and `LOCALHOST_WITH_MOCKS` from `MOCKED`; don't set them by hand.
+1. **No AWS access, or none wanted**: `MOCKED=true` in `scripts/LocalLaunch.env`, or `-- --mocks` for one run.
+2. **The launch stops before the server starts**: an expired session for `AWS_PROFILE` (refresh it), or no
+   dashboard Lambda by that name (check `LANDSCAPE`, `REGION` and `STACK_ID`); the message says which.
+3. **The port is already in use**: stopping `npm run dashboard:dev` (Ctrl+C, or closing its terminal) can leave
+   its `node` process listening on Windows. Find the process listening on `PORT` (default 3000) and stop it, or
+   set another `PORT` in `LocalLaunch.env`.
+4. **PowerShell refuses `npm`**: with the execution policy `Restricted`, npm's `npm.ps1` shim is blocked; run
+   `npm.cmd run dashboard:dev`, or use `cmd.exe` or Git Bash.
+5. **Works locally, fails deployed** (or the reverse): a local run uses your profile's AWS permissions, not the
+   Lambda role's, so a missing grant only shows when deployed.
+6. **The top bar names the user differently**: deployed it shows the IdP's `eduPersonPrincipalName`; the mock
+   sign-in shows `USER_PRINCIPAL` unless `USER_EPPN` is set.
+7. Route errors are in the server's own output.

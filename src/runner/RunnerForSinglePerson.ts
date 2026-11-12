@@ -3,6 +3,7 @@ import { handleApiEvent } from '../chunking/fetch/ChunkerApiSubscriber';
 import { ChunkingServiceRunner } from './AbstractRunner';
 import { Config } from 'integration-huron-person';
 import { Endpoint, NormalizedPopulationType, TargetConfig } from './RunnerTypes';
+import { RunStarter } from '../chunking/StartedBy';
 
 /**
  * Runner for single person testing mode.
@@ -67,6 +68,7 @@ export class SinglePersonRunner extends ChunkingServiceRunner {
       offset: 0,
       personRecordProcessorAddons,
       termsEndpoint: sourceEndpoint.termsEndpoint,
+      startedBy: RunStarter.RUNNER,
       processingMetadata: {
         processedAt: new Date().toISOString(),
         processorVersion: '1.0.0'

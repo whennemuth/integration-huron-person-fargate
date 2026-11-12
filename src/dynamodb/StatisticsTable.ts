@@ -1,3 +1,4 @@
+import { RunStarter, StartedBy } from '../chunking/StartedBy';
 import { TestEnvironment } from 'integration-core';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, UpdateCommand, UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
@@ -11,10 +12,17 @@ export const DYNAMODB_PARTITION_KEY = 'integrationTimestamp';
 export const DYNAMODB_SECONDARY_PARTITION_KEY = 'errorType';
 export const DYNAMODB_SORT_KEY = 'eventType';
 export const DYNAMODB_GSI_INDEX_NAME = 'errorType-timestamp-index';
-// Sparse GSI holding exactly one item per run: the RUN marker item, whose distinctRunId copies the table PK
-export const DYNAMODB_RUN_INDEX_NAME = 'distinct-run-index';
-export const DYNAMODB_RUN_INDEX_PARTITION_KEY = 'distinctRunId';
+// Sparse GSI holding exactly one item per run, the RUN marker item, all in one partition sorted by syncRunId, so the
+// newest runs can be read by key: partition key runList (always RUN_LIST_PARTITION), sort key distinctRunId (a copy
+// of the table PK). It replaced the scan-only distinct-run-index (partition key distinctRunId), removed 2026-11-10.
+export const DYNAMODB_RUN_LIST_INDEX_NAME = 'run-list-index';
+export const DYNAMODB_RUN_LIST_PARTITION_KEY = 'runList';
+export const DYNAMODB_RUN_LIST_SORT_KEY = 'distinctRunId';
+export const RUN_LIST_PARTITION = 'RUNS';
 export const RUN_MARKER_SORT_KEY = 'RUN';
+
+/** A page of syncRunIds, newest first, and whether older runs remain */
+export type RunIdPage = { syncRunIds: string[], hasOlder: boolean };
 export const RUN_SUMMARY_SORT_KEY = 'RUN_SUMMARY';
 
 export type DeletionSkipReason = 'TERMINAL_ERROR' | 'PERSON_DELTA' | 'DELETES_DISABLED' | 'NO_MERGE_OUTPUT' | 'MISSING_TABLES';
@@ -26,6 +34,70 @@ export type DeletionOutcome =
   | { status: 'FAILED'; message: string };
 
 export type RunSummaryStatus = 'SUCCEEDED' | 'FAILED' | 'POST_PROCESSING_FAILED';
+
+/** A run's record counts, summed over its chunks' IntegrationResult counts */
+export type RunResults = {
+  processed: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  added: number;
+  updated: number;
+  removed: number;
+};
+
+/**
+ * The totals of the STATISTICS-chunk items a run's processors have written. The post-processor's RUN_SUMMARY is
+ * built from them, and a run without a summary yet (still running, or stopped) reports them as its progress.
+ */
+export type ChunkTotals = {
+  /** Chunks that wrote a STATISTICS-chunk item */
+  chunksReported: number;
+  results: RunResults;
+  totalErrors: number;
+  throttleCount: number;
+  errorsByStatus: Record<string, number>;
+  /** The latest chunk endTimestamp; absent when no chunk has reported */
+  lastChunkAt?: string;
+};
+
+/**
+ * Sum a run's STATISTICS-chunk items. The one place a run's figures are added up, so the figures shown while it
+ * runs and the summary the post-processor writes can't disagree.
+ */
+export const sumChunkStatistics = (chunks: StatisticsItem[]): ChunkTotals => {
+  const results: RunResults = { processed: 0, succeeded: 0, failed: 0, skipped: 0, added: 0, updated: 0, removed: 0 };
+  const errorsByStatus: Record<string, number> = {};
+  let totalErrors = 0;
+  let throttleCount = 0;
+  let lastChunkAt: string | undefined;
+  for (const chunk of chunks) {
+    results.processed += chunk.totalRecords ?? 0;
+    results.succeeded += chunk.successCount ?? 0;
+    results.failed += chunk.failureCount ?? 0;
+    results.skipped += chunk.skippedCount ?? 0;
+    results.added += chunk.addedCount ?? 0;
+    results.updated += chunk.updatedCount ?? 0;
+    results.removed += chunk.removedCount ?? 0;
+    totalErrors += chunk.totalErrors ?? 0;
+    throttleCount += chunk.throttleCount ?? 0;
+    for (const [status, count] of Object.entries(chunk.errorsByStatus ?? {})) {
+      errorsByStatus[status] = (errorsByStatus[status] ?? 0) + Number(count);
+    }
+    // ISO timestamps order as strings
+    if (chunk.endTimestamp && (!lastChunkAt || chunk.endTimestamp > lastChunkAt)) {
+      lastChunkAt = chunk.endTimestamp;
+    }
+  }
+  return {
+    chunksReported: chunks.length,
+    results,
+    totalErrors,
+    throttleCount,
+    errorsByStatus,
+    ...(lastChunkAt ? { lastChunkAt } : {})
+  };
+};
 
 /** Per-run totals written once by the post-processor (SK = RUN_SUMMARY). */
 export type RunSummary = {
@@ -42,19 +114,13 @@ export type RunSummary = {
   totalRecords?: number;
   /** Chunks that wrote a STATISTICS-chunk item; fewer than chunkCount if processor tasks died */
   chunksReported: number;
-  results: {
-    processed: number;
-    succeeded: number;
-    failed: number;
-    skipped: number;
-    added: number;
-    updated: number;
-    removed: number;
-  };
+  results: RunResults;
   totalErrors: number;
   throttleCount: number;
   errorsByStatus: Record<string, number>;
   deletion?: DeletionOutcome;
+  /** Who or what started the run (src/chunking/StartedBy.ts), from its Flags; absent for runs from before it was recorded */
+  startedBy?: StartedBy;
 };
 
 export class StatisticsTable {
@@ -109,29 +175,14 @@ export class StatisticsTable {
     storageMode?: string;
     dryRun: boolean;
     deletion?: DeletionOutcome;
+    /** The run's Flags.startedBy, which the caller reads (from DynamoDB or S3, by storage mode) */
+    startedBy?: unknown;
   }): Promise<RunSummary> => {
     const { postProcessingSucceeded, storageMode, dryRun, deletion } = params;
+    const startedBy = RunStarter.from(params.startedBy);
     const metadata = await this.readMetadata(syncRunId) ?? {};
-    const chunks = await this.getAllChunkStatistics(syncRunId);
-
-    const results = { processed: 0, succeeded: 0, failed: 0, skipped: 0, added: 0, updated: 0, removed: 0 };
-    const errorsByStatus: Record<string, number> = {};
-    let totalErrors = 0;
-    let throttleCount = 0;
-    for (const chunk of chunks) {
-      results.processed += chunk.totalRecords ?? 0;
-      results.succeeded += chunk.successCount ?? 0;
-      results.failed += chunk.failureCount ?? 0;
-      results.skipped += chunk.skippedCount ?? 0;
-      results.added += chunk.addedCount ?? 0;
-      results.updated += chunk.updatedCount ?? 0;
-      results.removed += chunk.removedCount ?? 0;
-      totalErrors += chunk.totalErrors ?? 0;
-      throttleCount += chunk.throttleCount ?? 0;
-      for (const [status, count] of Object.entries(chunk.errorsByStatus ?? {})) {
-        errorsByStatus[status] = (errorsByStatus[status] ?? 0) + Number(count);
-      }
-    }
+    // The summary keeps its own completedAt; the latest chunk time is only reported for runs without one
+    const { lastChunkAt: _, ...totals } = sumChunkStatistics(await this.getAllChunkStatistics(syncRunId));
 
     let status: RunSummaryStatus = 'SUCCEEDED';
     if (!postProcessingSucceeded) {
@@ -151,12 +202,9 @@ export class StatisticsTable {
       bulkReset: metadata.bulkReset,
       chunkCount: metadata.chunkCount,
       totalRecords: metadata.totalRecords,
-      chunksReported: chunks.length,
-      results,
-      totalErrors,
-      throttleCount,
-      errorsByStatus,
-      deletion
+      ...totals,
+      deletion,
+      ...(startedBy ? { startedBy } : {})
     };
   }
 
@@ -223,34 +271,68 @@ export class StatisticsTable {
   }
 
   /**
-   * Get the distinct integration timestamps (syncRunIds) in the table - the equivalent of
-   * "SELECT DISTINCT integrationTimestamp". Scans the sparse, KEYS_ONLY distinct-run-index, which
-   * holds exactly one small item per run (see registerRun()), so the cost is proportional to the
-   * number of runs rather than the number of chunks/errors they produced.
-   *
-   * @returns An array of unique integration timestamps, sorted chronologically (ascending)
+   * A page of syncRunIds from the run-list-index, newest first: up to `limit` runs older than `before` (a
+   * syncRunId) when given. One Query of `limit + 1` keys-only items; the extra one says whether older runs
+   * remain. syncRunIds are ISO timestamps, so the index's sort order is time order. Throws the Query's
+   * ValidationException if the table can't serve the run-list-index (see isMissingIndexError() in
+   * src/reporting/RunReporting.ts).
    */
-  public getUniqueIntegrationTimestamps = async (): Promise<string[]> => {
-    const items = await this.table.scanIndex({ indexName: DYNAMODB_RUN_INDEX_NAME });
-    // ISO timestamps sort chronologically as strings; a scan returns them unordered
-    return items.map(item => item[DYNAMODB_PARTITION_KEY] as string).sort();
+  public getRunIdsPage = async (params: { limit: number, before?: string }): Promise<RunIdPage> => {
+    const { limit, before } = params;
+    const { items } = await this.table.queryGSIPage({
+      indexName: DYNAMODB_RUN_LIST_INDEX_NAME,
+      gsiPartitionKey: DYNAMODB_RUN_LIST_PARTITION_KEY,
+      partitionKeyValue: RUN_LIST_PARTITION,
+      ...(before !== undefined && { gsiSortKey: DYNAMODB_RUN_LIST_SORT_KEY, sortKeyValue: before, sortKeyComparison: '<' }),
+      scanIndexForward: false,
+      limit: limit + 1
+    });
+    const syncRunIds = items.map(item => item[DYNAMODB_PARTITION_KEY] as string);
+    return { syncRunIds: syncRunIds.slice(0, limit), hasOlder: syncRunIds.length > limit };
   }
 
   /**
-   * Write the run's RUN marker item, the only item carrying the distinct-run-index key. Idempotent,
+   * Every syncRunId in the run-list-index, oldest first, reading all its pages. Throws as getRunIdsPage()
+   * does when the table has no run-list-index.
+   */
+  public getAllRunIds = async (): Promise<string[]> => {
+    const syncRunIds: string[] = [];
+    let exclusiveStartKey: Record<string, any> | undefined;
+    do {
+      const page = await this.table.queryGSIPage({
+        indexName: DYNAMODB_RUN_LIST_INDEX_NAME,
+        gsiPartitionKey: DYNAMODB_RUN_LIST_PARTITION_KEY,
+        partitionKeyValue: RUN_LIST_PARTITION,
+        limit: 1000,
+        exclusiveStartKey
+      });
+      syncRunIds.push(...page.items.map(item => item[DYNAMODB_PARTITION_KEY] as string));
+      exclusiveStartKey = page.lastEvaluatedKey;
+    } while (exclusiveStartKey);
+    return syncRunIds;
+  }
+
+  /** The RUN marker item for a run, the only item carrying the run-list-index's keys */
+  private static runMarker(syncRunId: string): Record<string, string> {
+    return {
+      [DYNAMODB_PARTITION_KEY]: syncRunId,
+      [DYNAMODB_SORT_KEY]: RUN_MARKER_SORT_KEY,
+      [DYNAMODB_RUN_LIST_SORT_KEY]: syncRunId,
+      [DYNAMODB_RUN_LIST_PARTITION_KEY]: RUN_LIST_PARTITION
+    };
+  }
+
+  /**
+   * Write the run's RUN marker item, the only item carrying the run-list-index's keys. Idempotent,
    * so every write path that can be a run's first item in this table calls it.
    */
   public async registerRun(syncRunId: string): Promise<void> {
-    await this.table.putItem({
-      [DYNAMODB_PARTITION_KEY]: syncRunId,
-      [DYNAMODB_SORT_KEY]: RUN_MARKER_SORT_KEY,
-      [DYNAMODB_RUN_INDEX_PARTITION_KEY]: syncRunId
-    });
+    await this.table.putItem(StatisticsTable.runMarker(syncRunId));
   }
 
   /**
-   * One-time backfill of RUN marker items for runs written before the distinct-run-index existed.
-   * Scans the whole base table once.
+   * One-time backfill of RUN marker items: for runs written before the markers existed, and to add the
+   * run-list-index key (runList) to markers written before it. Scans the whole base table once.
    *
    * @returns The number of runs registered
    */
@@ -258,11 +340,7 @@ export class StatisticsTable {
     const items = await this.table.scanAll();
     const syncRunIds = Array.from(new Set(items.map(item => item[DYNAMODB_PARTITION_KEY] as string)));
     await this.table.batchWrite({
-      items: syncRunIds.map(syncRunId => ({
-        [DYNAMODB_PARTITION_KEY]: syncRunId,
-        [DYNAMODB_SORT_KEY]: RUN_MARKER_SORT_KEY,
-        [DYNAMODB_RUN_INDEX_PARTITION_KEY]: syncRunId
-      })),
+      items: syncRunIds.map(syncRunId => StatisticsTable.runMarker(syncRunId)),
       operation: 'put'
     });
     return syncRunIds.length;
@@ -738,7 +816,7 @@ export async function main() {
         }
         break;
       case 'list':
-        const syncList = await statisticsTable.getUniqueIntegrationTimestamps();
+        const syncList = await statisticsTable.getAllRunIds();
         console.log(`Found ${syncList.length} unique integration run(s):`);
         console.log(JSON.stringify(syncList, null, 2));
         break;
@@ -753,7 +831,7 @@ export async function main() {
         break;
       case 'backfill-runs':
         const registered = await statisticsTable.backfillRunMarkers();
-        console.log(`Registered ${registered} run(s) in ${DYNAMODB_RUN_INDEX_NAME}`);
+        console.log(`Registered ${registered} run(s) in ${DYNAMODB_RUN_LIST_INDEX_NAME}`);
         break;
       case 'delete':
         if(!timestamp) {

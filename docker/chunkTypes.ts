@@ -1,5 +1,6 @@
 
 import { Message } from '@aws-sdk/client-sqs';
+import type { StartedBy } from '../src/chunking/StartedBy';
 
 /** The source of person data either is all people, or only those that have changed */
 export enum SyncPopulation {
@@ -33,6 +34,7 @@ export type IChunkFromSource = {
   getSyncPopulation?: () => SyncPopulation  // Optional getter for syncPopulation from task parameters
   getPersonRecordProcessorAddons?: () => string | undefined  // Optional getter for personRecordProcessorAddons from task parameters
   getTermsEndpoint?: () => SourceEndpoint | undefined  // Optional getter for termsEndpoint from task parameters
+  getStartedBy?: () => StartedBy | undefined  // Optional getter for who or what started the run, from task parameters
 }
 
 export type ChunkFromParams = {

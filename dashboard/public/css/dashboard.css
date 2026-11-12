@@ -1,136 +1,1282 @@
-/* Custom dashboard styles */
-.dashboard-header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    padding: 2rem 0;
+/* ==========================================================================
+   Theme tokens
+   The one place the dashboard's colors, type and shape are decided. Bootstrap 5.3 reads its own
+   --bs-* variables, so they are pointed at these tokens; components below use the tokens directly.
+   A future dark mode redefines these under [data-bs-theme="dark"].
+   ========================================================================== */
+:root {
+    --hp-accent: #2c5a8c;
+    --hp-accent-rgb: 44, 90, 140;
+    --hp-accent-hover: #244b75;
+    --hp-accent-active: #1e3f62;
+    --hp-accent-subtle: #eaf0f6;
+    --hp-accent-border-subtle: #b9cadd;
+
+    --hp-canvas: #f5f6f8;
+    --hp-surface: #ffffff;
+    --hp-surface-muted: #f8f9fa;
+    --hp-border: #e1e4e8;
+    --hp-border-strong: #c9ced6;
+
+    --hp-text: #1f2328;
+    --hp-text-rgb: 31, 35, 40;
+    --hp-text-secondary: #57606a;
+    --hp-text-muted: #6e7781;
+
+    --hp-success: #1a7f37;
+    --hp-success-rgb: 26, 127, 55;
+    --hp-warning: #9a6700;
+    --hp-warning-rgb: 154, 103, 0;
+    --hp-danger: #c4302b;
+    --hp-danger-rgb: 196, 48, 43;
+
+    --hp-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    --hp-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --hp-font-size: 0.9375rem;
+
+    --hp-radius: 6px;
+    --hp-radius-sm: 4px;
+    --hp-radius-lg: 8px;
+    --hp-shadow-sm: 0 1px 2px rgba(var(--hp-text-rgb), 0.06);
+    --hp-focus-ring: 0 0 0 0.2rem rgba(var(--hp-accent-rgb), 0.2);
+
+    /* Bootstrap's variables, pointed at the tokens */
+    --bs-primary: var(--hp-accent);
+    --bs-primary-rgb: var(--hp-accent-rgb);
+    --bs-primary-text-emphasis: var(--hp-accent-active);
+    --bs-primary-bg-subtle: var(--hp-accent-subtle);
+    --bs-primary-border-subtle: var(--hp-accent-border-subtle);
+    --bs-success: var(--hp-success);
+    --bs-success-rgb: var(--hp-success-rgb);
+    --bs-warning-text-emphasis: var(--hp-warning);
+    --bs-danger: var(--hp-danger);
+    --bs-danger-rgb: var(--hp-danger-rgb);
+
+    --bs-link-color: var(--hp-accent);
+    --bs-link-color-rgb: var(--hp-accent-rgb);
+    --bs-link-hover-color: var(--hp-accent-hover);
+    --bs-link-hover-color-rgb: 36, 75, 117;
+
+    --bs-body-font-family: var(--hp-font-sans);
+    --bs-body-font-size: var(--hp-font-size);
+    --bs-font-monospace: var(--hp-font-mono);
+    --bs-body-color: var(--hp-text);
+    --bs-body-color-rgb: var(--hp-text-rgb);
+    --bs-emphasis-color: var(--hp-text);
+    --bs-secondary-color: var(--hp-text-secondary);
+    --bs-tertiary-bg: var(--hp-surface-muted);
+    --bs-border-color: var(--hp-border);
+
+    --bs-border-radius: var(--hp-radius);
+    --bs-border-radius-sm: var(--hp-radius-sm);
+    --bs-border-radius-lg: var(--hp-radius-lg);
+    --bs-focus-ring-color: rgba(var(--hp-accent-rgb), 0.2);
 }
 
-/* Status indicators */
-.status-indicator {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    display: inline-block;
-    margin-right: 8px;
-}
-.status-healthy { background-color: #28a745; }
-.status-warning { background-color: #ffc107; }
-.status-error { background-color: #dc3545; }
-
-/* Activity log */
-.activity-log {
-    max-height: 400px;
-    overflow-y: auto;
+/* ==========================================================================
+   Base
+   ========================================================================== */
+/* --bs-body-bg stays white because cards, inputs and modals take their surface from it */
+body {
+    background-color: var(--hp-canvas);
+    -webkit-font-smoothing: antialiased;
 }
 
-/* Person result styling */
-.person-result {
-    background-color: #f8f9fa;
-    border-left: 4px solid #007bff;
-    margin: 15px 0;
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--hp-text);
 }
 
-.metric-card {
-    transition: all 0.3s ease;
-    border: none;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+code, pre, kbd, samp {
+    font-family: var(--hp-font-mono);
 }
 
-.metric-card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 5px 20px rgba(0,0,0,0.15);
+.text-muted {
+    color: var(--hp-text-muted) !important;
 }
 
-.status-badge {
-    font-size: 0.8em;
-    padding: 0.25rem 0.5rem;
+/* Counts, timestamps and table figures line up in columns */
+.tabular-nums, table {
+    font-variant-numeric: tabular-nums;
 }
 
-.activity-timeline {
-    position: relative;
+/* ==========================================================================
+   Bootstrap components retuned to the tokens
+   (Bootstrap 5.3 hardcodes some colors per component rather than reading --bs-primary)
+   ========================================================================== */
+.btn-primary {
+    --bs-btn-bg: var(--hp-accent);
+    --bs-btn-border-color: var(--hp-accent);
+    --bs-btn-hover-bg: var(--hp-accent-hover);
+    --bs-btn-hover-border-color: var(--hp-accent-hover);
+    --bs-btn-active-bg: var(--hp-accent-active);
+    --bs-btn-active-border-color: var(--hp-accent-active);
+    --bs-btn-disabled-bg: var(--hp-accent);
+    --bs-btn-disabled-border-color: var(--hp-accent);
+    --bs-btn-focus-shadow-rgb: var(--hp-accent-rgb);
 }
 
-.activity-timeline::before {
-    content: '';
-    position: absolute;
-    left: 20px;
+.btn-outline-primary {
+    --bs-btn-color: var(--hp-accent);
+    --bs-btn-border-color: var(--hp-accent);
+    --bs-btn-hover-bg: var(--hp-accent);
+    --bs-btn-hover-border-color: var(--hp-accent);
+    --bs-btn-active-bg: var(--hp-accent-active);
+    --bs-btn-active-border-color: var(--hp-accent-active);
+    --bs-btn-disabled-color: var(--hp-accent);
+    --bs-btn-disabled-border-color: var(--hp-accent);
+    --bs-btn-focus-shadow-rgb: var(--hp-accent-rgb);
+}
+
+.btn-outline-secondary {
+    --bs-btn-color: var(--hp-text-secondary);
+    --bs-btn-border-color: var(--hp-border-strong);
+    --bs-btn-hover-color: var(--hp-text);
+    --bs-btn-hover-bg: var(--hp-surface-muted);
+    --bs-btn-hover-border-color: var(--hp-border-strong);
+    --bs-btn-active-color: var(--hp-text);
+    --bs-btn-active-bg: var(--hp-border);
+    --bs-btn-active-border-color: var(--hp-border-strong);
+}
+
+/* A smaller button for inline actions (e.g. copy to clipboard) */
+.btn-compact {
+    --bs-btn-padding-y: 0.125rem;
+    --bs-btn-padding-x: 0.5rem;
+    --bs-btn-font-size: 0.75rem;
+}
+
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--hp-accent-border-subtle);
+    box-shadow: var(--hp-focus-ring);
+}
+
+.form-check-input:checked {
+    background-color: var(--hp-accent);
+    border-color: var(--hp-accent);
+}
+
+.form-check-input:focus {
+    border-color: var(--hp-accent-border-subtle);
+    box-shadow: var(--hp-focus-ring);
+}
+
+.card {
+    --bs-card-border-color: var(--hp-border);
+    --bs-card-cap-bg: var(--hp-surface);
+    --bs-card-cap-padding-y: 0.75rem;
+    box-shadow: var(--hp-shadow-sm);
+}
+
+.card-header h5 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.modal {
+    --bs-modal-border-color: var(--hp-border);
+}
+
+/* ==========================================================================
+   Frame: sidebar, top bar and content area
+   ========================================================================== */
+:root {
+    --hp-sidebar-width: 240px;
+    --hp-topbar-height: 56px;
+    --hp-content-gutter: 1.5rem;
+}
+
+.app-shell {
+    display: flex;
+    min-height: 100vh;
+}
+
+/* Sidebar. The offcanvas-lg element inside is a static column at lg and up (where Bootstrap makes its
+   background transparent, so the column's surface is painted here) and an off-canvas menu below. */
+.app-sidebar {
+    flex-shrink: 0;
+}
+
+.app-sidebar .offcanvas-lg {
+    --bs-offcanvas-width: var(--hp-sidebar-width);
+    --bs-offcanvas-bg: var(--hp-surface-muted);
+}
+
+.app-sidebar .offcanvas-header {
+    border-bottom: 1px solid var(--hp-border);
+}
+
+.app-sidebar .offcanvas-body {
+    flex-direction: column;
+    padding: 0 0 1.5rem;
+}
+
+@media (min-width: 992px) {
+    .app-sidebar {
+        width: var(--hp-sidebar-width);
+        background-color: var(--hp-surface-muted);
+        border-right: 1px solid var(--hp-border);
+    }
+
+    .app-sidebar .offcanvas-lg {
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        overflow-y: auto;
+    }
+}
+
+.app-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    color: var(--hp-text);
+    white-space: nowrap;
+}
+
+.app-brand-icon {
+    color: var(--hp-accent);
+}
+
+.app-brand-block {
+    padding: 1.125rem 1.25rem 0.5rem;
+}
+
+.app-brand-subtitle {
+    display: block;
+    margin-top: 0.125rem;
+    font-size: 0.8125rem;
+    color: var(--hp-text-muted);
+}
+
+.app-nav {
+    padding: 0 0.75rem;
+    gap: 2px;
+}
+
+.app-nav-group {
+    margin: 1.25rem 0.625rem 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--hp-text-muted);
+}
+
+/* An ungrouped item at the top (the Overview) has no heading to space it from the brand above */
+.app-nav > .nav-link:first-child {
+    margin-top: 0.75rem;
+}
+
+.app-nav .nav-link {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    width: 100%;
+    padding: 0.4375rem 0.625rem;
+    border: 0;
+    border-radius: var(--hp-radius);
+    background: none;
+    color: var(--hp-text-secondary);
+    font-size: 0.9rem;
+    text-align: left;
+}
+
+.app-nav .nav-link i {
+    color: var(--hp-text-muted);
+}
+
+.app-nav .nav-link:hover {
+    background-color: rgba(var(--hp-text-rgb), 0.05);
+    color: var(--hp-text);
+}
+
+.app-nav .nav-link.active {
+    background-color: var(--hp-accent-subtle);
+    color: var(--hp-accent-active);
+    font-weight: 500;
+}
+
+.app-nav .nav-link.active i {
+    color: var(--hp-accent);
+}
+
+.app-nav .nav-link:focus-visible {
+    outline: 0;
+    box-shadow: var(--hp-focus-ring);
+}
+
+/* Main column */
+.app-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.app-topbar {
+    position: sticky;
     top: 0;
-    bottom: 0;
-    width: 2px;
-    background: #dee2e6;
+    z-index: 1020;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    height: var(--hp-topbar-height);
+    padding: 0 var(--hp-content-gutter);
+    background-color: var(--hp-surface);
+    border-bottom: 1px solid var(--hp-border);
 }
 
-.activity-item {
-    position: relative;
-    padding-left: 50px;
-    margin-bottom: 1rem;
+.app-topbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-left: auto;
+    min-width: 0;
 }
 
-.activity-item::before {
-    content: '';
-    position: absolute;
-    left: 14px;
-    top: 10px;
-    width: 12px;
-    height: 12px;
-    background: #007bff;
-    border-radius: 50%;
-    border: 3px solid white;
-    box-shadow: 0 0 0 3px #007bff;
-}
-
-.form-floating-custom {
-    position: relative;
-}
-
-.btn-loading {
-    position: relative;
-}
-
-.btn-loading .btn-text {
-    opacity: 0;
-}
-
-.btn-loading::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 1rem;
-    height: 1rem;
-    border: 2px solid transparent;
-    border-top: 2px solid currentColor;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-    0% { transform: translate(-50%, -50%) rotate(0deg); }
-    100% { transform: translate(-50%, -50%) rotate(360deg); }
-}
-
-.tab-content {
-    min-height: 500px;
-}
-
-.person-card {
-    border-left: 4px solid #007bff;
-    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-}
-
-.sync-status {
+.app-topbar-item {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
 }
 
-.spinner-border-sm {
-    width: 1rem;
-    height: 1rem;
+.app-topbar-label {
+    font-size: 0.8125rem;
+    color: var(--hp-text-muted);
+    white-space: nowrap;
 }
-/* Landscape navigator (navbar) */
+
+.app-user {
+    font-size: 0.875rem;
+    color: var(--hp-text-secondary);
+    white-space: nowrap;
+}
+
+.app-user i {
+    color: var(--hp-text-muted);
+}
+
+.app-menu-toggle {
+    margin-left: -0.5rem;
+    color: var(--hp-text-secondary);
+}
+
+.app-content {
+    flex: 1;
+    padding: 0 var(--hp-content-gutter) 2rem;
+}
+
+/* A page's fragment (#runs) names its pane, which the browser scrolls to: keep it clear of the sticky top bar */
+.app-content > .tab-pane {
+    scroll-margin-top: var(--hp-topbar-height);
+}
+
+@media (max-width: 575.98px) {
+    :root {
+        --hp-content-gutter: 1rem;
+    }
+}
+
+/* Login page: the top bar with no sidebar */
+.app-topbar-standalone .app-brand {
+    font-size: 1rem;
+}
+
+/* ==========================================================================
+   Page patterns
+   Every page is a page header (title, one-line description, page actions) over sections. A section is a
+   heading over a white surface; a table or a list of tiles may stand in for the surface. Cards are kept for
+   bounded objects shown as one unit (a person record, a mapping result).
+   ========================================================================== */
+.page {
+    max-width: 1200px;
+    padding-top: 1.5rem;
+}
+
+.page-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.page-title {
+    margin: 0;
+    font-size: 1.375rem;
+}
+
+.page-description {
+    max-width: 48rem;
+    margin: 0.25rem 0 0;
+    color: var(--hp-text-secondary);
+}
+
+.page-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: 0.5rem;
+}
+
+.page-section + .page-section {
+    margin-top: 2rem;
+}
+
+.section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.section-title {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.section-description {
+    margin: 0.125rem 0 0;
+    font-size: 0.875rem;
+    color: var(--hp-text-muted);
+}
+
+/* Two sections side by side on wide screens (main, then aside), stacked below lg */
+.page-columns {
+    display: grid;
+    gap: 2rem;
+    align-items: start;
+}
+
+@media (min-width: 992px) {
+    .page-columns {
+        grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    }
+
+    .page-columns .page-section + .page-section {
+        margin-top: 0;
+    }
+}
+
+.surface {
+    padding: 1.25rem;
+    background-color: var(--hp-surface);
+    border: 1px solid var(--hp-border);
+    border-radius: var(--hp-radius-lg);
+    box-shadow: var(--hp-shadow-sm);
+}
+
+/* A surface whose content (e.g. a table) runs to its edges */
+.surface-flush {
+    padding: 0;
+    overflow: hidden;
+}
+
+/* Stat tiles: a label over one figure */
+.stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 1rem;
+}
+
+.stat-tile {
+    padding: 1rem 1.25rem;
+    background-color: var(--hp-surface);
+    border: 1px solid var(--hp-border);
+    border-radius: var(--hp-radius-lg);
+    box-shadow: var(--hp-shadow-sm);
+}
+
+.stat-label {
+    font-size: 0.8125rem;
+    color: var(--hp-text-muted);
+}
+
+.stat-value {
+    margin-top: 0.25rem;
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+}
+
+.stat-note {
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    color: var(--hp-text-muted);
+}
+
+/* An unfinished run's figures so far: dashed tiles with muted figures, and a line saying how far it has got */
+.stat-tile-so-far {
+    border-style: dashed;
+    box-shadow: none;
+}
+
+.stat-tile-so-far .stat-value {
+    color: var(--hp-text-muted);
+}
+
+.stat-progress {
+    margin: 0.75rem 0 0;
+    font-size: 0.8125rem;
+    color: var(--hp-text-muted);
+}
+
+/* An unfinished run's row in a run list: its figures so far muted, with "so far" beside its status */
+.data-table td.so-far {
+    color: var(--hp-text-muted);
+    font-style: italic;
+}
+
+.so-far-note {
+    margin-left: 0.25rem;
+    font-size: 0.75rem;
+    font-style: italic;
+    color: var(--hp-text-muted);
+}
+
+/*
+ * An unfinished run's percent done (RunView.completion): amber, the tone of its phase badge (RunView.phase()),
+ * including once every fetched record is processed (done), since the run still waits on post-processing: green is
+ * kept for a finished run. Gray for a run that failed. --completion-color carries the state's color to the percent
+ * and its bar.
+ */
+.completion-done,
+.completion-underway,
+.completion-fetching { --completion-color: var(--hp-warning); }
+.completion-failed { --completion-color: var(--hp-text-muted); }
+
+.stat-completion {
+    margin-top: 0.375rem;
+}
+
+.stat-completion-text {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0 0.5rem;
+    font-size: 0.75rem;
+}
+
+.stat-completion-percent {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--completion-color);
+}
+
+.stat-completion-of {
+    color: var(--hp-text-muted);
+}
+
+.stat-completion-bar {
+    height: 4px;
+    margin-top: 0.25rem;
+    overflow: hidden;
+    border-radius: 2px;
+    background-color: var(--hp-surface-muted);
+}
+
+.stat-completion-bar > span {
+    display: block;
+    height: 100%;
+    background-color: var(--completion-color);
+}
+
+/* The percent beside the status in a run list row */
+.completion-note {
+    margin-left: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--completion-color);
+}
+
+/* The progress line's stalled notice, in the Incomplete badge's tone */
+.progress-stalled {
+    color: var(--hp-warning);
+}
+
+/* Data table: hairline rows, a muted header row, figures right-aligned (.num) */
+.data-table {
+    --bs-table-bg: transparent;
+    --bs-table-border-color: var(--hp-border);
+    margin: 0;
+    font-size: 0.875rem;
+}
+
+.data-table > :not(caption) > * > * {
+    padding: 0.625rem 1rem;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+/* A cell holding prose (e.g. an error message) wraps; the rest stay on one line and the table scrolls */
+.data-table .wrap {
+    white-space: normal;
+    min-width: 16rem;
+}
+
+.data-table thead th {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--hp-text-secondary);
+    background-color: var(--hp-surface-muted);
+}
+
+.data-table tbody tr:last-child > * {
+    border-bottom-width: 0;
+}
+
+.data-table .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.data-table .secondary {
+    color: var(--hp-text-muted);
+}
+
+/* Status badge: a dot and a word, tinted by outcome */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
+    color: var(--hp-text-secondary);
+    background-color: rgba(var(--hp-text-rgb), 0.06);
+}
+
+.status-badge::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: currentColor;
+}
+
+.status-badge-success {
+    color: var(--hp-success);
+    background-color: rgba(var(--hp-success-rgb), 0.1);
+}
+
+.status-badge-warning {
+    color: var(--hp-warning);
+    background-color: rgba(var(--hp-warning-rgb), 0.12);
+}
+
+.status-badge-danger {
+    color: var(--hp-danger);
+    background-color: rgba(var(--hp-danger-rgb), 0.1);
+}
+
+/* "Refreshed HH:MM" beside a page's Refresh button (RefreshStamp, page-state.js) */
+.refresh-stamp {
+    align-self: center;
+    font-size: 0.8125rem;
+    color: var(--hp-text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.refresh-stamp:empty {
+    display: none;
+}
+
+/* Rows that open a page: the first cell's link, or a click anywhere on the row */
+.data-table-links tbody tr {
+    cursor: pointer;
+}
+
+.data-table-links tbody tr:hover > * {
+    background-color: var(--hp-surface-muted);
+}
+
+.data-table tfoot > tr > * {
+    font-weight: 600;
+    background-color: var(--hp-surface-muted);
+    border-top: 1px solid var(--hp-border-strong);
+    border-bottom-width: 0;
+}
+
+/* Below a paged table: how many rows are shown, and the button for more */
+.table-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    padding: 0.625rem 1rem;
+    font-size: 0.8125rem;
+    color: var(--hp-text-muted);
+    border-top: 1px solid var(--hp-border);
+}
+
+.table-footer .page-state-compact {
+    flex-basis: 100%;
+    padding: 0;
+}
+
+/* Filter buttons over a list (e.g. errors by status code), each with its count */
+.filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.8125rem;
+    color: var(--hp-text-secondary);
+    background-color: var(--hp-surface);
+    border: 1px solid var(--hp-border);
+    border-radius: 999px;
+}
+
+.filter-chip:hover {
+    border-color: var(--hp-border-strong);
+}
+
+.filter-chip:focus-visible {
+    outline: 0;
+    box-shadow: var(--hp-focus-ring);
+}
+
+.filter-chip[aria-pressed="true"] {
+    color: var(--hp-accent);
+    background-color: var(--hp-accent-subtle);
+    border-color: var(--hp-accent-border-subtle);
+}
+
+.filter-chip-count {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Terms and values in two columns (a run's summary) */
+.fact-list {
+    display: grid;
+    grid-template-columns: minmax(8rem, max-content) 1fr;
+    gap: 0.5rem 1.5rem;
+    margin: 0;
+    font-size: 0.875rem;
+}
+
+.fact-list dt {
+    font-weight: 400;
+    color: var(--hp-text-muted);
+}
+
+.fact-list dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.fact-note,
+.section-note {
+    font-size: 0.875rem;
+    color: var(--hp-text-muted);
+}
+
+.fact-note {
+    margin: 0;
+}
+
+.section-note {
+    margin: 0 0 0.75rem;
+}
+
+/* States (page-state.js): loading, empty, error and redacted */
+.page-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 2.5rem 1rem;
+    text-align: center;
+    color: var(--hp-text-secondary);
+}
+
+.page-state-icon {
+    font-size: 1.25rem;
+    color: var(--hp-text-muted);
+}
+
+.page-state-loading .page-state-icon {
+    font-size: inherit;
+    color: var(--hp-accent);
+}
+
+.page-state-title {
+    margin: 0;
+    font-weight: 600;
+    color: var(--hp-text);
+}
+
+.page-state-message {
+    max-width: 34rem;
+    margin: 0.125rem 0 0;
+    font-size: 0.875rem;
+}
+
+.page-state-error .page-state-icon {
+    color: var(--hp-danger);
+}
+
+.page-state-redacted {
+    margin: 0.25rem;
+    border: 1px dashed var(--hp-border-strong);
+    border-radius: var(--hp-radius);
+    background-color: var(--hp-surface-muted);
+}
+
+/* One line, for a state inside a form or beside other content */
+.page-state-compact {
+    flex-direction: row;
+    align-items: baseline;
+    padding: 0.75rem 0;
+    text-align: left;
+}
+
+.page-state-compact .page-state-title {
+    font-weight: 500;
+}
+
+.page-state-compact .page-state-message {
+    margin: 0;
+}
+
+.page-state-compact .page-state-text {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 0.5rem;
+}
+
+.page-state-compact.page-state-redacted {
+    padding: 0.75rem 1rem;
+}
+
+/* ==========================================================================
+   Dashboard components
+   ========================================================================== */
+/* Person lookup result (person-card.js) */
+.person-result {
+    margin-top: 1.5rem;
+    padding: 1.25rem;
+    background-color: var(--hp-surface);
+    border: 1px solid var(--hp-border);
+    border-radius: var(--hp-radius-lg);
+    box-shadow: var(--hp-shadow-sm);
+}
+
+/* Person data tree (person-card.js) */
+.person-data-box {
+    margin-bottom: 10px;
+}
+
+.person-data-box .field-header {
+    padding: 2px 0;
+    border-left: 2px solid transparent;
+}
+
+.person-data-box .field-header:hover {
+    border-left-color: var(--hp-accent);
+}
+
+.person-data-box .array-item-header {
+    padding: 2px 0;
+    color: var(--hp-text-muted);
+}
+
+.person-data-box .array-item-header:hover {
+    color: var(--hp-accent);
+}
+
+.person-data-box .field-value {
+    font-family: var(--hp-font-mono);
+    font-size: 0.875em;
+    color: var(--hp-text-secondary);
+    word-break: break-word;
+}
+
+/* A link at the right of a section heading, to the page with more (e.g. "All runs") */
+.section-link {
+    font-size: 0.875rem;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.section-link:hover {
+    text-decoration: underline;
+}
+
+/* Overview's latest run (overview.js): when and how it ran, beside the way to its page */
+.latest-run {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1.5rem;
+}
+
+.latest-run-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+    margin: 0;
+    font-size: 1.0625rem;
+}
+
+.latest-run-facts {
+    margin: 0.25rem 0 0;
+    font-size: 0.875rem;
+    color: var(--hp-text-secondary);
+}
+
+.latest-run-figures {
+    margin-top: 1rem;
+}
+
+/* Run history (run-history.js) */
+.run-link {
+    font-weight: 500;
+    text-decoration: none;
+}
+
+.run-link:hover {
+    text-decoration: underline;
+}
+
+.run-tag {
+    display: inline-block;
+    padding: 0 0.375rem;
+    font-size: 0.75rem;
+    color: var(--hp-text-secondary);
+    border: 1px solid var(--hp-border-strong);
+    border-radius: var(--hp-radius-sm);
+}
+
+.back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.875rem;
+    text-decoration: none;
+}
+
+.back-link:hover {
+    text-decoration: underline;
+}
+
+.run-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+}
+
+.run-title .status-badge {
+    font-size: 0.8125rem;
+}
+
+.run-id {
+    margin: 0.25rem 0 0;
+    font-size: 0.8125rem;
+    color: var(--hp-text-muted);
+}
+
+.run-id code {
+    color: inherit;
+}
+
+/* Why a run's figures are missing, or what went wrong */
+.run-note {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+    padding: 0.875rem 1rem;
+    border: 1px solid;
+    border-radius: var(--hp-radius-lg);
+}
+
+.run-note-danger {
+    background-color: rgba(var(--hp-danger-rgb), 0.06);
+    border-color: rgba(var(--hp-danger-rgb), 0.3);
+}
+
+.run-note-warning {
+    background-color: rgba(var(--hp-warning-rgb), 0.07);
+    border-color: rgba(var(--hp-warning-rgb), 0.3);
+}
+
+.run-note-icon {
+    margin-top: 0.1875rem;
+}
+
+.run-note-danger .run-note-icon {
+    color: var(--hp-danger);
+}
+
+.run-note-warning .run-note-icon {
+    color: var(--hp-warning);
+}
+
+.run-note-title {
+    margin: 0;
+    font-weight: 600;
+}
+
+.run-note-message {
+    margin: 0.125rem 0 0;
+    font-size: 0.875rem;
+    color: var(--hp-text-secondary);
+}
+
+/* Bulk sync page (bulk-sync.js): the form, its confirmation, and the status panel */
+[data-bulk-form] .run-note {
+    margin-bottom: 1rem;
+}
+
+[data-bulk-form] fieldset legend.form-label {
+    font-size: inherit;
+}
+
+/* The form's fields, locked while the confirmation shows */
+.bulk-fields {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+[data-bulk-form] .form-check + .form-check {
+    margin-top: 0.5rem;
+}
+
+.bulk-buid {
+    max-width: 16rem;
+    font-family: var(--hp-font-mono);
+}
+
+/* A test's explanation and BUID box, and the custom settings: each set off under the choice that shows it */
+.bulk-test,
+.bulk-custom {
+    margin-left: 1.5rem;
+    padding: 0 0 0 0.875rem;
+    border: 0;
+    border-left: 2px solid var(--hp-border);
+    min-width: 0;
+}
+
+.bulk-test-note {
+    margin: 0 0 0.5rem;
+    font-size: 0.875rem;
+    color: var(--hp-text-muted);
+}
+
+.bulk-number {
+    max-width: 8rem;
+}
+
+/* Chunks per task's dropdown, under its choice */
+.bulk-chunks {
+    margin: 0.25rem 0 0.5rem 1.5rem;
+}
+
+/* The review's table: the event the chunker subscriber will receive */
+.bulk-settings {
+    margin-bottom: 0.75rem;
+    background-color: var(--hp-surface);
+    border: 1px solid var(--hp-border);
+    border-radius: var(--hp-radius);
+}
+
+.bulk-settings table {
+    margin-bottom: 0;
+    font-size: 0.8125rem;
+}
+
+.bulk-settings caption {
+    caption-side: top;
+    padding: 0.5rem 0.75rem;
+    font-weight: 600;
+    color: var(--hp-text);
+}
+
+.bulk-form-error {
+    margin: 0 0 0.75rem;
+    font-size: 0.875rem;
+    color: var(--hp-danger);
+}
+
+.bulk-confirm {
+    padding: 0.875rem 1rem;
+    background-color: var(--hp-surface-muted);
+    border: 1px solid var(--hp-border);
+    border-radius: var(--hp-radius);
+}
+
+.bulk-confirm-title {
+    margin: 0 0 0.5rem;
+    font-weight: 600;
+}
+
+.bulk-confirm-list {
+    margin: 0 0 0.75rem;
+    padding-left: 1.25rem;
+    font-size: 0.875rem;
+}
+
+.bulk-confirm-list li + li {
+    margin-top: 0.25rem;
+}
+
+.bulk-confirm-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.bulk-status-line {
+    margin: 0;
+}
+
+.bulk-status-hint {
+    margin: 0.375rem 0 0;
+    font-size: 0.875rem;
+    color: var(--hp-text-muted);
+}
+
+/* The sections block follows the tiles, or the note when there is one */
+.run-detail-sections {
+    margin-top: 2rem;
+}
+
+.run-aside-section + .run-aside-section {
+    margin-top: 2rem;
+}
+
+/* The run's sections: underlined tabs, each with its count */
+/* One line of tabs, which scrolls sideways on a narrow screen rather than wrapping */
+.run-sections {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin-bottom: 1.25rem;
+    border-bottom: 1px solid var(--hp-border);
+    scrollbar-width: none;
+}
+
+.run-sections .nav-link {
+    white-space: nowrap;
+}
+
+.run-sections .nav-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin-bottom: -1px;
+    color: var(--hp-text-secondary);
+}
+
+.run-sections .nav-link.active {
+    color: var(--hp-text);
+}
+
+.run-section-count {
+    padding: 0 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    color: var(--hp-text-secondary);
+    background-color: rgba(var(--hp-text-rgb), 0.06);
+    border-radius: 999px;
+}
+
+.deletion-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.375rem;
+    margin: 0 0 0.5rem;
+}
+
+.deletion-message {
+    margin: 0 0 0.75rem;
+    font-size: 0.875rem;
+}
+
+/* Lookup button spinner, shown while the lookup runs */
+.loading-spinner {
+    display: none;
+}
+
+.tab-loading .loading-spinner {
+    display: inline-block;
+}
+
+/* Login page prompt */
+.login-panel {
+    padding-top: 15vh;
+}
+
+.login-card {
+    width: 100%;
+    max-width: 26rem;
+}
+
+/* Landscape navigator, or badge when there's no navigator (top bar) */
 .landscape-navigator {
     width: auto;
-    min-width: 10rem;
+    min-width: 9rem;
+}
+
+.landscape-badge {
+    gap: 0.375rem;
+    padding: 0.25rem 0.625rem;
+    border: 1px solid var(--hp-border-strong);
+    border-radius: var(--hp-radius);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--hp-text-secondary);
+    white-space: nowrap;
+}
+
+/* Landscape tones (LandscapeTone.ts): the tint marks how careful to be in this landscape */
+.landscape-tone-production {
+    --hp-tone: var(--hp-danger);
+    --hp-tone-rgb: var(--hp-danger-rgb);
+}
+
+.landscape-tone-test {
+    --hp-tone: var(--hp-warning);
+    --hp-tone-rgb: var(--hp-warning-rgb);
+}
+
+.landscape-tone-mock {
+    --hp-tone: var(--hp-text-secondary);
+    --hp-tone-rgb: var(--hp-text-rgb);
+}
+
+.landscape-badge[class*="landscape-tone-"],
+.landscape-navigator[class*="landscape-tone-"] {
+    color: var(--hp-tone);
+    background-color: rgba(var(--hp-tone-rgb), 0.08);
+    border-color: rgba(var(--hp-tone-rgb), 0.45);
+    font-weight: 500;
+}
+
+.landscape-navigator[class*="landscape-tone-"]:focus {
+    border-color: var(--hp-tone);
+    box-shadow: 0 0 0 0.2rem rgba(var(--hp-tone-rgb), 0.2);
 }

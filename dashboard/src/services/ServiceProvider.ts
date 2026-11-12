@@ -2,7 +2,6 @@ import {
   PersonLookupService,
   PersonSyncService,
   BulkSyncService,
-  HistoryService,
   SystemStatusService,
   RunReportingService,
   LandscapeListingService,
@@ -14,7 +13,6 @@ import {
   MockPersonLookupService,
   MockPersonSyncService,
   MockBulkSyncService,
-  MockHistoryService,
   MockSystemStatusService,
   MockRunReportingService,
   MockLandscapeListingService
@@ -24,7 +22,6 @@ import {
 import { PersonLookup } from './PersonLookup';
 import { PersonSync } from './PersonSync';
 import { BulkSync } from './BulkSync';
-import { History } from './History';
 import { SystemStatus } from './SystemStatus';
 import { runReportingFromEnvironment } from './RunReports';
 import { LandscapeRegistry } from './LandscapeRegistry';
@@ -83,20 +80,9 @@ export class ServiceProvider {
    */
   static getBulkSyncService(config:Config): BulkSyncService {
     if (this.shouldUseMocks()) {
-      return new MockBulkSyncService();
+      return new MockBulkSyncService({ runs: this.getRunReportingService() });
     } else {
-      return new BulkSync(config);
-    }
-  }
-
-  /**
-   * Get history service implementation
-   */
-  static getHistoryService(): HistoryService {
-    if (this.shouldUseMocks()) {
-      return new MockHistoryService();
-    } else {
-      return new History();
+      return BulkSync.fromEnvironment(config, this.getRunReportingService());
     }
   }
 
@@ -145,7 +131,7 @@ export class ServiceProvider {
  *   landscapes                                                  (landscape registry in SSM)
  *   lookup | preview                                            (person lookup / sync preview by PERSON_ID,
  *                                                                with the config from getConfig(), unless mocked)
- *   history | status                                            (stubs: only the mocks answer)
+ *   status                                                      (a stub: only the mocks answer)
  */
 if (require.main === module) {
   const testEnvironment = TestEnvironment('DASHBOARD_SERVICE_PROVIDER');
@@ -258,14 +244,11 @@ if (require.main === module) {
         show('Sync preview', await ServiceProvider.getPersonSyncService(await config()).preview(requireVar('PERSON_ID'), operation));
         break;
       }
-      case 'history':
-        show('History', await ServiceProvider.getHistoryService().getHistory(undefined, undefined, optionalNumber('LIMIT')));
-        break;
       case 'status':
         show('System status', await ServiceProvider.getSystemStatusService().getStatus());
         break;
       default:
-        console.error(`Unknown task: ${task}. Supported tasks: capabilities, runs, summary, chunks, errors, changes, landscapes, lookup, preview, history, status`);
+        console.error(`Unknown task: ${task}. Supported tasks: capabilities, runs, summary, chunks, errors, changes, landscapes, lookup, preview, status`);
     }
   })().catch(error => {
     console.error('ServiceProvider harness failed:', error);

@@ -3,25 +3,26 @@ import {
   PersonLookupService,
   PersonSyncService,
   BulkSyncService,
-  HistoryService,
   SystemStatusService,
   PersonLookupResult,
   PersonSyncResult,
+  BulkSyncPlan,
   BulkSyncResult,
-  HistoryResult,
+  BulkSyncRequestBody,
+  BulkSyncState,
   SystemStatusResult,
   PersonLookupParams,
-  RunReportingService,
   LandscapeListingService,
-  LandscapeListing
+  LandscapeListing,
+  RunReportingService
 } from '../services/ServiceTypes';
 import { CrudOperation } from 'integration-core';
-import { PersonPushRequest } from 'integration-huron-person';
-import { Capabilities, ChangeType, Page, RunReport } from '../../../src/reporting/RunReporting';
-import { RunSummary } from '../../../src/dynamodb/StatisticsTable';
-import { StatisticsItem } from '../../../src/ApiErrorTracking';
-import { PersonHistoryRecord } from '../../../src/dynamodb/PersonHistoryTable';
+import { Config, PersonPushRequest } from 'integration-huron-person';
+import type { ApiChunkerEvent } from '../../../src/chunking/ChunkerSubscriber';
+import { BulkSync, BulkSyncSettings } from '../services/BulkSync';
+import type { StartedBy } from '../../../src/chunking/StartedBy';
 import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
+import { MockRunReportingService } from './MockRunReporting';
 
 export class MockPersonLookupService implements PersonLookupService {
   async lookup(params: PersonLookupParams): Promise<PersonLookupResult> {
@@ -99,47 +100,62 @@ export class MockPersonSyncService implements PersonSyncService {
   }
 }
 
-export class MockBulkSyncService implements BulkSyncService {
-  async start(operation: string, batchSize?: number, filters?: any): Promise<BulkSyncResult> {
-    return {
-      operation,
-      status: 'started',
-      batchSize: batchSize || 100,
-      filters: filters || {},
-      estimatedRecords: 1500,
-      startTime: new Date().toISOString(),
-      jobId: `bulk-${Date.now()}`
-    };
+/** The source endpoints a mock start reads from the (mock) integration config */
+export const MOCK_SOURCE_CONFIG = {
+  dataSource: {
+    people: { endpointConfig: { baseUrl: 'https://cdm.example.bu.edu' }, fetchPath: '/api/people' },
+    person: { endpointConfig: { baseUrl: 'https://cdm.example.bu.edu' }, fetchPath: '/api/person' }
   }
-}
+} as unknown as Config;
 
-export class MockHistoryService implements HistoryService {
-  async getHistory(startDate?: string, endDate?: string, limit: number = 50): Promise<HistoryResult> {
-    const mockHistory = [
-      {
-        id: '1',
-        timestamp: new Date().toISOString(),
-        operation: 'bulk-sync',
-        status: 'completed',
-        recordsProcessed: 1200,
-        duration: '00:05:30',
-        errors: 0
+/**
+ * The real BulkSync over the mock run history, with an in-memory stand-in for the chunker Lambda:
+ * the request is validated and the guards are checked as in a landscape, and a start records the chunker event it
+ * would have sent (invoked) instead of starting anything.
+ */
+export class MockBulkSyncService implements BulkSyncService {
+  /** The chunker events this instance's starts would have sent, oldest first */
+  readonly invoked: ApiChunkerEvent[] = [];
+  private readonly service: BulkSync;
+
+  constructor(params: {
+    runs?: Pick<RunReportingService, 'listRunPage' | 'getRunReport'>;
+    settings?: Partial<BulkSyncSettings>;
+    dryRun?: string[];
+    now?: () => number;
+  } = {}) {
+    const { runs = new MockRunReportingService(), settings = {}, dryRun = [], now } = params;
+    this.service = new BulkSync({
+      config: MOCK_SOURCE_CONFIG,
+      settings: {
+        landscape: LOCAL_LANDSCAPE,
+        chunkerFunctionName: `chunker-subscriber-${LOCAL_LANDSCAPE}`,
+        processorSubscriberFunctionName: `processor-subscriber-${LOCAL_LANDSCAPE}`,
+        region: 'us-east-2',
+        stackId: 'huron-person',
+        secretName: `huron-person-integration-config-${LOCAL_LANDSCAPE}`,
+        itemsPerChunk: 200,
+        ...settings
       },
-      {
-        id: '2',
-        timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-        operation: 'individual-sync',
-        status: 'completed',
-        recordsProcessed: 1,
-        duration: '00:00:15',
-        errors: 0
-      }
-    ];
+      runs,
+      functions: {
+        isDryRun: async functionName => dryRun.includes(functionName),
+        invokeAsync: async (_functionName, event) => { this.invoked.push(event); }
+      },
+      now
+    });
+  }
 
-    return {
-      history: mockHistory,
-      totalCount: mockHistory.length
-    };
+  describe(): Promise<BulkSyncState> {
+    return this.service.describe();
+  }
+
+  plan(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncPlan> {
+    return this.service.plan(request, startedBy);
+  }
+
+  start(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncResult> {
+    return this.service.start(request, startedBy);
   }
 }
 
@@ -163,80 +179,8 @@ export class MockSystemStatusService implements SystemStatusService {
   }
 }
 
-const MOCK_RUN_IDS = ['2026-10-01T02:00:00.000Z', '2026-10-02T02:00:00.000Z'];
-
-export class MockRunReportingService implements RunReportingService {
-  getCapabilities(): Capabilities {
-    return { landscape: LOCAL_LANDSCAPE, storageMode: 'dynamodb', changesSupported: true };
-  }
-
-  async listRuns(): Promise<string[]> {
-    return [...MOCK_RUN_IDS];
-  }
-
-  async getRunReport(syncRunId: string): Promise<RunReport | undefined> {
-    if (!MOCK_RUN_IDS.includes(syncRunId)) {
-      return undefined;
-    }
-    const summary: RunSummary = {
-      syncRunId,
-      status: 'SUCCEEDED',
-      storageMode: 'dynamodb',
-      dryRun: false,
-      createdAt: syncRunId,
-      completedAt: new Date(Date.parse(syncRunId) + 20 * 60 * 1000).toISOString(),
-      syncPopulation: 'person-full',
-      bulkReset: false,
-      chunkCount: 2,
-      totalRecords: 1500,
-      chunksReported: 2,
-      results: { processed: 1500, succeeded: 1497, failed: 3, skipped: 0, added: 12, updated: 40, removed: 0 },
-      totalErrors: 3,
-      throttleCount: 0,
-      errorsByStatus: { '500': 3 },
-      deletion: { status: 'COMPLETED', deletedCount: 2, failedCount: 0, totalProcessed: 2, message: 'Mock deletions' }
-    };
-    return { syncRunId, status: summary.status, summary };
-  }
-
-  async getRunChunkStatistics(syncRunId: string): Promise<StatisticsItem[]> {
-    return [0, 1].map((chunk): StatisticsItem => ({
-      integrationTimestamp: syncRunId,
-      eventType: `STATISTICS-chunk-000${chunk}`,
-      errorType: 'STATISTICS',
-      chunkId: `000${chunk}`,
-      startTimestamp: syncRunId,
-      endTimestamp: syncRunId,
-      chunkCount: 2,
-      chunkSize: 750,
-      totalRecords: 750,
-      sourceDescription: 'Mock source',
-      successCount: chunk === 0 ? 750 : 747,
-      failureCount: chunk === 0 ? 0 : 3,
-      skippedCount: 0,
-      totalErrors: chunk === 0 ? 0 : 3,
-      throttleCount: 0,
-      errorsByStatus: chunk === 0 ? {} : { 500: 3 } as Record<number, number>
-    }));
-  }
-
-  async getRunErrors(syncRunId: string, page: { statusCode?: number } = {}): Promise<Page<Record<string, any>>> {
-    const errors = MOCK_RUN_IDS.includes(syncRunId) ? [1, 2, 3].map(n => ({
-      integrationTimestamp: syncRunId,
-      eventType: `ERROR:500:${syncRunId}-${n}`,
-      statusCode: 500,
-      message: 'Mock target error'
-    })) : [];
-    return { items: errors.filter(e => page.statusCode === undefined || e.statusCode === page.statusCode) };
-  }
-
-  async getRunChanges(syncRunId: string, changeType: ChangeType): Promise<Page<PersonHistoryRecord>> {
-    const items: PersonHistoryRecord[] = MOCK_RUN_IDS.includes(syncRunId)
-      ? [{ personId: 'U00000001', syncRunId, hash: 'mock-hash', changeType }]
-      : [];
-    return { items };
-  }
-}
+// Run reporting: a deterministic history of runs in every state (see MockRunReporting.ts)
+export { MockRunReportingService } from './MockRunReporting';
 
 export class MockLandscapeListingService implements LandscapeListingService {
   async getLandscapes(): Promise<LandscapeListing> {
@@ -271,20 +215,6 @@ export class MockPersonLookup {
   static lookup(personId: string, system: 'source' | 'target') {
     const service = new MockPersonLookupService();
     return service.lookup({ personId, system } as PersonLookupParams);
-  }
-}
-
-export class MockBulkSync {
-  static start(operation: string, batchSize?: number, filters?: any) {
-    const service = new MockBulkSyncService();
-    return service.start(operation, batchSize, filters);
-  }
-}
-
-export class MockHistory {
-  static getHistory(startDate?: string, endDate?: string, limit: number = 50) {
-    const service = new MockHistoryService();
-    return service.getHistory(startDate, endDate, limit);
   }
 }
 

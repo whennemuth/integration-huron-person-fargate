@@ -7,7 +7,7 @@
  * fixes/changes to shared behavior only need to be made once.
  */
 
-import { humanReadableFromMilliseconds, IntegrationResult } from 'integration-core';
+import { CrudOperation, humanReadableFromMilliseconds, IntegrationResult } from 'integration-core';
 import { Config, PersonRecordProcessor, TargetApiErrorEventProcessor } from 'integration-huron-person';
 import { SyncPopulation } from '../../docker/chunkTypes';
 import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../ApiErrorTracking';
@@ -120,21 +120,48 @@ export async function resolveAddonPersonProcessor(
     ?? (await personRecordProcessorFactory(addons))?.processRecord;
 }
 
-/** Logs HuronPersonIntegration.run()'s result and warns if the success/delta math doesn't add up. */
+/** How many people a chunk added, updated and removed in the target */
+export type ChangeCounts = Pick<IntegrationResult, 'addedCount' | 'updatedCount' | 'removedCount'>;
+
+/**
+ * The people a chunk added, updated and removed in the target: its successful pushes, counted by operation.
+ *
+ * IntegrationResult's addedCount, updatedCount and removedCount are the sizes of the computed delta, taken
+ * before the push, so they also count the people whose push failed, who are counted again among the failures:
+ * a chunk of 200 with 5 failed creates reported 200 added, 195 succeeded and 5 failed. Counting the successes
+ * makes added + updated + removed equal the successes, so with the failures and skips they add up to the
+ * people processed. Every push result names its operation (SinglePushResult.crud); if a success doesn't (a
+ * target that leaves it out), or the result carries no push results, the delta's counts are kept.
+ */
+export function pushedChangeCounts(result: IntegrationResult): ChangeCounts {
+  const { addedCount, updatedCount, removedCount, successes } = result;
+  if (!successes || successes.some(success => !success.crud)) {
+    return { addedCount, updatedCount, removedCount };
+  }
+  const count = (crud: CrudOperation) => successes.filter(success => success.crud === crud).length;
+  return {
+    addedCount: count(CrudOperation.CREATE),
+    updatedCount: count(CrudOperation.UPDATE),
+    removedCount: count(CrudOperation.DELETE)
+  };
+}
+
+/** Logs HuronPersonIntegration.run()'s result and warns if the success/change math doesn't add up. */
 export function logIntegrationResult(result: IntegrationResult): void {
+  const { addedCount, updatedCount, removedCount } = pushedChangeCounts(result);
   console.log(`\n✓ Chunk integration completed with results:`);
   console.log(`  - Total Processed: ${result.totalProcessed}`);
   console.log(`  - ✓ Successful: ${result.successCount}`);
   console.log(`  - ✗ Failed: ${result.failureCount}`);
   console.log(`  - ⊘ Skipped: ${result.skippedCount}`);
-  console.log(`  - + Added: ${result.addedCount}`);
-  console.log(`  - ~ Updated: ${result.updatedCount}`);
-  console.log(`  - - Removed: ${result.removedCount}`);
+  console.log(`  - + Added: ${addedCount}`);
+  console.log(`  - ~ Updated: ${updatedCount}`);
+  console.log(`  - - Removed: ${removedCount}`);
   console.log(`  - ⧗ Duration: ${humanReadableFromMilliseconds(result.duration ?? 0)}`);
 
-  const deltaSum = result.addedCount + result.updatedCount + result.removedCount;
-  if (result.successCount !== deltaSum) {
-    console.warn(`  ⚠️  Math mismatch: Successful(${result.successCount}) should equal Added(${result.addedCount}) + Updated(${result.updatedCount}) + Removed(${result.removedCount}) = ${deltaSum}`);
+  const changeSum = addedCount + updatedCount + removedCount;
+  if (result.successCount !== changeSum) {
+    console.warn(`  ⚠️  Math mismatch: Successful(${result.successCount}) should equal Added(${addedCount}) + Updated(${updatedCount}) + Removed(${removedCount}) = ${changeSum}`);
   }
 }
 
@@ -168,9 +195,7 @@ export async function writeTrackerStatistics(params: {
       successCount: integrationResult.successCount,
       failureCount: integrationResult.failureCount,
       skippedCount: integrationResult.skippedCount,
-      addedCount: integrationResult.addedCount,
-      updatedCount: integrationResult.updatedCount,
-      removedCount: integrationResult.removedCount
+      ...pushedChangeCounts(integrationResult)
     })
   });
 

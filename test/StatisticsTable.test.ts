@@ -1,6 +1,6 @@
 import { mockClient } from 'aws-sdk-client-mock';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand, BatchWriteCommand, UpdateCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
-import { StatisticsTable } from '../src/dynamodb/StatisticsTable';
+import { StatisticsTable, sumChunkStatistics } from '../src/dynamodb/StatisticsTable';
 import { IContext } from '../context/IContext';
 import { StatisticsItem } from '../src/ApiErrorTracking';
 
@@ -92,6 +92,16 @@ describe('StatisticsTable', () => {
       expect(summary.status).toBe('FAILED');
     });
 
+    it("copies who started the run from its flags, keeping only a recognized value", async () => {
+      mockRun([]);
+      const summary = (startedBy: unknown) => statisticsTable.buildRunSummary(integrationTimestamp, {
+        postProcessingSucceeded: true, dryRun: false, startedBy
+      });
+      expect((await summary({ by: 'dashboard', principal: 'jdoe' })).startedBy).toEqual({ by: 'dashboard', principal: 'jdoe' });
+      expect(await summary(undefined)).not.toHaveProperty('startedBy');
+      expect(await summary({ by: 'someone' })).not.toHaveProperty('startedBy');
+    });
+
     it('is POST_PROCESSING_FAILED when post-processing failed', async () => {
       mockRun([]);
       const summary = await statisticsTable.buildRunSummary(integrationTimestamp, {
@@ -118,6 +128,46 @@ describe('StatisticsTable', () => {
     it('readRunSummary returns undefined when no summary was written', async () => {
       dynamoMock.on(GetCommand).resolves({ Item: undefined });
       expect(await statisticsTable.readRunSummary(integrationTimestamp)).toBeUndefined();
+    });
+
+    it('leaves the latest chunk time out of the summary, which has its own completedAt', async () => {
+      mockRun([chunk('chunk-0000')]);
+      const summary = await statisticsTable.buildRunSummary(integrationTimestamp, { postProcessingSucceeded: true, dryRun: false });
+      expect(summary).not.toHaveProperty('lastChunkAt');
+    });
+
+    describe('sumChunkStatistics', () => {
+      it('sums the chunks\' counts and errors, and finds the latest chunk end time', () => {
+        const totals = sumChunkStatistics([
+          chunk('chunk-0001', { successCount: 200, addedCount: 2, updatedCount: 198, removedCount: 0,
+            totalErrors: 3, throttleCount: 3, errorsByStatus: { 429: 3 }, endTimestamp: '2026-05-14T12:09:00.000Z' }),
+          chunk('chunk-0000', { successCount: 195, failureCount: 4, skippedCount: 1, removedCount: 7,
+            totalErrors: 4, errorsByStatus: { 500: 4 }, endTimestamp: '2026-05-14T12:03:00.000Z' })
+        ]);
+        expect(totals).toEqual({
+          chunksReported: 2,
+          results: { processed: 400, succeeded: 395, failed: 4, skipped: 1, added: 2, updated: 198, removed: 7 },
+          totalErrors: 7,
+          throttleCount: 3,
+          errorsByStatus: { '429': 3, '500': 4 },
+          lastChunkAt: '2026-05-14T12:09:00.000Z'
+        });
+      });
+
+      it('counts nothing, with no latest chunk time, when no chunk has reported', () => {
+        expect(sumChunkStatistics([])).toEqual({
+          chunksReported: 0,
+          results: { processed: 0, succeeded: 0, failed: 0, skipped: 0, added: 0, updated: 0, removed: 0 },
+          totalErrors: 0,
+          throttleCount: 0,
+          errorsByStatus: {}
+        });
+      });
+
+      it('treats counts missing from older chunk items as zero', () => {
+        const { results } = sumChunkStatistics([chunk('chunk-0000')]);
+        expect(results).toEqual({ processed: 200, succeeded: 0, failed: 0, skipped: 0, added: 0, updated: 0, removed: 0 });
+      });
     });
   });
 
@@ -301,49 +351,50 @@ describe('StatisticsTable', () => {
     });
   });
 
-  describe('getUniqueIntegrationTimestamps', () => {
-    it('scans the distinct-run-index and returns its timestamps', async () => {
-      const timestamp1 = '2026-05-14T12:00:00.000Z';
-      const timestamp2 = '2026-05-14T13:00:00.000Z';
+  describe('the run-list-index reads', () => {
+    const runs = ['2026-05-14T13:00:00.000Z', '2026-05-14T12:00:00.000Z', '2026-05-14T11:00:00.000Z'];
+    const keys = (ids: string[]) => ids.map(id => ({ integrationTimestamp: id, eventType: 'RUN', distinctRunId: id, runList: 'RUNS' }));
 
-      dynamoMock.on(ScanCommand).resolves({ Items: [
-        { integrationTimestamp: timestamp1, eventType: 'RUN', distinctRunId: timestamp1 },
-        { integrationTimestamp: timestamp2, eventType: 'RUN', distinctRunId: timestamp2 }
-      ] });
+    it('reads a page of the newest runs by key, one more than asked for to tell whether older ones remain', async () => {
+      dynamoMock.on(QueryCommand).resolves({ Items: keys(runs) });
 
-      const result = await statisticsTable.getUniqueIntegrationTimestamps();
-
-      expect(result).toEqual([timestamp1, timestamp2]);
-      expect(dynamoMock.commandCalls(ScanCommand)[0].args[0].input.IndexName).toBe('distinct-run-index');
-      expect(dynamoMock.commandCalls(QueryCommand)).toHaveLength(0);
+      expect(await statisticsTable.getRunIdsPage({ limit: 2 })).toEqual({ syncRunIds: runs.slice(0, 2), hasOlder: true });
+      expect(dynamoMock.commandCalls(QueryCommand)[0].args[0].input).toMatchObject({
+        IndexName: 'run-list-index',
+        KeyConditionExpression: '#pk = :pkValue',
+        ExpressionAttributeNames: { '#pk': 'runList' },
+        ExpressionAttributeValues: { ':pkValue': 'RUNS' },
+        ScanIndexForward: false,
+        Limit: 3
+      });
+      expect(dynamoMock.commandCalls(ScanCommand)).toHaveLength(0);
     });
 
-    it('should handle empty results', async () => {
-      dynamoMock.on(ScanCommand).resolves({ Items: [] });
+    it('reads the runs older than before, and says none older remain when the page is short', async () => {
+      dynamoMock.on(QueryCommand).resolves({ Items: keys(runs.slice(1)) });
 
-      const result = await statisticsTable.getUniqueIntegrationTimestamps();
-
-      expect(result).toEqual([]);
+      expect(await statisticsTable.getRunIdsPage({ limit: 2, before: runs[0] })).toEqual({ syncRunIds: runs.slice(1), hasOlder: false });
+      expect(dynamoMock.commandCalls(QueryCommand)[0].args[0].input).toMatchObject({
+        KeyConditionExpression: '#pk = :pkValue AND #sk < :skValue',
+        ExpressionAttributeNames: { '#pk': 'runList', '#sk': 'distinctRunId' },
+        ExpressionAttributeValues: { ':pkValue': 'RUNS', ':skValue': runs[0] }
+      });
     });
 
-    it('should sort timestamps chronologically and follow pagination', async () => {
-      const timestamp1 = '2026-05-14T12:00:00.000Z';
-      const timestamp2 = '2026-05-14T11:00:00.000Z';
-      const timestamp3 = '2026-05-14T13:00:00.000Z';
+    it('lists every run oldest first, following the pages', async () => {
+      dynamoMock.on(QueryCommand)
+        .resolvesOnce({ Items: keys([runs[2]]), LastEvaluatedKey: { k: 1 } })
+        .resolvesOnce({ Items: keys([runs[1], runs[0]]) });
 
-      dynamoMock.on(ScanCommand)
-        .resolvesOnce({ Items: [{ integrationTimestamp: timestamp1 }, { integrationTimestamp: timestamp3 }], LastEvaluatedKey: { k: 1 } })
-        .resolvesOnce({ Items: [{ integrationTimestamp: timestamp2 }] });
-
-      const result = await statisticsTable.getUniqueIntegrationTimestamps();
-
-      expect(result).toEqual([timestamp2, timestamp1, timestamp3]);
-      expect(dynamoMock.commandCalls(ScanCommand)).toHaveLength(2);
+      expect(await statisticsTable.getAllRunIds()).toEqual([runs[2], runs[1], runs[0]]);
+      const [first, second] = dynamoMock.commandCalls(QueryCommand).map(call => call.args[0].input);
+      expect(first.ScanIndexForward).toBeUndefined();
+      expect(second.ExclusiveStartKey).toEqual({ k: 1 });
     });
   });
 
   describe('run marker', () => {
-    const runMarker = { integrationTimestamp, eventType: 'RUN', distinctRunId: integrationTimestamp };
+    const runMarker = { integrationTimestamp, eventType: 'RUN', distinctRunId: integrationTimestamp, runList: 'RUNS' };
     const putItems = () => dynamoMock.commandCalls(BatchWriteCommand)
       .flatMap(call => Object.values(call.args[0].input.RequestItems!)[0] as any[])
       .map(request => request.PutRequest?.Item);
@@ -384,7 +435,7 @@ describe('StatisticsTable', () => {
       expect(count).toBe(2);
       expect(putItems()).toEqual([
         runMarker,
-        { integrationTimestamp: other, eventType: 'RUN', distinctRunId: other }
+        { integrationTimestamp: other, eventType: 'RUN', distinctRunId: other, runList: 'RUNS' }
       ]);
     });
   });

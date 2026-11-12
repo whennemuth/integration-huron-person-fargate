@@ -1,50 +1,33 @@
-<!-- Bulk Operations Tab -->
+<!-- Bulk sync page: start a sync run in this landscape, as its schedule does (public/js/bulk-sync.js fills it) -->
 <div class="tab-pane fade {{#bulkActive}}show active{{/bulkActive}}" id="bulk" role="tabpanel" aria-labelledby="bulk-tab">
-    <div class="row mt-4">
-        <div class="col-md-8">
-            <div class="card">
-                <div class="card-header">
-                    <h5><i class="fas fa-users me-2"></i>Bulk Sync Operations</h5>
-                </div>
-                <div class="card-body">
-                    <form id="bulkSyncForm">
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label for="syncType" class="form-label">Sync Type</label>
-                                <select class="form-select" id="syncType" required>
-                                    <option value="">Choose...</option>
-                                    <option value="full">Full Population</option>
-                                    <option value="delta">Changed Records Only</option>
-                                    <option value="failed">Retry Failed</option>
-                                </select>
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <label for="batchSize" class="form-label">Batch Size</label>
-                                <input type="number" class="form-control" id="batchSize" value="100" min="1" max="1000">
-                            </div>
-                        </div>
-                        <div class="mb-3">
-                            <label for="filters" class="form-label">Filters (Optional)</label>
-                            <textarea class="form-control" id="filters" rows="3" placeholder="JSON filters, e.g., {&quot;department&quot;: &quot;Engineering&quot;}"></textarea>
-                        </div>
-                        <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-play me-2"></i>Start Bulk Sync
-                        </button>
-                    </form>
-                </div>
+    <div class="page">
+        <header class="page-header">
+            <div>
+                <h1 class="page-title">Bulk sync</h1>
+                <p class="page-description">Start a sync run in this landscape, the way its schedule starts one.</p>
             </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card">
-                <div class="card-header">
-                    <h5><i class="fas fa-chart-bar me-2"></i>Current Status</h5>
-                </div>
-                <div class="card-body">
-                    <div id="bulkStatus">
-                        <p class="text-muted">No active operations</p>
-                    </div>
-                </div>
+            <div class="page-actions">
+                <span class="refresh-stamp" data-refresh-stamp="bulk"></span>
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-action="refresh-bulk">
+                    <i class="fas fa-rotate-right me-1"></i>Refresh
+                </button>
             </div>
+        </header>
+
+        <div class="page-columns">
+            <section class="page-section" aria-labelledby="bulkSyncHeading">
+                <div class="section-heading">
+                    <h2 class="section-title" id="bulkSyncHeading">New run</h2>
+                </div>
+                <div class="surface" data-bulk-form></div>
+            </section>
+
+            <section class="page-section" aria-labelledby="bulkStatusHeading">
+                <div class="section-heading">
+                    <h2 class="section-title" id="bulkStatusHeading">Status</h2>
+                </div>
+                <div class="surface" data-bulk-status></div>
+            </section>
         </div>
     </div>
 </div>
