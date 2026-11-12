@@ -7,6 +7,7 @@ import { BU_NameTagAspect, TaggingAspect } from '../lib/Tagging';
 import { getLocalConfig, getStackName } from '../src/Utils';
 import { ConfigManager } from 'integration-huron-person';
 import { createDashboardStack } from '../dashboard/lib/DashboardStacks';
+import { NetworkStack } from '../lib/NetworkStack';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -49,9 +50,13 @@ let stack:IntegrationHuronPersonLambdaStack;
     CostCenter, 
     Ticket 
   };
-  new TaggingAspect(stack, standardTags).applyTags({ 
-    aspect: new BU_NameTagAspect(standardTags) 
+  new TaggingAspect(stack, standardTags).applyTags({
+    aspect: new BU_NameTagAspect(standardTags)
   });
+
+  // The network every landscape shares (lib/NetworkStack.ts): deploying the pipeline stack deploys it first, and
+  // destroying the pipeline stack leaves it alone
+  stack.addDependency(NetworkStack.create(app, context), 'the pipeline runs in the shared network');
 
   // The landscape's dashboard, as a separate stack (see context DASHBOARD)
   await createDashboardStack(app, context);
