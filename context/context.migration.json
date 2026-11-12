@@ -89,7 +89,7 @@
   },
   "LAMBDA": {
     "chunkerSubscriber": {
-      "timeoutSeconds": 60,
+      "timeoutSeconds": 600,
       "memorySizeMb": 256
     },
     "processorSubscriber": {

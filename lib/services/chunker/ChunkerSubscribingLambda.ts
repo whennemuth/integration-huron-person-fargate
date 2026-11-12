@@ -17,6 +17,10 @@ export interface ChunkerSubscribingLambdaProps {
   landscape: string;
   /** The pipeline stack's STACK_ID, which names the atomic counter table it resets when a run starts */
   stackId: string;
+  /** The chunker service's cluster and service names, which a parallel start scales (src/chunking/ParallelStart.ts) */
+  chunkerClusterName: string;
+  chunkerServiceName: string;
+  /** Long enough for a parallel start's wait for the scale-in alarm (up to 6 minutes): see the context's LAMBDA */
   timeoutSeconds: number;
   memorySizeMb: number;
   dryRun?: boolean;
@@ -48,6 +52,9 @@ export interface ChunkerSubscribingLambdaProps {
  * and routes to the appropriate handler (S3 or API).
  */
 export class ChunkerSubscribingLambda extends Construct {
+  /** How long an asynchronous invocation may wait in Lambda's queue before it is dropped rather than run late */
+  static readonly MAX_EVENT_AGE = Duration.minutes(15);
+
   public readonly function: NodejsFunction;
 
   constructor(scope: Construct, id: string, props: ChunkerSubscribingLambdaProps) {
@@ -88,7 +95,10 @@ export class ChunkerSubscribingLambda extends Construct {
         // Name the atomic counter table, whose counters a run's first event resets (resetCountersForRunStart())
         STACK_ID: props.stackId,
         LANDSCAPE: props.landscape,
-        DESCRIPTION1: 
+        // The chunker service a parallel start scales (ParallelStart.fromEnvironment())
+        CHUNKER_CLUSTER_NAME: props.chunkerClusterName,
+        CHUNKER_SERVICE_NAME: props.chunkerServiceName,
+        DESCRIPTION1:
           `Analyzes incoming event (S3 or API) and delegates to appropriate handler (ChunkerS3Subscriber 
           or ChunkerApiSubscriber). Both handlers send SQS messages to trigger Fargate tasks that create 
           NDJSON chunk files from person data.`
@@ -123,6 +133,31 @@ export class ChunkerSubscribingLambda extends Construct {
         })],
       })
     );
+
+    // A parallel start (src/chunking/ParallelStart.ts) reads the chunker service's maximum and scaling policies, waits
+    // on its scale-in alarm, then sets its desired count. Application Auto Scaling's Describe actions don't support
+    // resource-level permissions; the alarm's name is generated, so any alarm in the region.
+    const { account, region } = Stack.of(this);
+    this.function.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['ecs:UpdateService', 'ecs:DescribeServices'],
+      resources: [`arn:aws:ecs:${region}:${account}:service/${props.chunkerClusterName}/${props.chunkerServiceName}`],
+    }));
+    this.function.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['application-autoscaling:DescribeScalableTargets', 'application-autoscaling:DescribeScalingPolicies'],
+      resources: ['*'],
+    }));
+    this.function.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['cloudwatch:DescribeAlarms'],
+      resources: [`arn:aws:cloudwatch:${region}:${account}:alarm:*`],
+    }));
+
+    // No automatic retry: Lambda retries a failed or timed-out asynchronous invocation twice by default, and a retried
+    // run start would reset the counters and seed again into a run already started (duplicate chunks). A failed start
+    // is started again by a person. An event that waited longer than this in Lambda's queue is dropped, not started late.
+    this.function.configureAsyncInvoke({ retryAttempts: 0, maxEventAge: ChunkerSubscribingLambda.MAX_EVENT_AGE });
 
     // Apply any resource-specific tags - tags not defined in IContext.TAGS
     if (props.tags) {
