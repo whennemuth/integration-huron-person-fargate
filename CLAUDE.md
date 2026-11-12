@@ -317,7 +317,10 @@ env var, which the Docker routers branch on; the runtime factories below then sw
      counted by operation (`pushedChangeCounts()` in `src/processing/ProcessorCommon.ts`), so they sum to
      the successes; `IntegrationResult`'s own are the delta's sizes before the push, which also count the
      failed pushes. Items written before 2026-11-09 hold the delta's counts, so a run with failures shows
-     too many added/updated.
+     too many added/updated. Their `totalRecords` (and `chunkSize`) is `IntegrationResult.totalProcessed`, the
+     people in the chunk's delta (those whose record changed), not the people in the chunk: people skipped as
+     unchanged are never counted. So it can't measure a run's progress; the dashboard counts chunks instead
+     (`chunksReported` ÷ METADATA `chunkCount`, `dashboard/CLAUDE.md` "Percent done").
    - `RUN_SUMMARY` (one per run) is written by `AbstractPostProcessor.main()`'s `finally` block, in both
      storage modes: METADATA plus the summed chunk statistics plus the deletion outcome
      (`DeletionOutcome`, returned by `runDeferredDeletes()`: COMPLETED with counts, SKIPPED with a
