@@ -1,11 +1,10 @@
 import { DataSourceConfig, Config } from 'integration-huron-person';
-import { DesiredCount } from '../DesiredCount';
 import { QueueSeeder } from '../chunking/fetch/QueueSeeder';
+import { ParallelStart } from '../chunking/ParallelStart';
 import { ChunkingServiceRunner } from './AbstractRunner';
-import { Endpoint, NormalizedPopulationType, RunnerEnv, TargetConfig } from './RunnerTypes';
+import { Endpoint, NormalizedPopulationType, TargetConfig } from './RunnerTypes';
 import { AbstractAtomicCounter } from '../dynamodb/AtomicCounter';
 import { CHUNKER_COUNTER_NAME } from '../chunking/ChunkerQueue';
-import { MetricsCatchupDelay } from './MetricsCatchupDelay';
 
 /**
  * Runner for queue seeding mode with parallel processing.
@@ -122,6 +121,11 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
     };
   }
 
+  /**
+   * Seed MESSAGES_TO_PREPOPULATE messages and, for a DESIRED_COUNT above 0, wait for the chunker's scale-in alarm and
+   * set the service's desired count: the procedure the chunker subscriber's parallel start uses too
+   * (src/chunking/ParallelStart.ts), so the service's maximum is checked before anything is sent.
+   */
   public async execute(
     sourceEndpoint: Endpoint,
     targetConfig: TargetConfig,
@@ -136,79 +140,37 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
       return;
     }
 
-    // Seed the queue
-    await this.seedQueue(sourceEndpoint, targetConfig, env, populationType, seedNumber);
-
-    // Scale ECS service if requested
-    if (env.desiredCount > 0) {
-      await this.scaleEcsService(env);
+    const parallelStart = this.parallelStart(sourceEndpoint, populationType);
+    const result = await parallelStart.start({ messages: seedNumber, tasks: env.desiredCount > 0 ? env.desiredCount : 0 });
+    if (result.statusCode !== 200) {
+      console.error(`Queue seeding didn't complete: ${result.body}`);
     }
   }
 
-  private async scaleEcsService(env: RunnerEnv): Promise<void> {
-    console.log(`\n🚀 Scaling up ECS service ${env.serviceName} in cluster ${env.clusterName} to desired count of ${env.desiredCount}...\n`);
-    
-    const desiredCountManager = new DesiredCount({ 
-      clusterName: env.clusterName!, 
-      serviceName: env.serviceName!, 
-      region: env.region! 
-    });
-    
-    const max = await desiredCountManager.getMax();
-    if (max !== undefined && env.desiredCount > max) {
-      console.warn(
-        `Desired count of ${env.desiredCount} exceeds the maximum allowed by the auto-scaling ` +
-        `configuration (${max}). Cancelling operation`
-      );
-      return;
-    }
-
-    // Wait for auto-scaling alarm evaluation to "see" the new queue depth and catch up before 
-    // scaling. The new desiredCount will quickly be reverted back down to zero if the alarm is 
-    // still in ALARM state.
-    await (new MetricsCatchupDelay({
-      clusterName: env.clusterName!,
-      serviceName: env.serviceName!,
-      region: env.region!
-    })).startDelay();
-    
-    // It should now be safe to scale the ECS service to the desired count.
-    await desiredCountManager.setTo(env.desiredCount);
-    console.log(`✓ ECS service scaled to ${env.desiredCount}\n`);
-  }
-
-  private async seedQueue(
-    endpoint: Endpoint,
-    targetConfig: TargetConfig,
-    env: RunnerEnv, 
-    populationType: NormalizedPopulationType,
-    seedNumber: number
-  ): Promise<void> {
-    console.log(`\n🌱 Seeding queue with ${seedNumber} messages...\n`);
-    
-    const queueSeeder = new QueueSeeder({
-      region: env.region!,
-      stackId: env.stackId!,
-      landscape: env.landscape!,
-      baseUrl: endpoint.baseUrl,
-      fetchPath: endpoint.fetchPath,
-      populationType,
-      bulkReset: env.bulkReset,
-      trustPreviousStorage: env.trustPreviousStorage,
-      iterationLimit: env.iterationLimit ? env.iterationLimit : 0,
-      messagesToSeed: seedNumber,
-      queueUrl: env.queueUrl!,
-      dryRun: false,
-      personRecordProcessorAddons: env.personRecordProcessorAddons,
-      termsEndpoint: endpoint.termsEndpoint
-    });
-    
-    // Reset the atomic counters to ensure a clean slate for seeded messages and chunk ordinals
-    await queueSeeder.resetAtomicCounters();
-
-    // Seed the queue with the specified number of messages
-    await queueSeeder.seedQueue();
-    
-    console.log(`\n✓ Queue seeding complete. Ready to scale up desiredCount to ${seedNumber}.\n`);
+  /** The parallel start for this run: the Runner's seeding (counters reset first), with the chunker service's AWS side */
+  protected parallelStart(endpoint: Endpoint, populationType: NormalizedPopulationType): ParallelStart {
+    const { env } = this;
+    const seed = async (messagesToSeed: number): Promise<number> => {
+      const queueSeeder = new QueueSeeder({
+        region: env.region!,
+        stackId: env.stackId!,
+        landscape: env.landscape!,
+        baseUrl: endpoint.baseUrl,
+        fetchPath: endpoint.fetchPath,
+        populationType,
+        bulkReset: env.bulkReset,
+        trustPreviousStorage: env.trustPreviousStorage,
+        iterationLimit: env.iterationLimit ? env.iterationLimit : 0,
+        messagesToSeed,
+        queueUrl: env.queueUrl!,
+        dryRun: false,
+        personRecordProcessorAddons: env.personRecordProcessorAddons,
+        termsEndpoint: endpoint.termsEndpoint
+      });
+      // Reset the atomic counters to ensure a clean slate for seeded messages and chunk ordinals
+      await queueSeeder.resetAtomicCounters();
+      return queueSeeder.seedQueue();
+    };
+    return new ParallelStart(ParallelStart.awsDeps({ clusterName: env.clusterName, serviceName: env.serviceName, region: env.region }, seed));
   }
 }

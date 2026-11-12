@@ -6,7 +6,7 @@ import { SourceEndpoint, SyncPopulation } from '../../../docker/chunkTypes';
 import { extractChunkDirectory } from '../filedrop/ChunkPathUtils';
 import { AbstractAtomicCounter } from '../../dynamodb/AtomicCounter';
 import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from '../ChunkerQueue';
-import { RunStarter } from '../StartedBy';
+import { RunStarter, StartedBy } from '../StartedBy';
 
 export type QueueSeederParams = {
   stackId?: string, 
@@ -24,6 +24,8 @@ export type QueueSeederParams = {
   personRecordProcessorAddons?: string;
   /** Terms endpoint override for this run's processor tasks (see Flags.termsEndpoint) */
   termsEndpoint?: SourceEndpoint;
+  /** Who or what started the run: the manual Runner, unless the chunker subscriber seeds a run's start for another */
+  startedBy?: StartedBy;
 };
 
 /**
@@ -210,8 +212,9 @@ export class QueueSeeder {
         chunkDirectory: this.chunkDirectory,
         personRecordProcessorAddons: this.personRecordProcessorAddons,
         termsEndpoint: this.params.termsEndpoint,
-        // Only the manual Runner seeds the queue (RunnerForQueueSeeding)
-        startedBy: RunStarter.RUNNER,
+        // The manual Runner's queue seeding (RunnerForQueueSeeding) unless the caller says who started the run (the
+        // chunker subscriber, seeding a run's start for the dashboard: src/chunking/ParallelStart.ts)
+        startedBy: this.params.startedBy ?? RunStarter.RUNNER,
         processingMetadata: {
           processedAt: new Date().toISOString(),
           processorVersion: '1.0.0'

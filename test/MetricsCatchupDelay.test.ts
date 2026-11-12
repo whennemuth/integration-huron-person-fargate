@@ -31,6 +31,23 @@ describe('MetricsCatchupDelay.startDelay abort', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
+  it("ends within maxWaitSeconds, whatever the period and buffer add up to (a Lambda's remaining time)", async () => {
+    const bounded = new MetricsCatchupDelay({ alarmPeriodSeconds: 60, additionalDelaySeconds: 300, countdownStepSeconds: 5, maxWaitSeconds: 10 });
+    let settled = false;
+    const result = bounded.startDelay().then(value => { settled = true; return value; });
+    await jest.advanceTimersByTimeAsync(9_000);
+    expect(settled).toBe(false);
+    await jest.advanceTimersByTimeAsync(1_000);
+    await expect(result).resolves.toBe(true);
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('limited to 10s'));
+  });
+
+  it('waits not at all when the limit is used up, and never a negative time', async () => {
+    const none = new MetricsCatchupDelay({ alarmPeriodSeconds: 60, additionalDelaySeconds: 300, maxWaitSeconds: -5 });
+    await expect(none.startDelay()).resolves.toBe(true);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
   it('returns false immediately when the signal is already aborted', async () => {
     const controller = new AbortController();
     controller.abort();

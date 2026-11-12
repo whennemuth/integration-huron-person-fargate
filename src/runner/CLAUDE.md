@@ -64,7 +64,10 @@ Design intent: avoid immediate desired-count reversal due to stale scale-in alar
   - Seeds queue with N messages using `QueueSeeder`.
   - Validates required env for seeding/scaling and checks desired-count guardrails.
   - Requires atomic counter table existence.
-  - If `DESIRED_COUNT > 0`, performs explicit ECS desired count update via `DesiredCount` after running `MetricsCatchupDelay`.
+  - Seeds and scales through `ParallelStart.start({ messages: MESSAGES_TO_PREPOPULATE, tasks: DESIRED_COUNT })`
+    (`src/chunking/ParallelStart.ts`), the same procedure as the chunker subscriber's parallel start for Bulk sync:
+    the service's maximum checked before anything is sent, then seeding (`QueueSeeder`, counters reset first), then,
+    if `DESIRED_COUNT > 0`, `MetricsCatchupDelay` and the desired count (`DesiredCount`). `DESIRED_COUNT` 0 seeds only.
 
 ### Timing and alarm protection
 - `MetricsCatchupDelay.ts`
@@ -75,7 +78,8 @@ Design intent: avoid immediate desired-count reversal due to stale scale-in alar
   - Behavior:
     - Resolve scale-in alarm and period when possible.
     - Fallback order for period: discovered alarm period -> env override -> default 60s.
-    - Wait for `period + additional delay`.
+    - Wait for `period + additional delay`, or no longer than `maxWaitSeconds` when given (the chunker subscriber
+      passes its Lambda's remaining time, less a margin, so its timeout can't stop it mid-wait).
     - During wait, poll alarm state; exit early if state is no longer `ALARM`.
     - Warn if delay expires and state is still `ALARM`.
 
