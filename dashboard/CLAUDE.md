@@ -778,7 +778,18 @@ mock routes); the service: `test/DashboardBulkSync.test.ts`.
 4. Review minification errors in build output
 
 ### Local Development Issues
-1. Set `NODE_ENV=development` to bypass origin verification
-2. Set `LOCALHOST_WITH_MOCKS=true` to use mock services
-3. Check Express server logs for route errors
-4. Verify port 3000 is available
+The launcher (`npm run dashboard:dev`, see "Local Development") sets `NODE_ENV=development`, which bypasses
+origin verification, and `LOCALHOST_WITH_MOCKS` from `MOCKED`; don't set them by hand.
+1. **No AWS access, or none wanted**: `MOCKED=true` in `scripts/LocalLaunch.env`, or `-- --mocks` for one run.
+2. **The launch stops before the server starts**: an expired session for `AWS_PROFILE` (refresh it), or no
+   dashboard Lambda by that name (check `LANDSCAPE`, `REGION` and `STACK_ID`); the message says which.
+3. **The port is already in use**: stopping `npm run dashboard:dev` (Ctrl+C, or closing its terminal) can leave
+   its `node` process listening on Windows. Find the process listening on `PORT` (default 3000) and stop it, or
+   set another `PORT` in `LocalLaunch.env`.
+4. **PowerShell refuses `npm`**: with the execution policy `Restricted`, npm's `npm.ps1` shim is blocked; run
+   `npm.cmd run dashboard:dev`, or use `cmd.exe` or Git Bash.
+5. **Works locally, fails deployed** (or the reverse): a local run uses your profile's AWS permissions, not the
+   Lambda role's, so a missing grant only shows when deployed.
+6. **The top bar names the user differently**: deployed it shows the IdP's `eduPersonPrincipalName`; the mock
+   sign-in shows `USER_PRINCIPAL` unless `USER_EPPN` is set.
+7. Route errors are in the server's own output.
