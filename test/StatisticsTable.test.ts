@@ -92,6 +92,16 @@ describe('StatisticsTable', () => {
       expect(summary.status).toBe('FAILED');
     });
 
+    it("copies who started the run from its flags, keeping only a recognized value", async () => {
+      mockRun([]);
+      const summary = (startedBy: unknown) => statisticsTable.buildRunSummary(integrationTimestamp, {
+        postProcessingSucceeded: true, dryRun: false, startedBy
+      });
+      expect((await summary({ by: 'dashboard', principal: 'jdoe' })).startedBy).toEqual({ by: 'dashboard', principal: 'jdoe' });
+      expect(await summary(undefined)).not.toHaveProperty('startedBy');
+      expect(await summary({ by: 'someone' })).not.toHaveProperty('startedBy');
+    });
+
     it('is POST_PROCESSING_FAILED when post-processing failed', async () => {
       mockRun([]);
       const summary = await statisticsTable.buildRunSummary(integrationTimestamp, {

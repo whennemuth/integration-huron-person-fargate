@@ -1,3 +1,4 @@
+import { RunStarter, StartedBy } from '../chunking/StartedBy';
 import { TestEnvironment } from 'integration-core';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, UpdateCommand, UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
@@ -118,6 +119,8 @@ export type RunSummary = {
   throttleCount: number;
   errorsByStatus: Record<string, number>;
   deletion?: DeletionOutcome;
+  /** Who or what started the run (src/chunking/StartedBy.ts), from its Flags; absent for runs from before it was recorded */
+  startedBy?: StartedBy;
 };
 
 export class StatisticsTable {
@@ -172,8 +175,11 @@ export class StatisticsTable {
     storageMode?: string;
     dryRun: boolean;
     deletion?: DeletionOutcome;
+    /** The run's Flags.startedBy, which the caller reads (from DynamoDB or S3, by storage mode) */
+    startedBy?: unknown;
   }): Promise<RunSummary> => {
     const { postProcessingSucceeded, storageMode, dryRun, deletion } = params;
+    const startedBy = RunStarter.from(params.startedBy);
     const metadata = await this.readMetadata(syncRunId) ?? {};
     // The summary keeps its own completedAt; the latest chunk time is only reported for runs without one
     const { lastChunkAt: _, ...totals } = sumChunkStatistics(await this.getAllChunkStatistics(syncRunId));
@@ -197,7 +203,8 @@ export class StatisticsTable {
       chunkCount: metadata.chunkCount,
       totalRecords: metadata.totalRecords,
       ...totals,
-      deletion
+      deletion,
+      ...(startedBy ? { startedBy } : {})
     };
   }
 

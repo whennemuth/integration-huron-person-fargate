@@ -1,4 +1,5 @@
 import { SourceEndpoint, SyncPopulation } from '../../../docker/chunkTypes';
+import type { StartedBy } from '../StartedBy';
 
 /**
  * Flags configuration for chunking pipeline.
@@ -29,6 +30,12 @@ export type Flags = {
    * (real source -> mock target), which use the configured terms endpoint.
    */
   termsEndpoint?: SourceEndpoint;
+  /**
+   * Who or what started the run (src/chunking/StartedBy.ts): the dashboard (with the signed-in user's buPrincipal),
+   * the schedule or the manual Runner. Absent for runs started before it was recorded, and for the S3 file drop.
+   * Copied into the run's summary by the post-processor, for Run history's "Started by".
+   */
+  startedBy?: StartedBy;
   [key: string]: any; // Allow additional fields for flexibility
 }
 

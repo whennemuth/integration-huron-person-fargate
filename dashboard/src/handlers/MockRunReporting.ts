@@ -13,6 +13,7 @@
  * MOCK_STORAGE_MODE (dynamodb, the default, or s3) selects the storage mode the mocks report. In S3 mode no
  * per-person change list is kept, so getRunChanges() refuses, as RunReporting does.
  */
+import { RunStarter, StartedBy } from '../../../src/chunking/StartedBy';
 import {
   Capabilities, ChangeType, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, Page, pageOfRunIds, ReportingError, RunIdPage, RunReport
 } from '../../../src/reporting/RunReporting';
@@ -55,6 +56,8 @@ type MockRunSpec = {
   bulkReset: boolean;
   durationMinutes: number;
   deletion?: DeletionOutcome;
+  /** Who or what started it; none for the oldest runs, from before it was recorded */
+  startedBy?: StartedBy;
 };
 
 /** A small deterministic hash, so generated values look varied but never change between requests */
@@ -77,6 +80,9 @@ const buidFor = (...parts: (string | number)[]): string => `U${String(hash(...pa
  * sync of the changed people on the others.
  */
 export class MockRunCatalog {
+  /** The newest runs record who started them; older ones (from before it was recorded) don't */
+  static readonly STARTED_BY_RECORDED_FOR = 30;
+
   private readonly specs: MockRunSpec[];
   private readonly byId: Map<string, MockRunSpec>;
   /** Generated lists, kept: a list is paged a slice at a time, and the largest holds ~14,000 changes */
@@ -141,6 +147,7 @@ export class MockRunCatalog {
           bulkReset: spec.bulkReset,
           trustPreviousStorage: false,
           syncPopulation: spec.syncPopulation as any,
+          ...(spec.startedBy ? { startedBy: spec.startedBy } : {}),
           ...(failed ? {
             runFailed: true,
             runFailureMessage: 'Source API returned 503 Service Unavailable after 5 attempts',
@@ -285,7 +292,8 @@ export class MockRunCatalog {
       chunkCount: MockRunCatalog.chunkCount(spec),
       totalRecords: spec.totalRecords,
       ...totals,
-      deletion: spec.deletion
+      deletion: spec.deletion,
+      ...(spec.startedBy ? { startedBy: spec.startedBy } : {})
     };
   }
 
@@ -334,7 +342,9 @@ export class MockRunCatalog {
       errorsByStatus: { 400: seed % 3, 429: (seed >> 3) % 4, 500: (seed >> 5) % 2 },
       dryRun: false,
       bulkReset: false,
-      durationMinutes: full ? 38 + seed % 15 : 6 + seed % 6
+      durationMinutes: full ? 38 + seed % 15 : 6 + seed % 6,
+      // The nightly runs are the schedule's; the oldest are from before who started a run was recorded
+      startedBy: n < MockRunCatalog.STARTED_BY_RECORDED_FOR ? RunStarter.SCHEDULE : undefined
     };
     const spec: MockRunSpec = { ...base, ...MockRunCatalog.specialCase(n, base, seed) };
     if (spec.deletion === undefined && (spec.outcome === 'SUCCEEDED' || spec.outcome === 'FAILED' || spec.outcome === 'POST_PROCESSING_FAILED')) {
@@ -352,13 +362,17 @@ export class MockRunCatalog {
           syncPopulation: 'person-full', totalRecords: FULL_POPULATION, added: 130, updated: 240, deactivated: 12,
           errorsByStatus: { 400: 40, 404: 25, 429: 120, 500: 75 }, durationMinutes: 47
         };
-      case 1: // Stopped part way, without being marked failed (or still running)
-        return { outcome: 'INCOMPLETE', syncPopulation: 'person-full', totalRecords: FULL_POPULATION, deactivated: 0 };
+      case 1: // Stopped part way, without being marked failed (or still running), started from Bulk sync
+        return {
+          outcome: 'INCOMPLETE', syncPopulation: 'person-full', totalRecords: FULL_POPULATION, deactivated: 0,
+          startedBy: RunStarter.dashboard('jdoe')
+        };
       case 3: // A single person, synced from the dashboard in the afternoon
       case 17:
         return {
           syncRunId: afternoon(n), syncPopulation: 'person-delta', buid: buidFor('single', n), totalRecords: 1,
-          added: 0, updated: 1, deactivated: 0, errorsByStatus: {}, durationMinutes: 2
+          added: 0, updated: 1, deactivated: 0, errorsByStatus: {}, durationMinutes: 2,
+          startedBy: RunStarter.dashboard(n === 3 ? 'jdoe' : 'asmith')
         };
       case 5: // Chunking failed, so the run was marked failed and never post-processed
         return { outcome: 'TERMINAL_ERROR', syncPopulation: 'person-full', totalRecords: 0 };
@@ -378,10 +392,10 @@ export class MockRunCatalog {
           errorsByStatus: { 500: 18 + seed % 10, 429: 6 },
           deletion: { status: 'SKIPPED', reason: 'TERMINAL_ERROR', message: 'The run is marked failed: deletions skipped' }
         };
-      case 20: // A bulk reset: everyone re-sent
+      case 20: // A bulk reset: everyone re-sent, from the manual Runner
         return {
           bulkReset: true, syncPopulation: 'person-full', totalRecords: FULL_POPULATION,
-          added: 0, updated: FULL_POPULATION - 40, deactivated: 0, durationMinutes: 95
+          added: 0, updated: FULL_POPULATION - 40, deactivated: 0, durationMinutes: 95, startedBy: RunStarter.RUNNER
         };
       default:
         return {};

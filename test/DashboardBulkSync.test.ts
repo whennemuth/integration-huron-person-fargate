@@ -203,6 +203,23 @@ describe('BulkSync', () => {
     });
   });
 
+  describe('who starts it', () => {
+    it("is the signed-in user's buPrincipal (array-valued, as the IdP sends it), or no one in a public dashboard", () => {
+      expect(BulkSync.startedBy({ buPrincipal: ['jdoe'], eduPersonPrincipalName: ['jdoe@bu.edu'] })).toEqual({ by: 'dashboard', principal: 'jdoe' });
+      expect(BulkSync.startedBy({ buPrincipal: 'jdoe' })).toEqual({ by: 'dashboard', principal: 'jdoe' });
+      expect(BulkSync.startedBy({ eduPersonPrincipalName: ['jdoe@bu.edu'] })).toEqual({ by: 'dashboard' });
+      expect(BulkSync.startedBy(undefined)).toEqual({ by: 'dashboard' });
+    });
+
+    it('goes on the event a start sends, and the one its review shows', async () => {
+      const { bulkSync, functions } = service();
+      const startedBy = { by: 'dashboard' as const, principal: 'jdoe' };
+      expect((await bulkSync.plan({ runType: 'full' }, startedBy)).event).toMatchObject({ startedBy });
+      await bulkSync.start({ runType: 'full' }, startedBy);
+      expect(functions.invokeAsync).toHaveBeenCalledWith('chunker-subscriber-preview', expect.objectContaining({ startedBy }));
+    });
+  });
+
   describe('plan', () => {
     it('returns the event a start would send, without starting anything', async () => {
       const { bulkSync, functions } = service();
@@ -334,6 +351,9 @@ describe('the bulk sync routes, under mocks', () => {
     const plan = await request('POST', { runType: 'test', buid: 'U0000042' }, '/api/bulk-sync/plan');
     expect(plan).toMatchObject({ status: 200, body: { choices: { runType: 'test', buid: 'U0000042' }, event: { fetchPath: '/api/person?buid=U0000042' } } });
     expect(plan.body.settings.length).toBeGreaterThan(20);
+
+    // No one is signed in here: the review's event says it came from the dashboard
+    expect(plan.body.event.startedBy).toEqual({ by: 'dashboard' });
 
     const started = await request('POST', { runType: 'test', buid: 'U0000042' });
     expect(started).toMatchObject({ status: 202, body: { status: 'started', run: { population: 'person-delta', buid: 'U0000042' } } });

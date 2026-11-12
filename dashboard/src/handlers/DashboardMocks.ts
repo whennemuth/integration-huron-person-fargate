@@ -20,6 +20,7 @@ import { CrudOperation } from 'integration-core';
 import { Config, PersonPushRequest } from 'integration-huron-person';
 import type { ApiChunkerEvent } from '../../../src/chunking/ChunkerSubscriber';
 import { BulkSync, BulkSyncSettings } from '../services/BulkSync';
+import type { StartedBy } from '../../../src/chunking/StartedBy';
 import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
 import { MockRunReportingService } from './MockRunReporting';
 
@@ -149,12 +150,12 @@ export class MockBulkSyncService implements BulkSyncService {
     return this.service.describe();
   }
 
-  plan(request: BulkSyncRequestBody): Promise<BulkSyncPlan> {
-    return this.service.plan(request);
+  plan(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncPlan> {
+    return this.service.plan(request, startedBy);
   }
 
-  start(request: BulkSyncRequestBody): Promise<BulkSyncResult> {
-    return this.service.start(request);
+  start(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncResult> {
+    return this.service.start(request, startedBy);
   }
 }
 

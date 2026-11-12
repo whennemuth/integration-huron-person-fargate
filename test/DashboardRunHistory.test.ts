@@ -415,6 +415,30 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
     });
   });
 
+  describe('who started a run', () => {
+    it('names the signed-in user, the schedule or the Runner, from the summary or else the flags', () => {
+      expect(RunView.startedByLabel({ by: 'dashboard', principal: 'jdoe' })).toBe('jdoe');
+      expect(RunView.startedByLabel({ by: 'dashboard' })).toBe('Dashboard');
+      expect(RunView.startedByLabel({ by: 'schedule' })).toBe('Schedule');
+      expect(RunView.startedByLabel({ by: 'runner' })).toBe('Runner');
+      expect(RunView.startedByLabel(undefined)).toBeUndefined();
+      expect(RunView.startedByLabel({ by: 'someone' })).toBeUndefined();
+
+      const summarized = new RunView({ syncRunId: 'a', status: 'SUCCEEDED', summary: { results: {}, startedBy: { by: 'schedule' } } });
+      expect(summarized.startedBy).toBe('Schedule');
+      expect(summarized.facts[0]).toBe('Started by Schedule');
+      const unfinished = new RunView({ ...incomplete, flags: { ...(incomplete as any).flags, startedBy: { by: 'dashboard', principal: 'jdoe' } } });
+      expect(unfinished.startedBy).toBe('jdoe');
+    });
+
+    it("shows it in its own column, and a dash for a run from before it was recorded", () => {
+      expect(RunListTable.HEAD_HTML).toMatch(/<th scope="col">Started<\/th>\s*<th scope="col">Started by<\/th>\s*<th scope="col">Status<\/th>/);
+      const row = (summary: any) => RunListTable.rowHtml(new RunView({ syncRunId: '2026-11-04T02:00:00.000Z', status: 'SUCCEEDED', summary }));
+      expect(row({ results: {}, startedBy: { by: 'dashboard', principal: 'j<d>oe' } })).toContain('<td>j&lt;d&gt;oe</td>');
+      expect(row({ results: {} })).toContain(`<td>${RunFormat.NONE}</td>`);
+    });
+  });
+
   describe('rows', () => {
     it("links a run's row to its page, and escapes what it shows", () => {
       const row = RunListTable.rowHtml(new RunView({

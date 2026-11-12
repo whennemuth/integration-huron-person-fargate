@@ -639,6 +639,12 @@ landscape's runs from the run reporting routes. Its classes each do one thing:
   minutes); a still-fetching run can stall but gets no estimate. A run waiting on post-processing stalls by the
   same rule ("Stalled: post-processing hasn't finished 3 days after the last chunk"). All from the browser's clock
   at each load.
+- **Started by** (`RunView.startedByLabel()`): a column after Started, and the first of a run's facts ("Started by
+  jdoe"): the signed-in user's `buPrincipal` for a start from Bulk sync ("Dashboard" without one), "Schedule" or
+  "Runner", from the summary's `startedBy` or else the flags' (fargate `src/chunking/StartedBy.ts`); a dash for a run
+  from before it was recorded. The mock catalog's newest 30 runs have one (`MockRunCatalog.STARTED_BY_RECORDED_FOR`):
+  the schedule's nightly runs, two single-person runs and the incomplete run from Bulk sync, the bulk reset from the
+  Runner.
 - A single-person run is named by its BUID only when the report has metadata (the source URL's `buid`): a
   finished run's summary doesn't record it.
 - `RunHistoryPage` shows the list (`#runs`, 20 runs a page with "Load older runs") or one run
@@ -705,6 +711,10 @@ routes above).
   the start (less `CLOCK_SLACK_MS`), since the chunker, not the page, creates it.
 - The Lambda's environment carries what the review shows: `PIPELINE_STACK_ID`, `ITEMS_PER_CHUNK`, and the config
   secret's name (`lib/FunctionUrl.ts`).
+- **Who starts it**: the handler passes the request's signed-in user (`Request.user`, the sign-in token's claims) to
+  `plan()` and `start()`, and `BulkSync.startedBy(user)` makes `{ by: 'dashboard', principal: <buPrincipal> }` of it
+  (no principal in a public dashboard). It goes on the event, so the review shows it and the run records it (Run
+  history's Started by). Never taken from the request body.
 Tests: `test/DashboardBulkSyncPage.test.ts` (the script in a vm, as written and minified, and once over the
 mock routes); the service: `test/DashboardBulkSync.test.ts`.
 

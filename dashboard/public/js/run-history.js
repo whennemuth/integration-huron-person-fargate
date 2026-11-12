@@ -238,6 +238,7 @@ class RunView {
         this.throttled = totals ? totals.throttleCount : undefined;
         this.errorsByStatus = totals ? totals.errorsByStatus : undefined;
         this.failureMessage = first(item.terminalError && item.terminalError.errorMessage, flags.runFailureMessage);
+        this.startedBy = RunView.startedByLabel(first(summary && summary.startedBy, flags.startedBy));
         this.failedAt = first(item.terminalError && item.terminalError.errorTimestamp, flags.runFailureTimestamp);
     }
 
@@ -247,8 +248,22 @@ class RunView {
     }
 
     /** The run's key facts, in the order a header lists them: population, storage mode, duration, markers */
+    /**
+     * Who or what started a run (Flags.startedBy, copied into its summary; src/chunking/StartedBy.ts): the signed-in
+     * user's buPrincipal for a start from Bulk sync ("Dashboard" without one), "Schedule" or "Runner"; undefined for a
+     * run from before it was recorded, or the S3 file drop.
+     */
+    static startedByLabel(startedBy) {
+        const { by, principal } = startedBy && typeof startedBy === 'object' ? startedBy : {};
+        if (by === 'dashboard') {
+            return principal ? String(principal) : 'Dashboard';
+        }
+        return { schedule: 'Schedule', runner: 'Runner' }[by];
+    }
+
     get facts() {
         return [
+            this.startedBy ? `Started by ${this.startedBy}` : undefined,
             this.populationLabel,
             this.storageMode ? `${RunFormat.storageMode(this.storageMode)} storage` : undefined,
             this.durationMs !== undefined ? this.durationText : undefined,
@@ -694,6 +709,7 @@ class RunListTable {
     static get HEAD_HTML() {
         return `
             <th scope="col">Started</th>
+            <th scope="col">Started by</th>
             <th scope="col">Status</th>
             <th scope="col">Population</th>
             <th scope="col" class="num">Records</th>
@@ -728,6 +744,7 @@ class RunListTable {
         return `
             <tr data-href="${href}">
                 <td><a class="run-link tabular-nums" href="${href}">${Html.escape(RunFormat.dateTime(run.startedAt))}</a></td>
+                <td>${Html.escape(run.startedBy || RunFormat.NONE)}</td>
                 <td>${run.statusBadgeHtml()}${soFar}</td>
                 <td>${Html.escape(run.populationLabel)}${tags ? ` ${tags}` : ''}</td>
                 <td class="num">${number(run.records)}</td>

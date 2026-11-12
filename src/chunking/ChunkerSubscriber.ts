@@ -41,6 +41,7 @@ import { handleS3Event } from './filedrop/ChunkerS3Subscriber';
 import { handleApiEvent } from './fetch/ChunkerApiSubscriber';
 import { isRunStartEvent, resetRunCounters, RunCounterLocation } from './RunCounters';
 import { SourceEndpoint, SyncPopulation } from '../../docker/chunkTypes';
+import type { StartedBy } from './StartedBy';
 
 /**
  * S3-based event structure
@@ -79,6 +80,8 @@ export interface ApiChunkerEvent {
    * (real source -> mock target), which use the configured terms endpoint.
    */
   termsEndpoint?: SourceEndpoint;
+  /** Who or what started the run (src/chunking/StartedBy.ts), recorded in its Flags and summary for Run history */
+  startedBy?: StartedBy;
   processingMetadata?: {
     processedAt?: string;
     processorVersion?: string;

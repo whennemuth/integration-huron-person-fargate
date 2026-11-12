@@ -23,7 +23,7 @@ describe('ScheduledRun', () => {
       fetchPath: '/api/1/rest/feed/run/task/BUProd/Admin-Integration-Services/GenericGets/huronIRBgetPersonByPopulation'
     };
 
-    it('is the payload the schedule sends: only populationType and trustPreviousStorage differ from before', () => {
+    it('is the payload the schedule sends: populationType and trustPreviousStorage changed, startedBy added', () => {
       // As the EventBridge schedule's input is stored: JSON, so an undefined field is left out
       const payload = JSON.parse(JSON.stringify(ScheduledRun.scheduleInput({ ...people, iterationLimit: 0, personRecordProcessorAddons: undefined })));
       expect(payload).toEqual({
@@ -33,6 +33,7 @@ describe('ScheduledRun', () => {
         offset: 0,
         bulkReset: false,
         trustPreviousStorage: true,
+        startedBy: { by: 'schedule' },
         processingMetadata: { processedAt: 'Placeholder. Override at runtime with ISO timestamp', processorVersion: '1.0.0' }
       });
     });

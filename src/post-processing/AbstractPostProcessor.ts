@@ -23,6 +23,7 @@
 import { DeleteMessageCommand, DeleteMessageCommandInput, DeleteMessageCommandOutput, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { Timer } from 'integration-core';
 import { TaskProtection } from '../TaskProtection';
+import { MetadataFactoryForBootstrap } from '../chunking/metadata';
 import { StandardMetadataUtils } from '../chunking/metadata/MetadataUtils';
 import { DeletionOutcome, StatisticsTable } from '../dynamodb/StatisticsTable';
 import { AbstractDeferredDeleteHandler } from './AbstractDeferredDeleteHandler';
@@ -30,6 +31,7 @@ import { AbstractDeferredDeleteHandler } from './AbstractDeferredDeleteHandler';
 export type TaskParameters = {
   createdAt?: string; // Timestamp from chunker metadata (when chunking started)
   chunkDirectory?: string | null;
+  chunksBucket?: string;
 }
 
 export type MergeResult = { }
@@ -149,7 +151,9 @@ export abstract class AbstractPostProcessor {
   /**
    * Write the run's RUN_SUMMARY item. Never throws: a missing summary must not fail post-processing.
    */
-  private async writeRunSummary(chunkDirectory: string | null | undefined, postProcessingSucceeded: boolean, deletion?: DeletionOutcome): Promise<void> {
+  private async writeRunSummary(
+    chunkDirectory: string | null | undefined, postProcessingSucceeded: boolean, deletion?: DeletionOutcome, bucketName?: string
+  ): Promise<void> {
     const { DYNAMODB_STATISTICS_TABLE_NAME: tableName, REGION: region, DRY_RUN = 'false', PREVIOUS_STORAGE_TYPE } = process.env;
     if (!chunkDirectory || !tableName) {
       console.warn('⚠️  Run summary not written: chunk directory or DYNAMODB_STATISTICS_TABLE_NAME unavailable');
@@ -162,12 +166,27 @@ export abstract class AbstractPostProcessor {
         postProcessingSucceeded,
         storageMode: PREVIOUS_STORAGE_TYPE?.toLowerCase(),
         dryRun: `${DRY_RUN}`.trim().toLowerCase() === 'true',
-        deletion
+        deletion,
+        startedBy: await this.readStartedBy(chunkDirectory, bucketName, region)
       });
       await statisticsTable.writeRunSummary(summary);
       console.log(`✓ Run summary written for ${syncRunId} (status: ${summary.status})`);
     } catch (error: any) {
       console.warn(`⚠️  Failed to write run summary: ${error.message}`);
+    }
+  }
+
+  /**
+   * Who or what started the run, from its Flags (the statistics table in DynamoDB mode, _flags.json in S3 mode).
+   * Never throws: an unreadable value leaves the summary without one.
+   */
+  private async readStartedBy(chunkDirectory: string, bucketName?: string, region?: string): Promise<unknown> {
+    try {
+      const { flags } = await new MetadataFactoryForBootstrap().readFlagsForBootstrap({ bucketName, chunkDirectory, region });
+      return flags.startedBy;
+    } catch (error: any) {
+      console.warn(`⚠️  Who started the run couldn't be read for its summary: ${error.message}`);
+      return undefined;
     }
   }
 
@@ -245,7 +264,7 @@ export abstract class AbstractPostProcessor {
       } else {
         timer.logElapsed('\n✗ Duration until failure');
       }
-      await this.writeRunSummary(taskParams?.chunkDirectory, exitCode === 0, deletion);
+      await this.writeRunSummary(taskParams?.chunkDirectory, exitCode === 0, deletion, taskParams?.chunksBucket);
       await new TaskProtection().disable();
       process.exit(exitCode);
     }

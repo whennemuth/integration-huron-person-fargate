@@ -151,6 +151,22 @@ with the people endpoint, `iterationLimit` = the context's `ECS.chunkerService.c
   setting is a TODO in integration-huron-person (`src/delta-strategy/TODO.md`).
 - A landscape gets this at its next pipeline deploy (a `lib/` change).
 
+**Who started a run is recorded with it** (`startedBy`, `src/chunking/StartedBy.ts`, since 2026-11-11), for the
+dashboard's Run history: `{ by: 'dashboard', principal? }` (Bulk sync, with the signed-in user's `buPrincipal`),
+`{ by: 'schedule' }` (`ScheduledRun.scheduleInput()`) or `{ by: 'runner' }` (`RunnerForSingleMessage`,
+`RunnerForSinglePerson`, `QueueSeeder`). Structured, so a principal can't be mistaken for a keyword; `RunStarter.from()`
+reads one back, keeping only the known fields.
+- **Its path**, like `termsEndpoint`'s: `ApiChunkerEvent.startedBy` -> the chunker subscriber's queue message
+  (`handleApiEvent()`) -> `TaskParameters` (`ChunkFromAPI`, `getStartedBy()`) -> each chained chunker message
+  (`ChunkerQueue.sendNextChunkingMessage()`) -> `Flags.startedBy` (`docker/chunker.ts`; the FLAGS item, or
+  `_flags.json` in S3 mode; written once per run, by its first chunker task) -> `RunSummary.startedBy`
+  (`AbstractPostProcessor.writeRunSummary()` reads the flags in either storage mode, since a summarized run's
+  report is its summary alone).
+- Runs from before it was recorded, and the S3 file drop, have none. The principal is stored with the run in the
+  statistics table, so anyone who can read Run history sees it.
+- Tests: `test/StartedBy.test.ts` (and the path's own tests: `ChunkerQueueChainStop`, `MetadataForDynamoDb`,
+  `StatisticsTable`, `ScheduledRun`).
+
 **A run starts with the chunker's counters at zero**: the source offset its chained messages take
 (`chunker-offset-counter`) and chunk ordinals (`chunker-chunk-ordinal-counter`), both in the landscape's
 atomic counter table. `resetRunCounters()` (`src/chunking/RunCounters.ts`) resets them, called from:

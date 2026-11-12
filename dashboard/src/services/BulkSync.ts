@@ -3,6 +3,7 @@ import { Config } from 'integration-huron-person';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 import type { ApiChunkerEvent } from '../../../src/chunking/ChunkerSubscriber';
 import { ScheduledRun } from '../../../src/chunking/ScheduledRun';
+import { RunStarter, StartedBy } from '../../../src/chunking/StartedBy';
 import type { RunReport } from '../../../src/reporting/RunReporting';
 import type { RunnerEnv } from '../../../src/runner/RunnerTypes';
 import { isMockLandscape } from '../../../src/Utils';
@@ -292,12 +293,22 @@ export class BulkSync implements BulkSyncService {
     };
   }
 
+  /**
+   * Who is starting a run from the dashboard: the signed-in user's buPrincipal (the JWT's SAML attribute, which the
+   * IdP sends array-valued), or no one in a public dashboard. Taken from the request's sign-in token
+   * (Authenticator.user), never from what the page sends.
+   */
+  static startedBy(user: any): StartedBy {
+    const principal = user && typeof user === 'object' ? [user.buPrincipal].flat()[0] : undefined;
+    return RunStarter.dashboard(principal ? `${principal}` : undefined);
+  }
+
   /** What a start would send, after the same checks; nothing is started */
-  async plan(body: BulkSyncRequestBody): Promise<BulkSyncPlan> {
+  async plan(body: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncPlan> {
     const { settings } = this.deps;
     const request = BulkSyncRequest.parse(body);
     await this.checkGuards(await this.latestRun(), request);
-    const event = this.event(request);
+    const event = this.event(request, startedBy);
     return {
       landscape: settings.landscape,
       choices: request.choices(),
@@ -306,13 +317,13 @@ export class BulkSync implements BulkSyncService {
     };
   }
 
-  async start(body: BulkSyncRequestBody): Promise<BulkSyncResult> {
+  async start(body: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncResult> {
     const { settings, functions } = this.deps;
     const request = BulkSyncRequest.parse(body);
     await this.checkGuards(await this.latestRun(), request);
-    const event = this.event(request);
+    const event = this.event(request, startedBy);
     await functions.invokeAsync(settings.chunkerFunctionName!, event);
-    console.log(`Bulk sync started in ${settings.landscape}: ${JSON.stringify(request.choices())}`);
+    console.log(`Bulk sync started in ${settings.landscape}: ${JSON.stringify({ ...request.choices(), startedBy })}`);
     return {
       status: 'started',
       startedAt: event.processingMetadata!.processedAt!,
@@ -322,7 +333,7 @@ export class BulkSync implements BulkSyncService {
   }
 
   /** The chunker event for a request, as the schedule (or, for a test, RunnerForSinglePerson) builds it */
-  event(request: BulkSyncRequest): ApiChunkerEvent {
+  event(request: BulkSyncRequest, startedBy?: StartedBy): ApiChunkerEvent {
     const { config } = this.deps;
     const source = request.buid ? config.dataSource?.person : config.dataSource?.people;
     const baseUrl = (source as any)?.endpointConfig?.baseUrl as string | undefined;
@@ -338,6 +349,7 @@ export class BulkSync implements BulkSyncService {
       ...ScheduledRun.previousStateFlags(request.bulkReset),
       iterationLimit: request.iterationLimit,
       offset: 0,
+      ...(startedBy ? { startedBy } : {}),
       processingMetadata: { processedAt: new Date(this.now).toISOString(), processorVersion: '1.0.0' }
     };
   }

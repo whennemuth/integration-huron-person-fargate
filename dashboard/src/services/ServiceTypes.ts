@@ -1,3 +1,4 @@
+import type { StartedBy } from '../../../src/chunking/StartedBy';
 import { CrudOperation } from 'integration-core';
 import { PersonPushRequest } from "integration-huron-person";
 import { StatisticsItem } from '../../../src/ApiErrorTracking';
@@ -29,8 +30,9 @@ export interface PersonSyncService {
  */
 export interface BulkSyncService {
   describe(): Promise<BulkSyncState>;
-  plan(request: BulkSyncRequestBody): Promise<BulkSyncPlan>;
-  start(request: BulkSyncRequestBody): Promise<BulkSyncResult>;
+  /** @param startedBy - who is starting it (the signed-in user), shown in the event and recorded with the run */
+  plan(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncPlan>;
+  start(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncResult>;
 }
 
 export interface SystemStatusService {

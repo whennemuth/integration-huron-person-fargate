@@ -8,7 +8,7 @@ import { LambdaFunctionUrlEvent, LambdaFunctionUrlResult } from './DashboardType
 import { OriginHeader } from './OriginVerification';
 import { CrudOperation, Status } from 'integration-core';
 import { BulkSyncRequestBody, LandscapeListing, PersonSyncResult } from '../services/ServiceTypes';
-import { BulkSyncError } from '../services/BulkSync';
+import { BulkSync, BulkSyncError } from '../services/BulkSync';
 import { buildNavigationBar } from './NavigationBar';
 import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
 import { PageNavigation } from './PageNavigation';
@@ -98,10 +98,10 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
         return await handlePersonSync({requestBody: body, cache });
       
       case '/api/bulk-sync':
-        return await handleBulkSync({ method: request.method, requestBody: body, cache });
+        return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user });
 
       case '/api/bulk-sync/plan':
-        return await handleBulkSync({ method: request.method, requestBody: body, cache, plan: true });
+        return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user, plan: true });
       
       case '/api/status':
         return await getSystemStatus();
@@ -381,8 +381,10 @@ async function handlePersonSync(params: { requestBody: string | null, cache: Das
  * A refused review or start is a BulkSyncError, answered with its status (400 invalid, 403 production landscape,
  * 409 a run underway or stalled or a subscriber in DRY_RUN, 503 not configured) and { error, code }.
  */
-async function handleBulkSync(params: { method: string, requestBody: string | null, cache: DashboardCache, plan?: boolean }): Promise<LambdaFunctionUrlResult> {
-  const { method, requestBody, cache, plan = false } = params;
+async function handleBulkSync(params: {
+  method: string, requestBody: string | null, cache: DashboardCache, user?: any, plan?: boolean
+}): Promise<LambdaFunctionUrlResult> {
+  const { method, requestBody, cache, user, plan = false } = params;
   const allowed = plan ? ['POST'] : ['GET', 'POST'];
   if (!allowed.includes(method)) {
     const response = jsonResponse(405, { error: 'Method not allowed' });
@@ -400,9 +402,11 @@ async function handleBulkSync(params: { method: string, requestBody: string | nu
     } catch {
       return jsonResponse(400, { error: 'The request body must be JSON', code: 'INVALID_REQUEST' });
     }
+    // Who is starting it: the signed-in user, from the request's sign-in token
+    const startedBy = BulkSync.startedBy(user);
     return plan
-      ? jsonResponse(200, await bulkSyncService.plan(body))
-      : jsonResponse(202, await bulkSyncService.start(body));
+      ? jsonResponse(200, await bulkSyncService.plan(body, startedBy))
+      : jsonResponse(202, await bulkSyncService.start(body, startedBy));
   } catch (error) {
     if (error instanceof BulkSyncError) {
       return jsonResponse(error.status, { error: error.message, code: error.code });

@@ -6,6 +6,7 @@ import { SourceEndpoint, SyncPopulation } from '../../../docker/chunkTypes';
 import { extractChunkDirectory } from '../filedrop/ChunkPathUtils';
 import { AbstractAtomicCounter } from '../../dynamodb/AtomicCounter';
 import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from '../ChunkerQueue';
+import { RunStarter } from '../StartedBy';
 
 export type QueueSeederParams = {
   stackId?: string, 
@@ -209,6 +210,8 @@ export class QueueSeeder {
         chunkDirectory: this.chunkDirectory,
         personRecordProcessorAddons: this.personRecordProcessorAddons,
         termsEndpoint: this.params.termsEndpoint,
+        // Only the manual Runner seeds the queue (RunnerForQueueSeeding)
+        startedBy: RunStarter.RUNNER,
         processingMetadata: {
           processedAt: new Date().toISOString(),
           processorVersion: '1.0.0'

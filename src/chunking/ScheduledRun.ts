@@ -1,5 +1,6 @@
 import { SyncPopulation } from '../../docker/chunkTypes';
 import type { ApiChunkerEvent } from './ChunkerSubscriber';
+import { RunStarter } from './StartedBy';
 
 /**
  * What a landscape's scheduled run is, defined once for the EventBridge schedule's input
@@ -52,6 +53,7 @@ export class ScheduledRun {
       offset: 0,
       ...ScheduledRun.previousStateFlags(ScheduledRun.BULK_RESET),
       ...(personRecordProcessorAddons !== undefined ? { personRecordProcessorAddons } : {}),
+      startedBy: RunStarter.SCHEDULE,
       processingMetadata: {
         processedAt: ScheduledRun.PROCESSED_AT_PLACEHOLDER,
         processorVersion: '1.0.0'
