@@ -38,7 +38,6 @@ export interface IContext {
 
   /** ECS Fargate configuration */
   ECS: {
-    vpcId?: string;
     /** Chunker task definition configuration */
     chunkerTaskDefinition: {
       cpu: number;

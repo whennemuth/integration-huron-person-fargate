@@ -50,7 +50,6 @@
     "deltaExpirationDays": 30
   },
   "ECS": {
-    "vpcId": "vpc-08291eb088cf2e883",
     "chunkerTaskDefinition": {
       "cpu": 2048,
       "memoryLimitMiB": 4096,
