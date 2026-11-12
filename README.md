@@ -312,8 +312,8 @@ For detailed documentation on the Runner harness, see [src/CLAUDE.md](./src/CLAU
 * `npm run watch`   watch for changes and compile
 * `npm run test`    perform the jest unit tests
 * `npm run deploy`  deploy every stack (pipeline, and the landscape's dashboard if the context has a `DASHBOARD` section)
-* `npm run deploy-fargate` / `npm run deploy-dashboard`  deploy one stack (pipeline first: the dashboard reads its resources)
-* `npm run teardown` / `teardown-fargate` / `teardown-dashboard`  destroy every stack / one stack (`bin/teardown.sh`; tearing down the dashboard can take a few hours while CloudFront removes its Lambda@Edge replicas, and is safe to rerun)
+* `npm run deploy-fargate` / `npm run deploy-dashboard`  deploy one stack (pipeline first: the dashboard reads its resources). Deploying the pipeline also deploys the shared network stack, `huron-integration-network`, which it depends on: in a new account that creates the network, otherwise nothing changes
+* `npm run teardown` / `teardown-fargate` / `teardown-dashboard`  destroy every stack / one stack (`bin/teardown.sh`; tearing down the dashboard can take a few hours while CloudFront removes its Lambda@Edge replicas, and is safe to rerun). None of them touches the shared network stack, which every landscape runs in and which is termination-protected (see "Shared Network Stack" in [CLAUDE.md](./CLAUDE.md))
 * `npx cdk diff --all`    compare deployed stacks with current state
 * `npm run synth`   emits the pipeline stack's CloudFormation template
 

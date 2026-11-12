@@ -58,7 +58,8 @@ export class BU_NameTagAspect implements IAspect {
         return;
       };
 
-      let tagValue = `${tv('Service')}-${tv('Function')}-${tv('Landscape')}-${id}`;
+      // A stack that belongs to no landscape (the shared network) has no Landscape tag: leave that part out
+      let tagValue = [tv('Service'), tv('Function'), tv('Landscape'), id].filter(Boolean).join('-');
       if (id) {
         if(id === 'ec2') {
           tagValue = tagValue.replace(/-ec2$/, `-Instance${nextEc2Index()}-ec2`);

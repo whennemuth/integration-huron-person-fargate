@@ -9,7 +9,9 @@ Defines AWS infrastructure-as-code using CDK. Orchestrates Lambda, ECS Fargate, 
 **Purpose**: Main CDK stack orchestrating all infrastructure
 
 **Responsibilities**:
-- Define VPC and networking
+- Run in the shared network: the VPC and subnets come from `NetworkStack.ts`'s SSM parameters
+  (`NetworkParameters.vpc()`, in `EcsInfrastructure.ts`); a pipeline stack never creates or looks up a VPC (see
+  "Shared Network Stack" in the fargate `CLAUDE.md`)
 - Create Lambda functions (chunker orchestrator)
 - Create ECS cluster and task definitions
 - Create S3 buckets (input, chunks, processed, output)
@@ -23,8 +25,8 @@ export class HuronStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
     
-    // 1. Networking
-    const vpc = new ec2.Vpc(this, 'VPC', { /* ... */ });
+    // 1. Networking: the shared network stack's VPC, from its SSM parameters (never a new Vpc here)
+    const vpc = NetworkParameters.vpc(this, 'Vpc', region);
     
     // 2. Storage
     const s3Bucket = new s3.Bucket(this, 'S3Bucket', { /* ... */ });

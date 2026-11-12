@@ -1,5 +1,5 @@
-import { RemovalPolicy, Tags } from 'aws-cdk-lib';
-import { IVpc, SubnetType, Vpc } from 'aws-cdk-lib/aws-ec2';
+import { Tags } from 'aws-cdk-lib';
+import { IVpc } from 'aws-cdk-lib/aws-ec2';
 import { IRepository } from 'aws-cdk-lib/aws-ecr';
 import { Cluster, ClusterProps, ContainerInsights } from 'aws-cdk-lib/aws-ecs';
 import { IFunction } from 'aws-cdk-lib/aws-lambda';
@@ -13,6 +13,7 @@ import { TaskDefinitions } from './TaskDefinitions';
 import { Config } from 'integration-huron-person';
 import { DynamoDbTables } from './DynamoDB';
 import { HuronPersonSecrets } from './Secrets';
+import { NetworkParameters } from './NetworkStack';
 
 export const CLUSTER_BASE_NAME = 'huron-person-cluster';
 
@@ -57,62 +58,14 @@ export class EcsInfrastructure extends Construct {
     this.servicesConstruct = new Construct(this, 'Services');
 
     /**
-     * IMPORTANT GOTCHA: If you start importing existing vpcs that the CDK formerly created 
-     * (with RETAIN on delete policy), you may run into cloudformation errors like the following:
-     * 
-     * The error message is: Resource handler returned message: "Invalid request provided: 
-     * Error retrieving subnet information for [subnet-0d62741a9b460cc61, 
-     * subnet-058326610d44d9229]: The subnet ID 'subnet-058326610d44d9229' does not exist 
-     * (ErrorCode: InvalidSubnetID.NotFound) (Service: Ecs, Status Code: 400, Request ID: 
-     * ae376d15-f8f6-4a6c-b715-2f1efd5cfa5a) (SDK Attempt Count: 1)" (RequestToken: 
-     * 7815edf1-d718-b924-fe0a-e25209ebad2d, HandlerErrorCode: InvalidRequest)
-     * 
-     * CDK's Vpc.fromLookup() writes results to cdk.context.json and doesn't re-lookup on 
-     * subsequent deployments. So even though you're importing the VPC correctly, CDK is using 
-     * stale subnet information from when those subnets existed.
-     * 
-     * The problem is the CDK is still using the old cached context that references the deleted 
-     * subnets, so you must perform the following remedy:
-     * 
-     * Clear CDK Context
-     * -----------------------------------
-     * Clear the context cache:
-     * cdk context --clear
-     * 
-     * Or delete the specific VPC context:
-     * Look for your VPC in cdk.context.json and remove that entry
-     * Or delete the entire cdk.context.json file
-     * 
-     * Force a fresh lookup:
-     * cdk synth --force
-     * 
-     * Then deploy:
-     * cdk deploy
+     * The shared network (lib/NetworkStack.ts), whose IDs CloudFormation reads from its SSM parameters at deploy.
+     * A pipeline stack never creates or looks up a VPC. It used to: with ECS.vpcId in the context it looked one up
+     * (Vpc.fromLookup), whose cdk.context.json cache kept subnet IDs after the subnets were gone; without it, it
+     * created one, and the network every landscape used then belonged to that landscape's stack, so its teardown
+     * deleted the subnets the others ran in (2026-11-12). The network stack is deployed first, as this stack's
+     * dependency (bin/App.ts), so its parameters exist when this stack is deployed, a brand-new account included.
      */
-    if(ctx.ECS.vpcId) {
-      // Use existing VPC if vpcId is provided
-      this.vpc = Vpc.fromLookup(this, 'Vpc', { vpcId: ctx.ECS.vpcId });
-    } 
-    else {
-      // Create VPC with private subnets and NAT gateway for security
-      this.vpc = new Vpc(this, 'Vpc', {
-        maxAzs: 2,  // Use 2 AZs for high availability    
-        natGateways: 1,  // NAT gateway for private subnet internet access (1 for cost optimization, 2 for HA)
-        subnetConfiguration: [
-          {
-            name: 'Public',
-            subnetType: SubnetType.PUBLIC,
-            cidrMask: 24,
-          },
-          {
-            name: 'Private',
-            subnetType: SubnetType.PRIVATE_WITH_EGRESS,
-            cidrMask: 24,
-          },
-        ],
-      });
-      this.vpc.applyRemovalPolicy(RemovalPolicy.RETAIN); // Retain VPC on stack deletion for cleanup
-    }
+    this.vpc = NetworkParameters.vpc(this, 'Vpc', ctx.REGION);
 
     // Create ECS Cluster
     const { Landscape } = ctx.TAGS;

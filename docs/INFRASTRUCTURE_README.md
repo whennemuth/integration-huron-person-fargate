@@ -115,7 +115,7 @@ All constructs are in [lib/constructs/](../lib/constructs/):
 | File | Construct | Description |
 |------|-----------|-------------|
 | `EcrRepository.ts` | `EcrRepository` | ECR repo with lifecycle rules |
-| `EcsCluster.ts` | `EcsCluster` | Cluster + VPC (creates or lookup) |
+| `EcsCluster.ts` | `EcsCluster` | Cluster (its VPC now comes from the shared network stack, `lib/NetworkStack.ts`) |
 | `ChunkerTaskDefinition.ts` | `ChunkerTaskDefinition` | Chunker task (ARM64, 2-4 vCPU) |
 | `ProcessorTaskDefinition.ts` | `ProcessorTaskDefinition` | Processor task (ARM64, 1-2 vCPU) |
 | `ChunkerTriggerLambda.ts` | `ChunkerTriggerLambda` | Lambda inline code |
@@ -167,7 +167,7 @@ aws ecs describe-tasks --cluster huron-person-cluster --tasks <task-arn>
 
 - **ARM64/Graviton2**: ~20% savings vs x86_64
 - **Auto-scaling**: Processors scale 0→N (pay only when processing)
-- **No NAT Gateway**: Public subnets only (saves ~$32/month per AZ)
+- **One NAT Gateway**, shared: every landscape runs in the private subnets of one network stack (`lib/NetworkStack.ts`), whose single NAT gateway (~$32/month) serves them all
 - **S3 Lifecycle**: Chunks auto-delete after 7 days
 - **Log Retention**: 7 days (configurable in context.json)
 
@@ -183,7 +183,7 @@ See [CDK_DEPLOYMENT.md](../docs/CDK_DEPLOYMENT.md) for detailed troubleshooting 
 **Common Issues:**
 
 1. **Build errors (TS5055)**: Run `rm -rf dist && npm run build`
-2. **VPC lookup fails**: Set `useDefaultVpc: false` in `EcsCluster` props
+2. **Network parameters missing**: the pipeline reads its VPC and subnets from the SSM parameters under `/huron-integration-network/`; deploy the network stack (`npm run deploy-fargate` does it first)
 3. **Task not starting**: Check image exists in ECR (`aws ecr list-images`)
 4. **DLQ messages**: Check processor logs for errors
 

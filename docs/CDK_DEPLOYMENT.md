@@ -77,11 +77,17 @@ name a stack or use `--all`, or use the npm scripts:
 | Script | Stacks |
 |---|---|
 | `npm run deploy` | all (writes `cdk.out/synth.output.fargate.yaml` and `synth.output.dashboard.yaml`) |
-| `npm run deploy-fargate` | pipeline (writes `cdk.out/synth.output.fargate.yaml`) |
+| `npm run deploy-fargate` | pipeline, after the shared network stack it depends on (writes `cdk.out/synth.output.fargate.yaml`) |
 | `npm run deploy-dashboard` | dashboard + edge-lambda (writes `cdk.out/synth.output.dashboard.yaml`) |
 | `npm run teardown` | all |
 | `npm run teardown-fargate` | pipeline |
 | `npm run teardown-dashboard` | dashboard + edge-lambda |
+
+**The shared network:** every landscape's pipeline runs in the network of `huron-integration-network`
+(`lib/NetworkStack.ts`), one stack per account and region, which the pipeline stack depends on. Deploying a pipeline
+deploys it first (creating it in a new account); no teardown script touches it, and it is termination-protected.
+The pipeline reads the network's IDs from its SSM parameters at deploy time. See "Shared Network Stack" in
+[CLAUDE.md](../CLAUDE.md).
 
 **Order:** the dashboard stack takes nothing from the pipeline stack's outputs - it finds the
 pipeline's config secret, tables and chunks bucket by name - so the stacks deploy in any order.
