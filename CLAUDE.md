@@ -309,9 +309,12 @@ env var, which the Docker routers branch on; the runtime factories below then sw
      before it existed, or before the markers did) need the harness task `backfill-runs` (one scan of the table),
      run after the stack update that adds the index and before the dashboard that reads it is deployed.
    - **Change the statistics table's GSIs one per deploy**: CloudFormation refuses an update that adds or removes
-     more than one. As of 2026-11-10, preview and mock have `run-list-index`; staging and migration (pipeline
-     stacks last deployed in July) have no run index yet, so their next pipeline deploy adds `run-list-index`,
-     then needs `backfill-runs`.
+     more than one. As of 2026-11-12, preview and mock have `run-list-index`, and so does staging, whose pipeline
+     stack was recreated that day: a table created with the index needs no `backfill-runs`. Migration has no run
+     index yet. Its pipeline stack is still July's, which can't be updated in place: that stack had a Merger service,
+     and its ECS log groups have since moved to new logical IDs under the same names, so CloudFormation would try to
+     create them before deleting the old ones and fail with "already exists". Recreated as staging was, its table
+     gets the index at creation.
    - `STATISTICS-chunk-*` items carry the chunk's `IntegrationResult` counts (success/failure/skipped,
      added/updated/removed) as well as its error counts. Added/updated/removed are the successful pushes
      counted by operation (`pushedChangeCounts()` in `src/processing/ProcessorCommon.ts`), so they sum to
