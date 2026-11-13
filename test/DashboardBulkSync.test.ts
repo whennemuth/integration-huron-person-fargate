@@ -80,7 +80,8 @@ describe('BulkSyncRequest', () => {
     [{ runType: 'full', iterationLimit: 1.5 }, 'iterationLimit must be a whole number from 0 (a single task) to 50'],
     [{ runType: 'full', iterationLimit: '2' }, 'iterationLimit must be a whole number from 0 (a single task) to 50'],
     [{ runType: 'full', parallelStart: 21 }, 'parallelStart must be a whole number from 0 to 20'],
-    [{ runType: 'full', parallelStart: 4 }, "parallelStart must be 0: starting with several chunker messages isn't available until shared queue seeding is built"]
+    [{ runType: 'test', buid: 'U12345678', parallelStart: 4 }, 'A test starts with one chunker task: parallelStart must be 0'],
+    [{ runType: 'full', iterationLimit: 0, parallelStart: 4 }, "A single task can't be started in parallel: parallelStart needs chunks per task above 0"]
   ])('refuses %j as INVALID_REQUEST', (body, message) => {
     expect(() => BulkSyncRequest.parse(body as any)).toThrow(message);
     try { BulkSyncRequest.parse(body as any); } catch (error) {
@@ -125,17 +126,65 @@ describe('BulkSync', () => {
     chunkerFunctionName: 'chunker-subscriber-preview', processorSubscriberFunctionName: 'processor-subscriber-preview',
     itemsPerChunk: 200
   };
-  const service = (params: { newest?: RunReport; dryRun?: string[]; tone?: string; config?: any; missing?: string[] } = {}) => {
-    const { newest = finishedRun, dryRun = [], tone, config = MOCK_SOURCE_CONFIG, missing } = params;
+  const service = (params: {
+    newest?: RunReport; dryRun?: string[]; tone?: string; config?: any; missing?: string[]; serviceMax?: number | 'none'
+  } = {}) => {
+    const { newest = finishedRun, dryRun = [], tone, config = MOCK_SOURCE_CONFIG, missing, serviceMax } = params;
     const functions = {
       isDryRun: jest.fn(async (name: string) => dryRun.includes(name)),
       invokeAsync: jest.fn(async () => undefined)
     };
+    const chunkerService = serviceMax === undefined ? undefined
+      : { maxTasks: jest.fn(async () => (serviceMax === 'none' ? undefined : serviceMax)) };
     const bulkSync = new BulkSync({
-      config, settings: { ...settings, landscapeTone: tone, missing }, runs: runsEndingWith(newest), functions, now: () => NOW
+      config, settings: { ...settings, landscapeTone: tone, missing, chunkerClusterName: 'huron-person-cluster-preview', chunkerServiceName: 'Chunker' },
+      runs: runsEndingWith(newest), functions, chunkerService, now: () => NOW
     });
     return { bulkSync, functions };
   };
+
+  describe('a parallel start', () => {
+    it("offers up to 20 tasks, lowered to the chunker service's maximum when it can be read", async () => {
+      expect((await service({ serviceMax: 15 }).bulkSync.describe()).parallelStart).toEqual({ max: 15, enabled: true });
+      expect((await service({ serviceMax: 40 }).bulkSync.describe()).parallelStart).toEqual({ max: 20, enabled: true });
+      expect((await service({ serviceMax: 'none' }).bulkSync.describe()).parallelStart).toEqual({ max: 20, enabled: true });
+      expect((await service().bulkSync.describe()).parallelStart).toEqual({ max: 20, enabled: true });
+    });
+
+    it('sends parallelStart in the event, so the chunker subscriber seeds, waits and scales', async () => {
+      const { bulkSync, functions } = service({ serviceMax: 15 });
+      await bulkSync.start({ runType: 'full-no-deactivations', parallelStart: 3 });
+      expect(functions.invokeAsync).toHaveBeenCalledWith('chunker-subscriber-preview', expect.objectContaining({ iterationLimit: 10, parallelStart: 3 }));
+    });
+
+    it('sends no parallelStart for a start with one message', async () => {
+      const { bulkSync, functions } = service({ serviceMax: 15 });
+      await bulkSync.start({ runType: 'full' });
+      expect((functions.invokeAsync as jest.Mock).mock.calls[0][1]).not.toHaveProperty('parallelStart');
+    });
+
+    it("refuses more tasks than the chunker service may run, before invoking anything", async () => {
+      const { bulkSync, functions } = service({ serviceMax: 2 });
+      for (const attempt of [bulkSync.start({ runType: 'full', parallelStart: 3 }), bulkSync.plan({ runType: 'full', parallelStart: 3 })]) {
+        await expect(attempt).rejects.toMatchObject({ code: 'INVALID_REQUEST', message: expect.stringContaining('more than the 2 chunker tasks') });
+      }
+      expect(functions.invokeAsync).not.toHaveBeenCalled();
+    });
+
+    it('shows the review the messages, the task count and the chunker service it scales', async () => {
+      const { settings: rows, event } = await service({ serviceMax: 15 }).bulkSync.plan({ runType: 'full', parallelStart: 3 });
+      expect(event).toMatchObject({ parallelStart: 3 });
+      const byName = Object.fromEntries(rows.map(row => [row.name, row]));
+      expect(byName.messagesToPrepopulate).toMatchObject({ value: '3', source: 'form', note: expect.stringContaining('waits for the scale-in alarm') });
+      expect(byName.desiredCount).toMatchObject({ value: 3, source: 'form' });
+      expect(byName.clusterName).toMatchObject({ value: 'huron-person-cluster-preview', source: 'landscape' });
+      expect(byName.serviceName).toMatchObject({ value: 'Chunker', source: 'landscape' });
+
+      const single = Object.fromEntries((await service().bulkSync.plan({ runType: 'full' })).settings.map(row => [row.name, row]));
+      expect(single.clusterName).toMatchObject({ source: 'unused' });
+      expect(single.messagesToPrepopulate.note).toContain('one message');
+    });
+  });
 
   it('starts a full sync as the schedule does: the people endpoint, stored hashes trusted; 10 chunks per task', async () => {
     const { bulkSync, functions } = service();
@@ -195,7 +244,7 @@ describe('BulkSync', () => {
       landscape: 'preview',
       defaults: { runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 0 },
       iterationLimit: { max: 50 },
-      parallelStart: { max: 20, enabled: false },
+      parallelStart: { max: 20, enabled: true },
       latestRun: { kind: 'finished', syncRunId: finishedRun.syncRunId },
       warnings: []
     });
@@ -375,8 +424,11 @@ describe('the bulk sync routes, under mocks', () => {
   it('answers a refused review or start with its status and code', async () => {
     expect(await request('POST', { runType: 'full', buid: 'U0000042' }))
       .toMatchObject({ status: 400, body: { code: 'INVALID_REQUEST' } });
-    expect(await request('POST', { runType: 'full', parallelStart: 3 }, '/api/bulk-sync/plan'))
+    // The mock chunker service runs at most 15 tasks
+    expect(await request('POST', { runType: 'full', parallelStart: 16 }, '/api/bulk-sync/plan'))
       .toMatchObject({ status: 400, body: { code: 'INVALID_REQUEST' } });
+    expect(await request('POST', { runType: 'full', parallelStart: 3 }, '/api/bulk-sync/plan'))
+      .toMatchObject({ status: 200, body: { event: { parallelStart: 3 } } });
     expect(await request('POST', 'not json')).toMatchObject({ status: 400, body: { code: 'INVALID_REQUEST' } });
     expect((await request('PUT', {})).status).toBe(405);
     const getPlan = await handler({

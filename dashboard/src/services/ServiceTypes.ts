@@ -139,7 +139,10 @@ export type BulkSyncState = {
   defaults: { runType: BulkSyncRunType; bulkReset: boolean; iterationLimit: number; parallelStart: number };
   /** Chunks per task's range (0, a single task, aside) */
   iterationLimit: { max: number };
-  /** Parallel start's range, and whether it can be changed yet (not until shared queue seeding exists) */
+  /**
+   * Parallel start's range (0 to the chunker service's most tasks, at most 20), and whether the landscape offers it
+   * (the page keeps it read-only at 0 when it doesn't; BulkSync always offers it)
+   */
   parallelStart: { max: number; enabled: boolean };
   latestRun: RunActivityState;
   /** Why a start would be refused now (a BulkSyncError code and message); absent when a start is allowed */

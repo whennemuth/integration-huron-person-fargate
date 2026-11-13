@@ -40,6 +40,8 @@ describe('landscapeResources', () => {
       chunksBucketName: 'huron-person-chunks-mock',
       chunkerFunctionName: 'chunker-subscriber-mock',
       processorSubscriberFunctionName: 'processor-subscriber-mock',
+      chunkerClusterName: 'huron-person-cluster-mock',
+      chunkerServiceName: 'Chunker',
       pipelineStackId: 'huron-person-fargate-processor',
       itemsPerChunk: 200,
     });
@@ -143,6 +145,18 @@ describe('FunctionUrlOrigin', () => {
     expect(resourcesOf('lambda:GetFunctionConfiguration')).toContain('function:chunker-subscriber-mock');
     expect(resourcesOf('lambda:GetFunctionConfiguration')).toContain('function:processor-subscriber-mock');
     expect(statements.flatMap((s: any) => [s.Action].flat()).every((a: string) => ['lambda:InvokeFunction', 'lambda:GetFunctionConfiguration'].includes(a))).toBe(true);
+  });
+
+  it("may read the chunker service's maximum for Parallel start, and change no scaling itself", () => {
+    const template = synth('dynamodb');
+    const actions = Object.values(template.findResources('AWS::IAM::Policy'))
+      .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement)
+      .flatMap((s: any) => [s.Action].flat());
+    expect(actions.filter((a: string) => a.startsWith('application-autoscaling:'))).toEqual(['application-autoscaling:DescribeScalableTargets']);
+    expect(actions.filter((a: string) => a.startsWith('ecs:') || a.startsWith('cloudwatch:'))).toEqual([]);
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: { Variables: Match.objectLike({ CHUNKER_CLUSTER_NAME: 'huron-person-cluster-mock', CHUNKER_SERVICE_NAME: 'Chunker' }) }
+    });
 
     template.hasResourceProperties('AWS::Lambda::Function', {
       Environment: {

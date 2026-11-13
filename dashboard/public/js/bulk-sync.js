@@ -96,7 +96,8 @@ class BulkSyncView {
      * override. A test shows the BUID box; Custom settings shows the custom fields. A test is always a single chunker
      * task, so while Test is chosen, Single task is checked and the chunk mode can't be changed (the server makes a
      * test a single task whatever is sent: BulkSyncRequest.parse()). The fieldset keeps the mode the user chose
-     * (data-chosen-mode), to restore when another run type is chosen.
+     * (data-chosen-mode), to restore when another run type is chosen. Parallel start is likewise held at 0 for a test or
+     * a single task (seeded offsets need chunks per task), its own choice kept on its wrapper (data-chosen-parallel).
      */
     static formHtml(state, values) {
         const {
@@ -176,14 +177,15 @@ class BulkSyncView {
                             hint: 'One task reads every chunk itself. With no other task to share the work, reading the source takes much longer.'
                         })}
                     </fieldset>
-                    <div>
+                    <div data-bulk-parallel data-enabled="${parallel.enabled ? 'true' : 'false'}" data-chosen-parallel="${form.parallelStart}">
                         <label class="form-label" for="bulk-parallelStart">Parallel start</label>
-                        <select class="form-select bulk-number" name="parallelStart" id="bulk-parallelStart"${parallel.enabled ? '' : ' disabled'}>
-                            ${options(0, parallel.max, form.parallelStart)}
+                        <select class="form-select bulk-number" name="parallelStart" id="bulk-parallelStart"${parallel.enabled && ! single ? '' : ' disabled'}>
+                            ${options(0, parallel.max, single ? 0 : form.parallelStart)}
                         </select>
                         <div class="form-text">
-                            How many chunker messages start the run, and the chunker tasks to start them with (0: one message,
-                            and auto-scaling adds tasks).${parallel.enabled ? '' : ' Read-only at 0 until shared queue seeding is built.'}
+                            How many chunker tasks start the run at once. 0 starts it with one, and auto-scaling adds tasks as
+                            the work builds up. Above 0, the start takes up to a few minutes while the chunker's scaling catches
+                            up. A test or a single task always starts with one.
                         </div>
                     </div>
                 </fieldset>
@@ -220,6 +222,9 @@ class BulkSyncView {
             lines.push(choices.iterationLimit === 0
                 ? 'A single chunker task reads the whole source.'
                 : `Each chunker task reads ${choices.iterationLimit} chunks, then hands the rest on to a new task.`);
+        }
+        if (choices.parallelStart > 0) {
+            lines.push(`It starts with ${choices.parallelStart} chunker tasks at once. The start takes up to a few minutes while the chunker's scaling catches up.`);
         }
         if (choices.overrideStalled && latestRun && latestRun.syncRunId) {
             lines.push(`The stalled run of ${RunFormat.dateTime(latestRun.syncRunId)} is left as it is.`);
@@ -308,9 +313,12 @@ class BulkSyncView {
                 <p class="bulk-status-hint">${Html.escape(what)}. Follow it in Run history or on Overview.</p>
             `;
         }
+        const parallel = result.run.parallelStart > 0
+            ? `Its ${result.run.parallelStart} chunker tasks start within a few minutes, once the chunker's scaling catches up. `
+            : '';
         return `
             <p class="bulk-status-line">${Html.escape(when)}: ${Html.escape(what)}.</p>
-            <p class="bulk-status-hint">It appears in Run history once its chunker has written its first records. Refresh to look for it.</p>
+            <p class="bulk-status-hint">${Html.escape(parallel)}It appears in Run history once its chunker has written its first records. Refresh to look for it.</p>
         `;
     }
 }
@@ -365,13 +373,14 @@ class BulkSyncPage {
         const runType = checked('runType');
         const buid = String(fields.buid.value || '').trim().toUpperCase();
         const custom = !! fields.custom.checked;
+        const single = runType === 'test' || checked('chunkMode') === 'single';
         return {
             runType,
             ...(runType === 'test' ? { buid } : {}),
             bulkReset: !! fields.bulkReset.checked,
             ...(custom ? {
-                iterationLimit: runType === 'test' || checked('chunkMode') === 'single' ? 0 : Number(fields.chunksPerTask.value),
-                parallelStart: Number(fields.parallelStart.value)
+                iterationLimit: single ? 0 : Number(fields.chunksPerTask.value),
+                parallelStart: single ? 0 : Number(fields.parallelStart.value)
             } : {}),
             ...(fields.overrideStalled ? { overrideStalled: !! fields.overrideStalled.checked } : {}),
             custom
@@ -391,13 +400,19 @@ class BulkSyncPage {
         if (event.target.name === 'runType') {
             const test = form.querySelector('[data-bulk-test]');
             if (test) test.hidden = event.target.value !== 'test';
-            BulkSyncPage.lockChunkMode(form, event.target.value === 'test');
+            const mode = BulkSyncPage.lockChunkMode(form, event.target.value === 'test');
+            BulkSyncPage.lockParallelStart(form, mode === 'single');
         }
         if (event.target.name === 'chunkMode') {
             const chunks = form.querySelector('[data-bulk-chunks]');
             if (chunks) chunks.hidden = event.target.value !== 'perTask';
             const modes = form.querySelector('[data-bulk-chunk-mode]');
             if (modes) modes.dataset.chosenMode = event.target.value;
+            BulkSyncPage.lockParallelStart(form, event.target.value === 'single');
+        }
+        if (event.target.name === 'parallelStart') {
+            const parallel = form.querySelector('[data-bulk-parallel]');
+            if (parallel) parallel.dataset.chosenParallel = event.target.value;
         }
         if (event.target.name === 'custom') {
             const custom = form.querySelector('[data-bulk-custom]');
@@ -419,6 +434,22 @@ class BulkSyncPage {
             radio.checked = radio.value === mode;
         }
         if (chunks) chunks.hidden = mode !== 'perTask';
+        return mode;
+    }
+
+    /**
+     * Hold Parallel start at 0, unchangeable, for a single chunker task (a test is one); otherwise restore the value the
+     * user chose (the wrapper's data-chosen-parallel), changeable unless the landscape doesn't offer it (data-enabled).
+     */
+    static lockParallelStart(form, single) {
+        const select = form.elements ? form.elements.parallelStart : undefined;
+        const parallel = form.querySelector('[data-bulk-parallel]');
+        if ( ! select) {
+            return;
+        }
+        const enabled = ! parallel || parallel.dataset.enabled !== 'false';
+        select.disabled = single || ! enabled;
+        select.value = single ? '0' : ((parallel && parallel.dataset.chosenParallel) || '0');
     }
 
     /** Load what a start would do, and, after a start, look for the run it started. Resolves true once shown */

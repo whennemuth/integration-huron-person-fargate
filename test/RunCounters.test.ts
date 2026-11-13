@@ -106,9 +106,38 @@ describe('the chunker subscriber Lambda', () => {
   const stack = new Stack(app, 'TestStack', { env: { account: '111111111111', region: 'us-east-2' } });
   new ChunkerSubscribingLambda(stack, 'Chunker', {
     vpc: new Vpc(stack, 'Vpc'), chunkerQueueUrl: 'https://sqs.us-east-2.amazonaws.com/111111111111/chunker', inputBucketName: 'input',
-    region: 'us-east-2', landscape: 'preview', stackId: 'huron-person-fargate-processor', timeoutSeconds: 30, memorySizeMb: 256
+    region: 'us-east-2', landscape: 'preview', stackId: 'huron-person-fargate-processor',
+    chunkerClusterName: 'huron-person-cluster-preview', chunkerServiceName: 'Chunker', timeoutSeconds: 600, memorySizeMb: 256
   });
   const template = Template.fromStack(stack);
+  const statements = () => Object.values(template.findResources('AWS::IAM::Policy'))
+    .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+
+  describe('for a parallel start (src/chunking/ParallelStart.ts)', () => {
+    it('has the timeout its context gives it, and names the chunker service in its environment', () => {
+      template.hasResourceProperties('AWS::Lambda::Function', {
+        FunctionName: 'chunker-subscriber-preview', Timeout: 600,
+        Environment: { Variables: { CHUNKER_CLUSTER_NAME: 'huron-person-cluster-preview', CHUNKER_SERVICE_NAME: 'Chunker' } }
+      });
+    });
+
+    it('is never retried automatically, so a failed run start is never repeated into a run already started', () => {
+      template.hasResourceProperties('AWS::Lambda::EventInvokeConfig', { MaximumRetryAttempts: 0, MaximumEventAgeInSeconds: 900, Qualifier: '$LATEST' });
+    });
+
+    it('may scale only the chunker service, and read its scaling and alarms', () => {
+      const ecs = statements().find((s: any) => [s.Action].flat().includes('ecs:UpdateService'));
+      expect([ecs.Action].flat().sort()).toEqual(['ecs:DescribeServices', 'ecs:UpdateService']);
+      expect(ecs.Resource).toBe('arn:aws:ecs:us-east-2:111111111111:service/huron-person-cluster-preview/Chunker');
+      const scaling = statements().find((s: any) => [s.Action].flat().includes('application-autoscaling:DescribeScalingPolicies'));
+      expect([scaling.Action].flat().sort()).toEqual(['application-autoscaling:DescribeScalableTargets', 'application-autoscaling:DescribeScalingPolicies']);
+      const alarms = statements().find((s: any) => [s.Action].flat().includes('cloudwatch:DescribeAlarms'));
+      expect(alarms.Resource).toBe('arn:aws:cloudwatch:us-east-2:111111111111:alarm:*');
+      // Nothing that changes scaling or alarms themselves
+      const actions = statements().flatMap((s: any) => [s.Action].flat());
+      expect(actions.filter((a: string) => /^(application-autoscaling|cloudwatch):(Put|Delete|Register|Set)/.test(a))).toEqual([]);
+    });
+  });
 
   it('names the atomic counter table in its environment', () => {
     const [fn] = Object.values(template.findResources('AWS::Lambda::Function', { Properties: { FunctionName: 'chunker-subscriber-preview' } }));

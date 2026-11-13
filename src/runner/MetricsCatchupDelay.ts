@@ -11,6 +11,12 @@ export type TemporalParams = {
   countdownStepSeconds?: number;
   additionalDelaySeconds?: number;
   alarmPeriodSeconds?: number;
+  /**
+   * The most the delay may last, whatever the alarm period and buffer add up to: a caller with a deadline of its own
+   * (the chunker subscriber Lambda, whose timeout would otherwise stop it mid-wait) passes its remaining time, less
+   * a margin. Unset, the delay is the period plus the buffer, as for the manual Runner.
+   */
+  maxWaitSeconds?: number;
 }
 export type MetricsCatchupDelayParams = AlarmLookupParams & TemporalParams;
 
@@ -93,13 +99,16 @@ export class MetricsCatchupDelay {
       // We intentionally use a conservative 5-minute default propagation buffer to avoid scaling
       // into a stale ALARM view that can immediately trigger an unwanted scale-in reaction.
       additionalDelaySeconds=300,
-      countdownStepSeconds=5
+      countdownStepSeconds=5,
+      maxWaitSeconds
     } = this.params ?? {};
-    const totalDelaySeconds = alarmPeriodSeconds + additionalDelaySeconds;
+    const fullDelaySeconds = alarmPeriodSeconds + additionalDelaySeconds;
+    const totalDelaySeconds = maxWaitSeconds === undefined ? fullDelaySeconds : Math.max(0, Math.min(fullDelaySeconds, Math.floor(maxWaitSeconds)));
 
     console.log(
       `\n⏳ Starting metrics catch-up delay using fixed base delay (${alarmPeriodSeconds}s)` +
-      `${additionalDelaySeconds > 0 ? ` + ${additionalDelaySeconds}s buffer` : ''}.`
+      `${additionalDelaySeconds > 0 ? ` + ${additionalDelaySeconds}s buffer` : ''}` +
+      `${totalDelaySeconds < fullDelaySeconds ? `, limited to ${totalDelaySeconds}s` : ''}.`
     );
 
     let remaining = totalDelaySeconds;
@@ -126,6 +135,10 @@ export class MetricsCatchupDelay {
     if (signal?.aborted) {
       console.warn(`⚠️ Metrics catch-up delay aborted before alarm state reached OK.`);
       return false;
+    }
+    if (totalDelaySeconds === 0) {
+      // No time to wait at all (a caller's limit used up): still look at the alarm once
+      alarmState = await this.getAlarmState();
     }
     if( alarmState === 'ALARM') {
       console.warn(`⚠️ Metrics catch-up delay completed, but alarm state is still ALARM. Scaling may not go as expected.`);

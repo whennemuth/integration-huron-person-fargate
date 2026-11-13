@@ -4,6 +4,8 @@ import { FUNCTION_BASE_NAME as chunkerSubscriberBaseName } from '../../src/chunk
 import { DYNAMODB_TABLE_NAME as personHistoryTableName } from '../../src/dynamodb/PersonHistoryTable';
 import { DYNAMODB_TABLE_NAME as statisticsTableName } from '../../src/dynamodb/StatisticsTable';
 import { FUNCTION_BASE_NAME as processorSubscriberBaseName } from '../../src/processing/ProcessorSubscriber';
+import { CLUSTER_BASE_NAME } from '../../lib/EcsInfrastructure';
+import { SERVICE_LOGICAL_ID as CHUNKER_SERVICE_NAME } from '../../lib/services/chunker/ChunkerService';
 
 /**
  * Names of the landscape's pipeline resources that its dashboard reads, derived the same way the
@@ -21,6 +23,9 @@ export type LandscapeResources = {
   chunkerFunctionName: string;
   /** Starting a run: the processor subscriber, whose DRY_RUN it checks */
   processorSubscriberFunctionName: string;
+  /** A parallel start: the chunker service, whose most tasks bounds Bulk sync's Parallel start */
+  chunkerClusterName: string;
+  chunkerServiceName: string;
   /** A run's review shows these: the pipeline stack's STACK_ID, and the chunker task's ITEMS_PER_CHUNK */
   pipelineStackId: string;
   itemsPerChunk?: number;
@@ -40,6 +45,8 @@ export const landscapeResources = (context: LandscapeContext): LandscapeResource
     chunksBucketName: `${chunksBucket}-${landscape}`,
     chunkerFunctionName: `${chunkerSubscriberBaseName}-${landscape}`,
     processorSubscriberFunctionName: `${processorSubscriberBaseName}-${landscape}`,
+    chunkerClusterName: `${CLUSTER_BASE_NAME}-${landscape}`,
+    chunkerServiceName: CHUNKER_SERVICE_NAME,
     pipelineStackId: context.STACK_ID,
     itemsPerChunk: context.ITEMS_PER_CHUNK
   };

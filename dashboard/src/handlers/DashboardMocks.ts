@@ -114,6 +114,8 @@ export const MOCK_SOURCE_CONFIG = {
  * would have sent (invoked) instead of starting anything.
  */
 export class MockBulkSyncService implements BulkSyncService {
+  /** The mock chunker service's most tasks, which bounds Parallel start */
+  static readonly CHUNKER_MAX_TASKS = 15;
   /** The chunker events this instance's starts would have sent, oldest first */
   readonly invoked: ApiChunkerEvent[] = [];
   private readonly service: BulkSync;
@@ -135,6 +137,8 @@ export class MockBulkSyncService implements BulkSyncService {
         stackId: 'huron-person',
         secretName: `huron-person-integration-config-${LOCAL_LANDSCAPE}`,
         itemsPerChunk: 200,
+        chunkerClusterName: `huron-person-cluster-${LOCAL_LANDSCAPE}`,
+        chunkerServiceName: 'Chunker',
         ...settings
       },
       runs,
@@ -142,6 +146,8 @@ export class MockBulkSyncService implements BulkSyncService {
         isDryRun: async functionName => dryRun.includes(functionName),
         invokeAsync: async (_functionName, event) => { this.invoked.push(event); }
       },
+      // As preview's chunker service: at most 15 tasks
+      chunkerService: { maxTasks: async () => MockBulkSyncService.CHUNKER_MAX_TASKS },
       now
     });
   }

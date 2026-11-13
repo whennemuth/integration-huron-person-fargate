@@ -6,6 +6,7 @@ import { ScheduledRun } from '../../../src/chunking/ScheduledRun';
 import { RunStarter, StartedBy } from '../../../src/chunking/StartedBy';
 import type { RunReport } from '../../../src/reporting/RunReporting';
 import type { RunnerEnv } from '../../../src/runner/RunnerTypes';
+import { DesiredCount } from '../../../src/DesiredCount';
 import { isMockLandscape } from '../../../src/Utils';
 import { CACHE_SECRET } from '../handlers/DashboardCache';
 import {
@@ -63,10 +64,12 @@ export class BulkSyncRequest {
   static readonly CHUNKS_PER_TASK_DEFAULT = 10;
   /** The most chunks per task a request may ask for (0 asks for a single task that fetches them all) */
   static readonly CHUNKS_PER_TASK_MAX = 50;
-  /** The most chunker messages a parallel start may send (MESSAGES_TO_PREPOPULATE and DESIRED_COUNT alike) */
+  /**
+   * The most chunker tasks a parallel start may start with (MESSAGES_TO_PREPOPULATE and DESIRED_COUNT alike), whatever
+   * the chunker service allows; the service's own maximum lowers it (BulkSync.parallelStartMax()). The chunker
+   * subscriber's limit (ParallelStart.MAX in src/chunking/ParallelStart.ts) is the same.
+   */
   static readonly PARALLEL_START_MAX = 20;
-  /** Whether a parallel start other than 0 is accepted: not until shared queue seeding exists (dashboard-overhaul-plan.md, phase 5b, "Later") */
-  static readonly PARALLEL_START_ENABLED = false;
 
   /** @throws BulkSyncError INVALID_REQUEST naming what is wrong */
   static parse(body: BulkSyncRequestBody): BulkSyncRequest {
@@ -102,8 +105,11 @@ export class BulkSyncRequest {
     if (!Number.isInteger(parallelStart) || (parallelStart as number) < 0 || (parallelStart as number) > BulkSyncRequest.PARALLEL_START_MAX) {
       throw invalid(`parallelStart must be a whole number from 0 to ${BulkSyncRequest.PARALLEL_START_MAX}`);
     }
-    if (parallelStart !== 0 && !BulkSyncRequest.PARALLEL_START_ENABLED) {
-      throw invalid("parallelStart must be 0: starting with several chunker messages isn't available until shared queue seeding is built");
+    if (parallelStart !== 0 && runType === 'test') {
+      throw invalid('A test starts with one chunker task: parallelStart must be 0');
+    }
+    if (parallelStart !== 0 && iterationLimit === 0) {
+      throw invalid("A single task can't be started in parallel: parallelStart needs chunks per task above 0");
     }
     // A test is a single chunker task, whatever chunks per task the form sent (see the class's comment)
     const chunksPerTask = runType === 'test' ? 0 : iterationLimit as number;
@@ -170,6 +176,30 @@ export class RunActivity {
   }
 }
 
+/** The chunker service, as far as a parallel start is concerned: how many tasks it may run */
+export interface ChunkerService {
+  /** The service's auto-scaling maximum, or undefined if it can't be read */
+  maxTasks(): Promise<number | undefined>;
+}
+
+/** The chunker service's maximum from its scalable target (DesiredCount); undefined, with a warning, if unreadable */
+export class AwsChunkerService implements ChunkerService {
+  constructor(private readonly service: { clusterName?: string; serviceName?: string; region?: string }) {}
+
+  async maxTasks(): Promise<number | undefined> {
+    const { clusterName, serviceName, region } = this.service;
+    if (!clusterName || !serviceName || !region) {
+      return undefined;
+    }
+    try {
+      return await new DesiredCount({ clusterName, serviceName, region }).getMax();
+    } catch (error: any) {
+      console.warn(`Couldn't read the chunker service's maximum tasks (${clusterName}/${serviceName}): ${error?.message ?? error}`);
+      return undefined;
+    }
+  }
+}
+
 /** The pipeline's Lambda functions a start touches: the subscribers' DRY_RUN switch, and the chunker's invocation */
 export interface ChunkerFunctions {
   /** Whether the function's DRY_RUN environment variable is 'true' (the manual Runner's decorators set it) */
@@ -212,6 +242,9 @@ export type BulkSyncSettings = {
   processorSubscriberFunctionName?: string;
   /** The chunker task's ITEMS_PER_CHUNK, set at deploy */
   itemsPerChunk?: number;
+  /** The chunker service a parallel start scales (through the chunker subscriber) */
+  chunkerClusterName?: string;
+  chunkerServiceName?: string;
   /** The environment variables a start needs that are missing: every start is refused as NOT_CONFIGURED */
   missing?: string[];
 };
@@ -239,6 +272,8 @@ export class BulkSync implements BulkSyncService {
     settings: BulkSyncSettings;
     runs: Pick<RunReportingService, 'listRunPage' | 'getRunReport'>;
     functions: ChunkerFunctions;
+    /** Absent: Parallel start goes up to PARALLEL_START_MAX, and the chunker subscriber checks the service's maximum */
+    chunkerService?: ChunkerService;
     now?: () => number;
   }) {}
 
@@ -247,7 +282,7 @@ export class BulkSync implements BulkSyncService {
     const env = process.env;
     const {
       LANDSCAPE, LANDSCAPE_TONE, REGION, PIPELINE_STACK_ID, CHUNKER_FUNCTION_NAME, PROCESSOR_SUBSCRIBER_FUNCTION_NAME,
-      ITEMS_PER_CHUNK
+      ITEMS_PER_CHUNK, CHUNKER_CLUSTER_NAME, CHUNKER_SERVICE_NAME
     } = env;
     const missing = Object.entries({ LANDSCAPE, REGION, CHUNKER_FUNCTION_NAME, PROCESSOR_SUBSCRIBER_FUNCTION_NAME })
       .filter(([, value]) => !value).map(([name]) => name);
@@ -260,12 +295,33 @@ export class BulkSync implements BulkSyncService {
       chunkerFunctionName: CHUNKER_FUNCTION_NAME,
       processorSubscriberFunctionName: PROCESSOR_SUBSCRIBER_FUNCTION_NAME,
       itemsPerChunk: ITEMS_PER_CHUNK ? Number(ITEMS_PER_CHUNK) : undefined,
+      chunkerClusterName: CHUNKER_CLUSTER_NAME,
+      chunkerServiceName: CHUNKER_SERVICE_NAME,
       missing
     };
     return new BulkSync({
       config, settings, runs,
       functions: new LambdaChunkerFunctions(new LambdaClient({ region: REGION })),
+      chunkerService: new AwsChunkerService({ clusterName: CHUNKER_CLUSTER_NAME, serviceName: CHUNKER_SERVICE_NAME, region: REGION })
     });
+  }
+
+  /** The most tasks Parallel start offers: PARALLEL_START_MAX, lowered to the chunker service's maximum when known */
+  async parallelStartMax(): Promise<number> {
+    const serviceMax = await this.deps.chunkerService?.maxTasks();
+    return serviceMax === undefined ? BulkSyncRequest.PARALLEL_START_MAX : Math.min(BulkSyncRequest.PARALLEL_START_MAX, serviceMax);
+  }
+
+  /** @throws BulkSyncError INVALID_REQUEST for a parallel start above the most tasks the chunker service allows */
+  private async checkParallelStart(request: BulkSyncRequest): Promise<void> {
+    if (request.parallelStart === 0) {
+      return;
+    }
+    const max = await this.parallelStartMax();
+    if (request.parallelStart > max) {
+      throw new BulkSyncError('INVALID_REQUEST',
+        `Parallel start ${request.parallelStart} is more than the ${max} chunker tasks this landscape's chunker service may run`);
+    }
   }
 
   private get now(): number {
@@ -293,7 +349,7 @@ export class BulkSync implements BulkSyncService {
         parallelStart: 0
       },
       iterationLimit: { max: BulkSyncRequest.CHUNKS_PER_TASK_MAX },
-      parallelStart: { max: BulkSyncRequest.PARALLEL_START_MAX, enabled: BulkSyncRequest.PARALLEL_START_ENABLED },
+      parallelStart: { max: await this.parallelStartMax(), enabled: true },
       latestRun,
       ...(blocked ? { blocked } : {}),
       warnings: this.warnings()
@@ -314,6 +370,7 @@ export class BulkSync implements BulkSyncService {
   async plan(body: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncPlan> {
     const { settings } = this.deps;
     const request = BulkSyncRequest.parse(body);
+    await this.checkParallelStart(request);
     await this.checkGuards(await this.latestRun(), request);
     const event = this.event(request, startedBy);
     return {
@@ -327,6 +384,7 @@ export class BulkSync implements BulkSyncService {
   async start(body: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncResult> {
     const { settings, functions } = this.deps;
     const request = BulkSyncRequest.parse(body);
+    await this.checkParallelStart(request);
     await this.checkGuards(await this.latestRun(), request);
     const event = this.event(request, startedBy);
     await functions.invokeAsync(settings.chunkerFunctionName!, event);
@@ -356,6 +414,8 @@ export class BulkSync implements BulkSyncService {
       ...ScheduledRun.previousStateFlags(request.bulkReset),
       iterationLimit: request.iterationLimit,
       offset: 0,
+      // The chunker subscriber seeds this many messages, waits for the scale-in alarm, and sets the desired count
+      ...(request.parallelStart > 0 ? { parallelStart: request.parallelStart } : {}),
       ...(startedBy ? { startedBy } : {}),
       processingMetadata: { processedAt: new Date(this.now).toISOString(), processorVersion: '1.0.0' }
     };
@@ -371,7 +431,10 @@ export class BulkSync implements BulkSyncService {
     const landscape = (value: SettingValue['value'] | undefined, note?: string): SettingValue => ({ value: value ?? null, source: 'landscape', ...(note ? { note } : {}) });
     const fixed = (value: SettingValue['value'], note: string): SettingValue => ({ value, source: 'fixed', note });
     const unused = (note: string): SettingValue => ({ value: null, source: 'unused', note });
-    const parallel = 'Parallel start: read-only at 0 until shared queue seeding is built (0 sends one message and lets auto-scaling add tasks)';
+    const seeded = request.parallelStart > 0;
+    const parallel = seeded
+      ? 'Parallel start: the chunker subscriber sends this many messages, waits for the scale-in alarm, then sets the desired count'
+      : 'Parallel start 0: one message, and auto-scaling adds tasks';
     const dryRunSwitch = "Not offered here: it switches the subscribers' DRY_RUN, which stays switched";
     const runner: Record<keyof RunnerEnv, SettingValue> = {
       secretArn: landscape(settings.secretName, "The landscape's integration config secret (its name), which the chunker reads"),
@@ -395,8 +458,8 @@ export class BulkSync implements BulkSyncService {
       skipAtomicCounterReset: fixed(false, "The chunker subscriber resets the chunker's counters at every run's start"),
       messagesToPrepopulate: form(String(request.parallelStart), parallel),
       desiredCount: form(request.parallelStart, parallel),
-      clusterName: unused('Only for a parallel start'),
-      serviceName: unused('Only for a parallel start'),
+      clusterName: seeded ? landscape(settings.chunkerClusterName, 'The chunker service a parallel start scales') : unused('Only for a parallel start'),
+      serviceName: seeded ? landscape(settings.chunkerServiceName, 'The chunker service a parallel start scales') : unused('Only for a parallel start'),
       messagingOnly: fixed(false, dryRunSwitch),
       chunkingOnly: fixed(false, dryRunSwitch),
       sourceSimulator: fixed(false, 'Mock landscapes only, not offered here yet'),

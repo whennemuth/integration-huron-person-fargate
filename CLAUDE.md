@@ -180,6 +180,33 @@ atomic counter table. `resetRunCounters()` (`src/chunking/RunCounters.ts`) reset
 Never in `handleApiEvent()` itself: the Runner's queue seeding calls it for every seeded message, taking their
 offsets from the counter it has just reset (`QueueSeeder` resets its own).
 
+**A run starts with one chunker message, or N seeded at once** (`parallelStart`, since 2026-11-12):
+- **One message** (no `parallelStart`, or 0): the subscriber queues the event, and the chunker service's auto-scaling
+  adds tasks as the work builds up. The EventBridge schedule always starts this way.
+- **Seeded** (`ApiChunkerEvent.parallelStart` N, 1-20; Bulk sync's Parallel start): after the counter reset, the
+  subscriber seeds the queue with N messages (`QueueSeeder`, offsets a task's chunks apart from the counter), waits
+  for the chunker's scale-in alarm to leave `ALARM` (`MetricsCatchupDelay`, the 2026-07-02 incident fix), then sets
+  the chunker service's desired count to N (`DesiredCount`). The procedure is `src/chunking/ParallelStart.ts`, which
+  the Runner's queue seeding (`RunnerForQueueSeeding`, `MESSAGES_TO_PREPOPULATE` / `DESIRED_COUNT`) shares.
+- **Refused** with a 400 result, returned rather than thrown (a throw would be retried, if retries were on, and refused
+  again): before the counter reset, N outside 1-20, an event that doesn't start a run, `iterationLimit` 0 (seeded
+  offsets step by a task's chunks), a single-person fetch (`buid`), or missing environment (`ParallelStart.refusal()`);
+  after the reset but before anything is sent, N above the service's `MaxCapacity`. In `DRY_RUN` it only logs what it
+  would do. Chained messages never carry `parallelStart`.
+- **The subscriber Lambda** (`lib/services/chunker/ChunkerSubscribingLambda.ts`) has, for this:
+  - a 600-second timeout (context `LAMBDA.chunkerSubscriber.timeoutSeconds`, every landscape): the alarm wait alone
+    can take six minutes (a 60-second period plus a 300-second buffer). The wait is also bounded by the invocation's
+    remaining time, less a minute, so a slow alarm can't time the Lambda out before the desired count is set.
+  - no automatic retry (`retryAttempts: 0`, events older than 15 minutes dropped): Lambda retries a failed
+    asynchronous invocation twice by default, which for a run start would reset the counters and seed again into
+    a run already underway. A failed start is started again by a person.
+  - `CHUNKER_CLUSTER_NAME` / `CHUNKER_SERVICE_NAME` in its environment, and the grants: `ecs:UpdateService` and
+    `DescribeServices` on that one service, `application-autoscaling:DescribeScalableTargets` /
+    `DescribeScalingPolicies` (resource `*`; they can't be scoped), `cloudwatch:DescribeAlarms` on the region's
+    alarms.
+- First checked in staging on 2026-11-12 with 15 tasks: the alarm settled after 150 seconds, the 15 tasks were
+  running 45 seconds after the desired count was set, and no offset or person was chunked twice.
+
 **Glitched-source safety cutoff (`maxTotalRecords`)**: If the source never returns an empty
 batch, chunking would never end - an endless fetch loop when `iterationLimit=0`, or endless
 chunker message/task chaining when `iterationLimit>0`. `IContext`

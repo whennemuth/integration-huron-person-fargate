@@ -140,13 +140,34 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       expect(html).toMatch(/<button class="btn btn-primary" type="submit">/);
     });
 
-    it('offers parallel start from 0 to 20, read-only until queue seeding exists', () => {
+    it("offers parallel start from 0 to the landscape's most, held at 0 for a test or a single task", () => {
+      // Not offered by the landscape: read-only at 0
       const html = BulkSyncView.formHtml(state());
       expect(html).toMatch(/name="parallelStart" id="bulk-parallelStart" disabled/);
       expect(html).toMatch(/id="bulk-parallelStart" disabled>\s*<option value="0" selected>0<\/option>/);
       expect(html).toContain('<option value="20">20</option>');
-      expect(html).toContain('Read-only at 0 until shared queue seeding is built.');
-      expect(BulkSyncView.formHtml(state({ parallelStart: { max: 20, enabled: true } }))).not.toMatch(/id="bulk-parallelStart" disabled/);
+      expect(html).toContain('data-enabled="false"');
+      expect(html).not.toContain('Read-only at 0 until shared queue seeding is built.');
+      expect(html).toContain('A test or a single task always starts with one.');
+
+      // Offered, up to the chunker service's most tasks, keeping the value entered
+      const offered = state({ parallelStart: { max: 15, enabled: true } });
+      const chosen = BulkSyncView.formHtml(offered, { runType: 'full', custom: true, iterationLimit: 10, parallelStart: 4 });
+      expect(chosen).not.toMatch(/id="bulk-parallelStart" disabled/);
+      expect(chosen).toContain('<option value="4" selected>4</option>');
+      expect(chosen).toContain('<option value="15">15</option>');
+      expect(chosen.slice(chosen.indexOf('id="bulk-parallelStart"'))).not.toContain('<option value="16">');
+      expect(chosen).toContain('data-chosen-parallel="4"');
+
+      // A test or a single task: locked at 0, the value entered kept for later
+      for (const values of [
+        { runType: 'test', buid: 'U1', custom: true, iterationLimit: 10, parallelStart: 4 },
+        { runType: 'full', custom: true, iterationLimit: 0, parallelStart: 4 }
+      ]) {
+        const single = BulkSyncView.formHtml(offered, values);
+        expect(single).toMatch(/id="bulk-parallelStart" disabled>\s*<option value="0" selected>0<\/option>/);
+        expect(single).toContain('data-chosen-parallel="4"');
+      }
     });
 
     it('keeps what was entered, showing the BUID box for a test and the custom fields when chosen', () => {
@@ -223,6 +244,12 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
         'People whose record has not changed since their last sync are skipped, and Huron is not contacted for them.',
         `The stalled run of ${RunFormat.dateTime(stalled.syncRunId)} is left as it is.`
       ]);
+      expect(lines({ runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 6 })).toEqual([
+        "Full sync of everyone in the source, into preview's Huron. People no longer in the source are deactivated afterward.",
+        'People whose record has not changed since their last sync are skipped, and Huron is not contacted for them.',
+        'Each chunker task reads 10 chunks, then hands the rest on to a new task.',
+        "It starts with 6 chunker tasks at once. The start takes up to a few minutes while the chunker's scaling catches up."
+      ]);
     });
 
     it('reviews what will run and the event the chunker subscriber will be sent, and nothing more', () => {
@@ -259,6 +286,11 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       expect(found).toContain('status-badge-warning');
       const full = { startedAt: '2026-11-10T11:58:00.000Z', run: { runType: 'full-no-deactivations', population: 'person-delta' } };
       expect(BulkSyncView.startedHtml({ result: full }, NOW)).toContain('Started 2 min ago: Full sync (no deactivations).');
+      expect(BulkSyncView.startedHtml({ result: full }, NOW)).not.toContain('chunker tasks start');
+      // A parallel start says its tasks take a few minutes to start
+      const parallel = { startedAt: '2026-11-10T11:58:00.000Z', run: { runType: 'full', population: 'person-full', parallelStart: 5 } };
+      expect(BulkSyncView.startedHtml({ result: parallel }, NOW))
+        .toContain('Its 5 chunker tasks start within a few minutes, once the chunker&#39;s scaling catches up. It appears in Run history');
     });
   });
 
@@ -351,12 +383,12 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
 
     it("reads the request from the form's fields: the BUID only for a test, the custom settings only when chosen", () => {
       const radio = (value: string, checked: boolean) => ({ value, checked });
-      const fields = (params: { runType: string; buid?: string; custom?: boolean; chunkMode?: string; chunksPerTask?: string; overrideStalled?: boolean }) => ({
+      const fields = (params: { runType: string; buid?: string; custom?: boolean; chunkMode?: string; chunksPerTask?: string; parallelStart?: string; overrideStalled?: boolean }) => ({
         elements: {
           runType: ['full', 'full-no-deactivations', 'delta', 'test'].map(type => radio(type, type === params.runType)),
           buid: { value: params.buid ?? '' }, bulkReset: { checked: true }, custom: { checked: !! params.custom },
           chunkMode: ['perTask', 'single'].map(mode => radio(mode, mode === (params.chunkMode ?? 'perTask'))),
-          chunksPerTask: { value: params.chunksPerTask ?? '10' }, parallelStart: { value: '0' },
+          chunksPerTask: { value: params.chunksPerTask ?? '10' }, parallelStart: { value: params.parallelStart ?? '0' },
           ...(params.overrideStalled === undefined ? {} : { overrideStalled: { checked: params.overrideStalled } })
         }
       });
@@ -368,6 +400,11 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       // A single task is iterationLimit 0, whatever the dropdown says
       expect(BulkSyncPage.readRequest(fields({ runType: 'full-no-deactivations', custom: true, chunkMode: 'single', chunksPerTask: '25' })))
         .toEqual({ runType: 'full-no-deactivations', bulkReset: true, iterationLimit: 0, parallelStart: 0, custom: true });
+      // Parallel start is sent for chunks per task, and is 0 for a single task or a test whatever the dropdown says
+      expect(BulkSyncPage.readRequest(fields({ runType: 'full', custom: true, chunksPerTask: '10', parallelStart: '6' })))
+        .toEqual({ runType: 'full', bulkReset: true, iterationLimit: 10, parallelStart: 6, custom: true });
+      expect(BulkSyncPage.readRequest(fields({ runType: 'full', custom: true, chunkMode: 'single', parallelStart: '6' })).parallelStart).toBe(0);
+      expect(BulkSyncPage.readRequest(fields({ runType: 'test', buid: 'U1', custom: true, parallelStart: '6' })).parallelStart).toBe(0);
     });
 
     it('shows the BUID box for a test, the custom fields while Custom settings is checked, and the dropdown for chunks per task', () => {
@@ -417,6 +454,52 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       bulkPage.onChange({ target: { form, name: 'runType', value: 'full-no-deactivations' } });
       expect(state()).toEqual(['perTask:off', 'single:on']);
       expect(chunks.hidden).toBe(true);
+    });
+
+    it("holds Parallel start at 0 for a test or a single task, and restores the user's choice otherwise", () => {
+      const { bulkPage } = page();
+      const modes = new FakeElement();
+      modes.dataset.chosenMode = 'perTask';
+      const parallel = new FakeElement();
+      parallel.dataset.enabled = 'true';
+      parallel.dataset.chosenParallel = '0';
+      const select = { value: '0', disabled: false };
+      const radios = [{ value: 'perTask', checked: true, disabled: false }, { value: 'single', checked: false, disabled: false }];
+      const form = {
+        elements: { chunkMode: radios, parallelStart: select },
+        querySelector: (selector: string) => ({
+          '[data-bulk-test]': new FakeElement(), '[data-bulk-chunks]': new FakeElement(), '[data-bulk-chunk-mode]': modes, '[data-bulk-parallel]': parallel
+        } as any)[selector]
+      };
+      const shown = () => `${select.value}${select.disabled ? ':locked' : ''}`;
+
+      // The user chooses 6
+      select.value = '6';
+      bulkPage.onChange({ target: { form, name: 'parallelStart', value: '6' } });
+      expect(parallel.dataset.chosenParallel).toBe('6');
+
+      // A test, then a full run again
+      bulkPage.onChange({ target: { form, name: 'runType', value: 'test' } });
+      expect(shown()).toBe('0:locked');
+      bulkPage.onChange({ target: { form, name: 'runType', value: 'full' } });
+      expect(shown()).toBe('6');
+
+      // A single task, then chunks per task again
+      bulkPage.onChange({ target: { form, name: 'chunkMode', value: 'single' } });
+      expect(shown()).toBe('0:locked');
+      bulkPage.onChange({ target: { form, name: 'chunkMode', value: 'perTask' } });
+      expect(shown()).toBe('6');
+
+      // A single task chosen before a test stays locked after it
+      bulkPage.onChange({ target: { form, name: 'chunkMode', value: 'single' } });
+      bulkPage.onChange({ target: { form, name: 'runType', value: 'test' } });
+      bulkPage.onChange({ target: { form, name: 'runType', value: 'full' } });
+      expect(shown()).toBe('0:locked');
+
+      // A landscape that doesn't offer it: never unlocked
+      parallel.dataset.enabled = 'false';
+      bulkPage.onChange({ target: { form, name: 'chunkMode', value: 'perTask' } });
+      expect(select.disabled).toBe(true);
     });
   });
 });

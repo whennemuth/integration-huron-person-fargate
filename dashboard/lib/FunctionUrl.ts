@@ -36,7 +36,8 @@ export class FunctionUrlOrigin {
     } } = this.params;
     const {
       landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName,
-      chunkerFunctionName, processorSubscriberFunctionName, pipelineStackId, itemsPerChunk
+      chunkerFunctionName, processorSubscriberFunctionName, pipelineStackId, itemsPerChunk, chunkerClusterName,
+      chunkerServiceName
     } = landscapeResources;
 
     // The origin verification secret: 32 bytes from the cryptographically secure generator, base64url
@@ -65,6 +66,9 @@ export class FunctionUrlOrigin {
       // Starting a run (BulkSync, dashboard/src/services/BulkSync.ts), as the EventBridge schedule does
       CHUNKER_FUNCTION_NAME: chunkerFunctionName,
       PROCESSOR_SUBSCRIBER_FUNCTION_NAME: processorSubscriberFunctionName,
+      // A parallel start: the chunker service, whose most tasks bounds Parallel start
+      CHUNKER_CLUSTER_NAME: chunkerClusterName,
+      CHUNKER_SERVICE_NAME: chunkerServiceName,
       // Shown in a run's review: the pipeline stack and the chunker task's chunk size
       PIPELINE_STACK_ID: pipelineStackId,
       ...(itemsPerChunk !== undefined && { ITEMS_PER_CHUNK: String(itemsPerChunk) }),
@@ -151,6 +155,14 @@ export class FunctionUrlOrigin {
       effect: Effect.ALLOW,
       actions: ['lambda:GetFunctionConfiguration'],
       resources: [functionArn(chunkerFunctionName), functionArn(processorSubscriberFunctionName)],
+    }));
+    // A parallel start: read the chunker service's most tasks (its scalable target). Application Auto Scaling's
+    // Describe actions don't support resource-level permissions. The dashboard never scales anything itself: the
+    // chunker subscriber does (src/chunking/ParallelStart.ts).
+    this.lambda.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['application-autoscaling:DescribeScalableTargets'],
+      resources: ['*'],
     }));
 
     // Lambda function url for the web app.

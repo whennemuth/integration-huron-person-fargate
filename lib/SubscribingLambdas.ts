@@ -1,7 +1,8 @@
 import { Construct } from 'constructs';
 import { IBucket } from 'aws-cdk-lib/aws-s3';
 import { ChunkerSubscribingLambda } from './services/chunker/ChunkerSubscribingLambda';
-import { EcsInfrastructure } from './EcsInfrastructure';
+import { CLUSTER_BASE_NAME, EcsInfrastructure } from './EcsInfrastructure';
+import { SERVICE_LOGICAL_ID as CHUNKER_SERVICE_NAME } from './services/chunker/ChunkerService';
 import { IContext } from '../context/IContext';
 import { PostProcessorSubscribingLambda } from './services/post-processor/PostProcessorSubscribingLambda';
 import { ProcessorSubscribingLambda } from './services/processor/ProcessorSubscribingLambda';
@@ -79,6 +80,8 @@ export class SubscribingLambdas extends Construct {
       region: ctx.REGION,
       landscape: ctx.TAGS.Landscape.toLowerCase(),
       stackId: ctx.STACK_ID,
+      chunkerClusterName: `${CLUSTER_BASE_NAME}-${ctx.TAGS.Landscape.toLowerCase()}`,
+      chunkerServiceName: CHUNKER_SERVICE_NAME,
       timeoutSeconds: ctx.LAMBDA.chunkerSubscriber.timeoutSeconds,
       memorySizeMb: ctx.LAMBDA.chunkerSubscriber.memorySizeMb,
       dryRun: ctx.DRY_RUN?.lambda?.chunker,

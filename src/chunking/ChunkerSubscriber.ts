@@ -40,6 +40,7 @@
 import { handleS3Event } from './filedrop/ChunkerS3Subscriber';
 import { handleApiEvent } from './fetch/ChunkerApiSubscriber';
 import { isRunStartEvent, resetRunCounters, RunCounterLocation } from './RunCounters';
+import { ParallelStart } from './ParallelStart';
 import { SourceEndpoint, SyncPopulation } from '../../docker/chunkTypes';
 import type { StartedBy } from './StartedBy';
 
@@ -82,6 +83,12 @@ export interface ApiChunkerEvent {
   termsEndpoint?: SourceEndpoint;
   /** Who or what started the run (src/chunking/StartedBy.ts), recorded in its Flags and summary for Run history */
   startedBy?: StartedBy;
+  /**
+   * Start the run with this many chunker tasks at once (src/chunking/ParallelStart.ts): seed this many messages, wait
+   * for the chunker's scale-in alarm, and set the service's desired count. Only on a run's first event; absent or 0
+   * starts with one message. Never forwarded to the seeded or chained messages.
+   */
+  parallelStart?: number;
   processingMetadata?: {
     processedAt?: string;
     processorVersion?: string;
@@ -120,15 +127,23 @@ export async function resetCountersForRunStart(
 /**
  * The Lambda handler function that dispatches based on event type.
  *
+ * An API event asking for a parallel start (ApiChunkerEvent.parallelStart > 0) is checked first (ParallelStart.refusal(),
+ * before the counters are reset or anything is sent), then started with that many chunker tasks; the wait inside is
+ * bounded by the Lambda's remaining time (context). Any other API event is queued as one message.
+ *
  * @param event - Either an S3ChunkerEvent or ApiChunkerEvent
+ * @param context - The Lambda context (its getRemainingTimeInMillis() bounds a parallel start's wait)
  * @returns Response with status code and message
  */
-export async function handler(event: S3ChunkerEvent | ApiChunkerEvent): Promise<any> {
+export async function handler(event: S3ChunkerEvent | ApiChunkerEvent, context?: { getRemainingTimeInMillis?: () => number }): Promise<any> {
   console.log('Received event:', JSON.stringify(event, null, 2));
 
   // Determine event type by checking for API-specific fields
   if (isApiEvent(event)) {
     console.log('Event type: API-based chunking');
+    if (ParallelStart.requested(event) > 0) {
+      return await startInParallel(event, context);
+    }
     await resetCountersForRunStart(event as ApiChunkerEvent);
     return await handleApiEvent(event as ApiChunkerEvent);
   } else if (isS3Event(event)) {
@@ -139,6 +154,27 @@ export async function handler(event: S3ChunkerEvent | ApiChunkerEvent): Promise<
     console.error(errMsg);
     return { statusCode: 400, body: errMsg };
   }
+}
+
+/**
+ * A run's start with several chunker tasks: refused (nothing reset or sent) if it can't be done, otherwise the counters
+ * reset and then the parallel start (ParallelStart.run()). A refusal is returned, not thrown: an asynchronous
+ * invocation that throws is retried, and a refused start would only be refused again.
+ */
+export async function startInParallel(
+  event: ApiChunkerEvent,
+  context?: { getRemainingTimeInMillis?: () => number },
+  env: NodeJS.ProcessEnv = process.env,
+  parallelStart: (event: ApiChunkerEvent) => ParallelStart = event => ParallelStart.fromEnvironment(event, env),
+  reset: (location: RunCounterLocation) => Promise<void> = resetRunCounters
+): Promise<any> {
+  const refusal = ParallelStart.refusal(event, env);
+  if (refusal) {
+    console.error(`Parallel start refused: ${refusal}`);
+    return { statusCode: 400, body: refusal };
+  }
+  await resetCountersForRunStart(event, env, reset);
+  return await parallelStart(event).run(event, context?.getRemainingTimeInMillis?.());
 }
 
 /**
