@@ -141,6 +141,9 @@ if (require.main === module) {
 - **ChunkerService** (`lib/services/chunker/ChunkerService.ts`): CDK construct that creates the ECS service
 - **ChunkerSubscriber Lambda** (`lib/services/chunker/ChunkerSubscribingLambda.ts`): Lambda that sends messages to chunker queue
 - **QueueSeeder** (`src/chunking/fetch/QueueSeeder.ts`): Utility for pre-populating queue with messages
+- **ParallelStart** (`src/chunking/ParallelStart.ts`): the seed, alarm-wait and desired-count procedure that queue
+  seeding shares with the chunker subscriber Lambda, which runs it for an event carrying `parallelStart` (the
+  dashboard's Bulk sync). See "A run starts with one chunker message, or N seeded at once" in the project `CLAUDE.md`.
 
 ### VS Code Debugging
 
