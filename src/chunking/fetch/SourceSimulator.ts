@@ -15,7 +15,7 @@
  * - Validates the API key against the source keys in the config secret (see "API keys" below)
  * - Returns minimal field set (only fields DataMapper uses)
  * - Matches real API response structure: `{ response: [persons] }`
- * - Simulates slow API: Optional delay before responding via MOCK_SIMULATED_DELAY_SECONDS
+ * - Simulates slow API: Optional delay before responding (simulatedDelaySeconds, else MOCK_SIMULATED_DELAY_SECONDS)
  * 
  * **Design (Single Person Endpoint):**
  * - Mirrors the real person API: one person, selected by the `buid` query parameter. The `buid`
@@ -40,10 +40,24 @@
  * - `nonCurrentTermRate`: Proportion (0.0-1.0) of students with a non-current term (default: 0.0).
  *   Which students get one is decided by a hash of the person's index, not by chance, so a person's
  *   payload is the same on every request.
+ * - The simulation settings below
  *
  * **Query Parameters (Single Person Endpoint):**
  * - `buid`: The person's BUID, e.g. `U0000042` (required)
- * - `nonCurrentTermRate`: As for the people endpoint
+ * - `nonCurrentTermRate` and the simulation settings: As for the people endpoint
+ *
+ * **Simulation settings (any endpoint; simulationSettings()):** each from its query parameter, else
+ * the environment variable below, else its default. A value that isn't a number is ignored (the next
+ * source is used); one out of range is clamped.
+ * - `totalPopulation` (else MOCK_TOTAL_POPULATION, else 10000): persons available, a whole number
+ * - `simulatedDelaySeconds` (else MOCK_SIMULATED_DELAY_SECONDS, else 0): 0 to 30 seconds
+ * - `errorRate` (else MOCK_ERROR_RATE, else 0.0): probability of a simulated 500
+ * A run carries them in its fetchPath (e.g. `/?totalPopulation=1950&simulatedDelaySeconds=3`): the
+ * chunker keeps fetchPath's own query on every page request (DataSource.getFetchUrl() appends
+ * recordCount and offset to it; only a `buid` parameter stops it paging) and passes fetchPath on in
+ * each chained message, so every request of the run is simulated alike, and the simulator Lambda's
+ * configuration isn't changed for a run. Every request of one run must carry the same
+ * totalPopulation, since each request's own value bounds the depletion.
  * 
  * **Headers:**
  * - `Authorization`: Bearer token containing API key
@@ -66,10 +80,10 @@
  * the other endpoints. Matching each endpoint to one key would instead require the simulator to use
  * the real paths and the chunker to match keys on path alone.
  * 
- * **Environment Variables:**
+ * **Environment Variables** (the simulation settings' defaults, which a request's query overrides):
  * - MOCK_TOTAL_POPULATION: Total persons available (e.g., 10000)
  * - MOCK_ERROR_RATE: Probability of simulated errors (0.0-1.0)
- * - MOCK_SIMULATED_DELAY_SECONDS: Delay in seconds before responding (simulates slow API)
+ * - MOCK_SIMULATED_DELAY_SECONDS: Delay in seconds before responding (simulates slow API, at most 30)
  * - SECRET_ARN: ARN of Secrets Manager secret containing the API keys
  * 
  * **Response Format:**
@@ -542,16 +556,87 @@ function generateMockTerms(): Term[] {
 }
 
 /**
- * Parse the optional nonCurrentTermRate query parameter (0.0 to 1.0, default 0.0), which controls
- * the proportion of students with a non-current term. Out-of-range values are clamped.
+ * The query parameters through which a request sets the simulation, overriding the Lambda's environment. A run
+ * carries them in its fetchPath (every page request keeps fetchPath's own query alongside recordCount and offset),
+ * so its settings travel with it and nothing in the Lambda's configuration changes for a run.
  */
-function parseNonCurrentTermRate(queryParams: Record<string, string | undefined>): number {
-  const nonCurrentTermRate = parseFloat(queryParams.nonCurrentTermRate || '0.0');
-  if (nonCurrentTermRate < 0.0 || nonCurrentTermRate > 1.0) {
-    console.warn(`Invalid nonCurrentTermRate=${nonCurrentTermRate}, clamping to [0.0, 1.0]`);
-    return Math.max(0.0, Math.min(1.0, nonCurrentTermRate));
+export enum SIMULATION_QUERY_PARAMETERS {
+  TOTAL_POPULATION = 'totalPopulation',
+  SIMULATED_DELAY_SECONDS = 'simulatedDelaySeconds',
+  ERROR_RATE = 'errorRate',
+  NON_CURRENT_TERM_RATE = 'nonCurrentTermRate',
+}
+
+/** The longest simulated delay: well inside the simulator Lambda's timeout */
+export const MAX_SIMULATED_DELAY_SECONDS = 30;
+
+/** The population when neither the request nor the environment gives one */
+export const DEFAULT_TOTAL_POPULATION = 10000;
+
+/** How a request is simulated (simulationSettings()) */
+export type SimulationSettings = {
+  /** Persons available, a whole number from 0 */
+  totalPopulation: number;
+  /** Seconds before responding, 0 to MAX_SIMULATED_DELAY_SECONDS */
+  simulatedDelaySeconds: number;
+  /** Probability of a simulated 500, 0.0 to 1.0 */
+  errorRate: number;
+  /** Proportion (0.0 to 1.0) of students with a non-current term */
+  nonCurrentTermRate: number;
+};
+
+/**
+ * How a request is simulated: each setting from its query parameter (SIMULATION_QUERY_PARAMETERS), else the
+ * Lambda's environment (MOCK_TOTAL_POPULATION, MOCK_SIMULATED_DELAY_SECONDS, MOCK_ERROR_RATE; nonCurrentTermRate has
+ * none), else its default. A value that isn't a number is ignored with a warning (the next source is used), and one
+ * out of range is clamped.
+ */
+export function simulationSettings(
+  queryParams: Record<string, string | undefined> = {},
+  env: NodeJS.ProcessEnv = process.env
+): SimulationSettings {
+  const { TOTAL_POPULATION, SIMULATED_DELAY_SECONDS, ERROR_RATE, NON_CURRENT_TERM_RATE } = SIMULATION_QUERY_PARAMETERS;
+  const { MOCK_TOTAL_POPULATION, MOCK_SIMULATED_DELAY_SECONDS, MOCK_ERROR_RATE } = ENVIRONMENT_VARIABLES_NAMES;
+  const setting = (sources: [string, string | undefined][], fallback: number, min: number, max: number): number => {
+    for (const [source, raw] of sources) {
+      if (raw === undefined || raw.trim() === '') {
+        continue;
+      }
+      const value = Number(raw);
+      if (!Number.isFinite(value)) {
+        console.warn(`Ignoring ${source}=${raw}: not a number`);
+        continue;
+      }
+      if (value < min || value > max) {
+        console.warn(`${source}=${raw} is out of range, clamping to [${min}, ${max}]`);
+      }
+      return Math.max(min, Math.min(max, value));
+    }
+    return fallback;
+  };
+  return {
+    totalPopulation: Math.floor(setting([
+      [TOTAL_POPULATION, queryParams[TOTAL_POPULATION]], [MOCK_TOTAL_POPULATION, env[MOCK_TOTAL_POPULATION]]
+    ], DEFAULT_TOTAL_POPULATION, 0, Number.MAX_SAFE_INTEGER)),
+    simulatedDelaySeconds: setting([
+      [SIMULATED_DELAY_SECONDS, queryParams[SIMULATED_DELAY_SECONDS]], [MOCK_SIMULATED_DELAY_SECONDS, env[MOCK_SIMULATED_DELAY_SECONDS]]
+    ], 0, 0, MAX_SIMULATED_DELAY_SECONDS),
+    errorRate: setting([
+      [ERROR_RATE, queryParams[ERROR_RATE]], [MOCK_ERROR_RATE, env[MOCK_ERROR_RATE]]
+    ], 0, 0, 1),
+    nonCurrentTermRate: setting([
+      [NON_CURRENT_TERM_RATE, queryParams[NON_CURRENT_TERM_RATE]]
+    ], 0, 0, 1),
+  };
+}
+
+/** Waits out what is left of the simulated delay, measured from the request's start */
+async function simulateDelay(simulatedDelaySeconds: number, requestStartTime: number): Promise<void> {
+  const remainingDelay = simulatedDelaySeconds - (Date.now() - requestStartTime) / 1000;
+  if (remainingDelay > 0) {
+    console.log(`Simulating API delay: waiting ${remainingDelay.toFixed(2)} more seconds before responding`);
+    await new Promise(resolve => setTimeout(resolve, remainingDelay * 1000));
   }
-  return nonCurrentTermRate;
 }
 
 /**
@@ -561,9 +646,7 @@ function parseNonCurrentTermRate(queryParams: Record<string, string | undefined>
 async function handlePersonRequest(event: APIGatewayProxyEventV2, requestStartTime: number): Promise<APIGatewayProxyResultV2> {
   const queryParams = event.queryStringParameters || {};
   const { buid } = queryParams;
-  const totalPopulation = parseInt(process.env.MOCK_TOTAL_POPULATION || '10000', 10);
-  const errorRate = parseFloat(process.env.MOCK_ERROR_RATE || '0.0');
-  const nonCurrentTermRate = parseNonCurrentTermRate(queryParams);
+  const { totalPopulation, errorRate, nonCurrentTermRate, simulatedDelaySeconds } = simulationSettings(queryParams);
 
   const index = personIndexFromBuid(buid);
   if (index === undefined) {
@@ -591,12 +674,7 @@ async function handlePersonRequest(event: APIGatewayProxyEventV2, requestStartTi
   console.log(`Returning ${persons.length} person(s) for buid=${buid} (index=${index}, totalPopulation=${totalPopulation})`);
 
   // Simulate API delay if configured (mimics slow real API behavior)
-  const simulatedDelaySeconds = parseFloat(process.env.MOCK_SIMULATED_DELAY_SECONDS || '0');
-  const remainingDelay = simulatedDelaySeconds - (Date.now() - requestStartTime) / 1000;
-  if (remainingDelay > 0) {
-    console.log(`Simulating API delay: waiting ${remainingDelay.toFixed(2)} more seconds before responding`);
-    await new Promise(resolve => setTimeout(resolve, remainingDelay * 1000));
-  }
+  await simulateDelay(simulatedDelaySeconds, requestStartTime);
 
   return {
     statusCode: 200,
@@ -619,6 +697,9 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
     headers: Object.keys(event.headers || {}),
   }));
 
+  // The simulation's settings: the request's query parameters, else the environment's
+  const settings = simulationSettings(event.queryStringParameters || {});
+
   // Health check endpoint (no auth required)
   if (event.rawPath === '/health') {
     return {
@@ -626,8 +707,8 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         status: 'healthy',
-        totalPopulation: parseInt(process.env.MOCK_TOTAL_POPULATION || '10000', 10),
-        errorRate: parseFloat(process.env.MOCK_ERROR_RATE || '0.0'),
+        totalPopulation: settings.totalPopulation,
+        errorRate: settings.errorRate,
       }),
     };
   }
@@ -654,15 +735,10 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
     console.log('Routing to terms endpoint');
 
     // Simulate slow API (optional delay)
-    const simulatedDelaySeconds = parseFloat(process.env.MOCK_SIMULATED_DELAY_SECONDS || '0');
-    if (simulatedDelaySeconds > 0) {
-      console.log(`Simulating API delay: ${simulatedDelaySeconds} seconds`);
-      await new Promise((resolve) => setTimeout(resolve, simulatedDelaySeconds * 1000));
-    }
+    await simulateDelay(settings.simulatedDelaySeconds, requestStartTime);
 
     // Simulate error (optional error rate)
-    const errorRate = parseFloat(process.env.MOCK_ERROR_RATE || '0.0');
-    if (Math.random() < errorRate) {
+    if (settings.errorRate > 0 && Math.random() < settings.errorRate) {
       console.error('Simulating random error response');
       return {
         statusCode: 500,
@@ -694,11 +770,10 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
   const queryParams = event.queryStringParameters || {};
   const recordCount = parseInt(queryParams.recordCount || '200', 10);
   const offset = parseInt(queryParams.offset || '0', 10);
-  const totalPopulation = parseInt(process.env.MOCK_TOTAL_POPULATION || '10000', 10);
-  const errorRate = parseFloat(process.env.MOCK_ERROR_RATE || '0.0');
-  const nonCurrentTermRate = parseNonCurrentTermRate(queryParams);
+  const { totalPopulation, errorRate, nonCurrentTermRate, simulatedDelaySeconds } = settings;
 
-  console.log(`Generating mock data: offset=${offset}, recordCount=${recordCount}, totalPopulation=${totalPopulation}, nonCurrentTermRate=${nonCurrentTermRate}`);
+  console.log(`Generating mock data: offset=${offset}, recordCount=${recordCount}, ` +
+    `settings=${JSON.stringify(settings)}`);
   console.log('Note: offset is accepted for API compatibility but ignored for stateful depletion allocation');
 
   // Simulate errors based on configured error rate
@@ -735,16 +810,7 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
   };
 
   // Simulate API delay if configured (mimics slow real API behavior)
-  const simulatedDelaySeconds = parseFloat(process.env.MOCK_SIMULATED_DELAY_SECONDS || '0');
-  if (simulatedDelaySeconds > 0) {
-    const elapsedSeconds = (Date.now() - requestStartTime) / 1000;
-    const remainingDelay = simulatedDelaySeconds - elapsedSeconds;
-    
-    if (remainingDelay > 0) {
-      console.log(`Simulating API delay: waiting ${remainingDelay.toFixed(2)} more seconds before responding`);
-      await new Promise(resolve => setTimeout(resolve, remainingDelay * 1000));
-    }
-  }
+  await simulateDelay(simulatedDelaySeconds, requestStartTime);
 
   return {
     statusCode: 200,
