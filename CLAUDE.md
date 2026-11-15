@@ -208,6 +208,26 @@ offsets from the counter it has just reset (`QueueSeeder` resets its own).
 - First checked in staging on 2026-11-12 with 15 tasks: the alarm settled after 150 seconds, the 15 tasks were
   running 45 seconds after the desired count was set, and no offset or person was chunked twice.
 
+**A mock landscape's run can start from scratch** (`ApiChunkerEvent.resetState`, since 2026-11-14,
+`mock-landscape-options-plan.md`): the subscriber resets the landscape's run state before the counters and before
+anything is queued or seeded, through `src/chunking/MockLandscapeReset.ts`, which the Runner's
+`MOCK_TARGET_RESET_STATE` shares (see "Mock Landscapes" below for what it empties). Emptying the statistics table
+empties the landscape's Run history too.
+- **Checked first, with the parallel start** (`runStartRefusal()`): a 400 result, nothing reset or sent, for a reset
+  on an event that doesn't start a run, outside a mock landscape (`MockLandscapeReset.refusal()`), or without
+  `CHUNKS_BUCKET_NAME`. Skipped in `DRY_RUN`; a failed reset fails the invocation (not retried), so the run doesn't
+  start. Chained and seeded messages never carry `resetState`.
+- **Only a mock landscape's subscriber can do it**: `ChunkerSubscribingLambda` gives it `CHUNKS_BUCKET_NAME` and the
+  grants (`dynamodb:Scan`, `BatchWriteItem`, `DescribeTable` on the mock target, statistics and both person tables;
+  `s3:ListBucket` limited to the `delta-storage/` prefix and `s3:DeleteObject` under it) only when
+  `isMockLandscape()`; another landscape's subscriber has neither.
+- **The time it takes** comes out of the invocation's 600 seconds, which a parallel start's alarm wait shares (that
+  wait is bounded by the time left). Truncating 25 items at a time is quick for the simulator's population; a mock
+  target filled by a hybrid full sync (about 146,000 people) may not finish (the plan's open question 1).
+- **In a mock landscape, a run start also resets the source simulator's depletion counter**
+  (`simulator-offset-counter`, `runCounterNames()` in `src/chunking/RunCounters.ts`), with the chunker's two, so a
+  run with the simulator reads its population from the first person. A run from the real source doesn't notice.
+
 **Glitched-source safety cutoff (`maxTotalRecords`)**: If the source never returns an empty
 batch, chunking would never end - an endless fetch loop when `iterationLimit=0`, or endless
 chunker message/task chaining when `iterationLimit>0`. `IContext`
@@ -465,7 +485,8 @@ dynamic reference) into the mock stack's integration config secret as
 optionally resets its run state (`RUNNER_MOCK_TARGET_RESET_STATE=true` truncates the mock target and
 statistics tables via `BulkPurger`, then clears the delta baseline of the stack's storage mode: the person
 current-state and history tables in DynamoDB mode, or the `delta-storage/` files of the chunks bucket in
-S3 mode; the mode is detected from whether the person current-state table exists), and warns about
+S3 mode; the mode is detected from whether the person current-state table exists; `src/chunking/MockLandscapeReset.ts`,
+shared with the chunker subscriber's `resetState`), and warns about
 "hybrid" runs (real source API -> mock target) - which remain supported (`RUNNER_SOURCE_SIMULATOR=false`
 against a mock landscape), but consume from the real, depleting source API like any other landscape.
 `BulkPurger` refuses to purge a non-mock landscape unless `force: true`.

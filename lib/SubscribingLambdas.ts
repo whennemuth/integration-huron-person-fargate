@@ -82,6 +82,8 @@ export class SubscribingLambdas extends Construct {
       stackId: ctx.STACK_ID,
       chunkerClusterName: `${CLUSTER_BASE_NAME}-${ctx.TAGS.Landscape.toLowerCase()}`,
       chunkerServiceName: CHUNKER_SERVICE_NAME,
+      // In a mock landscape only, for a run that starts from scratch (resetState): its delta-storage/ baseline
+      chunksBucketName: chunksBucket.bucketName,
       timeoutSeconds: ctx.LAMBDA.chunkerSubscriber.timeoutSeconds,
       memorySizeMb: ctx.LAMBDA.chunkerSubscriber.memorySizeMb,
       dryRun: ctx.DRY_RUN?.lambda?.chunker,
