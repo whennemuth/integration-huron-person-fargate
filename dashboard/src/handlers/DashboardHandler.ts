@@ -22,11 +22,11 @@ import { Config } from 'integration-huron-person';
 let cache: DashboardCache = new DashboardCache();
 
 /**
- * The integration config for the person and bulk sync services. The mock services ignore it, so
- * none is read when they're in use: running locally with mocks needs no config secret.
+ * The integration config for the person and bulk sync services. The offline services ignore it, so
+ * none is read when they're in use: running locally offline needs no config secret.
  */
 async function serviceConfiguration(cache: DashboardCache): Promise<Config> {
-  return ServiceProvider.shouldUseMocks() ? {} as Config : cache.getConfiguration();
+  return ServiceProvider.isOffline() ? {} as Config : cache.getConfiguration();
 }
 
 /**

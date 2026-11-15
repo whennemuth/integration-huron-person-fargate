@@ -40,7 +40,7 @@
     "start-delta-reset": "sh bin/start-off-schedule-sync.sh --populationType person-delta --bulkReset true",
     "dashboard:build:templates": "ts-node dashboard/scripts/BuildTemplates.ts",
     "dashboard:dev": "npm run dashboard:build:templates && ts-node dashboard/scripts/LocalLaunch.ts",
-    "dashboard:dev:mock": "npm run dashboard:dev -- --mocks --landscape mock",
+    "dashboard:dev:offline:mock": "npm run dashboard:dev -- --offline --landscape mock",
     "dashboard:get-stack-name": "ts-node -e \"require('./dashboard/lib/DashboardStacks.ts').echoDashboardStackName()\"",
     "dashboard:synth": "npm run dashboard:build:templates && npm run -s dashboard:get-stack-name | xargs cdk synth",
     "dashboard:publish-dev": "sh dashboard/bin/publish-to-bucket.sh",

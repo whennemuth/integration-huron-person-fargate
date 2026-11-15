@@ -2,14 +2,14 @@
  * Tests starting a sync run from the dashboard (dashboard/src/services/BulkSync.ts): the request it accepts, how
  * it reads the newest run (underway, stalled, finished), the guards, the chunker event it sends (the chunker
  * subscriber resets the counters for it), the review (plan) with every run setting, the real Lambda port against a
- * mocked client, and the routes (GET and POST /api/bulk-sync, POST /api/bulk-sync/plan) under mocks. The form's
+ * mocked client, and the routes (GET and POST /api/bulk-sync, POST /api/bulk-sync/plan) offline. The form's
  * defaults are the scheduled run's (src/chunking/ScheduledRun.ts; test/ScheduledRun.test.ts).
  */
 import { GetFunctionConfigurationCommand, GetFunctionUrlConfigCommand, InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { mockClient } from 'aws-sdk-client-mock';
 import { handler } from '../dashboard/src/handlers/DashboardHandler';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
-import { MOCK_SOURCE_CONFIG, MockBulkSyncService } from '../dashboard/src/handlers/DashboardMocks';
+import { OFFLINE_SOURCE_CONFIG, OfflineBulkSyncService } from '../dashboard/src/handlers/OfflineServices';
 import {
   AwsSourceSimulatorService, BulkSync, BulkSyncError, BulkSyncRequest, LambdaChunkerFunctions, RunActivity
 } from '../dashboard/src/services/BulkSync';
@@ -131,7 +131,7 @@ describe('BulkSync', () => {
   const service = (params: {
     newest?: RunReport; dryRun?: string[]; tone?: string; config?: any; missing?: string[]; serviceMax?: number | 'none'
   } = {}) => {
-    const { newest = finishedRun, dryRun = [], tone, config = MOCK_SOURCE_CONFIG, missing, serviceMax } = params;
+    const { newest = finishedRun, dryRun = [], tone, config = OFFLINE_SOURCE_CONFIG, missing, serviceMax } = params;
     const functions = {
       isDryRun: jest.fn(async (name: string) => dryRun.includes(name)),
       invokeAsync: jest.fn(async () => undefined)
@@ -326,34 +326,34 @@ describe('BulkSync', () => {
   });
 
   it('plays the landscape the launcher names (LANDSCAPE), else local, in its listing and capabilities too', async () => {
-    const { MockLandscapeListingService, MockRunReportingService } = await import('../dashboard/src/handlers/DashboardMocks');
+    const { OfflineLandscapeListingService, OfflineRunReportingService } = await import('../dashboard/src/handlers/OfflineServices');
     const saved = process.env.LANDSCAPE;
     try {
       delete process.env.LANDSCAPE;
-      expect((await new MockBulkSyncService({ runs: runsEndingWith(finishedRun) }).describe()).landscape).toBe('local');
-      expect((await new MockLandscapeListingService().getLandscapes()).current).toBe('local');
+      expect((await new OfflineBulkSyncService({ runs: runsEndingWith(finishedRun) }).describe()).landscape).toBe('local');
+      expect((await new OfflineLandscapeListingService().getLandscapes()).current).toBe('local');
       process.env.LANDSCAPE = 'mock';
-      const state = await new MockBulkSyncService({ runs: runsEndingWith(finishedRun) }).describe();
+      const state = await new OfflineBulkSyncService({ runs: runsEndingWith(finishedRun) }).describe();
       expect(state.landscape).toBe('mock');
       expect(state.mock).toBeDefined();
-      const listing = await new MockLandscapeListingService().getLandscapes();
+      const listing = await new OfflineLandscapeListingService().getLandscapes();
       expect(listing.current).toBe('mock');
       expect(listing.landscapes.filter(entry => entry.current).map(entry => entry.landscape)).toEqual(['mock']);
-      expect((await new MockRunReportingService().getCapabilities()).landscape).toBe('mock');
+      expect((await new OfflineRunReportingService().getCapabilities()).landscape).toBe('mock');
     } finally {
       if (saved === undefined) delete process.env.LANDSCAPE; else process.env.LANDSCAPE = saved;
     }
   });
 
   it("warns that a mock landscape's run reads the real source", async () => {
-    const mock = new MockBulkSyncService({ runs: runsEndingWith(finishedRun), settings: { landscape: 'mock' } });
+    const mock = new OfflineBulkSyncService({ runs: runsEndingWith(finishedRun), settings: { landscape: 'mock' } });
     expect((await mock.describe()).warnings).toEqual([expect.stringContaining('mock is a mock landscape')]);
   });
 
   describe("a mock landscape's options: the source and Start from scratch", () => {
     const SIMULATOR_URL = 'https://example-simulator.lambda-url.us-east-2.on.aws/';
     const mockService = (simulator?: any) => {
-      const service = new MockBulkSyncService({
+      const service = new OfflineBulkSyncService({
         runs: runsEndingWith(finishedRun), settings: { landscape: 'mock' }, now: () => NOW,
         ...(simulator === undefined ? {} : { simulator })
       });
@@ -476,7 +476,7 @@ describe('BulkSync', () => {
         delete process.env[name];
       }
       process.env.LANDSCAPE = 'preview';
-      const bulkSync = BulkSync.fromEnvironment(MOCK_SOURCE_CONFIG, runsEndingWith(finishedRun));
+      const bulkSync = BulkSync.fromEnvironment(OFFLINE_SOURCE_CONFIG, runsEndingWith(finishedRun));
       expect((await bulkSync.describe()).blocked).toEqual({
         code: 'NOT_CONFIGURED', message: expect.stringContaining('missing REGION, CHUNKER_FUNCTION_NAME, PROCESSOR_SUBSCRIBER_FUNCTION_NAME')
       });
@@ -490,11 +490,11 @@ describe('BulkSync', () => {
         CHUNKER_FUNCTION_NAME: 'chunker-subscriber-preview', PROCESSOR_SUBSCRIBER_FUNCTION_NAME: 'processor-subscriber-preview',
         ITEMS_PER_CHUNK: '150'
       });
-      const bulkSync = BulkSync.fromEnvironment(MOCK_SOURCE_CONFIG, runsEndingWith(finishedRun));
+      const bulkSync = BulkSync.fromEnvironment(OFFLINE_SOURCE_CONFIG, runsEndingWith(finishedRun));
       // The source simulator only when the environment names it, as only a mock landscape's does
       expect((bulkSync as any).deps.simulator).toBeUndefined();
       process.env.SOURCE_SIMULATOR_FUNCTION_NAME = 'source-simulator-mock';
-      expect((BulkSync.fromEnvironment(MOCK_SOURCE_CONFIG, runsEndingWith(finishedRun)) as any).deps.simulator).toBeInstanceOf(AwsSourceSimulatorService);
+      expect((BulkSync.fromEnvironment(OFFLINE_SOURCE_CONFIG, runsEndingWith(finishedRun)) as any).deps.simulator).toBeInstanceOf(AwsSourceSimulatorService);
       const request = BulkSyncRequest.parse({ runType: 'full' });
       expect(bulkSync.event(request)).toMatchObject({ iterationLimit: 10, bulkReset: false, trustPreviousStorage: true });
       const byName = Object.fromEntries(bulkSync.runSettings(request).map(row => [row.name, row.value]));
@@ -532,7 +532,7 @@ describe('LambdaChunkerFunctions', () => {
   });
 });
 
-describe('the bulk sync routes, under mocks', () => {
+describe('the bulk sync routes, offline', () => {
   const request = async (method: string, body?: unknown, path = '/api/bulk-sync') => {
     const result = await handler({
       rawPath: path, headers: {}, body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
@@ -541,8 +541,8 @@ describe('the bulk sync routes, under mocks', () => {
     return { status: result.statusCode, body: result.body ? JSON.parse(`${result.body}`) : undefined };
   };
 
-  beforeAll(() => { process.env.LOCALHOST_WITH_MOCKS = 'true'; });
-  afterAll(() => { delete process.env.LOCALHOST_WITH_MOCKS; });
+  beforeAll(() => { process.env.LOCAL_OFFLINE = 'true'; });
+  afterAll(() => { delete process.env.LOCAL_OFFLINE; });
   beforeEach(() => {
     jest.spyOn(console, 'log').mockImplementation(() => undefined);
     jest.spyOn(console, 'error').mockImplementation(() => undefined);

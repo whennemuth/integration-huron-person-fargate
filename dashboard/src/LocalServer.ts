@@ -180,7 +180,7 @@ app.use((err: Error, req: express.Request, res: express.Response, next: express.
 
 /**
  * Start the server.
- * @param options.requestDecorator What stands in for the edge functions (e.g. the local launcher's mock sign-in)
+ * @param options.requestDecorator What stands in for the edge functions (e.g. the local launcher's local sign-in)
  */
 export const startLocalServer = async (options: { requestDecorator?: LocalRequestDecorator } = {}) => {
   requestDecorator = options.requestDecorator;

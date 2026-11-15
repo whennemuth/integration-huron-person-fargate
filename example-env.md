@@ -336,7 +336,7 @@ SERVICE_TOGGLER_LANDSCAPE=dev
 # TASK options: capabilities | runs | summary | chunks | errors | changes | landscapes | lookup | preview | status
 DASHBOARD_SERVICE_PROVIDER_TASK=runs
 # true: the mock services, no AWS access
-DASHBOARD_SERVICE_PROVIDER_LOCALHOST_WITH_MOCKS=false
+DASHBOARD_SERVICE_PROVIDER_LOCAL_OFFLINE=false
 # The dashboard Lambda's environment for the landscape to read (run reporting, landscape registry)
 DASHBOARD_SERVICE_PROVIDER_LANDSCAPE=<landscape>
 DASHBOARD_SERVICE_PROVIDER_REGION=<aws-region>

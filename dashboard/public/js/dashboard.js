@@ -419,7 +419,7 @@ function showSyncLoadingModal(title = 'Syncing Person Data', message = 'Please w
 /**
  * Hide sync loading modal, resolving once it is gone, so the result modal that follows doesn't open
  * on top of it. Bootstrap ignores hide() while the modal is still fading in, which a fast response
- * (e.g. from the local mock services) would otherwise hit, leaving the loading modal stuck open.
+ * (e.g. from the local offline services) would otherwise hit, leaving the loading modal stuck open.
  */
 async function hideSyncLoadingModal() {
     const modal = document.getElementById('syncLoadingModal');

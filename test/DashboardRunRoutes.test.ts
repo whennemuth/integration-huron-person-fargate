@@ -1,6 +1,6 @@
 /**
  * Tests the dashboard's run reporting and landscape routes (dashboard/src/handlers/DashboardHandler.ts):
- * validation, the limit cap, ReportingError mapping and the mock services.
+ * validation, the limit cap, ReportingError mapping and the offline services.
  */
 import { handler } from '../dashboard/src/handlers/DashboardHandler';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
@@ -228,13 +228,13 @@ describe('Dashboard landscapes route', () => {
   });
 });
 
-describe('Dashboard routes with mock services (LOCALHOST_WITH_MOCKS)', () => {
-  beforeAll(() => { process.env.LOCALHOST_WITH_MOCKS = 'true'; });
-  afterAll(() => { delete process.env.LOCALHOST_WITH_MOCKS; });
+describe('Dashboard routes with the offline services (LOCAL_OFFLINE)', () => {
+  beforeAll(() => { process.env.LOCAL_OFFLINE = 'true'; });
+  afterAll(() => { delete process.env.LOCAL_OFFLINE; });
   beforeEach(() => jest.spyOn(console, 'log').mockImplementation(() => {}));
   afterEach(() => jest.restoreAllMocks());
 
-  it('serves runs, a summary, a change page and the landscapes from the mocks', async () => {
+  it('serves runs, a summary, a change page and the landscapes from the offline services', async () => {
     const { body: { runs } } = await request('/api/runs');
     expect(runs.length).toBeGreaterThan(0);
     expect(await request(`/api/runs/${runs[0]}/summary`)).toMatchObject({ status: 200, body: { status: 'SUCCEEDED' } });
@@ -268,7 +268,7 @@ describe('Dashboard routes with mock services (LOCALHOST_WITH_MOCKS)', () => {
     expect(items.filter((item: any) => item.summary).every((item: any) => item.progress === undefined)).toBe(true);
   });
 
-  it('serves the person and bulk sync routes from the mocks without reading the config secret', async () => {
+  it('serves the person and bulk sync routes from the offline services without reading the config secret', async () => {
     const savedArn = process.env.INTEGRATION_SECRETS_ARN;
     delete process.env.INTEGRATION_SECRETS_ARN;
     const post = async (path: string, body: any) => {

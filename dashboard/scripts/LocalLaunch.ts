@@ -3,14 +3,15 @@
  * landscape's dashboard Lambda would run, with the settings in dashboard/scripts/LocalLaunch.env (git-ignored;
  * see LocalLaunch.env.example). The repository's .env is never read.
  *
- *   npm run dashboard:dev [-- <flags>]     (flags: see LocalLaunchOptions.ts, e.g. -- --mocks --storage-mode s3)
+ *   npm run dashboard:dev [-- <flags>]     (flags: see LocalLaunchOptions.ts, e.g. -- --offline --storage-mode s3)
  *
- * Without mocks (MOCKED=false), it looks up the deployed dashboard Lambda of LANDSCAPE in REGION at every launch
+ * Online (OFFLINE=false), it looks up the deployed dashboard Lambda of LANDSCAPE in REGION at every launch
  * and runs the server with that Lambda's environment (its secrets left out), under LocalLaunch.env's
  * overrides, so the server reads the landscape's tables, config secret and registry with your AWS_PROFILE's
- * credentials. With mocks, nothing is looked up and no AWS access is needed.
+ * credentials. Offline, nothing is looked up and no AWS access is needed: the offline services answer from built-in
+ * data (dashboard/src/handlers/OfflineServices.ts).
  *
- * With AUTHENTICATION=mock, the mock sign-in (MockSignIn.ts) stands in front of the handler for the sign-in edge
+ * With AUTHENTICATION=local, the local sign-in (LocalSignIn.ts) stands in front of the handler for the sign-in edge
  * functions: every request arrives signed in as USER_PRINCIPAL, with a signed JWT cookie, and /logout is answered
  * locally.
  *
@@ -26,7 +27,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { parse } from 'dotenv';
 import { DashboardFunctionNotFoundError, LambdaFunction } from './LambdaFunction';
-import { LaunchEnvironment, LOCAL_MOCK_SIGN_IN, LocalLaunchOptions } from './LocalLaunchOptions';
+import { LaunchEnvironment, LOCAL_SIGN_IN, LocalLaunchOptions } from './LocalLaunchOptions';
 import type { LocalRequestDecorator } from '../src/LocalServer';
 
 export const ENV_FILE = join(__dirname, 'LocalLaunch.env');
@@ -52,8 +53,8 @@ const readSettings = (): Record<string, string> => {
  */
 export const lookupFailure = (landscape: string | undefined, error: unknown): Error => {
   const hint = error instanceof DashboardFunctionNotFoundError
-    ? 'Check LANDSCAPE and REGION in LocalLaunch.env, or set MOCKED=true.'
-    : 'Check that your AWS session is current (e.g. aws sso login), or set MOCKED=true.';
+    ? 'Check LANDSCAPE and REGION in LocalLaunch.env, or set OFFLINE=true.'
+    : 'Check that your AWS session is current (e.g. aws sso login), or set OFFLINE=true.';
   const message = error instanceof Error ? error.message : String(error);
   return new Error(`Can't look up the ${landscape} dashboard Lambda's environment: ${message}\n${hint}`);
 };
@@ -72,8 +73,11 @@ const lookUpLambdaEnvironment = async (options: LocalLaunchOptions, awsProfile?:
 
 /** Says how the server is about to run, and with what (secrets never reach here, and are masked anyway) */
 const describe = (options: LocalLaunchOptions, { variables, unset, overrides }: LaunchEnvironment): void => {
-  const source = options.mocked ? 'the mock services (no AWS access)' : `the ${options.landscape} landscape's dashboard Lambda environment`;
+  const source = options.offline
+    ? `offline, playing the ${options.offlineLandscape} landscape (built-in data, no AWS access)`
+    : `the ${options.landscape} landscape's dashboard Lambda environment`;
   console.log(`\nLocal launch: ${source}; sign-in: ${options.authentication}; watch: ${options.watch}`);
+  options.warnings.forEach(warning => console.warn(`  Renamed: ${warning}`));
   const shown = LambdaFunction.masked(variables);
   const width = Math.max(...Object.keys(shown).map(name => name.length));
   Object.entries(shown).forEach(([name, value]) => {
@@ -91,17 +95,17 @@ const applyEnvironment = ({ variables, unset }: LaunchEnvironment): void => {
 };
 
 /**
- * Start the server, with the mock sign-in in front of its handler if the environment asks for it. Required, not
+ * Start the server, with the local sign-in in front of its handler if the environment asks for it. Required, not
  * imported: the server's modules read some variables when they load.
  */
 const startServer = (): void => {
   const { startLocalServer } = require('../src/LocalServer') as typeof import('../src/LocalServer');
   let requestDecorator: LocalRequestDecorator | undefined;
-  if (process.env[LOCAL_MOCK_SIGN_IN] === 'true') {
-    const { MockSignIn } = require('./MockSignIn') as typeof import('./MockSignIn');
-    const mockSignIn = MockSignIn.fromEnvironment(process.env);
-    console.log(`Mock sign-in: every request is signed in as ${mockSignIn.userName} (JWT cookie ${mockSignIn.cookieName})`);
-    requestDecorator = mockSignIn;
+  if (process.env[LOCAL_SIGN_IN] === 'true') {
+    const { LocalSignIn } = require('./LocalSignIn') as typeof import('./LocalSignIn');
+    const localSignIn = LocalSignIn.fromEnvironment(process.env);
+    console.log(`Local sign-in: every request is signed in as ${localSignIn.userName} (JWT cookie ${localSignIn.cookieName})`);
+    requestDecorator = localSignIn;
   }
   startLocalServer({ requestDecorator });
 };

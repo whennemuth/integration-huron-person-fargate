@@ -41,7 +41,7 @@ Workspace-wide agent instructions live in `<workspace root>/.claude/CLAUDE.md`, 
 - **Lambda handler abstractions**: Request routing, response formatting
 - **Template service patterns**: Mustache rendering, inline asset injection
 - **Origin verification**: Security header validation, request filtering
-- **Mock service implementations**: DashboardMocks behavior, local vs production switching
+- **Offline service implementations**: OfflineServices behavior, local vs production switching
 - **CDK infrastructure patterns**: Stack dependencies, CloudFront configurations, Lambda Function URL setup
 - **Authentication abstractions**: SAML/OIDC integration (when configured)
 
@@ -133,7 +133,7 @@ The Lambda function serves two primary roles:
 
 ### Development Features
 - Express-based local development server
-- Mock service implementations for standalone testing
+- Offline service implementations for standalone testing (no AWS access)
 - Hot reload with nodemon watch mode
 - Template build automation
 
@@ -215,33 +215,39 @@ const provider = new ServiceProvider(config);
 const personSync = provider.getPersonSyncService();
 ```
 
-### Mock Services for Local Development
-**Location**: `src/handlers/DashboardMocks.ts`
+### Offline Services for Local Development
+**Location**: `src/handlers/OfflineServices.ts`
 
-Provides mock implementations when `LOCALHOST_WITH_MOCKS=true` (ignored in Lambda):
-- Mock BU CDM data source responses
-- Mock Huron data target operations
+**"Offline" and "mock" are kept apart** (renamed 2026-11-15): *offline* is a local run whose dashboard services are
+stand-ins answering from built-in data, with no AWS access; *mock* means only a mock landscape (`isMockLandscape()`),
+a deployed pipeline whose target is the target simulator. The local stand-in for the sign-in edge functions is the
+*local sign-in*. An offline run can play a mock landscape (`--landscape mock`).
+
+Provides the offline implementations when `LOCAL_OFFLINE=true` (ignored in Lambda):
+- Sample BU CDM data source responses
+- Sample Huron data target operations
 - Simulated sync execution
-- Fake status data
-- A fake landscape registry (`mock` and `Staging` at example.com urls), whose current landscape is the one the
-  mocks play: `LANDSCAPE`, which the launcher sets to `local`, or to `--landscape`'s (`npm run dashboard:dev:mock`
-  plays `mock`, so the top bar shows mock selected, with the mock tint). The entries' urls lead nowhere: a local run
-  plays one landscape, and switching means restarting with the other command.
-- **The landscape the mocks play** (`LANDSCAPE`, else `local`) is the one Bulk sync (`MockBulkSyncService`) and run
-  reporting's capabilities report. A mock landscape's name (`mock`) shows Bulk sync's mock landscape options.
-- Run reporting (`src/handlers/MockRunReporting.ts`): a deterministic history of 40 runs ending
-  with the nightly run of 2026-11-04. `MockRunCatalog` defines them: nightly delta syncs, a full
+- Sample status data
+- A sample landscape registry (`mock` and `Staging` at example.com urls), whose current landscape is the one the
+  offline services play: `LANDSCAPE`, which the launcher sets to `local`, or to `--landscape`'s
+  (`npm run dashboard:dev:offline:mock` plays `mock`, so the top bar shows mock selected, with the mock tint). The
+  entries' urls lead nowhere: a local run plays one landscape, and switching means restarting with the other command.
+- **The landscape the offline services play** (`LANDSCAPE`, else `local`) is the one Bulk sync
+  (`OfflineBulkSyncService`) and run reporting's capabilities report. A mock landscape's name (`mock`) shows Bulk
+  sync's mock landscape options.
+- Run reporting (`src/handlers/OfflineRunReporting.ts`): a deterministic history of 40 runs ending
+  with the nightly run of 2026-11-04. `OfflineRunCatalog` defines them: nightly delta syncs, a full
   sync every seventh night, and at fixed positions from the newest the special cases (an incomplete
   run, a terminal error, a failed and a post-processing-failed run, a dry run, a bulk reset, two
   single-person runs). The newest run has 260 errors across 400/404/429/500 and 130/240/12
   NEW/UPDATED/DELETED changes, enough for several pages. Chunk statistics, errors and changes agree
-  with each run's summary. `MockRunReportingService` pages them with offset cursors (`OffsetPager`)
-  under RunReporting's limits and `ReportingError` codes. `MOCK_STORAGE_MODE` (`dynamodb`, the
+  with each run's summary. `OfflineRunReportingService` pages them with offset cursors (`OffsetPager`)
+  under RunReporting's limits and `ReportingError` codes. `OFFLINE_STORAGE_MODE` (`dynamodb`, the
   default, or `s3`) sets the storage mode it reports; in S3 mode change lists are refused with
-  `UNSUPPORTED_IN_STORAGE_MODE`. Tests: `test/DashboardMockRunReporting.test.ts`.
+  `UNSUPPORTED_IN_STORAGE_MODE`. Tests: `test/DashboardOfflineRunReporting.test.ts`.
 
 **Benefit**: Enables full local testing without AWS credentials or external service access. The
-mocks ignore the integration config, so the person and bulk sync routes don't read it when they
+offline services ignore the integration config, so the person and bulk sync routes don't read it when they
 are in use (`serviceConfiguration()` in `DashboardHandler.ts`): no config secret is needed.
 
 ### Template Service Pattern
@@ -277,8 +283,8 @@ Request validation security layer:
 npm install
 npm run dashboard:build:templates  # Build Mustache templates with inline assets
 npm run dashboard:dev              # Start the local server at http://localhost:3000/dashboard
-npm run dashboard:dev -- --mocks   # The same with the mock services for one run (flags: see below)
-npm run dashboard:dev:mock         # The mock services playing the mock landscape (--mocks --landscape mock)
+npm run dashboard:dev -- --offline  # The same offline (the offline services, no AWS access) for one run (flags: see below)
+npm run dashboard:dev:offline:mock # Offline, playing the mock landscape (--offline --landscape mock)
 ```
 
 `dashboard:dev` builds the templates, then runs `scripts/LocalLaunch.ts`, which starts
@@ -287,7 +293,7 @@ npm run dashboard:dev:mock         # The mock services playing the mock landscap
 repository's `.env` is never read.
 - **The landscape**: `LANDSCAPE`, `REGION` and optional `STACK_ID` name the deployed dashboard Lambda to
   run as; `AWS_PROFILE` gives the credentials the server uses in place of the Lambda's role.
-- **Without mocks** (`MOCKED=false`) the launcher looks up that Lambda's environment at every launch
+- **Online** (`OFFLINE=false`) the launcher looks up that Lambda's environment at every launch
   (`LambdaFunction`, see "Test Harnesses" below), leaves out its secrets (`ORIGIN_VERIFY_SECRET`), and runs
   the server with it: the server reads the landscape's tables, config secret and registry. A redeploy
   that changes the environment is picked up at the next launch. An expired AWS session, or a landscape
@@ -297,33 +303,37 @@ repository's `.env` is never read.
 - **Overrides**: any other variable in `LocalLaunch.env` wins over the Lambda's value (the launcher marks
   each one in what it prints). Without a deployed dashboard Lambda, the whole environment can be given there
   by hand.
-- **Switches**: `MOCKED` (`LOCALHOST_WITH_MOCKS`; no lookup and no AWS access), `AUTHENTICATION` (`none`:
-  public mode, the app login/logout headers removed; `mock`: signed in as `USER_PRINCIPAL`, see below),
+- **Switches**: `OFFLINE` (`LOCAL_OFFLINE`; no lookup and no AWS access), `AUTHENTICATION` (`none`:
+  public mode, the app login/logout headers removed; `local`: signed in as `USER_PRINCIPAL`, see below),
   `WATCH` (nodemon restarts the server on a change under `dashboard/`; the environment is looked up once and
-  handed to each restart through `LOCAL_LAUNCH_RESOLVED`), `MOCK_STORAGE_MODE` (`dynamodb` | `s3`, the
-  storage mode the mock run reporting reports), `PORT` (default 3000).
-- **Flags** override a switch for one run, after `--`: `--mocks`, `--no-mocks`, `--auth <none|mock>`,
-  `--watch`, `--no-watch`, `--storage-mode <dynamodb|s3>` (mocks only), `--landscape <name>` (mocks only: the
-  landscape the mocks play, default `local`; `LocalLaunch.env`'s `LANDSCAPE` names a deployed landscape and isn't
-  used with mocks), `--allow-production`.
-- **Production guard**: without mocks the launcher refuses a landscape whose `LANDSCAPE_TONE` (the Lambda's,
+  handed to each restart through `LOCAL_LAUNCH_RESOLVED`), `OFFLINE_STORAGE_MODE` (`dynamodb` | `s3`, the
+  storage mode the offline run reporting reports), `PORT` (default 3000).
+- **Flags** override a switch for one run, after `--`: `--offline`, `--online`, `--auth <none|local>`,
+  `--watch`, `--no-watch`, `--storage-mode <dynamodb|s3>` (offline only), `--landscape <name>` (offline only: the
+  landscape the offline services play, default `local`; `LocalLaunch.env`'s `LANDSCAPE` names a deployed landscape
+  and isn't used offline), `--allow-production`.
+- **Names before 2026-11-15** still work, each with a "Renamed:" warning saying what it is now
+  (`LocalLaunchOptions.RENAMED`): `MOCKED`, `MOCK_STORAGE_MODE` and `AUTHENTICATION=mock` in `LocalLaunch.env`,
+  `--mocks`, `--no-mocks` and `--auth mock`; and on the server `LOCALHOST_WITH_MOCKS` (`ServiceProvider.isOffline()`)
+  and `MOCK_STORAGE_MODE`. A new name set alongside an old one wins.
+- **Production guard**: online, the launcher refuses a landscape whose `LANDSCAPE_TONE` (the Lambda's,
   or an override) is `production`, since Sync and Bulk sync would write to its real target from local code,
   unless `ALLOW_PRODUCTION=true` or `--allow-production`. A local run also uses your profile's permissions,
   not the Lambda role's.
-- **Mock sign-in** (`AUTHENTICATION=mock`, `MockSignIn` in `scripts/MockSignIn.ts`): stands in for the sign-in
+- **Local sign-in** (`AUTHENTICATION=local`, `LocalSignIn` in `scripts/LocalSignIn.ts`): stands in for the sign-in
   edge functions, so every request arrives signed in as `USER_PRINCIPAL` without an IdP. The Lambda's own
   sign-in settings are kept (`APP_AUTHORIZATION`, the login/logout header names, `AUTH_COOKIE_NAME`), so
-  `Authenticator` runs as deployed. Before the handler sees a request, `MockSignIn` adds the `authenticated:
+  `Authenticator` runs as deployed. Before the handler sees a request, `LocalSignIn` adds the `authenticated:
   true` header and presents the JWT cookie, made as the edge functions make it: `JwtTools` signs
   `{ sub, user: <claims> }` (RS256) with a key pair generated when the server starts (`publicKey` keeps the
   public half), the claims array-valued as the IdP sends them (`buPrincipal`, and `eduPersonPrincipalName`,
   `mail`, `givenName`, `sn` from `USER_EPPN`, `USER_MAIL`, `USER_GIVEN_NAME`, `USER_SURNAME`). The top bar shows
-  the user. `/logout` is answered locally with a page saying the mock user can't sign out. Under mocks, with no
+  the user. `/logout` is answered locally with a page saying the local user can't sign out. Offline, with no
   Lambda to take them from, placeholder login/logout header names are set. The launcher passes
-  `LOCAL_MOCK_SIGN_IN=true` in the environment, so each watch restart puts it back in front of the handler.
+  `LOCAL_SIGN_IN=true` in the environment, so each watch restart puts it back in front of the handler.
   `LocalServer.ts` takes it through `startLocalServer({ requestDecorator })` (`LocalRequestDecorator`:
   `decorate(event)` and an optional `respond(path)`), and imports nothing from `scripts/`. Tests:
-  `test/DashboardMockSignIn.test.ts`.
+  `test/DashboardLocalSignIn.test.ts`.
 
 `LocalLaunchOptions` (`scripts/LocalLaunchOptions.ts`) decides all of this from the file and the flags
 without side effects; `LocalLaunch.ts` reads, looks up, prints the environment (secrets masked) and starts.
@@ -333,7 +343,7 @@ runs scripts in `cmd.exe` on Windows, where neither `VAR=value` prefixes nor `sh
 **Environment Variables** (set by the launcher, or in `LocalLaunch.env`):
 - `NODE_ENV=development` - Enables local mode, bypasses origin verification
 - `PORT=3000` - Local server port (default)
-- `LOCALHOST_WITH_MOCKS=true` - Enables mock services
+- `LOCAL_OFFLINE=true` - Enables the offline services
 - `OVERRIDE_CACHE_WITH_LOCAL_CONFIG=true` - Loads the integration config with fargate's
   `getConfig()` (same sources as the fargate harnesses) instead of reading `INTEGRATION_SECRETS_ARN`
 
@@ -349,7 +359,7 @@ pipeline harness's.
   provider and calls it as `DashboardHandler` does, read only. `TASK`: `capabilities`, `runs`,
   `summary`, `chunks`, `errors`, `changes`, `landscapes`, `lookup`, `preview`,
   `status`. The landscape's Lambda environment (`LANDSCAPE`, `REGION`, table names, ...) is
-  given with the prefix; `LOCALHOST_WITH_MOCKS=true` uses the mocks without loading any config.
+  given with the prefix; `LOCAL_OFFLINE=true` uses the offline services without loading any config.
 
 ```bash
 DASHBOARD_SERVICE_PROVIDER_TASK=summary npx ts-node -r dotenv/config dashboard/src/services/ServiceProvider.ts
@@ -658,7 +668,7 @@ landscape's runs from the run reporting routes. Its classes each do one thing:
 - **Started by** (`RunView.startedByLabel()`): a column after Started, and the first of a run's facts ("Started by
   jdoe"): the signed-in user's `buPrincipal` for a start from Bulk sync ("Dashboard" without one), "Schedule" or
   "Runner", from the summary's `startedBy` or else the flags' (fargate `src/chunking/StartedBy.ts`); a dash for a run
-  from before it was recorded. The mock catalog's newest 30 runs have one (`MockRunCatalog.STARTED_BY_RECORDED_FOR`):
+  from before it was recorded. The offline catalog's newest 30 runs have one (`OfflineRunCatalog.STARTED_BY_RECORDED_FOR`):
   the schedule's nightly runs, two single-person runs and the incomplete run from Bulk sync, the bulk reset from the
   Runner.
 - A single-person run is named by its BUID only when the report has metadata (the source URL's `buid`): a
@@ -673,7 +683,7 @@ landscape's runs from the run reporting routes. Its classes each do one thing:
   from the summary or else the chunk statistics) and **Changes** (by type; in S3 mode, where
   `changesSupported` is false, it says why there are none).
 Tests: `test/DashboardRunHistory.test.ts` runs the script in a vm (as written and minified) and drives
-`RunsApi` through the handler with the mock run history.
+`RunsApi` through the handler with the offline run history.
 
 ### Overview page
 
@@ -716,8 +726,8 @@ routes above).
     `mockTargetResetState` settings come from the form in a mock landscape, and are fixed at `false` elsewhere.
   - **The review** names the target simulator as the target, says which source, and notes a Parallel start seeded
     past the simulator's people (from the review's `itemsPerChunk`).
-  - **Under mocks**: `npm run dashboard:dev:mock` plays the mock landscape, with a stand-in simulator
-    (`MockBulkSyncService.MOCK_SIMULATOR`, mock's deployed settings) at an example URL. It is always found, so a
+  - **Offline**: `npm run dashboard:dev:offline:mock` plays the mock landscape, with a stand-in simulator
+    (`OfflineBulkSyncService.STAND_IN_SIMULATOR`, mock's deployed settings) at an example URL. It is always found, so a
     simulator that isn't deployed is seen only in the tests.
 - **Parallel start** (`parallelStart`, 0 by default): how many chunker tasks start the run at once, standing for the
   Runner's `MESSAGES_TO_PREPOPULATE` and `DESIRED_COUNT` together. 0 sends the chunker subscriber one message, and
@@ -766,7 +776,7 @@ routes above).
   (no principal in a public dashboard). It goes on the event, so the review shows it and the run records it (Run
   history's Started by). Never taken from the request body.
 Tests: `test/DashboardBulkSyncPage.test.ts` (the script in a vm, as written and minified, and once over the
-mock routes); the service: `test/DashboardBulkSync.test.ts`.
+offline routes); the service: `test/DashboardBulkSync.test.ts`.
 
 ## Dependencies
 
@@ -783,7 +793,7 @@ mock routes); the service: `test/DashboardBulkSync.test.ts`.
 1. Create service class in `src/services/`
 2. Define service interface in `ServiceTypes.ts`
 3. Register in `ServiceProvider.ts`
-4. Add mock implementation to `DashboardMocks.ts`
+4. Add an offline implementation to `OfflineServices.ts`
 5. Create handler method in `DashboardHandler.ts`
 6. Add route in Lambda handler
 
@@ -822,8 +832,8 @@ mock routes); the service: `test/DashboardBulkSync.test.ts`.
 
 ### Local Development Issues
 The launcher (`npm run dashboard:dev`, see "Local Development") sets `NODE_ENV=development`, which bypasses
-origin verification, and `LOCALHOST_WITH_MOCKS` from `MOCKED`; don't set them by hand.
-1. **No AWS access, or none wanted**: `MOCKED=true` in `scripts/LocalLaunch.env`, or `-- --mocks` for one run.
+origin verification, and `LOCAL_OFFLINE` from `OFFLINE`; don't set them by hand.
+1. **No AWS access, or none wanted**: `OFFLINE=true` in `scripts/LocalLaunch.env`, or `-- --offline` for one run.
 2. **The launch stops before the server starts**: an expired session for `AWS_PROFILE` (refresh it), or no
    dashboard Lambda by that name (check `LANDSCAPE`, `REGION` and `STACK_ID`); the message says which.
 3. **The port is already in use**: stopping `npm run dashboard:dev` (Ctrl+C, or closing its terminal) can leave
@@ -833,6 +843,6 @@ origin verification, and `LOCALHOST_WITH_MOCKS` from `MOCKED`; don't set them by
    `npm.cmd run dashboard:dev`, or use `cmd.exe` or Git Bash.
 5. **Works locally, fails deployed** (or the reverse): a local run uses your profile's AWS permissions, not the
    Lambda role's, so a missing grant only shows when deployed.
-6. **The top bar names the user differently**: deployed it shows the IdP's `eduPersonPrincipalName`; the mock
+6. **The top bar names the user differently**: deployed it shows the IdP's `eduPersonPrincipalName`; the local
    sign-in shows `USER_PRINCIPAL` unless `USER_EPPN` is set.
 7. Route errors are in the server's own output.

@@ -1,4 +1,6 @@
-// Mock implementations for local development
+// The offline services: a local run's stand-ins for the dashboard's services, answering from built-in data with no
+// AWS access (LOCAL_OFFLINE=true, the launcher's OFFLINE switch). Not to be confused with a mock landscape, whose
+// pipeline's target is mocked: --landscape mock plays one.
 import {
   PersonLookupService,
   PersonSyncService,
@@ -23,9 +25,9 @@ import { BulkSync, BulkSyncSettings, SourceSimulatorService } from '../services/
 import { isMockLandscape } from '../../../src/Utils';
 import type { StartedBy } from '../../../src/chunking/StartedBy';
 import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
-import { MockRunReportingService } from './MockRunReporting';
+import { OfflineRunReportingService } from './OfflineRunReporting';
 
-export class MockPersonLookupService implements PersonLookupService {
+export class OfflinePersonLookupService implements PersonLookupService {
   async lookup(params: PersonLookupParams): Promise<PersonLookupResult> {
     const { personId='', system } = params;
     const buId = system === 'source' ? personId : 'U1234567';
@@ -48,7 +50,7 @@ export class MockPersonLookupService implements PersonLookupService {
   }
 }
 
-export class MockPersonSyncService implements PersonSyncService {
+export class OfflinePersonSyncService implements PersonSyncService {
   async preview(personId: string, operation: CrudOperation): Promise<PersonPushRequest> {
     return {
       operation: operation as 'create' | 'update' | 'delete',
@@ -58,9 +60,9 @@ export class MockPersonSyncService implements PersonSyncService {
           {
             fieldValues: [
               { id: personId },
-              { firstName: 'Mock' },
+              { firstName: 'Sample' },
               { lastName: 'Person' },
-              { email: 'mock@example.com' }
+              { email: 'sample@example.com' }
             ]
           }
         ]
@@ -71,17 +73,17 @@ export class MockPersonSyncService implements PersonSyncService {
   async previewExperiment(personId: string, rawData: any[], operation?: CrudOperation): Promise<PersonPushRequest> {
     // Same as preview(), but without operation field
     // Uses provided rawData instead of looking it up
-    const mockPersonId = personId || rawData[0]?.personid || 'U1234567';
+    const samplePersonId = personId || rawData[0]?.personid || 'U1234567';
     return {
       data: {
-        personId: mockPersonId,
+        personId: samplePersonId,
         fieldSets: [
           {
             fieldValues: [
-              { id: mockPersonId },
-              { firstName: rawData[0]?.personBasic?.names?.[0]?.firstName || 'Mock' },
+              { id: samplePersonId },
+              { firstName: rawData[0]?.personBasic?.names?.[0]?.firstName || 'Sample' },
               { lastName: rawData[0]?.personBasic?.names?.[0]?.lastName || 'Person' },
-              { email: rawData[0]?.personContact?.emails?.[0]?.emailAddress || 'mock@example.com' }
+              { email: rawData[0]?.personContact?.emails?.[0]?.emailAddress || 'sample@example.com' }
             ]
           }
         ]
@@ -101,8 +103,8 @@ export class MockPersonSyncService implements PersonSyncService {
   }
 }
 
-/** The source endpoints a mock start reads from the (mock) integration config */
-export const MOCK_SOURCE_CONFIG = {
+/** The source endpoints an offline start reads from the (offline) integration config */
+export const OFFLINE_SOURCE_CONFIG = {
   dataSource: {
     people: { endpointConfig: { baseUrl: 'https://cdm.example.bu.edu' }, fetchPath: '/api/people' },
     person: { endpointConfig: { baseUrl: 'https://cdm.example.bu.edu' }, fetchPath: '/api/person' }
@@ -110,19 +112,19 @@ export const MOCK_SOURCE_CONFIG = {
 } as unknown as Config;
 
 /**
- * The real BulkSync over the mock run history, with an in-memory stand-in for the chunker Lambda:
+ * The real BulkSync over the offline run history, with an in-memory stand-in for the chunker Lambda:
  * the request is validated and the guards are checked as in a landscape, and a start records the chunker event it
  * would have sent (invoked) instead of starting anything.
  *
- * Its landscape is the one the mocks play (LANDSCAPE, which the launcher sets: `local`, or --landscape's, as
- * `npm run dashboard:dev:mock` sets `mock`). A mock landscape's name shows Bulk sync's mock landscape options, with a
- * stand-in source simulator (MOCK_SIMULATOR) at an example URL with mock's deployed settings.
+ * Its landscape is the one the offline services play (LANDSCAPE, which the launcher sets: `local`, or --landscape's, as
+ * `npm run dashboard:dev:offline:mock` sets `mock`). A mock landscape's name shows Bulk sync's mock landscape options, with a
+ * stand-in source simulator (STAND_IN_SIMULATOR) at an example URL with mock's deployed settings.
  */
-export class MockBulkSyncService implements BulkSyncService {
-  /** The mock chunker service's most tasks, which bounds Parallel start */
+export class OfflineBulkSyncService implements BulkSyncService {
+  /** The offline chunker service's most tasks, which bounds Parallel start */
   static readonly CHUNKER_MAX_TASKS = 15;
   /** A mock landscape's stand-in source simulator: found, at an example Function URL, with mock's deployed settings */
-  static readonly MOCK_SIMULATOR: SourceSimulatorService = {
+  static readonly STAND_IN_SIMULATOR: SourceSimulatorService = {
     lookup: async () => ({ url: 'https://example-simulator.lambda-url.us-east-2.on.aws/' }),
     settings: async () => ({ totalPopulation: 1950, simulatedDelaySeconds: 3, errorRate: 0 })
   };
@@ -134,17 +136,17 @@ export class MockBulkSyncService implements BulkSyncService {
     runs?: Pick<RunReportingService, 'listRunPage' | 'getRunReport'>;
     settings?: Partial<BulkSyncSettings>;
     dryRun?: string[];
-    /** A mock landscape's source simulator (default: MOCK_SIMULATOR in a mock landscape, none elsewhere) */
+    /** A mock landscape's source simulator (default: STAND_IN_SIMULATOR in a mock landscape, none elsewhere) */
     simulator?: SourceSimulatorService | null;
     now?: () => number;
   } = {}) {
-    const { runs = new MockRunReportingService(), settings = {}, dryRun = [], now } = params;
+    const { runs = new OfflineRunReportingService(), settings = {}, dryRun = [], now } = params;
     const landscape = settings.landscape ?? (process.env.LANDSCAPE || LOCAL_LANDSCAPE);
     const simulator = params.simulator === undefined
-      ? (isMockLandscape(landscape) ? MockBulkSyncService.MOCK_SIMULATOR : undefined)
+      ? (isMockLandscape(landscape) ? OfflineBulkSyncService.STAND_IN_SIMULATOR : undefined)
       : params.simulator ?? undefined;
     this.service = new BulkSync({
-      config: MOCK_SOURCE_CONFIG,
+      config: OFFLINE_SOURCE_CONFIG,
       settings: {
         landscape,
         chunkerFunctionName: `chunker-subscriber-${landscape}`,
@@ -163,7 +165,7 @@ export class MockBulkSyncService implements BulkSyncService {
         invokeAsync: async (_functionName, event) => { this.invoked.push(event); }
       },
       // As preview's chunker service: at most 15 tasks
-      chunkerService: { maxTasks: async () => MockBulkSyncService.CHUNKER_MAX_TASKS },
+      chunkerService: { maxTasks: async () => OfflineBulkSyncService.CHUNKER_MAX_TASKS },
       ...(simulator ? { simulator } : {}),
       now
     });
@@ -182,7 +184,7 @@ export class MockBulkSyncService implements BulkSyncService {
   }
 }
 
-export class MockSystemStatusService implements SystemStatusService {
+export class OfflineSystemStatusService implements SystemStatusService {
   async getStatus(): Promise<SystemStatusResult> {
     return {
       timestamp: new Date().toISOString(),
@@ -202,12 +204,12 @@ export class MockSystemStatusService implements SystemStatusService {
   }
 }
 
-// Run reporting: a deterministic history of runs in every state (see MockRunReporting.ts)
-export { MockRunReportingService } from './MockRunReporting';
+// Run reporting: a deterministic history of runs in every state (see OfflineRunReporting.ts)
+export { OfflineRunReportingService } from './OfflineRunReporting';
 
-export class MockLandscapeListingService implements LandscapeListingService {
+export class OfflineLandscapeListingService implements LandscapeListingService {
   async getLandscapes(): Promise<LandscapeListing> {
-    // The landscape the mocks play (LANDSCAPE: local, or the launcher's --landscape, e.g. mock) is the current one
+    // The landscape the offline services play (LANDSCAPE: local, or the launcher's --landscape, e.g. mock) is the current one
     const current = process.env.LANDSCAPE || LOCAL_LANDSCAPE;
     return {
       current,
@@ -216,36 +218,5 @@ export class MockLandscapeListingService implements LandscapeListingService {
         { landscape: 'staging', label: 'Staging', url: 'https://staging.example.com', isDefault: true }
       ].map(entry => ({ ...entry, current: entry.landscape === current }))
     };
-  }
-}
-
-// Legacy exports for backward compatibility (can be removed later)
-export class MockSinglePersonSync {
-  static async sync(personId: string, operation: string) {
-    const service = new MockPersonSyncService();
-    return await service.sync(personId, CrudOperation.CREATE);
-  }
-}
-
-export class MockConfigManager {
-  static getConfig() {
-    return {
-      sourceApi: { url: 'https://api.example.com' },
-      targetApi: { url: 'https://target.example.com' }
-    };
-  }
-}
-
-export class MockPersonLookup {
-  static lookup(personId: string, system: 'source' | 'target') {
-    const service = new MockPersonLookupService();
-    return service.lookup({ personId, system } as PersonLookupParams);
-  }
-}
-
-export class MockSystemStatus {
-  static getStatus() {
-    const service = new MockSystemStatusService();
-    return service.getStatus();
   }
 }

@@ -11,7 +11,7 @@ import { Script, createContext } from 'vm';
 import { minifyJS } from '../dashboard/scripts/BuildTemplates';
 import { handler } from '../dashboard/src/handlers/DashboardHandler';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
-import { NEWEST_MOCK_RUN } from '../dashboard/src/handlers/MockRunReporting';
+import { NEWEST_OFFLINE_RUN } from '../dashboard/src/handlers/OfflineRunReporting';
 
 const JS_DIR = join(__dirname, '../dashboard/public/js');
 const SCRIPTS = ['page-state.js', 'run-history.js', 'system-status.js', 'overview.js'];
@@ -210,7 +210,7 @@ describe.each([false, true])('overview.js and system-status.js (minified: %s)', 
   });
 });
 
-describe('overview.js against the dashboard routes and mock services', () => {
+describe('overview.js against the dashboard routes and offline services', () => {
   const { RunsApi, OverviewPage } = loadScripts();
 
   /** dashboard.js's fetchSectionData, over the handler instead of fetch */
@@ -230,15 +230,15 @@ describe('overview.js against the dashboard routes and mock services', () => {
     return data;
   };
 
-  beforeAll(() => { process.env.LOCALHOST_WITH_MOCKS = 'true'; });
-  afterAll(() => { delete process.env.LOCALHOST_WITH_MOCKS; });
+  beforeAll(() => { process.env.LOCAL_OFFLINE = 'true'; });
+  afterAll(() => { delete process.env.LOCAL_OFFLINE; });
   beforeEach(() => jest.spyOn(console, 'log').mockImplementation(() => {}));
   afterEach(() => jest.restoreAllMocks());
 
   it('shows the newest mock run and the mock service checks', async () => {
     const { root, parts } = fakeOverview();
     await new OverviewPage({ api: new RunsApi(getJson), getJson, root }).load();
-    expect(parts['[data-latest-run]'].innerHTML).toContain(`#runs/${NEWEST_MOCK_RUN}`);
+    expect(parts['[data-latest-run]'].innerHTML).toContain(`#runs/${NEWEST_OFFLINE_RUN}`);
     expect(parts['[data-services]'].innerHTML).toContain('Target API (Huron)');
   });
 });

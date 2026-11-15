@@ -4,8 +4,8 @@
  * rows it builds. The script is browser code with no module system, so it is run in a vm context, as written
  * and as the Lambda build minifies it.
  *
- * RunsApi is driven through the dashboard handler with the mock services (LOCALHOST_WITH_MOCKS), so the page's
- * requests are checked against the routes and the mock run history they will meet under `dashboard:dev -- --mocks`.
+ * RunsApi is driven through the dashboard handler with the offline services (LOCAL_OFFLINE), so the page's
+ * requests are checked against the routes and the offline run history they will meet under `dashboard:dev -- --offline`.
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -13,7 +13,7 @@ import { Script, createContext } from 'vm';
 import { minifyJS } from '../dashboard/scripts/BuildTemplates';
 import { handler } from '../dashboard/src/handlers/DashboardHandler';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
-import { MOCK_RUN_COUNT, NEWEST_MOCK_RUN } from '../dashboard/src/handlers/MockRunReporting';
+import { OFFLINE_RUN_COUNT, NEWEST_OFFLINE_RUN } from '../dashboard/src/handlers/OfflineRunReporting';
 
 const JS_DIR = join(__dirname, '../dashboard/public/js');
 const CLASSES = ['Html', 'RunFormat', 'RunView', 'RunsApi', 'CursorPager', 'PagedTable', 'RunListTable', 'RunDetailView', 'RunHistoryPage'];
@@ -555,8 +555,8 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
 describe('run-history.js against the dashboard routes and mock run history', () => {
   const { RunsApi, CursorPager } = loadRunHistory();
 
-  beforeAll(() => { process.env.LOCALHOST_WITH_MOCKS = 'true'; });
-  afterAll(() => { delete process.env.LOCALHOST_WITH_MOCKS; });
+  beforeAll(() => { process.env.LOCAL_OFFLINE = 'true'; });
+  afterAll(() => { delete process.env.LOCAL_OFFLINE; });
   beforeEach(() => {
     jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -571,8 +571,8 @@ describe('run-history.js against the dashboard routes and mock run history', () 
       pages.push((await pager.next()).length);
     }
     expect(pages).toEqual([20, 20]);
-    expect(pager.items).toHaveLength(MOCK_RUN_COUNT);
-    expect(pager.items[0].syncRunId).toBe(NEWEST_MOCK_RUN);
+    expect(pager.items).toHaveLength(OFFLINE_RUN_COUNT);
+    expect(pager.items[0].syncRunId).toBe(NEWEST_OFFLINE_RUN);
     const startedAt = pager.items.map((run: any) => run.startedAt);
     expect([...startedAt].sort().reverse()).toEqual(startedAt);
     expect(new Set(pager.items.map((run: any) => run.status))).toEqual(
@@ -604,8 +604,8 @@ describe('run-history.js against the dashboard routes and mock run history', () 
 
   it("pages through one status code's errors, and counts them as the summary does", async () => {
     const api = new RunsApi(getJson);
-    const run = await api.run(NEWEST_MOCK_RUN);
-    const pager = new CursorPager((cursor?: string) => api.errors(NEWEST_MOCK_RUN, { statusCode: 429, cursor, limit: 50 }));
+    const run = await api.run(NEWEST_OFFLINE_RUN);
+    const pager = new CursorPager((cursor?: string) => api.errors(NEWEST_OFFLINE_RUN, { statusCode: 429, cursor, limit: 50 }));
     while (pager.hasMore) {
       await pager.next();
     }
@@ -615,9 +615,9 @@ describe('run-history.js against the dashboard routes and mock run history', () 
 
   it("pages through a run's changes of one type, as many as the summary counts", async () => {
     const api = new RunsApi(getJson);
-    const run = await api.run(NEWEST_MOCK_RUN);
+    const run = await api.run(NEWEST_OFFLINE_RUN);
     for (const changeType of ['NEW', 'UPDATED', 'DELETED']) {
-      const pager = new CursorPager((cursor?: string) => api.changes(NEWEST_MOCK_RUN, { changeType, cursor, limit: 50 }));
+      const pager = new CursorPager((cursor?: string) => api.changes(NEWEST_OFFLINE_RUN, { changeType, cursor, limit: 50 }));
       while (pager.hasMore) {
         await pager.next();
       }
@@ -627,18 +627,18 @@ describe('run-history.js against the dashboard routes and mock run history', () 
 
   it('rejects with the status and message the page shows: an invalid cursor, a run that does not exist', async () => {
     const api = new RunsApi(getJson);
-    await expect(api.errors(NEWEST_MOCK_RUN, { cursor: 'not-a-cursor' })).rejects.toMatchObject({ status: 400 });
+    await expect(api.errors(NEWEST_OFFLINE_RUN, { cursor: 'not-a-cursor' })).rejects.toMatchObject({ status: 400 });
     await expect(api.run('2001-01-01T00:00:00.000Z')).rejects.toMatchObject({ status: 404 });
   });
 
   it('is told, in S3 mode, that changes are not recorded', async () => {
-    process.env.MOCK_STORAGE_MODE = 's3';
+    process.env.OFFLINE_STORAGE_MODE = 's3';
     try {
       const api = new RunsApi(getJson);
       expect(await api.capabilities()).toMatchObject({ storageMode: 's3', changesSupported: false });
-      await expect(api.changes(NEWEST_MOCK_RUN, { changeType: 'NEW' })).rejects.toMatchObject({ status: 400 });
+      await expect(api.changes(NEWEST_OFFLINE_RUN, { changeType: 'NEW' })).rejects.toMatchObject({ status: 400 });
     } finally {
-      delete process.env.MOCK_STORAGE_MODE;
+      delete process.env.OFFLINE_STORAGE_MODE;
     }
   });
 });

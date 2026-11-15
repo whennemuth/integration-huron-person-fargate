@@ -4,7 +4,7 @@
  * the run), the checks made before sending, and the page's load, review, start and finding of the started run. The
  * script is browser code with no module system, so it runs in a vm context (as written and as the Lambda build
  * minifies it), after the scripts it builds on, against a minimal stand-in for the DOM; and once against the
- * dashboard routes with the mock services.
+ * dashboard routes with the offline services.
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -614,7 +614,7 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
   });
 });
 
-describe('bulk-sync.js against the dashboard routes and mock services', () => {
+describe('bulk-sync.js against the dashboard routes and offline services', () => {
   const { RunsApi, BulkSyncPage } = loadScripts();
 
   /** dashboard.js's fetchSectionData and postSectionData, over the handler instead of fetch */
@@ -631,8 +631,8 @@ describe('bulk-sync.js against the dashboard routes and mock services', () => {
     return data;
   };
 
-  beforeAll(() => { process.env.LOCALHOST_WITH_MOCKS = 'true'; });
-  afterAll(() => { delete process.env.LOCALHOST_WITH_MOCKS; });
+  beforeAll(() => { process.env.LOCAL_OFFLINE = 'true'; });
+  afterAll(() => { delete process.env.LOCAL_OFFLINE; });
   beforeEach(() => {
     jest.spyOn(console, 'log').mockImplementation(() => undefined);
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
