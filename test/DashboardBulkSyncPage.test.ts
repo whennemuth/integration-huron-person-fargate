@@ -294,6 +294,79 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
     });
   });
 
+  describe("BulkSyncView in a mock landscape", () => {
+    const mock = (simulator: Record<string, any> = {}) => ({
+      simulator: { available: true, defaults: { totalPopulation: 1950, simulatedDelaySeconds: 3, errorRate: 0, nonCurrentTermRate: 0 }, ...simulator },
+      limits: { totalPopulation: 500000, simulatedDelaySeconds: 30 }
+    });
+
+    it('offers the source and Start from scratch only in a mock landscape, the simulator at its deployed settings', () => {
+      expect(BulkSyncView.formHtml(state())).not.toContain('data-bulk-mock');
+      const html = BulkSyncView.formHtml(state({ mock: mock() }));
+      expect(html).toContain('data-bulk-mock');
+      expect(html).toMatch(/name="source" id="bulk-source-real" value="real" checked>/);
+      expect(html).toMatch(/name="source" id="bulk-source-simulator" value="simulator">/);
+      expect(html).toMatch(/data-bulk-simulator hidden/);
+      expect(html).toMatch(/name="simTotalPopulation"[\s\S]*?value="1950"/);
+      expect(html).toMatch(/name="simDelay"[\s\S]*?value="3"/);
+      expect(html).toContain('name="resetState"');
+      expect(html).toContain('Start from scratch');
+      expect(html).toContain('Run history then starts again from this run.');
+      // Chosen, it shows its settings, keeping what was entered
+      const chosen = BulkSyncView.formHtml(state({ mock: mock() }), { runType: 'full', source: 'simulator', simulator: { totalPopulation: 40 }, resetState: true });
+      expect(chosen).toMatch(/value="simulator" checked>/);
+      expect(chosen).not.toMatch(/data-bulk-simulator hidden/);
+      expect(chosen).toMatch(/name="simTotalPopulation"[\s\S]*?value="40"/);
+      expect(chosen).toMatch(/name="resetState" id="bulk-resetState" checked/);
+    });
+
+    it("says why the simulator can't be chosen", () => {
+      const html = BulkSyncView.formHtml(state({ mock: mock({ available: false, reason: "The source simulator (source-simulator-mock) isn't deployed in this landscape" }) }));
+      expect(html).toMatch(/value="simulator" disabled>/);
+      expect(html).toContain('Not available: The source simulator (source-simulator-mock) isn&#39;t deployed in this landscape.');
+    });
+
+    it("spells out a mock landscape's run: its target, its source, and a start from scratch", () => {
+      const lines = (choices: any, itemsPerChunk?: number) => BulkSyncView.summaryLines(choices, 'mock', finished, itemsPerChunk);
+      expect(lines({ runType: 'full', bulkReset: false, iterationLimit: 10, source: 'simulator', resetState: true,
+        simulator: { totalPopulation: 1950, simulatedDelaySeconds: 3, errorRate: 0.05, nonCurrentTermRate: 0 } })).toEqual([
+        "Full sync of everyone in the source, into mock's target simulator. People no longer in the source are deactivated afterward.",
+        'The source is the source simulator: 1,950 made-up people, each response taking 3 s, 5% of responses failing.',
+        "It starts from scratch: the target simulator, Run history and every person's fingerprint are emptied first, so everyone is created again.",
+        'Each chunker task reads 10 chunks, then hands the rest on to a new task.'
+      ]);
+      const hybrid = lines({ runType: 'full-no-deactivations', bulkReset: false, iterationLimit: 0, source: 'real', resetState: false });
+      expect(hybrid[1]).toBe('The source is the real source API, read as any landscape reads it.');
+      expect(hybrid[2]).toBe('People whose record has not changed since their last sync are skipped, and the target simulator is not contacted for them.');
+      expect(lines({ runType: 'full', bulkReset: true, iterationLimit: 10, source: 'real', resetState: true })[3])
+        .toBe('Bulk reset: everyone is looked up in the target simulator and created or updated as needed.');
+      // A parallel start seeded past the simulator's people: 6 tasks x 10 chunks x 200 = 12,000 people for 1,950
+      const seeded = lines({ runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 6, source: 'simulator', simulator: { totalPopulation: 1950 } }, 200);
+      expect(seeded[seeded.length - 1]).toBe("Its 6 tasks are set to read 12,000 people, more than the simulator's 1,950: the tasks past the end find no one and stop.");
+      const enough = lines({ runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 2, source: 'simulator', simulator: { totalPopulation: 3000 } }, 200);
+      expect(enough.join(' ')).not.toContain('find no one');
+    });
+
+    it("refuses the simulator's settings the server would refuse, and a test's BUID beyond its people", () => {
+      const simulated = (simulator: any, extra: any = {}) => ({ runType: 'full', source: 'simulator', simulator: { totalPopulation: 50, simulatedDelaySeconds: 0, errorRate: 0, nonCurrentTermRate: 0, ...simulator }, ...extra });
+      expect(BulkSyncView.requestError(simulated({}))).toBeUndefined();
+      expect(BulkSyncView.requestError(simulated({ totalPopulation: NaN }))).toBe('The simulator needs a whole number of people, at least 1.');
+      expect(BulkSyncView.requestError(simulated({ totalPopulation: 2.5 }))).toBe('The simulator needs a whole number of people, at least 1.');
+      expect(BulkSyncView.requestError(simulated({ simulatedDelaySeconds: -1 }))).toBe('Seconds per response is a number, 0 or more.');
+      expect(BulkSyncView.requestError(simulated({ errorRate: 2 }))).toBe('Failing responses (0 to 1) is a number from 0 to 1.');
+      expect(BulkSyncView.requestError(simulated({}, { runType: 'test', buid: 'U0000051' }))).toBe("U0000051 is beyond the simulator's 50 people.");
+      expect(BulkSyncView.requestError(simulated({}, { runType: 'test', buid: 'U0000000' }))).toBe("The simulator's BUIDs start at U0000001 (got 'U0000000').");
+      expect(BulkSyncView.requestError(simulated({}, { runType: 'test', buid: 'U0000050' }))).toBeUndefined();
+      // The real source: none of it applies
+      expect(BulkSyncView.requestError({ runType: 'full', source: 'real' })).toBeUndefined();
+    });
+
+    it('says a run that started from scratch empties Run history', () => {
+      const result = { startedAt: '2026-11-10T11:58:00.000Z', run: { runType: 'full', population: 'person-full', resetState: true } };
+      expect(BulkSyncView.startedHtml({ result }, NOW)).toContain('Run history was emptied first, so this run will be the only one listed.');
+    });
+  });
+
   describe('BulkSyncPage', () => {
     const page = (options: Record<string, any> = {}) => {
       const { root, parts, form } = fakeBulkPage();
@@ -379,6 +452,43 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       });
       expect(form.buttons.every(button => !button.disabled)).toBe(true);
       expect(bulkPage.started).toBeUndefined();
+    });
+
+    it("reads a mock landscape's options only from its section: the source, the simulator's settings, Start from scratch", () => {
+      const radio = (value: string, checked: boolean) => ({ value, checked });
+      const fields = (mock?: { source: string; values?: string[]; resetState?: boolean }) => ({
+        elements: {
+          runType: ['full', 'full-no-deactivations', 'delta', 'test'].map(type => radio(type, type === 'full')),
+          buid: { value: '' }, bulkReset: { checked: false }, custom: { checked: false },
+          chunkMode: ['perTask', 'single'].map(mode => radio(mode, mode === 'perTask')),
+          chunksPerTask: { value: '10' }, parallelStart: { value: '0' },
+          ...(mock ? {
+            source: ['real', 'simulator'].map(source => radio(source, source === mock.source)),
+            simTotalPopulation: { value: (mock.values || [])[0] ?? '1950' }, simDelay: { value: (mock.values || [])[1] ?? '3' },
+            simErrorRate: { value: (mock.values || [])[2] ?? '0' }, simNonCurrentTermRate: { value: (mock.values || [])[3] ?? '0.25' },
+            resetState: { checked: !! mock.resetState }
+          } : {})
+        }
+      });
+      expect(BulkSyncPage.readRequest(fields())).toEqual({ runType: 'full', bulkReset: false, custom: false });
+      expect(BulkSyncPage.readRequest(fields({ source: 'real', resetState: true }))).toEqual({
+        runType: 'full', bulkReset: false, source: 'real', resetState: true, custom: false
+      });
+      expect(BulkSyncPage.readRequest(fields({ source: 'simulator', values: ['40', ' 0 ', '0.1', ''] }))).toEqual({
+        runType: 'full', bulkReset: false, source: 'simulator', resetState: false, custom: false,
+        simulator: { totalPopulation: 40, simulatedDelaySeconds: 0, errorRate: 0.1, nonCurrentTermRate: NaN }
+      });
+    });
+
+    it('shows the simulator\'s settings while it is the source', () => {
+      const { bulkPage } = page();
+      const simulator = new FakeElement();
+      simulator.hidden = true;
+      const form = { querySelector: (selector: string) => ({ '[data-bulk-simulator]': simulator } as any)[selector] };
+      bulkPage.onChange({ target: { form, name: 'source', value: 'simulator' } });
+      expect(simulator.hidden).toBe(false);
+      bulkPage.onChange({ target: { form, name: 'source', value: 'real' } });
+      expect(simulator.hidden).toBe(true);
     });
 
     it("reads the request from the form's fields: the BUID only for a test, the custom settings only when chosen", () => {
@@ -543,5 +653,30 @@ describe('bulk-sync.js against the dashboard routes and mock services', () => {
     expect(review).toContain('<code>trustPreviousStorage</code>');
     expect(await bulkPage.confirm()).toBe(true);
     expect(bulkPage.started.result).toMatchObject({ status: 'started', run: { population: 'person-delta', buid: 'U0000042' } });
+  });
+
+  it('offers a mock landscape its options when the mocks play one (LANDSCAPE=mock), and reviews a run from the simulator', async () => {
+    process.env.LANDSCAPE = 'mock';
+    try {
+      const { root, form } = fakeBulkPage();
+      const bulkPage = new BulkSyncPage({
+        getJson: (path: string) => call(path), postJson: (path: string, body: unknown) => call(path, 'POST', body),
+        runs: new RunsApi((path: string) => call(path)), root
+      });
+      expect(await bulkPage.load()).toBe(true);
+      expect(bulkPage.state.mock.simulator).toMatchObject({ available: true, defaults: { totalPopulation: 1950 } });
+      expect(form.innerHTML).toContain('data-bulk-mock');
+      const request = {
+        runType: 'full', bulkReset: false, source: 'simulator', resetState: true, custom: false,
+        simulator: { totalPopulation: 30, simulatedDelaySeconds: 0, errorRate: 0, nonCurrentTermRate: 0 }
+      };
+      expect(await bulkPage.review(request)).toBe(true);
+      const review = form.parts['[data-bulk-confirm]'].innerHTML;
+      expect(review).toContain('The source is the source simulator: 30 made-up people.');
+      expect(review).toContain('<code>/?totalPopulation=30&amp;simulatedDelaySeconds=0&amp;errorRate=0&amp;nonCurrentTermRate=0</code>');
+      expect(review).toContain('<code>resetState</code>');
+    } finally {
+      delete process.env.LANDSCAPE;
+    }
   });
 });

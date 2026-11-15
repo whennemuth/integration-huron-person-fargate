@@ -81,6 +81,13 @@ describe('LocalLaunchOptions', () => {
       expect(() => new LocalLaunchOptions(FILE, ['--storage-mode', 's3'])).toThrow('--storage-mode applies only to the mocks');
     });
 
+    it("takes --landscape only with mocks, and only a landscape's name", () => {
+      expect(() => new LocalLaunchOptions(FILE, ['--landscape', 'mock'])).toThrow('--landscape applies only to the mocks');
+      expect(() => new LocalLaunchOptions(MOCKED_FILE, ['--landscape'])).toThrow("--landscape must be followed by a landscape's name, e.g. mock (got nothing)");
+      expect(() => new LocalLaunchOptions(MOCKED_FILE, ['--landscape', 'Mock 1'])).toThrow("(got 'Mock 1')");
+      expect(() => new LocalLaunchOptions(MOCKED_FILE, ['--landscape', 'mock1'])).not.toThrow();
+    });
+
     it('needs a user to sign in as for the mock sign-in', () => {
       expect(() => new LocalLaunchOptions({ ...MOCKED_FILE, AUTHENTICATION: 'mock', USER_PRINCIPAL: ' ' })).toThrow('AUTHENTICATION=mock signs in as USER_PRINCIPAL');
     });
@@ -140,6 +147,16 @@ describe('LocalLaunchOptions', () => {
       expect(variables).not.toHaveProperty('DYNAMODB_STATISTICS_TABLE_NAME');
       expect(variables).not.toHaveProperty('APP_AUTHORIZATION');
       expect(unset).toEqual([]);
+    });
+
+    it("plays local with mocks, or the --landscape named, never LocalLaunch.env's deployed landscape", () => {
+      // FILE names preview, the deployed landscape a run without mocks runs as
+      expect(new LocalLaunchOptions(MOCKED_FILE).environment().variables.LANDSCAPE).toBe('local');
+      const mock = new LocalLaunchOptions(FILE, ['--mocks', '--landscape', 'mock']);
+      expect(mock.mocksLandscape).toBe('mock');
+      expect(mock.environment().variables).toMatchObject({ LANDSCAPE: 'mock', LOCALHOST_WITH_MOCKS: 'true' });
+      // Without mocks, the landscape is LocalLaunch.env's (and the Lambda's)
+      expect(new LocalLaunchOptions(FILE).environment(LAMBDA).variables.LANDSCAPE).toBe('preview');
     });
 
     it('keeps sign-in headers LocalLaunch.env gives with mocks', () => {

@@ -44,7 +44,13 @@ describe('landscapeResources', () => {
       chunkerServiceName: 'Chunker',
       pipelineStackId: 'huron-person-fargate-processor',
       itemsPerChunk: 200,
+      sourceSimulatorFunctionName: 'source-simulator-mock',
     });
+  });
+
+  it('names the source simulator only in a mock landscape', () => {
+    const staging = landscapeResources({ ...makeLandscape('dynamodb'), TAGS: { Landscape: 'staging', Service: 'svc', Function: 'fn' } } as any);
+    expect(staging).not.toHaveProperty('sourceSimulatorFunctionName');
   });
 
   it("takes none of a start's choices from the context: not its chunksPerTask, nor its previous-state flags", () => {
@@ -144,7 +150,24 @@ describe('FunctionUrlOrigin', () => {
     expect(resourcesOf('lambda:InvokeFunction')).not.toContain('processor-subscriber');
     expect(resourcesOf('lambda:GetFunctionConfiguration')).toContain('function:chunker-subscriber-mock');
     expect(resourcesOf('lambda:GetFunctionConfiguration')).toContain('function:processor-subscriber-mock');
-    expect(statements.flatMap((s: any) => [s.Action].flat()).every((a: string) => ['lambda:InvokeFunction', 'lambda:GetFunctionConfiguration'].includes(a))).toBe(true);
+    // Besides, in a mock landscape (this one), only the source simulator's URL lookup (tested below)
+    expect(statements.flatMap((s: any) => [s.Action].flat()).every((a: string) =>
+      ['lambda:InvokeFunction', 'lambda:GetFunctionConfiguration', 'lambda:GetFunctionUrlConfig'].includes(a))).toBe(true);
+  });
+
+  it("may look up a mock landscape's source simulator's Function URL, and only that", () => {
+    const template = synth('dynamodb');
+    const statements = Object.values(template.findResources('AWS::IAM::Policy'))
+      .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+    const lookup = statements.filter((s: any) => [s.Action].flat().includes('lambda:GetFunctionUrlConfig'));
+    expect(lookup).toHaveLength(1);
+    expect([lookup[0].Action].flat()).toEqual(['lambda:GetFunctionUrlConfig']);
+    expect(JSON.stringify(lookup[0].Resource)).toContain('function:source-simulator-mock');
+    // Nothing that changes the simulator
+    expect(statements.flatMap((s: any) => [s.Action].flat()).filter((a: string) => /^lambda:(Update|Put|Create|Delete)/.test(a))).toEqual([]);
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: { Variables: Match.objectLike({ SOURCE_SIMULATOR_FUNCTION_NAME: 'source-simulator-mock' }) }
+    });
   });
 
   it("may read the chunker service's maximum for Parallel start, and change no scaling itself", () => {

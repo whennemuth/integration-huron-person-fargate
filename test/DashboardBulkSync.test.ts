@@ -5,12 +5,14 @@
  * mocked client, and the routes (GET and POST /api/bulk-sync, POST /api/bulk-sync/plan) under mocks. The form's
  * defaults are the scheduled run's (src/chunking/ScheduledRun.ts; test/ScheduledRun.test.ts).
  */
-import { GetFunctionConfigurationCommand, InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
+import { GetFunctionConfigurationCommand, GetFunctionUrlConfigCommand, InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { mockClient } from 'aws-sdk-client-mock';
 import { handler } from '../dashboard/src/handlers/DashboardHandler';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
 import { MOCK_SOURCE_CONFIG, MockBulkSyncService } from '../dashboard/src/handlers/DashboardMocks';
-import { BulkSync, BulkSyncError, BulkSyncRequest, LambdaChunkerFunctions, RunActivity } from '../dashboard/src/services/BulkSync';
+import {
+  AwsSourceSimulatorService, BulkSync, BulkSyncError, BulkSyncRequest, LambdaChunkerFunctions, RunActivity
+} from '../dashboard/src/services/BulkSync';
 import { RunReport } from '../src/reporting/RunReporting';
 
 const MIN = 60_000;
@@ -246,7 +248,8 @@ describe('BulkSync', () => {
       iterationLimit: { max: 50 },
       parallelStart: { max: 20, enabled: true },
       latestRun: { kind: 'finished', syncRunId: finishedRun.syncRunId },
-      warnings: []
+      warnings: [],
+      itemsPerChunk: 200
     });
     const stalled = await service({ newest: stalledRun }).bulkSync.describe();
     expect(stalled.latestRun.kind).toBe('stalled');
@@ -322,9 +325,146 @@ describe('BulkSync', () => {
     });
   });
 
+  it('plays the landscape the launcher names (LANDSCAPE), else local, in its listing and capabilities too', async () => {
+    const { MockLandscapeListingService, MockRunReportingService } = await import('../dashboard/src/handlers/DashboardMocks');
+    const saved = process.env.LANDSCAPE;
+    try {
+      delete process.env.LANDSCAPE;
+      expect((await new MockBulkSyncService({ runs: runsEndingWith(finishedRun) }).describe()).landscape).toBe('local');
+      expect((await new MockLandscapeListingService().getLandscapes()).current).toBe('local');
+      process.env.LANDSCAPE = 'mock';
+      const state = await new MockBulkSyncService({ runs: runsEndingWith(finishedRun) }).describe();
+      expect(state.landscape).toBe('mock');
+      expect(state.mock).toBeDefined();
+      const listing = await new MockLandscapeListingService().getLandscapes();
+      expect(listing.current).toBe('mock');
+      expect(listing.landscapes.filter(entry => entry.current).map(entry => entry.landscape)).toEqual(['mock']);
+      expect((await new MockRunReportingService().getCapabilities()).landscape).toBe('mock');
+    } finally {
+      if (saved === undefined) delete process.env.LANDSCAPE; else process.env.LANDSCAPE = saved;
+    }
+  });
+
   it("warns that a mock landscape's run reads the real source", async () => {
     const mock = new MockBulkSyncService({ runs: runsEndingWith(finishedRun), settings: { landscape: 'mock' } });
     expect((await mock.describe()).warnings).toEqual([expect.stringContaining('mock is a mock landscape')]);
+  });
+
+  describe("a mock landscape's options: the source and Start from scratch", () => {
+    const SIMULATOR_URL = 'https://example-simulator.lambda-url.us-east-2.on.aws/';
+    const mockService = (simulator?: any) => {
+      const service = new MockBulkSyncService({
+        runs: runsEndingWith(finishedRun), settings: { landscape: 'mock' }, now: () => NOW,
+        ...(simulator === undefined ? {} : { simulator })
+      });
+      return service;
+    };
+    const simulatedFull = { runType: 'full', source: 'simulator', simulator: { totalPopulation: 50, simulatedDelaySeconds: 0, errorRate: 0, nonCurrentTermRate: 0.25 } };
+
+    it('offers the simulator with its deployed settings, and nothing of the kind outside a mock landscape', async () => {
+      expect((await mockService().describe()).mock).toEqual({
+        simulator: { available: true, defaults: { totalPopulation: 1950, simulatedDelaySeconds: 3, errorRate: 0, nonCurrentTermRate: 0 } },
+        limits: { totalPopulation: 500_000, simulatedDelaySeconds: 30 }
+      });
+      expect(await service().bulkSync.describe()).not.toHaveProperty('mock');
+    });
+
+    it("says why the simulator can't be the source, and refuses a run that asks for it", async () => {
+      const missing = mockService({ lookup: async () => ({ reason: "The source simulator (source-simulator-mock) isn't deployed in this landscape" }), settings: async () => undefined });
+      expect((await missing.describe()).mock!.simulator).toEqual({
+        available: false, reason: "The source simulator (source-simulator-mock) isn't deployed in this landscape", defaults: BulkSync.SIMULATOR_DEFAULTS
+      });
+      await expect(missing.plan(simulatedFull)).rejects.toMatchObject({ code: 'INVALID_REQUEST', message: expect.stringContaining("can't be the source: The source simulator") });
+      expect((await mockService(null).describe()).mock!.simulator).toMatchObject({ available: false, reason: expect.stringContaining('redeploy its dashboard stack') });
+    });
+
+    it('sends the simulator as the source, its settings as query parameters, its terms, and the reset', async () => {
+      const service = mockService();
+      const plan = await service.plan({ ...simulatedFull, resetState: true });
+      expect(plan.event).toMatchObject({
+        baseUrl: 'https://example-simulator.lambda-url.us-east-2.on.aws',
+        fetchPath: '/?totalPopulation=50&simulatedDelaySeconds=0&errorRate=0&nonCurrentTermRate=0.25',
+        termsEndpoint: { baseUrl: 'https://example-simulator.lambda-url.us-east-2.on.aws', fetchPath: '/terms' },
+        populationType: 'person-full', resetState: true
+      });
+      expect(plan.choices).toMatchObject({ source: 'simulator', simulator: simulatedFull.simulator, resetState: true });
+      await service.start({ ...simulatedFull, resetState: true });
+      expect(service.invoked[0]).toMatchObject({ resetState: true, fetchPath: plan.event.fetchPath });
+    });
+
+    it("tests one of the simulator's people through its person endpoint", async () => {
+      const { event } = await mockService().plan({ runType: 'test', buid: 'U0000042', source: 'simulator', simulator: { totalPopulation: 100 } });
+      expect(event.fetchPath).toBe('/person?buid=U0000042&totalPopulation=100');
+      expect(event.iterationLimit).toBe(0);
+    });
+
+    it('reads the real source as before when it is chosen, and resets nothing unless asked', async () => {
+      const { event, choices } = await mockService().plan({ runType: 'full', source: 'real' });
+      expect(event).toMatchObject({ baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people' });
+      expect(event).not.toHaveProperty('termsEndpoint');
+      expect(event).not.toHaveProperty('resetState');
+      expect(choices).toMatchObject({ source: 'real', resetState: false });
+      expect(choices).not.toHaveProperty('simulator');
+    });
+
+    it('lists the mock settings from the form', async () => {
+      const byName = async (body: any, service: any = mockService()) =>
+        Object.fromEntries((await service.plan(body)).settings.map((row: any) => [row.name, row]));
+      const simulated = await byName({ ...simulatedFull, simulator: { totalPopulation: 50 }, resetState: true });
+      expect(simulated.sourceSimulator).toMatchObject({ value: true, source: 'form' });
+      expect(simulated.sourceSimulatorMockTotalPopulation).toMatchObject({ value: 50, source: 'form', note: expect.stringContaining('query parameter') });
+      expect(simulated.sourceSimulatorMockErrorRate).toMatchObject({ value: null, source: 'form', note: expect.stringContaining('own setting applies') });
+      expect(simulated.mockTargetResetState).toMatchObject({ value: true, source: 'form' });
+      const hybrid = await byName({ runType: 'full' });
+      expect(hybrid.sourceSimulator).toMatchObject({ value: false, source: 'form', note: expect.stringContaining('hybrid') });
+      expect(hybrid.sourceSimulatorMockTotalPopulation).toMatchObject({ source: 'unused' });
+      const elsewhere = Object.fromEntries((await service().bulkSync.plan({ runType: 'full' })).settings.map(row => [row.name, row]));
+      expect(elsewhere.sourceSimulator).toMatchObject({ value: false, source: 'fixed', note: 'Mock landscapes only' });
+      expect(elsewhere.mockTargetResetState).toMatchObject({ value: false, source: 'fixed', note: 'Mock landscapes only' });
+    });
+
+    it.each([
+      [{ runType: 'full', source: 'simulator' }, false, 'only for a mock landscape'],
+      [{ runType: 'full', resetState: true }, false, 'only for a mock landscape'],
+      [{ runType: 'full', simulator: {} }, false, 'only for a mock landscape'],
+      [{ runType: 'full', source: 'elsewhere' }, true, "source must be one of 'real', 'simulator'"],
+      [{ runType: 'full', resetState: 'yes' }, true, 'resetState must be true or false'],
+      [{ runType: 'full', simulator: { totalPopulation: 5 } }, true, 'Simulator settings are only for a run whose source is the source simulator'],
+      [{ runType: 'full', source: 'simulator', simulator: [] }, true, "simulator must be an object of the source simulator's settings"],
+      [{ runType: 'full', source: 'simulator', simulator: { people: 5 } }, true, "simulator.people isn't a source simulator setting"],
+      [{ runType: 'full', source: 'simulator', simulator: { totalPopulation: 0 } }, true, 'simulator.totalPopulation must be a whole number from 1 to 500000'],
+      [{ runType: 'full', source: 'simulator', simulator: { totalPopulation: 2.5 } }, true, 'simulator.totalPopulation must be a whole number'],
+      [{ runType: 'full', source: 'simulator', simulator: { simulatedDelaySeconds: 31 } }, true, 'simulator.simulatedDelaySeconds must be a number from 0 to 30'],
+      [{ runType: 'full', source: 'simulator', simulator: { errorRate: 1.5 } }, true, 'simulator.errorRate must be a number from 0 to 1'],
+      [{ runType: 'full', source: 'simulator', simulator: { nonCurrentTermRate: '0.5' } }, true, 'simulator.nonCurrentTermRate must be a number from 0 to 1'],
+      [{ runType: 'test', buid: 'U0000000', source: 'simulator' }, true, "The source simulator's BUIDs are a U followed by digits from 1"],
+      [{ runType: 'test', buid: 'U0000101', source: 'simulator', simulator: { totalPopulation: 100 } }, true, "U0000101 is beyond the source simulator's 100 people"]
+    ])('refuses %j (mock landscape: %s) as INVALID_REQUEST', (body, mockLandscape, message) => {
+      expect(() => BulkSyncRequest.parse(body as any, { mockLandscape })).toThrow(message);
+    });
+
+    it("reads the simulator's Function URL and its settings, changing nothing", async () => {
+      const lambda = mockClient(LambdaClient);
+      const fetched: string[] = [];
+      const realFetch = global.fetch;
+      global.fetch = jest.fn(async (url: any) => {
+        fetched.push(String(url));
+        return { ok: true, json: async () => ({ status: 'healthy', totalPopulation: 1950, errorRate: 0, simulatedDelaySeconds: 3 }) } as any;
+      }) as any;
+      try {
+        lambda.on(GetFunctionUrlConfigCommand, { FunctionName: 'source-simulator-mock' }).resolves({ FunctionUrl: SIMULATOR_URL } as any);
+        const simulator = new AwsSourceSimulatorService('source-simulator-mock', new LambdaClient({ region: 'us-east-2' }));
+        expect(await simulator.lookup()).toEqual({ url: SIMULATOR_URL });
+        expect(await simulator.settings(SIMULATOR_URL)).toEqual({ totalPopulation: 1950, errorRate: 0, simulatedDelaySeconds: 3 });
+        expect(fetched).toEqual([`${SIMULATOR_URL}health`]);
+        lambda.on(GetFunctionUrlConfigCommand).rejects(Object.assign(new Error('not found'), { name: 'ResourceNotFoundException' }));
+        expect(await simulator.lookup()).toEqual({ reason: "The source simulator (source-simulator-mock) isn't deployed in this landscape" });
+        expect(lambda.calls().every(call => call.args[0] instanceof GetFunctionUrlConfigCommand)).toBe(true);
+      } finally {
+        global.fetch = realFetch;
+        lambda.restore();
+      }
+    });
   });
 
   describe('from the environment', () => {
@@ -351,6 +491,10 @@ describe('BulkSync', () => {
         ITEMS_PER_CHUNK: '150'
       });
       const bulkSync = BulkSync.fromEnvironment(MOCK_SOURCE_CONFIG, runsEndingWith(finishedRun));
+      // The source simulator only when the environment names it, as only a mock landscape's does
+      expect((bulkSync as any).deps.simulator).toBeUndefined();
+      process.env.SOURCE_SIMULATOR_FUNCTION_NAME = 'source-simulator-mock';
+      expect((BulkSync.fromEnvironment(MOCK_SOURCE_CONFIG, runsEndingWith(finishedRun)) as any).deps.simulator).toBeInstanceOf(AwsSourceSimulatorService);
       const request = BulkSyncRequest.parse({ runType: 'full' });
       expect(bulkSync.event(request)).toMatchObject({ iterationLimit: 10, bulkReset: false, trustPreviousStorage: true });
       const byName = Object.fromEntries(bulkSync.runSettings(request).map(row => [row.name, row.value]));

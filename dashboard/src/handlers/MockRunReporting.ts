@@ -480,7 +480,7 @@ export class MockRunReportingService implements RunReportingService {
 
   getCapabilities(): Capabilities {
     const { storageMode } = this.catalog;
-    return { landscape: LOCAL_LANDSCAPE, storageMode, changesSupported: storageMode === 'dynamodb' };
+    return { landscape: process.env.LANDSCAPE || LOCAL_LANDSCAPE, storageMode, changesSupported: storageMode === 'dynamodb' };
   }
 
   async listRuns(): Promise<string[]> {

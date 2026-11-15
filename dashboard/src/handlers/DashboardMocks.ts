@@ -19,7 +19,8 @@ import {
 import { CrudOperation } from 'integration-core';
 import { Config, PersonPushRequest } from 'integration-huron-person';
 import type { ApiChunkerEvent } from '../../../src/chunking/ChunkerSubscriber';
-import { BulkSync, BulkSyncSettings } from '../services/BulkSync';
+import { BulkSync, BulkSyncSettings, SourceSimulatorService } from '../services/BulkSync';
+import { isMockLandscape } from '../../../src/Utils';
 import type { StartedBy } from '../../../src/chunking/StartedBy';
 import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
 import { MockRunReportingService } from './MockRunReporting';
@@ -112,10 +113,19 @@ export const MOCK_SOURCE_CONFIG = {
  * The real BulkSync over the mock run history, with an in-memory stand-in for the chunker Lambda:
  * the request is validated and the guards are checked as in a landscape, and a start records the chunker event it
  * would have sent (invoked) instead of starting anything.
+ *
+ * Its landscape is the one the mocks play (LANDSCAPE, which the launcher sets: `local`, or --landscape's, as
+ * `npm run dashboard:dev:mock` sets `mock`). A mock landscape's name shows Bulk sync's mock landscape options, with a
+ * stand-in source simulator (MOCK_SIMULATOR) at an example URL with mock's deployed settings.
  */
 export class MockBulkSyncService implements BulkSyncService {
   /** The mock chunker service's most tasks, which bounds Parallel start */
   static readonly CHUNKER_MAX_TASKS = 15;
+  /** A mock landscape's stand-in source simulator: found, at an example Function URL, with mock's deployed settings */
+  static readonly MOCK_SIMULATOR: SourceSimulatorService = {
+    lookup: async () => ({ url: 'https://example-simulator.lambda-url.us-east-2.on.aws/' }),
+    settings: async () => ({ totalPopulation: 1950, simulatedDelaySeconds: 3, errorRate: 0 })
+  };
   /** The chunker events this instance's starts would have sent, oldest first */
   readonly invoked: ApiChunkerEvent[] = [];
   private readonly service: BulkSync;
@@ -124,20 +134,26 @@ export class MockBulkSyncService implements BulkSyncService {
     runs?: Pick<RunReportingService, 'listRunPage' | 'getRunReport'>;
     settings?: Partial<BulkSyncSettings>;
     dryRun?: string[];
+    /** A mock landscape's source simulator (default: MOCK_SIMULATOR in a mock landscape, none elsewhere) */
+    simulator?: SourceSimulatorService | null;
     now?: () => number;
   } = {}) {
     const { runs = new MockRunReportingService(), settings = {}, dryRun = [], now } = params;
+    const landscape = settings.landscape ?? (process.env.LANDSCAPE || LOCAL_LANDSCAPE);
+    const simulator = params.simulator === undefined
+      ? (isMockLandscape(landscape) ? MockBulkSyncService.MOCK_SIMULATOR : undefined)
+      : params.simulator ?? undefined;
     this.service = new BulkSync({
       config: MOCK_SOURCE_CONFIG,
       settings: {
-        landscape: LOCAL_LANDSCAPE,
-        chunkerFunctionName: `chunker-subscriber-${LOCAL_LANDSCAPE}`,
-        processorSubscriberFunctionName: `processor-subscriber-${LOCAL_LANDSCAPE}`,
+        landscape,
+        chunkerFunctionName: `chunker-subscriber-${landscape}`,
+        processorSubscriberFunctionName: `processor-subscriber-${landscape}`,
         region: 'us-east-2',
         stackId: 'huron-person',
-        secretName: `huron-person-integration-config-${LOCAL_LANDSCAPE}`,
+        secretName: `huron-person-integration-config-${landscape}`,
         itemsPerChunk: 200,
-        chunkerClusterName: `huron-person-cluster-${LOCAL_LANDSCAPE}`,
+        chunkerClusterName: `huron-person-cluster-${landscape}`,
         chunkerServiceName: 'Chunker',
         ...settings
       },
@@ -148,6 +164,7 @@ export class MockBulkSyncService implements BulkSyncService {
       },
       // As preview's chunker service: at most 15 tasks
       chunkerService: { maxTasks: async () => MockBulkSyncService.CHUNKER_MAX_TASKS },
+      ...(simulator ? { simulator } : {}),
       now
     });
   }
@@ -190,12 +207,14 @@ export { MockRunReportingService } from './MockRunReporting';
 
 export class MockLandscapeListingService implements LandscapeListingService {
   async getLandscapes(): Promise<LandscapeListing> {
+    // The landscape the mocks play (LANDSCAPE: local, or the launcher's --landscape, e.g. mock) is the current one
+    const current = process.env.LANDSCAPE || LOCAL_LANDSCAPE;
     return {
-      current: LOCAL_LANDSCAPE,
+      current,
       landscapes: [
-        { landscape: 'mock', label: 'mock', url: 'https://mock.example.com', isDefault: false, current: false },
-        { landscape: 'staging', label: 'Staging', url: 'https://staging.example.com', isDefault: true, current: false }
-      ]
+        { landscape: 'mock', label: 'mock', url: 'https://mock.example.com', isDefault: false },
+        { landscape: 'staging', label: 'Staging', url: 'https://staging.example.com', isDefault: true }
+      ].map(entry => ({ ...entry, current: entry.landscape === current }))
     };
   }
 }

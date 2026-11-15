@@ -111,6 +111,44 @@ export type BulkSyncRequestBody = {
   iterationLimit?: unknown;
   parallelStart?: unknown;
   overrideStalled?: unknown;
+  /** A mock landscape only: 'real' (the source API) or 'simulator' (the source simulator) */
+  source?: unknown;
+  /** A mock landscape only, with the simulator as the source: its settings for this run (SimulatorSettings) */
+  simulator?: unknown;
+  /** A mock landscape only: start from scratch (empty the mock target, Run history and fingerprints first) */
+  resetState?: unknown;
+};
+
+/** Where a mock landscape's run reads people from: the real source API, or the source simulator */
+export type BulkSyncSource = 'real' | 'simulator';
+
+/**
+ * How the source simulator simulates a run (simulationSettings() in src/chunking/fetch/SourceSimulator.ts), sent as
+ * query parameters in the run's fetchPath
+ */
+export type SimulatorSettings = {
+  /** Simulated people */
+  totalPopulation: number;
+  /** Seconds each response takes */
+  simulatedDelaySeconds: number;
+  /** Share of responses (0 to 1) that fail with a 500 */
+  errorRate: number;
+  /** Share of students (0 to 1) given a term that isn't current */
+  nonCurrentTermRate: number;
+};
+
+/** A mock landscape's own options (BulkSyncState.mock) */
+export type MockLandscapeOptions = {
+  simulator: {
+    /** Whether the source simulator can be chosen: deployed, with a Function URL */
+    available: boolean;
+    /** Why it can't be, when it can't */
+    reason?: string;
+    /** The form's starting values: the simulator's deployed settings (its /health), else the simulator's defaults */
+    defaults: SimulatorSettings;
+  };
+  /** The highest population and delay a request may ask for */
+  limits: { totalPopulation: number; simulatedDelaySeconds: number };
 };
 
 /**
@@ -149,6 +187,10 @@ export type BulkSyncState = {
   blocked?: { code: BulkSyncErrorCode; message: string };
   /** Things to know before starting that don't block it (e.g. a mock landscape's real source) */
   warnings: string[];
+  /** The chunker task's ITEMS_PER_CHUNK, for the page's estimate of a parallel start's reach */
+  itemsPerChunk?: number;
+  /** A mock landscape only: the source and Start from scratch */
+  mock?: MockLandscapeOptions;
 };
 
 export type BulkSyncErrorCode =
@@ -167,6 +209,12 @@ export type BulkSyncChoices = {
   /** Chunker messages sent at the start (0: one, and auto-scaling adds tasks) */
   parallelStart: number;
   overrideStalled: boolean;
+  /** A mock landscape only (absent elsewhere): where the run reads people from */
+  source?: BulkSyncSource;
+  /** With the simulator as the source: the settings sent to it */
+  simulator?: Partial<SimulatorSettings>;
+  /** A mock landscape only: whether the run starts from scratch */
+  resetState?: boolean;
 };
 
 /**

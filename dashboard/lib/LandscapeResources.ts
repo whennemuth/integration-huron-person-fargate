@@ -6,6 +6,8 @@ import { DYNAMODB_TABLE_NAME as statisticsTableName } from '../../src/dynamodb/S
 import { FUNCTION_BASE_NAME as processorSubscriberBaseName } from '../../src/processing/ProcessorSubscriber';
 import { CLUSTER_BASE_NAME } from '../../lib/EcsInfrastructure';
 import { SERVICE_LOGICAL_ID as CHUNKER_SERVICE_NAME } from '../../lib/services/chunker/ChunkerService';
+import { FUNCTION_BASE_NAME as sourceSimulatorBaseName } from '../../src/chunking/fetch/SourceSimulator';
+import { isMockLandscape } from '../../src/Utils';
 
 /**
  * Names of the landscape's pipeline resources that its dashboard reads, derived the same way the
@@ -29,6 +31,11 @@ export type LandscapeResources = {
   /** A run's review shows these: the pipeline stack's STACK_ID, and the chunker task's ITEMS_PER_CHUNK */
   pipelineStackId: string;
   itemsPerChunk?: number;
+  /**
+   * A mock landscape only: the source simulator Lambda, whose Function URL Bulk sync looks up to offer it as the source
+   * (absent in any other landscape, which has no simulator)
+   */
+  sourceSimulatorFunctionName?: string;
 };
 
 export const landscapeResources = (context: LandscapeContext): LandscapeResources => {
@@ -48,6 +55,7 @@ export const landscapeResources = (context: LandscapeContext): LandscapeResource
     chunkerClusterName: `${CLUSTER_BASE_NAME}-${landscape}`,
     chunkerServiceName: CHUNKER_SERVICE_NAME,
     pipelineStackId: context.STACK_ID,
-    itemsPerChunk: context.ITEMS_PER_CHUNK
+    itemsPerChunk: context.ITEMS_PER_CHUNK,
+    ...(isMockLandscape(landscape) ? { sourceSimulatorFunctionName: `${sourceSimulatorBaseName}-${landscape}` } : {})
   };
 }

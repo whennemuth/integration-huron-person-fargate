@@ -37,6 +37,7 @@ export class FunctionUrlOrigin {
     const {
       landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName,
       chunkerFunctionName, processorSubscriberFunctionName, pipelineStackId, itemsPerChunk, chunkerClusterName,
+      sourceSimulatorFunctionName,
       chunkerServiceName
     } = landscapeResources;
 
@@ -72,6 +73,8 @@ export class FunctionUrlOrigin {
       // Shown in a run's review: the pipeline stack and the chunker task's chunk size
       PIPELINE_STACK_ID: pipelineStackId,
       ...(itemsPerChunk !== undefined && { ITEMS_PER_CHUNK: String(itemsPerChunk) }),
+      // A mock landscape only: the source simulator, which Bulk sync offers as the source
+      ...(sourceSimulatorFunctionName && { SOURCE_SIMULATOR_FUNCTION_NAME: sourceSimulatorFunctionName }),
     } as any;
 
     // Add authentication-related environment variables if applicable
@@ -164,6 +167,15 @@ export class FunctionUrlOrigin {
       actions: ['application-autoscaling:DescribeScalableTargets'],
       resources: ['*'],
     }));
+    // A mock landscape only: look up the source simulator's Function URL, to offer it as a run's source. Its settings
+    // are read from its own unauthenticated /health; nothing about it is changed.
+    if (sourceSimulatorFunctionName) {
+      this.lambda.addToRolePolicy(new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['lambda:GetFunctionUrlConfig'],
+        resources: [functionArn(sourceSimulatorFunctionName)],
+      }));
+    }
 
     // Lambda function url for the web app.
     this.functionUrl = new FunctionUrl(this.lambda, 'url', {

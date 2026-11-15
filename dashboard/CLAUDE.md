@@ -155,7 +155,9 @@ The Lambda function serves two primary roles:
 - `POST /api/bulk-sync` - start a sync run, as the EventBridge schedule does (`BulkSync`,
   `src/services/BulkSync.ts`): `{ runType: 'full' | 'full-no-deactivations' | 'test', buid? (a test's,
   and only a test's), bulkReset?, iterationLimit? (0-50, 0 a single task; default 10; always 0 for a test), parallelStart? (0 to the chunker service's most tasks, at most 20; refused for a test or a single task),
-  overrideStalled? }`; `202` with what was started. A refused review
+  overrideStalled?, and in a mock landscape only: source? ('real' | 'simulator'), simulator? ({ totalPopulation?,
+  simulatedDelaySeconds?, errorRate?, nonCurrentTermRate? }, with the simulator), resetState? }`; `202` with what was
+  started. A refused review
   or start is a `BulkSyncError` as `{ error, code }` (400 invalid, 403 production, 409 a run underway or stalled or a
   subscriber in `DRY_RUN`, 503 not configured)
 - `GET /api/status` - Get system health status and metrics
@@ -221,8 +223,12 @@ Provides mock implementations when `LOCALHOST_WITH_MOCKS=true` (ignored in Lambd
 - Mock Huron data target operations
 - Simulated sync execution
 - Fake status data
-- A fake landscape registry ("local", plus `mock` and `Staging` at example.com urls). This `mock`
-  is unrelated to the deployed mock landscape.
+- A fake landscape registry (`mock` and `Staging` at example.com urls), whose current landscape is the one the
+  mocks play: `LANDSCAPE`, which the launcher sets to `local`, or to `--landscape`'s (`npm run dashboard:dev:mock`
+  plays `mock`, so the top bar shows mock selected, with the mock tint). The entries' urls lead nowhere: a local run
+  plays one landscape, and switching means restarting with the other command.
+- **The landscape the mocks play** (`LANDSCAPE`, else `local`) is the one Bulk sync (`MockBulkSyncService`) and run
+  reporting's capabilities report. A mock landscape's name (`mock`) shows Bulk sync's mock landscape options.
 - Run reporting (`src/handlers/MockRunReporting.ts`): a deterministic history of 40 runs ending
   with the nightly run of 2026-11-04. `MockRunCatalog` defines them: nightly delta syncs, a full
   sync every seventh night, and at fixed positions from the newest the special cases (an incomplete
@@ -272,6 +278,7 @@ npm install
 npm run dashboard:build:templates  # Build Mustache templates with inline assets
 npm run dashboard:dev              # Start the local server at http://localhost:3000/dashboard
 npm run dashboard:dev -- --mocks   # The same with the mock services for one run (flags: see below)
+npm run dashboard:dev:mock         # The mock services playing the mock landscape (--mocks --landscape mock)
 ```
 
 `dashboard:dev` builds the templates, then runs `scripts/LocalLaunch.ts`, which starts
@@ -296,7 +303,9 @@ repository's `.env` is never read.
   handed to each restart through `LOCAL_LAUNCH_RESOLVED`), `MOCK_STORAGE_MODE` (`dynamodb` | `s3`, the
   storage mode the mock run reporting reports), `PORT` (default 3000).
 - **Flags** override a switch for one run, after `--`: `--mocks`, `--no-mocks`, `--auth <none|mock>`,
-  `--watch`, `--no-watch`, `--storage-mode <dynamodb|s3>` (mocks only), `--allow-production`.
+  `--watch`, `--no-watch`, `--storage-mode <dynamodb|s3>` (mocks only), `--landscape <name>` (mocks only: the
+  landscape the mocks play, default `local`; `LocalLaunch.env`'s `LANDSCAPE` names a deployed landscape and isn't
+  used with mocks), `--allow-production`.
 - **Production guard**: without mocks the launcher refuses a landscape whose `LANDSCAPE_TONE` (the Lambda's,
   or an override) is `production`, since Sync and Bulk sync would write to its real target from local code,
   unless `ALLOW_PRODUCTION=true` or `--allow-production`. A local run also uses your profile's permissions,
@@ -401,7 +410,7 @@ characters: the Shibboleth construct names a bucket `<stack name>-context-config
   statistics table, the person history table (DynamoDB mode) and the chunks bucket
   (`lib/LandscapeResources.ts`). To start a run (Bulk sync) it may also invoke the chunker subscriber
   (`chunker-subscriber-<landscape>`, which resets the chunker's counters for a run's start) and read its and
-  the processor subscriber's configuration (their `DRY_RUN`), and read the chunker service's most tasks (its scalable target, for Parallel start); it writes nothing. All by deterministic name -
+  the processor subscriber's configuration (their `DRY_RUN`), and read the chunker service's most tasks (its scalable target, for Parallel start); in a mock landscape only, it may also look up the source simulator's Function URL (`lambda:GetFunctionUrlConfig` on `source-simulator-<landscape>`, named in its `SOURCE_SIMULATOR_FUNCTION_NAME`). It writes nothing. All by deterministic name -
   no CloudFormation imports from the pipeline stack.
 
 **Commands** (from the fargate root; `npm run deploy` deploys the pipeline and dashboard stacks):
@@ -689,6 +698,27 @@ routes above).
   settings: chunker tasks ("Chunks per task", 1-50, default 10, `BulkSyncRequest.CHUNKS_PER_TASK_DEFAULT`; or
   "Single task", sent as `iterationLimit: 0`; a test is always a single task, whatever the form sends, since a chained chunker task would fetch the same person again: with bulk reset it got ahead of the first while that built the person cache, and the person was chunked twice, preview 2026-11-12; `BulkSyncRequest.parse()`; on the page, choosing Test checks Single task and locks both chunk modes, and choosing another run type unlocks them and restores the mode chosen before, kept on the fieldset as `data-chosen-mode`: `BulkSyncPage.lockChunkMode()`) and Parallel start (below). The
   defaults are the scheduled run's (`ScheduledRun`, fargate `src/chunking/ScheduledRun.ts`).
+- **A mock landscape's own options** (`BulkSyncState.mock`, a "Mock landscape" section after Custom settings, only where
+  `isMockLandscape()`; `mock-landscape-options-plan.md`, since 2026-11-15):
+  - **Source**: the real source API (the default, a hybrid run) or the source simulator. With the simulator, the
+    event's source is its Function URL (looked up by `AwsSourceSimulatorService`), its people endpoint or
+    `/person?buid=` for a test, with the four simulator settings as query parameters of `fetchPath`
+    (`simulationSettings()` in `src/chunking/fetch/SourceSimulator.ts`), and its `/terms` as the `termsEndpoint`.
+    Nothing about the simulator Lambda is changed. Its settings start at its deployed ones, read from its
+    unauthenticated `/health`; refused out of range (`BulkSyncRequest.SIMULATOR_LIMITS`: at most 500,000 people, the
+    chunker's safety cutoff, and 30 seconds a response), and a test's BUID must be one of its people. When the
+    simulator isn't deployed, its choice is disabled with the reason.
+  - **Start from scratch** (`resetState`): the event carries it, and the chunker subscriber empties the target
+    simulator, the statistics (Run history) and the delta baseline before the run starts
+    (`src/chunking/MockLandscapeReset.ts`). The page says Run history starts again from this run.
+  - **Refused elsewhere** (`BulkSyncRequest.parse(body, { mockLandscape })`), and only a mock landscape's dashboard
+    has the simulator's name and lookup grant. The review's `sourceSimulator`, `sourceSimulatorMock*` and
+    `mockTargetResetState` settings come from the form in a mock landscape, and are fixed at `false` elsewhere.
+  - **The review** names the target simulator as the target, says which source, and notes a Parallel start seeded
+    past the simulator's people (from the review's `itemsPerChunk`).
+  - **Under mocks**: `npm run dashboard:dev:mock` plays the mock landscape, with a stand-in simulator
+    (`MockBulkSyncService.MOCK_SIMULATOR`, mock's deployed settings) at an example URL. It is always found, so a
+    simulator that isn't deployed is seen only in the tests.
 - **Parallel start** (`parallelStart`, 0 by default): how many chunker tasks start the run at once, standing for the
   Runner's `MESSAGES_TO_PREPOPULATE` and `DESIRED_COUNT` together. 0 sends the chunker subscriber one message, and
   auto-scaling adds tasks. N above 0 goes on the event, and the subscriber seeds the queue with N messages (offsets
@@ -710,9 +740,8 @@ routes above).
   combination, and a missing `trustPreviousStorage` reads as `false` (a reset), so both are always sent.
 - **Not offered** (command line only, or not yet): addons, `CHUNKING_ONLY` / `MESSAGING_ONLY` (they switch the
   subscribers' `DRY_RUN`, which stays switched), skipping the counter reset (the chunker subscriber always resets),
-  `ITEMS_PER_CHUNK` (the chunker task's environment, set at deploy), and in mock landscapes the target reset and the
-  source simulator (later). The plan route's settings list them with their fixed values; the page doesn't show
-  that list.
+  and `ITEMS_PER_CHUNK` (the chunker task's environment, set at deploy). The plan route's settings list them with
+  their fixed values; the page doesn't show that list.
 - **The page's words are for people who don't know the pipeline**: bulk reset is explained as a fingerprint of
   each person's record rather than as hashes, and the page doesn't mention the schedule (a later page will
   describe what the schedule does).

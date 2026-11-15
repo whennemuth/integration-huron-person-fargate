@@ -709,6 +709,7 @@ export async function handler(event: APIGatewayProxyEventV2, context: Context): 
         status: 'healthy',
         totalPopulation: settings.totalPopulation,
         errorRate: settings.errorRate,
+        simulatedDelaySeconds: settings.simulatedDelaySeconds,
       }),
     };
   }

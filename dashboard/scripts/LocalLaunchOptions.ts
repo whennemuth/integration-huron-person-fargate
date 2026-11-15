@@ -9,12 +9,16 @@
  *    another value, is an override (listed, so the launcher can say so).
  * 3. What the switches call for: NODE_ENV=development, the mock services or not, and public mode or the mock
  *    sign-in (LOCAL_MOCK_SIGN_IN; the Lambda's own sign-in settings are kept, so its Authenticator runs as deployed).
+ *    With mocks, LANDSCAPE is the landscape the mocks play: --landscape's, else `local` (LocalLaunch.env's LANDSCAPE
+ *    names a deployed landscape for a run without mocks, and isn't used for one with them).
  *
  * Command-line flags override a switch for one run:
  *   --mocks | --no-mocks          MOCKED
  *   --auth <none|mock>            AUTHENTICATION
  *   --watch | --no-watch          WATCH
  *   --storage-mode <dynamodb|s3>  MOCK_STORAGE_MODE (with mocks only)
+ *   --landscape <name>            the landscape the mocks play, e.g. mock for a mock landscape's page (with mocks only;
+ *                                 npm run dashboard:dev:mock)
  *   --allow-production            ALLOW_PRODUCTION
  */
 import { LambdaFunction } from './LambdaFunction';
@@ -40,6 +44,15 @@ export const MOCK_SIGN_IN_HEADERS = { APP_LOGIN_HEADER: 'app-login', APP_LOGOUT_
 
 const SIGN_IN_HEADERS = Object.keys(MOCK_SIGN_IN_HEADERS);
 
+/**
+ * The landscape the mocks play unless --landscape names another (LandscapeRegistry.ts's LOCAL_LANDSCAPE, not imported:
+ * nothing of the server may load before its environment is set)
+ */
+export const MOCKS_LANDSCAPE = 'local';
+
+/** A landscape's name, as the stacks name them: lower case letters and digits, after a letter */
+const LANDSCAPE_NAME = /^[a-z][a-z0-9]*$/;
+
 export type LaunchEnvironment = {
   /** The variables to set */
   variables: Record<string, string>;
@@ -55,6 +68,7 @@ type Flags = {
   watch?: boolean;
   storageMode?: string;
   allowProduction?: boolean;
+  landscape?: string;
 }
 
 export class LocalLaunchOptions {
@@ -63,6 +77,8 @@ export class LocalLaunchOptions {
   readonly watch: boolean;
   readonly storageMode: StorageMode;
   readonly allowProduction: boolean;
+  /** With mocks: the landscape they play (--landscape, else MOCKS_LANDSCAPE) */
+  readonly mocksLandscape?: string;
   readonly landscape?: string;
   readonly region?: string;
   readonly stackId?: string;
@@ -88,6 +104,10 @@ export class LocalLaunchOptions {
     if (flags.storageMode && !this.mocked) {
       throw new Error('--storage-mode applies only to the mocks: add --mocks, or set MOCKED=true');
     }
+    if (flags.landscape && !this.mocked) {
+      throw new Error("--landscape applies only to the mocks: add --mocks (without them, LocalLaunch.env's LANDSCAPE names the deployed landscape to run as)");
+    }
+    this.mocksLandscape = this.mocked ? (flags.landscape ?? MOCKS_LANDSCAPE) : undefined;
     if (!this.mocked && (!this.landscape || !this.region)) {
       throw new Error('Without mocks, LocalLaunch.env must name the landscape to run as: set LANDSCAPE and REGION (or MOCKED=true)');
     }
@@ -124,7 +144,9 @@ export class LocalLaunchOptions {
       NODE_ENV: 'development',
       LOCALHOST_WITH_MOCKS: `${this.mocked}`,
       MOCK_STORAGE_MODE: this.storageMode,
-      [LOCAL_MOCK_SIGN_IN]: `${this.authentication === 'mock'}`
+      [LOCAL_MOCK_SIGN_IN]: `${this.authentication === 'mock'}`,
+      // With mocks, the landscape they play (a mock landscape's name shows its page as it is there)
+      ...(this.mocksLandscape ? { LANDSCAPE: this.mocksLandscape } : {})
     };
     const unset: string[] = [];
     if (this.authentication === 'none') {
@@ -169,12 +191,20 @@ export class LocalLaunchOptions {
         case '--allow-production': flags.allowProduction = true; break;
         case '--auth': flags.authentication = valueOf('--auth', ++i, AUTHENTICATION_MODES); break;
         case '--storage-mode': flags.storageMode = valueOf('--storage-mode', ++i, STORAGE_MODES); break;
+        case '--landscape': {
+          const name = args[++i];
+          if (!name || !LANDSCAPE_NAME.test(name)) {
+            throw new Error(`--landscape must be followed by a landscape's name, e.g. mock (got ${name === undefined ? 'nothing' : `'${name}'`})`);
+          }
+          flags.landscape = name;
+          break;
+        }
         default: unknown.push(args[i]);
       }
     }
     if (unknown.length > 0) {
       throw new Error(`Unknown option(s): ${unknown.join(', ')} (expected --mocks, --no-mocks, --auth <${AUTHENTICATION_MODES.join('|')}>, ` +
-        `--watch, --no-watch, --storage-mode <${STORAGE_MODES.join('|')}>, --allow-production)`);
+        `--watch, --no-watch, --storage-mode <${STORAGE_MODES.join('|')}>, --landscape <name>, --allow-production)`);
     }
     return flags;
   }
