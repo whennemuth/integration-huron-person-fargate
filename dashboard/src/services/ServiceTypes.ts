@@ -1,4 +1,6 @@
+import type { Launch } from './LaunchFlag';
 import type { StartedBy } from '../../../src/chunking/StartedBy';
+import type { MockLandscapeResetRecord } from '../../../src/chunking/MockLandscapeReset';
 import { CrudOperation } from 'integration-core';
 import { PersonPushRequest } from "integration-huron-person";
 import { StatisticsItem } from '../../../src/ApiErrorTracking';
@@ -33,6 +35,10 @@ export interface BulkSyncService {
   /** @param startedBy - who is starting it (the signed-in user), shown in the event and recorded with the run */
   plan(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncPlan>;
   start(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncResult>;
+  /** A mock landscape's reset on its own (Overview): the last one, and whether one can be started now */
+  resetState(): Promise<MockLandscapeResetState>;
+  /** Start a mock landscape's reset on its own; throws a BulkSyncError when refused */
+  requestReset(startedBy?: StartedBy): Promise<MockLandscapeResetRequested>;
 }
 
 export interface SystemStatusService {
@@ -111,6 +117,44 @@ export type BulkSyncRequestBody = {
   iterationLimit?: unknown;
   parallelStart?: unknown;
   overrideStalled?: unknown;
+  /** A mock landscape only: 'real' (the source API) or 'simulator' (the source simulator) */
+  source?: unknown;
+  /** A mock landscape only, with the simulator as the source: its settings for this run (SimulatorSettings) */
+  simulator?: unknown;
+  /** A mock landscape only: start from scratch (empty the mock target, Run history and fingerprints first) */
+  resetState?: unknown;
+};
+
+/** Where a mock landscape's run reads people from: the real source API, or the source simulator */
+export type BulkSyncSource = 'real' | 'simulator';
+
+/**
+ * How the source simulator simulates a run (simulationSettings() in src/chunking/fetch/SourceSimulator.ts), sent as
+ * query parameters in the run's fetchPath
+ */
+export type SimulatorSettings = {
+  /** Simulated people */
+  totalPopulation: number;
+  /** Seconds each response takes */
+  simulatedDelaySeconds: number;
+  /** Share of responses (0 to 1) that fail with a 500 */
+  errorRate: number;
+  /** Share of students (0 to 1) given a term that isn't current */
+  nonCurrentTermRate: number;
+};
+
+/** A mock landscape's own options (BulkSyncState.mock) */
+export type MockLandscapeOptions = {
+  simulator: {
+    /** Whether the source simulator can be chosen: deployed, with a Function URL */
+    available: boolean;
+    /** Why it can't be, when it can't */
+    reason?: string;
+    /** The form's starting values: the simulator's deployed settings (its /health), else the simulator's defaults */
+    defaults: SimulatorSettings;
+  };
+  /** The highest population and delay a request may ask for */
+  limits: { totalPopulation: number; simulatedDelaySeconds: number };
 };
 
 /**
@@ -149,10 +193,38 @@ export type BulkSyncState = {
   blocked?: { code: BulkSyncErrorCode; message: string };
   /** Things to know before starting that don't block it (e.g. a mock landscape's real source) */
   warnings: string[];
+  /** The chunker task's ITEMS_PER_CHUNK, for the page's estimate of a parallel start's reach */
+  itemsPerChunk?: number;
+  /** A mock landscape only: the source and Start from scratch */
+  mock?: MockLandscapeOptions;
+  /** A run launched moments ago whose chunker hasn't written its first records yet (LaunchFlag); absent otherwise */
+  launch?: Launch;
 };
 
 export type BulkSyncErrorCode =
-  'INVALID_REQUEST' | 'PRODUCTION_LANDSCAPE' | 'RUN_UNDERWAY' | 'RUN_STALLED' | 'SUBSCRIBER_DRY_RUN' | 'NOT_CONFIGURED';
+  'INVALID_REQUEST' | 'PRODUCTION_LANDSCAPE' | 'RUN_UNDERWAY' | 'RUN_STALLED' | 'SUBSCRIBER_DRY_RUN' | 'NOT_CONFIGURED' |
+  'RESET_UNDERWAY' | 'RUN_LAUNCHING';
+
+/** A mock landscape reset's status as of now: `running` beyond 15 minutes is `stopped` (MockLandscapeReset.statusOf()) */
+export type MockLandscapeResetStatus = 'running' | 'succeeded' | 'failed' | 'stopped';
+
+/**
+ * Overview's Mock landscape section (GET /api/mock-landscape/reset): not a mock landscape; or the last reset, as
+ * recorded by the chunker subscriber, and why a reset can't be started now
+ */
+export type MockLandscapeResetState =
+  | { mockLandscape: false }
+  | {
+      mockLandscape: true;
+      landscape: string;
+      last?: Omit<MockLandscapeResetRecord, 'status'> & { status: MockLandscapeResetStatus };
+      /** Why the last reset couldn't be read, if it couldn't */
+      lastError?: string;
+      blocked?: { code: BulkSyncErrorCode; message: string };
+    };
+
+/** A reset handed to the chunker subscriber (POST /api/mock-landscape/reset, 202) */
+export type MockLandscapeResetRequested = { status: 'requested'; landscape: string; requestedAt: string };
 
 /** A validated request's choices, as the page summarizes them */
 export type BulkSyncChoices = {
@@ -167,6 +239,12 @@ export type BulkSyncChoices = {
   /** Chunker messages sent at the start (0: one, and auto-scaling adds tasks) */
   parallelStart: number;
   overrideStalled: boolean;
+  /** A mock landscape only (absent elsewhere): where the run reads people from */
+  source?: BulkSyncSource;
+  /** With the simulator as the source: the settings sent to it */
+  simulator?: Partial<SimulatorSettings>;
+  /** A mock landscape only: whether the run starts from scratch */
+  resetState?: boolean;
 };
 
 /**

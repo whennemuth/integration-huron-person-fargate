@@ -81,6 +81,7 @@ The source simulator (`src/chunking/fetch/SourceSimulator.ts`) is a Lambda Funct
 - **API keys**: every endpoint accepts any of the three source keys in the config secret (people, person, terms), and rejects anything else. Callers pick keys by URL and the simulator's URLs can't satisfy all of them while hybrid runs need the secret's real source URLs: the chunker never matches the simulator's `/person` to the configured person URL, so it sends the people key there, whereas a client given the simulator's URLs directly (integration-huron-person's `SyncPerson.ts`) sends the person key, and the processor always sends the terms key. See "API keys" in the `SourceSimulator.ts` header.
 - **How simulated terms reach the processor** (only for simulated-source runs): terms are fetched by the processor tasks (integration-huron-person's `getDataMapper()`/`DataMapperOrg`), from the config they load from the secret - so the Runner cannot redirect them by changing its own config object (it used to, with no effect: mock runs fetched terms from the real terms API). Instead `SourceSimulatorRunnerDecorator` returns a `termsEndpoint` with the source endpoint, which travels like `personRecordProcessorAddons`: chunker SQS message (`ApiChunkerEvent.termsEndpoint`) -> `TaskParameters` -> re-forwarded by `ChunkerQueue.sendNextChunkingMessage()` -> `docker/chunker.ts` writes it to the run's Flags (`Flags.termsEndpoint`) -> `ProcessorForS3`/`ProcessorForDynamoDb` apply it via `applyTermsEndpoint()` (ProcessorCommon.ts: replaces `dataSource.terms` baseUrl/fetchPath only; the apiKey stays). Hybrid runs (real source -> mock target) and scheduled runs never set it, so they keep the configured (real) terms endpoint. The field itself is generic, not mock-specific.
 - Optional `nonCurrentTermRate` query parameter (0.0-1.0, default 0.0), on `/` and `/person`: the proportion of simulated students assigned a non-current term, for testing semester-filtering logic. Which students get one is decided by a hash of the person's index (not `Math.random()`), so a person's payload is identical on every request and from either endpoint
+- **Simulation settings per request** (`simulationSettings()`, since 2026-11-14): `totalPopulation`, `simulatedDelaySeconds` (at most 30) and `errorRate` query parameters, on any endpoint, override the Lambda's `MOCK_TOTAL_POPULATION`, `MOCK_SIMULATED_DELAY_SECONDS` and `MOCK_ERROR_RATE`, which remain the defaults (set from the context at deploy). A value that isn't a number is ignored; one out of range is clamped. A run carries them in its `fetchPath` (e.g. `/?totalPopulation=1950`), so its settings travel with it and the Lambda's configuration isn't changed for a run: the chunker keeps `fetchPath`'s own query on every page request (`DataSource.getFetchUrl()` in integration-huron-person appends `recordCount` and `offset` to it; only `buid` stops it paging) and passes `fetchPath` on in each chained message. The manual Runner still writes its `SOURCE_SIMULATOR_MOCK_*` overrides into the Lambda's environment (`SourceSimulatorRunnerDecorator`); the dashboard's Bulk sync uses the query, reading the defaults from the simulator's `/health` (which reports all three), and changes nothing in the Lambda (`dashboard/CLAUDE.md`, "A mock landscape's own options")
 
 **Safety enforcement - source simulation entails target simulation**: the source simulator may only exist in a mock landscape (see "Mock Landscapes" below), whose target is always mocked. This is enforced twice: `lib/AppConstruct.ts` refuses to synthesize a stack with `LAMBDA.sourceSimulator.enabled` in a non-mock landscape (so real stacks have no simulator Lambda at all), and `Runner.ts` aborts when `RUNNER_SOURCE_SIMULATOR=true` targets a non-mock landscape. There is no supported way to run simulated source data against the real Huron target API.
 
@@ -206,6 +207,46 @@ offsets from the counter it has just reset (`QueueSeeder` resets its own).
     alarms.
 - First checked in staging on 2026-11-12 with 15 tasks: the alarm settled after 150 seconds, the 15 tasks were
   running 45 seconds after the desired count was set, and no offset or person was chunked twice.
+
+**A mock landscape's run can start from scratch** (`ApiChunkerEvent.resetState`, since 2026-11-14,
+`mock-landscape-options-plan.md`): the subscriber resets the landscape's run state before the counters and before
+anything is queued or seeded, through `src/chunking/MockLandscapeReset.ts`, which the Runner's
+`MOCK_TARGET_RESET_STATE` shares (see "Mock Landscapes" below for what it empties). Emptying the statistics table
+empties the landscape's Run history too.
+- **Checked first, with the parallel start** (`runStartRefusal()`): a 400 result, nothing reset or sent, for a reset
+  on an event that doesn't start a run, outside a mock landscape (`MockLandscapeReset.refusal()`), or without
+  `CHUNKS_BUCKET_NAME`. Skipped in `DRY_RUN`; a failed reset fails the invocation (not retried), so the run doesn't
+  start. Chained and seeded messages never carry `resetState`.
+- **Only a mock landscape's subscriber can do it**: `ChunkerSubscribingLambda` gives it `CHUNKS_BUCKET_NAME` and the
+  grants (`dynamodb:Scan`, `BatchWriteItem`, `DescribeTable` on the mock target, statistics and both person tables;
+  `s3:ListBucket` limited to the `delta-storage/` prefix and `s3:DeleteObject` under it) only when
+  `isMockLandscape()`; another landscape's subscriber has neither.
+- **The time it takes** comes out of the invocation's 600 seconds, which a parallel start's alarm wait shares (that
+  wait is bounded by the time left). The tables are truncated at the same time (`BulkPurger`), each with a parallel
+  scan of `DynamoDBTable.TRUNCATE_SEGMENTS` segments, each keeping `TRUNCATE_BATCHES_IN_FLIGHT` delete batches of 25
+  in flight (`DynamoDBTable.truncateTable()`, since 2026-11-15; throttled deletes retried with backoff), because one
+  batch at a time couldn't empty the about 438,000 items a hybrid full sync left in mock within the time. Every
+  truncation uses it: the Runner's reset and the tables' harness `truncate` tasks too. The mock target table's
+  truncation goes through it as well (it used to read every whole record into memory and delete them one
+  `DeleteItem` at a time, which the subscriber isn't granted). The first reset in mock (2026-11-16, about 438,000
+  items) took 348 s of the 600 with no DynamoDB throttling: the limit was the Lambda's own share of a CPU, and it used
+  239 of its 256 MB with about 100 delete requests in flight. So mock's chunker subscriber has 1,024 MB
+  (`LAMBDA.chunkerSubscriber.memorySizeMb` in `context.mock.json`): four times the memory, and the CPU share that
+  comes with it.
+- **A reset on its own** (`MockLandscapeResetEvent` `{ mockLandscapeReset: true, startedBy?, requestedAt? }`; the
+  dashboard's Overview, Reset landscape): the subscriber runs the same reset and nothing else, with the same refusals
+  (`resetEventRefusal()`), skipped in `DRY_RUN` (`handleResetEvent()`). It shows what Start from scratch will take.
+- **Every reset is recorded** (`MockLandscapeResetRecord`, `MockLandscapeReset.recorder()`) in the landscape's atomic
+  counter table, which no reset empties: the item `counter_name` `not-a-counter:mock-landscape-reset` (borrowing the
+  table, not a counter: `NOT_A_COUNTER_PREFIX` in `src/dynamodb/AtomicCounter.ts`, and a `purpose` attribute saying
+  so; anything that clears the counters must leave such items alone), attribute `reset`, written
+  with `UpdateItem` (granted for the run counters) when it starts and when it ends: how it was started (`overview` or
+  `bulk-sync`), by whom, when, each table's count and time, the S3 baseline objects, or the error. One still
+  `running` 15 minutes after it started has stopped (`statusOf()`: its Lambda ran out of time). Recording never fails
+  the reset; a failed reset is recorded, then fails the invocation.
+- **In a mock landscape, a run start also resets the source simulator's depletion counter**
+  (`simulator-offset-counter`, `runCounterNames()` in `src/chunking/RunCounters.ts`), with the chunker's two, so a
+  run with the simulator reads its population from the first person. A run from the real source doesn't notice.
 
 **Glitched-source safety cutoff (`maxTotalRecords`)**: If the source never returns an empty
 batch, chunking would never end - an endless fetch loop when `iterationLimit=0`, or endless
@@ -464,7 +505,8 @@ dynamic reference) into the mock stack's integration config secret as
 optionally resets its run state (`RUNNER_MOCK_TARGET_RESET_STATE=true` truncates the mock target and
 statistics tables via `BulkPurger`, then clears the delta baseline of the stack's storage mode: the person
 current-state and history tables in DynamoDB mode, or the `delta-storage/` files of the chunks bucket in
-S3 mode; the mode is detected from whether the person current-state table exists), and warns about
+S3 mode; the mode is detected from whether the person current-state table exists; `src/chunking/MockLandscapeReset.ts`,
+shared with the chunker subscriber's `resetState`), and warns about
 "hybrid" runs (real source API -> mock target) - which remain supported (`RUNNER_SOURCE_SIMULATOR=false`
 against a mock landscape), but consume from the real, depleting source API like any other landscape.
 `BulkPurger` refuses to purge a non-mock landscape unless `force: true`.

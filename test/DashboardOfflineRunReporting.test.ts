@@ -1,12 +1,12 @@
 /**
- * Tests the dashboard's mock run reporting (dashboard/src/handlers/MockRunReporting.ts): that its runs cover
+ * Tests the dashboard's offline run reporting (dashboard/src/handlers/OfflineRunReporting.ts): that its runs cover
  * every state the run reporting screens show, that what it records for a run is self-consistent, and that it
  * pages and fails the way the real RunReporting does.
  */
-import { MOCK_RUN_COUNT, MockRunReportingService, NEWEST_MOCK_RUN, OffsetPager } from '../dashboard/src/handlers/MockRunReporting';
+import { OFFLINE_RUN_COUNT, OfflineRunReportingService, NEWEST_OFFLINE_RUN, OffsetPager } from '../dashboard/src/handlers/OfflineRunReporting';
 import { ChangeType, ReportingError, RunReport } from '../src/reporting/RunReporting';
 
-const service = new MockRunReportingService('dynamodb');
+const service = new OfflineRunReportingService('dynamodb');
 
 const allReports = async (reporting = service): Promise<RunReport[]> => {
   const ids = await reporting.listRuns();
@@ -32,18 +32,18 @@ const expectReportingError = async (promise: Promise<unknown>, code: string) => 
   await expect(promise).rejects.toMatchObject({ code });
 };
 
-describe('MockRunReportingService', () => {
+describe('OfflineRunReportingService', () => {
   it('lists its runs oldest first, ending with the newest', async () => {
     const ids = await service.listRuns();
-    expect(ids).toHaveLength(MOCK_RUN_COUNT);
+    expect(ids).toHaveLength(OFFLINE_RUN_COUNT);
     expect([...ids].sort()).toEqual(ids);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids[ids.length - 1]).toBe(NEWEST_MOCK_RUN);
+    expect(ids[ids.length - 1]).toBe(NEWEST_OFFLINE_RUN);
     expect(await service.getRunReport('2020-01-01T00:00:00.000Z')).toBeUndefined();
   });
 
   it('is deterministic', async () => {
-    expect(await allReports(new MockRunReportingService('dynamodb'))).toEqual(await allReports());
+    expect(await allReports(new OfflineRunReportingService('dynamodb'))).toEqual(await allReports());
   });
 
   it('covers every run status and kind of run the screens show', async () => {
@@ -112,54 +112,54 @@ describe('MockRunReportingService', () => {
   });
 
   it('pages the newest run\'s errors, newest pages following the cursor, filtered by status code', async () => {
-    const all = await drain(cursor => service.getRunErrors(NEWEST_MOCK_RUN, { cursor }));
+    const all = await drain(cursor => service.getRunErrors(NEWEST_OFFLINE_RUN, { cursor }));
     expect(all.items).toHaveLength(260);
     expect(all.pages).toBe(3);
     // In sort key order: by status code, then time
     const keys = all.items.map(error => error.eventType);
     expect([...keys].sort()).toEqual(keys);
 
-    const throttles = await drain(cursor => service.getRunErrors(NEWEST_MOCK_RUN, { statusCode: 429, limit: 50, cursor }));
+    const throttles = await drain(cursor => service.getRunErrors(NEWEST_OFFLINE_RUN, { statusCode: 429, limit: 50, cursor }));
     expect(throttles.items).toHaveLength(120);
     expect(throttles.pages).toBe(3);
     expect(throttles.items.every(error => error.statusCode === 429 && error.isThrottled)).toBe(true);
   });
 
   it('pages the newest run\'s changes', async () => {
-    const updated = await drain(cursor => service.getRunChanges(NEWEST_MOCK_RUN, 'UPDATED', { cursor }));
+    const updated = await drain(cursor => service.getRunChanges(NEWEST_OFFLINE_RUN, 'UPDATED', { cursor }));
     expect(updated.items).toHaveLength(240);
     expect(updated.pages).toBe(3);
     expect(updated.items.every(change => change.changeType === 'UPDATED' && change.previousHash)).toBe(true);
   });
 
   it('refuses a cursor from another listing, a malformed cursor, and an out-of-range limit', async () => {
-    const { cursor } = await service.getRunErrors(NEWEST_MOCK_RUN, { statusCode: 429, limit: 10 });
-    await expectReportingError(service.getRunErrors(NEWEST_MOCK_RUN, { statusCode: 500, cursor }), 'INVALID_CURSOR');
-    await expectReportingError(service.getRunChanges(NEWEST_MOCK_RUN, 'NEW', { cursor }), 'INVALID_CURSOR');
-    await expectReportingError(service.getRunErrors(NEWEST_MOCK_RUN, { cursor: 'not-a-cursor' }), 'INVALID_CURSOR');
-    await expectReportingError(service.getRunErrors(NEWEST_MOCK_RUN, { limit: 0 }), 'INVALID_LIMIT');
-    await expectReportingError(service.getRunErrors(NEWEST_MOCK_RUN, { limit: 501 }), 'INVALID_LIMIT');
+    const { cursor } = await service.getRunErrors(NEWEST_OFFLINE_RUN, { statusCode: 429, limit: 10 });
+    await expectReportingError(service.getRunErrors(NEWEST_OFFLINE_RUN, { statusCode: 500, cursor }), 'INVALID_CURSOR');
+    await expectReportingError(service.getRunChanges(NEWEST_OFFLINE_RUN, 'NEW', { cursor }), 'INVALID_CURSOR');
+    await expectReportingError(service.getRunErrors(NEWEST_OFFLINE_RUN, { cursor: 'not-a-cursor' }), 'INVALID_CURSOR');
+    await expectReportingError(service.getRunErrors(NEWEST_OFFLINE_RUN, { limit: 0 }), 'INVALID_LIMIT');
+    await expectReportingError(service.getRunErrors(NEWEST_OFFLINE_RUN, { limit: 501 }), 'INVALID_LIMIT');
   });
 
   describe('in S3 storage mode', () => {
-    const s3 = new MockRunReportingService('s3');
+    const s3 = new OfflineRunReportingService('s3');
 
     it('reports S3 mode, without change lists', async () => {
       expect(s3.getCapabilities()).toEqual({ landscape: 'local', storageMode: 's3', changesSupported: false });
-      expect((await s3.getRunReport(NEWEST_MOCK_RUN))?.summary?.storageMode).toBe('s3');
-      await expectReportingError(s3.getRunChanges(NEWEST_MOCK_RUN, 'NEW'), 'UNSUPPORTED_IN_STORAGE_MODE');
+      expect((await s3.getRunReport(NEWEST_OFFLINE_RUN))?.summary?.storageMode).toBe('s3');
+      await expectReportingError(s3.getRunChanges(NEWEST_OFFLINE_RUN, 'NEW'), 'UNSUPPORTED_IN_STORAGE_MODE');
     });
 
-    it('is selected by MOCK_STORAGE_MODE, which must name a storage mode', () => {
-      const saved = process.env.MOCK_STORAGE_MODE;
+    it('is selected by OFFLINE_STORAGE_MODE, which must name a storage mode', () => {
+      const saved = process.env.OFFLINE_STORAGE_MODE;
       try {
-        process.env.MOCK_STORAGE_MODE = 'S3';
-        expect(new MockRunReportingService().getCapabilities().storageMode).toBe('s3');
-        delete process.env.MOCK_STORAGE_MODE;
-        expect(new MockRunReportingService().getCapabilities()).toMatchObject({ storageMode: 'dynamodb', changesSupported: true });
-        expect(() => new MockRunReportingService('file')).toThrow("MOCK_STORAGE_MODE must be one of dynamodb, s3 (got 'file')");
+        process.env.OFFLINE_STORAGE_MODE = 'S3';
+        expect(new OfflineRunReportingService().getCapabilities().storageMode).toBe('s3');
+        delete process.env.OFFLINE_STORAGE_MODE;
+        expect(new OfflineRunReportingService().getCapabilities()).toMatchObject({ storageMode: 'dynamodb', changesSupported: true });
+        expect(() => new OfflineRunReportingService('file')).toThrow("OFFLINE_STORAGE_MODE must be one of dynamodb, s3 (got 'file')");
       } finally {
-        if (saved === undefined) delete process.env.MOCK_STORAGE_MODE; else process.env.MOCK_STORAGE_MODE = saved;
+        if (saved === undefined) delete process.env.OFFLINE_STORAGE_MODE; else process.env.OFFLINE_STORAGE_MODE = saved;
       }
     });
   });
@@ -175,5 +175,39 @@ describe('OffsetPager', () => {
     const third = pager.page(items, { limit: 10, cursor: pager.page(items, { limit: 10, cursor: first.cursor }).cursor });
     expect(third).toEqual({ items: items.slice(20) });
     expect(pager.page([], {})).toEqual({ items: [] });
+  });
+});
+
+describe('the offline switches, and their names before 2026-11-15', () => {
+  const saved = { ...process.env };
+  afterEach(() => { process.env = { ...saved }; jest.restoreAllMocks(); });
+
+  it('is offline with LOCAL_OFFLINE=true, or LOCALHOST_WITH_MOCKS=true when LOCAL_OFFLINE is unset (with a warning)', async () => {
+    const { ServiceProvider } = await import('../dashboard/src/services/ServiceProvider');
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    delete process.env.AWS_LAMBDA_FUNCTION_NAME;
+    delete process.env.LOCALHOST_WITH_MOCKS;
+    process.env.LOCAL_OFFLINE = 'true';
+    expect(ServiceProvider.isOffline()).toBe(true);
+    delete process.env.LOCAL_OFFLINE;
+    expect(ServiceProvider.isOffline()).toBe(false);
+    process.env.LOCALHOST_WITH_MOCKS = 'true';
+    expect(ServiceProvider.isOffline()).toBe(true);
+    expect(warn).toHaveBeenCalledWith('Renamed: LOCALHOST_WITH_MOCKS is now LOCAL_OFFLINE');
+    // The new name wins
+    process.env.LOCAL_OFFLINE = 'false';
+    expect(ServiceProvider.isOffline()).toBe(false);
+    // Never in Lambda
+    process.env.LOCAL_OFFLINE = 'true';
+    process.env.AWS_LAMBDA_FUNCTION_NAME = 'hp-dashboard-mock-app-function';
+    expect(ServiceProvider.isOffline()).toBe(false);
+  });
+
+  it('reports the storage mode OFFLINE_STORAGE_MODE names, else MOCK_STORAGE_MODE', () => {
+    delete process.env.OFFLINE_STORAGE_MODE;
+    process.env.MOCK_STORAGE_MODE = 's3';
+    expect(new OfflineRunReportingService().getCapabilities().storageMode).toBe('s3');
+    process.env.OFFLINE_STORAGE_MODE = 'dynamodb';
+    expect(new OfflineRunReportingService().getCapabilities().storageMode).toBe('dynamodb');
   });
 });

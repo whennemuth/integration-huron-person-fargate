@@ -1,16 +1,16 @@
 /**
- * Mock run reporting for local development (LOCALHOST_WITH_MOCKS=true): a deterministic history of about
+ * Offline run reporting for local development (LOCAL_OFFLINE=true): a deterministic history of about
  * forty sync runs over six weeks, rich enough to show every state the run reporting screens handle.
  *
- * - MockRunCatalog builds the runs and everything recorded for them: reports, chunk statistics, errors and
+ * - OfflineRunCatalog builds the runs and everything recorded for them: reports, chunk statistics, errors and
  *   person changes, kept consistent with one another (chunk statistics sum to the summary, or to an unfinished
  *   run's progress, through sumChunkStatistics() as a real landscape's do; error items to its errorsByStatus,
  *   change items to its added/updated/removed counts).
- * - MockRunReportingService serves the catalog through the same RunReportingService interface as the real
+ * - OfflineRunReportingService serves the catalog through the same RunReportingService interface as the real
  *   RunReporting, with the same page limits and ReportingError codes, so the screens' paging and error
  *   handling are exercised as they are against a real landscape.
  *
- * MOCK_STORAGE_MODE (dynamodb, the default, or s3) selects the storage mode the mocks report. In S3 mode no
+ * OFFLINE_STORAGE_MODE (dynamodb, the default, or s3) selects the storage mode the offline run reporting reports. In S3 mode no
  * per-person change list is kept, so getRunChanges() refuses, as RunReporting does.
  */
 import { RunStarter, StartedBy } from '../../../src/chunking/StartedBy';
@@ -23,12 +23,12 @@ import { PersonHistoryRecord } from '../../../src/dynamodb/PersonHistoryTable';
 import { RunReportingService } from '../services/ServiceTypes';
 import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
 
-export type MockStorageMode = 'dynamodb' | 's3';
-export const MOCK_STORAGE_MODES: MockStorageMode[] = ['dynamodb', 's3'];
+export type OfflineStorageMode = 'dynamodb' | 's3';
+export const OFFLINE_STORAGE_MODES: OfflineStorageMode[] = ['dynamodb', 's3'];
 
-/** The newest mock run: the nightly run of 2026-11-04 */
-export const NEWEST_MOCK_RUN = '2026-11-04T02:00:00.000Z';
-export const MOCK_RUN_COUNT = 40;
+/** The newest offline run: the nightly run of 2026-11-04 */
+export const NEWEST_OFFLINE_RUN = '2026-11-04T02:00:00.000Z';
+export const OFFLINE_RUN_COUNT = 40;
 
 const MINUTE = 60 * 1000;
 const DAY = 24 * 60 * MINUTE;
@@ -36,11 +36,11 @@ const FULL_POPULATION = 14_500;
 const ITEMS_PER_CHUNK = 1000;
 const ERROR_STATUS_CODES = [400, 404, 429, 500] as const;
 
-/** How a mock run ended */
+/** How an offline run ended */
 type Outcome = 'SUCCEEDED' | 'FAILED' | 'POST_PROCESSING_FAILED' | 'INCOMPLETE' | 'TERMINAL_ERROR';
 
 /** One run, as the catalog defines it: everything else is derived from this */
-type MockRunSpec = {
+type OfflineRunSpec = {
   syncRunId: string;
   outcome: Outcome;
   syncPopulation: 'person-full' | 'person-delta';
@@ -75,31 +75,31 @@ const hex = (...parts: (string | number)[]): string =>
 const buidFor = (...parts: (string | number)[]): string => `U${String(hash(...parts) % 100_000_000).padStart(8, '0')}`;
 
 /**
- * The mock runs and what is recorded for each. Runs are numbered from the newest (0) back; the special
+ * The offline runs and what is recorded for each. Runs are numbered from the newest (0) back; the special
  * cases sit at fixed positions, and the rest are nightly runs: a full sync every seventh night, and a delta
  * sync of the changed people on the others.
  */
-export class MockRunCatalog {
+export class OfflineRunCatalog {
   /** The newest runs record who started them; older ones (from before it was recorded) don't */
   static readonly STARTED_BY_RECORDED_FOR = 30;
 
-  private readonly specs: MockRunSpec[];
-  private readonly byId: Map<string, MockRunSpec>;
+  private readonly specs: OfflineRunSpec[];
+  private readonly byId: Map<string, OfflineRunSpec>;
   /** Generated lists, kept: a list is paged a slice at a time, and the largest holds ~14,000 changes */
   private readonly cache = new Map<string, any>();
-  private static readonly shared = new Map<MockStorageMode, MockRunCatalog>();
+  private static readonly shared = new Map<OfflineStorageMode, OfflineRunCatalog>();
 
-  constructor(public readonly storageMode: MockStorageMode = 'dynamodb') {
-    this.specs = Array.from({ length: MOCK_RUN_COUNT }, (_, n) => MockRunCatalog.spec(n));
+  constructor(public readonly storageMode: OfflineStorageMode = 'dynamodb') {
+    this.specs = Array.from({ length: OFFLINE_RUN_COUNT }, (_, n) => OfflineRunCatalog.spec(n));
     this.byId = new Map(this.specs.map(spec => [spec.syncRunId, spec]));
   }
 
   /** One catalog per storage mode, shared by every service instance (the provider makes one per request) */
-  static for(storageMode: MockStorageMode): MockRunCatalog {
-    let catalog = MockRunCatalog.shared.get(storageMode);
+  static for(storageMode: OfflineStorageMode): OfflineRunCatalog {
+    let catalog = OfflineRunCatalog.shared.get(storageMode);
     if (!catalog) {
-      catalog = new MockRunCatalog(storageMode);
-      MockRunCatalog.shared.set(storageMode, catalog);
+      catalog = new OfflineRunCatalog(storageMode);
+      OfflineRunCatalog.shared.set(storageMode, catalog);
     }
     return catalog;
   }
@@ -139,9 +139,9 @@ export class MockRunCatalog {
           bulkReset: spec.bulkReset,
           trustPreviousStorage: false,
           itemsPerChunk: ITEMS_PER_CHUNK,
-          source: MockRunCatalog.source(spec),
+          source: OfflineRunCatalog.source(spec),
           // Its chunker found the end of the source records (every chunk is written); only some are processed
-          ...(failed ? {} : { chunkCount: MockRunCatalog.chunkCount(spec), totalRecords: spec.totalRecords, partialOrEmptyChunkEncountered: true })
+          ...(failed ? {} : { chunkCount: OfflineRunCatalog.chunkCount(spec), totalRecords: spec.totalRecords, partialOrEmptyChunkEncountered: true })
         },
         flags: {
           bulkReset: spec.bulkReset,
@@ -180,7 +180,7 @@ export class MockRunCatalog {
     if (!spec || spec.outcome === 'TERMINAL_ERROR') {
       return [];
     }
-    const chunkCount = MockRunCatalog.chunkCount(spec);
+    const chunkCount = OfflineRunCatalog.chunkCount(spec);
     const reported = spec.outcome === 'INCOMPLETE' ? Math.ceil(chunkCount * 0.6) : chunkCount;
     const share = (total: number, chunk: number) => Math.floor(total / chunkCount) + (chunk < total % chunkCount ? 1 : 0);
     const start = Date.parse(syncRunId);
@@ -204,7 +204,7 @@ export class MockRunCatalog {
         chunkCount,
         chunkSize: ITEMS_PER_CHUNK,
         totalRecords,
-        sourceDescription: MockRunCatalog.source(spec),
+        sourceDescription: OfflineRunCatalog.source(spec),
         successCount: totalRecords - failureCount,
         failureCount,
         skippedCount: 0,
@@ -249,7 +249,7 @@ export class MockRunCatalog {
           errorType: `ERROR:${code}`,
           timestamp,
           statusCode: code,
-          ...MockRunCatalog.errorDetail(code, buid, hash(syncRunId, code, n))
+          ...OfflineRunCatalog.errorDetail(code, buid, hash(syncRunId, code, n))
         };
       }));
   }
@@ -275,7 +275,7 @@ export class MockRunCatalog {
     })).sort((a, b) => a.personId < b.personId ? -1 : a.personId > b.personId ? 1 : 0);
   }
 
-  private summary(spec: MockRunSpec): RunSummary {
+  private summary(spec: OfflineRunSpec): RunSummary {
     // Summed as the post-processor sums a run's chunks
     const { lastChunkAt: _, ...totals } = sumChunkStatistics(this.chunkStatistics(spec.syncRunId));
     const statusFor: Record<string, RunSummaryStatus> = {
@@ -290,7 +290,7 @@ export class MockRunCatalog {
       completedAt: new Date(Date.parse(spec.syncRunId) + spec.durationMinutes * MINUTE).toISOString(),
       syncPopulation: spec.syncPopulation,
       bulkReset: spec.bulkReset,
-      chunkCount: MockRunCatalog.chunkCount(spec),
+      chunkCount: OfflineRunCatalog.chunkCount(spec),
       totalRecords: spec.totalRecords,
       ...totals,
       deletion: spec.deletion,
@@ -298,18 +298,18 @@ export class MockRunCatalog {
     };
   }
 
-  private static chunkCount(spec: MockRunSpec): number {
+  private static chunkCount(spec: OfflineRunSpec): number {
     return Math.max(1, Math.ceil(spec.totalRecords / ITEMS_PER_CHUNK));
   }
 
-  private static source(spec: MockRunSpec): string {
+  private static source(spec: OfflineRunSpec): string {
     return `https://cdm.example.bu.edu/api/people${spec.buid ? `/person?buid=${spec.buid}` : ''}`;
   }
 
   /** An error's fields after its code: like ApiErrorTracking's, the person it concerns is in detailsObj (a JSON string) */
   private static errorDetail(code: number, buid: string, seed: number): Record<string, any> {
     return {
-      ...MockRunCatalog.errorText(code, buid, seed),
+      ...OfflineRunCatalog.errorText(code, buid, seed),
       detailsObj: JSON.stringify({ hrn: `hrn:hrs:persons:${buid}`, sourceIdentifier: buid })
     };
   }
@@ -328,11 +328,11 @@ export class MockRunCatalog {
   }
 
   /** Run n, counting back from the newest (0) */
-  private static spec(n: number): MockRunSpec {
-    const nightly = Date.parse(NEWEST_MOCK_RUN) - n * DAY;
+  private static spec(n: number): OfflineRunSpec {
+    const nightly = Date.parse(NEWEST_OFFLINE_RUN) - n * DAY;
     const seed = hash('run', n);
     const full = n % 7 === 0;
-    const base: MockRunSpec = {
+    const base: OfflineRunSpec = {
       syncRunId: new Date(nightly).toISOString(),
       outcome: 'SUCCEEDED',
       syncPopulation: full ? 'person-full' : 'person-delta',
@@ -345,18 +345,18 @@ export class MockRunCatalog {
       bulkReset: false,
       durationMinutes: full ? 38 + seed % 15 : 6 + seed % 6,
       // The nightly runs are the schedule's; the oldest are from before who started a run was recorded
-      startedBy: n < MockRunCatalog.STARTED_BY_RECORDED_FOR ? RunStarter.SCHEDULE : undefined
+      startedBy: n < OfflineRunCatalog.STARTED_BY_RECORDED_FOR ? RunStarter.SCHEDULE : undefined
     };
-    const spec: MockRunSpec = { ...base, ...MockRunCatalog.specialCase(n, base, seed) };
+    const spec: OfflineRunSpec = { ...base, ...OfflineRunCatalog.specialCase(n, base, seed) };
     if (spec.deletion === undefined && (spec.outcome === 'SUCCEEDED' || spec.outcome === 'FAILED' || spec.outcome === 'POST_PROCESSING_FAILED')) {
-      spec.deletion = MockRunCatalog.deletion(spec);
+      spec.deletion = OfflineRunCatalog.deletion(spec);
     }
     return spec;
   }
 
   /** The runs that differ from a nightly run, at fixed positions from the newest */
-  private static specialCase(n: number, base: MockRunSpec, seed: number): Partial<MockRunSpec> {
-    const afternoon = (day: number) => new Date(Date.parse(NEWEST_MOCK_RUN) - day * DAY + 13 * 60 * MINUTE + 17 * MINUTE).toISOString();
+  private static specialCase(n: number, base: OfflineRunSpec, seed: number): Partial<OfflineRunSpec> {
+    const afternoon = (day: number) => new Date(Date.parse(NEWEST_OFFLINE_RUN) - day * DAY + 13 * 60 * MINUTE + 17 * MINUTE).toISOString();
     switch (n) {
       case 0: // The latest run: a full sync with enough errors and changes to need several pages
         return {
@@ -403,7 +403,7 @@ export class MockRunCatalog {
     }
   }
 
-  private static deletion(spec: MockRunSpec): DeletionOutcome {
+  private static deletion(spec: OfflineRunSpec): DeletionOutcome {
     if (spec.syncPopulation === 'person-delta') {
       return { status: 'SKIPPED', reason: 'PERSON_DELTA', message: 'Deletions are detected only in a full sync' };
     }
@@ -462,25 +462,25 @@ export class OffsetPager {
   }
 }
 
-export class MockRunReportingService implements RunReportingService {
-  private readonly catalog: MockRunCatalog;
+export class OfflineRunReportingService implements RunReportingService {
+  private readonly catalog: OfflineRunCatalog;
 
-  /** @param storageMode the storage mode to report (default: MOCK_STORAGE_MODE, else dynamodb) */
-  constructor(storageMode: string | undefined = process.env.MOCK_STORAGE_MODE) {
-    this.catalog = MockRunCatalog.for(MockRunReportingService.parseStorageMode(storageMode));
+  /** @param storageMode the storage mode to report (default: OFFLINE_STORAGE_MODE, or MOCK_STORAGE_MODE, its name before 2026-11-15; else dynamodb) */
+  constructor(storageMode: string | undefined = process.env.OFFLINE_STORAGE_MODE ?? process.env.MOCK_STORAGE_MODE) {
+    this.catalog = OfflineRunCatalog.for(OfflineRunReportingService.parseStorageMode(storageMode));
   }
 
-  static parseStorageMode(value?: string): MockStorageMode {
+  static parseStorageMode(value?: string): OfflineStorageMode {
     const mode = (value || 'dynamodb').trim().toLowerCase();
-    if (!MOCK_STORAGE_MODES.includes(mode as MockStorageMode)) {
-      throw new Error(`MOCK_STORAGE_MODE must be one of ${MOCK_STORAGE_MODES.join(', ')} (got '${value}')`);
+    if (!OFFLINE_STORAGE_MODES.includes(mode as OfflineStorageMode)) {
+      throw new Error(`OFFLINE_STORAGE_MODE must be one of ${OFFLINE_STORAGE_MODES.join(', ')} (got '${value}')`);
     }
-    return mode as MockStorageMode;
+    return mode as OfflineStorageMode;
   }
 
   getCapabilities(): Capabilities {
     const { storageMode } = this.catalog;
-    return { landscape: LOCAL_LANDSCAPE, storageMode, changesSupported: storageMode === 'dynamodb' };
+    return { landscape: process.env.LANDSCAPE || LOCAL_LANDSCAPE, storageMode, changesSupported: storageMode === 'dynamodb' };
   }
 
   async listRuns(): Promise<string[]> {

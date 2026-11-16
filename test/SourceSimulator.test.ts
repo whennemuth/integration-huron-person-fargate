@@ -1,4 +1,6 @@
-import { handler, personIndexFromBuid, resetSourceSimulatorState } from '../src/chunking/fetch/SourceSimulator';
+import {
+  handler, personIndexFromBuid, resetSourceSimulatorState, simulationSettings, DEFAULT_TOTAL_POPULATION, MAX_SIMULATED_DELAY_SECONDS
+} from '../src/chunking/fetch/SourceSimulator';
 import { APIGatewayProxyEventV2, Context } from 'aws-lambda';
 import { ConfigManager } from 'integration-huron-person';
 
@@ -521,6 +523,84 @@ describe('SourceSimulator Lambda Handler', () => {
       const nonCurrent = first.filter(code => code === '2256').length;
       expect(nonCurrent / first.length).toBeGreaterThan(0.3);
       expect(nonCurrent / first.length).toBeLessThan(0.7);
+    });
+  });
+
+  describe('Simulation settings from the query (simulationSettings)', () => {
+    it('takes each setting from the query, else the environment, else its default', () => {
+      const env = { MOCK_TOTAL_POPULATION: '1950', MOCK_SIMULATED_DELAY_SECONDS: '3', MOCK_ERROR_RATE: '0.1' };
+      expect(simulationSettings({}, env)).toEqual({ totalPopulation: 1950, simulatedDelaySeconds: 3, errorRate: 0.1, nonCurrentTermRate: 0 });
+      expect(simulationSettings({ totalPopulation: '40', simulatedDelaySeconds: '0', errorRate: '0', nonCurrentTermRate: '0.25' }, env))
+        .toEqual({ totalPopulation: 40, simulatedDelaySeconds: 0, errorRate: 0, nonCurrentTermRate: 0.25 });
+      expect(simulationSettings({}, {})).toEqual({ totalPopulation: DEFAULT_TOTAL_POPULATION, simulatedDelaySeconds: 0, errorRate: 0, nonCurrentTermRate: 0 });
+    });
+
+    it('ignores a value that is not a number, using the next source', () => {
+      const env = { MOCK_TOTAL_POPULATION: '1950', MOCK_ERROR_RATE: 'lots' };
+      expect(simulationSettings({ totalPopulation: 'many', errorRate: '' }, env)).toMatchObject({ totalPopulation: 1950, errorRate: 0 });
+    });
+
+    it('clamps a value out of range, and takes a whole population', () => {
+      expect(simulationSettings({ totalPopulation: '-5', simulatedDelaySeconds: '600', errorRate: '2', nonCurrentTermRate: '-1' }, {}))
+        .toEqual({ totalPopulation: 0, simulatedDelaySeconds: MAX_SIMULATED_DELAY_SECONDS, errorRate: 1, nonCurrentTermRate: 0 });
+      expect(simulationSettings({ totalPopulation: '12.7' }, {}).totalPopulation).toBe(12);
+    });
+
+    it("depletes a run's population from the query, overriding the environment's", async () => {
+      // MOCK_TOTAL_POPULATION is 1000 in the environment
+      const page = async () => parseResponseBody(assertProxyResult(
+        await handler(createEvent({ totalPopulation: '50', recordCount: '40' }), mockContext)
+      )).response;
+      expect(await page()).toHaveLength(40);
+      expect(await page()).toHaveLength(10);
+      expect(await page()).toHaveLength(0);
+    });
+
+    it("keeps a fetchPath's own query on every page request, as the chunker builds them", async () => {
+      // As DataSource.getFetchUrl() (integration-huron-person) builds each page's URL: fetchPath against the base
+      // URL, then the batch's recordCount and offset appended to fetchPath's own query
+      const fetchPath = '/?totalPopulation=30&simulatedDelaySeconds=0';
+      const pageEvent = (offset: number) => {
+        const url = new URL(fetchPath, 'https://example.lambda-url.us-east-2.on.aws');
+        url.searchParams.append('recordCount', '8');
+        url.searchParams.append('offset', `${offset}`);
+        return createEvent(Object.fromEntries(url.searchParams), undefined, url.pathname);
+      };
+      const personids: string[] = [];
+      for (let offset = 0; ; offset++) {
+        const persons = parseResponseBody(assertProxyResult(await handler(pageEvent(offset), mockContext))).response;
+        if (persons.length === 0) break;
+        personids.push(...persons.map((p: any) => p.personid));
+      }
+      expect(personids).toHaveLength(30);
+      expect(personids[29]).toBe('U0000030');
+    });
+
+    it('applies the population to the single person endpoint', async () => {
+      const person = async (buid: string) => parseResponseBody(assertProxyResult(
+        await handler(createEvent({ buid, totalPopulation: '5' }, undefined, '/person'), mockContext)
+      )).response;
+      expect(await person('U0000005')).toHaveLength(1);
+      expect(await person('U0000006')).toEqual([]);
+    });
+
+    it.each(['/', '/person', '/terms'])('applies the error rate from the query on %s', async (path) => {
+      const query: Record<string, string> = path === '/person' ? { buid: 'U0000001' } : {};
+      const status = async (errorRate: string) => assertProxyResult(
+        await handler(createEvent({ ...query, errorRate }, undefined, path), mockContext)
+      ).statusCode;
+      expect(await status('1')).toBe(500);
+      process.env.MOCK_ERROR_RATE = '1.0';
+      expect(await status('0')).toBe(200);
+    });
+
+    it("lets the query's delay override the environment's", async () => {
+      // 30 seconds in the environment would outlast the test's timeout; the query's 0 wins
+      process.env.MOCK_SIMULATED_DELAY_SECONDS = '30';
+      const started = Date.now();
+      const response = assertProxyResult(await handler(createEvent({ simulatedDelaySeconds: '0', recordCount: '1' }), mockContext));
+      expect(response.statusCode).toBe(200);
+      expect(Date.now() - started).toBeLessThan(5000);
     });
   });
 

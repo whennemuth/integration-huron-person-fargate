@@ -1,9 +1,21 @@
 import { AbstractAtomicCounter } from '../dynamodb/AtomicCounter';
 import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from './ChunkerQueue';
 import type { ApiChunkerEvent } from './ChunkerSubscriber';
+import { SIMULATOR_COUNTER_NAME } from './fetch/SourceSimulator';
+import { isMockLandscape } from '../Utils';
 
 /** The chunker's counters a run starts from zero: the source offset its chained messages take, and chunk ordinals */
 export const RUN_COUNTER_NAMES = [CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME];
+
+/**
+ * The counters a run in this landscape starts from zero: the chunker's own, and in a mock landscape the source
+ * simulator's depletion counter too (SIMULATOR_COUNTER_NAME, in the same table), so a run with the simulator reads
+ * its population from the first person. Only mock landscapes have a simulator; resetting its counter for a run that
+ * reads the real source does nothing it would notice.
+ */
+export function runCounterNames(landscape: string | undefined): string[] {
+  return isMockLandscape(landscape) ? [...RUN_COUNTER_NAMES, SIMULATOR_COUNTER_NAME] : RUN_COUNTER_NAMES;
+}
 
 /** Where a landscape's atomic counter table is (DYNAMODB_TABLE_NAME in src/dynamodb/AtomicCounter.ts names it) */
 export type RunCounterLocation = { stackId: string; region: string; landscape: string };
@@ -15,7 +27,7 @@ export type RunCounterLocation = { stackId: string; region: string; landscape: s
  * dashboard's Bulk sync), and the manual Runner (AbstractRunner.resetAtomicCounters()).
  */
 export async function resetRunCounters(location: RunCounterLocation): Promise<void> {
-  for (const name of RUN_COUNTER_NAMES) {
+  for (const name of runCounterNames(location.landscape)) {
     console.log(`Resetting atomic counter ${name}`);
     await new class extends AbstractAtomicCounter {
       getCounterName(): string {

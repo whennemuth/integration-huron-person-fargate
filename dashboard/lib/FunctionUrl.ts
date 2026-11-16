@@ -14,6 +14,7 @@ import { JwtTools } from "shibboleth-sp";
 import { AuthenticatedContext, AuthenticationMode, IContext } from "../context/IContext";
 import { CACHE_SECRET } from "../src/handlers/DashboardCache";
 import { LandscapeTone } from "../src/handlers/LandscapeTone";
+import { LaunchFlag } from "../src/services/LaunchFlag";
 import { dashboardFunctionName } from "./DashboardFunctionName";
 import { LandscapeResources } from "./LandscapeResources";
 import { registerLandscape } from "./LandscapeRegistration";
@@ -37,6 +38,7 @@ export class FunctionUrlOrigin {
     const {
       landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName,
       chunkerFunctionName, processorSubscriberFunctionName, pipelineStackId, itemsPerChunk, chunkerClusterName,
+      sourceSimulatorFunctionName, atomicCounterTableName,
       chunkerServiceName
     } = landscapeResources;
 
@@ -72,6 +74,8 @@ export class FunctionUrlOrigin {
       // Shown in a run's review: the pipeline stack and the chunker task's chunk size
       PIPELINE_STACK_ID: pipelineStackId,
       ...(itemsPerChunk !== undefined && { ITEMS_PER_CHUNK: String(itemsPerChunk) }),
+      // A mock landscape only: the source simulator, which Bulk sync offers as the source
+      ...(sourceSimulatorFunctionName && { SOURCE_SIMULATOR_FUNCTION_NAME: sourceSimulatorFunctionName }),
     } as any;
 
     // Add authentication-related environment variables if applicable
@@ -164,6 +168,32 @@ export class FunctionUrlOrigin {
       actions: ['application-autoscaling:DescribeScalableTargets'],
       resources: ['*'],
     }));
+    // Bulk sync's launch flag (src/services/LaunchFlag.ts): this landscape's one SSM parameter, put when a run is
+    // launched (only if absent), read by the routes that show runs, and deleted once its run appears or it expires.
+    // The pipeline never reads it.
+    this.lambda.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['ssm:PutParameter', 'ssm:GetParameter', 'ssm:DeleteParameter'],
+      resources: [Stack.of(stack).formatArn({ service: 'ssm', resource: 'parameter', resourceName: LaunchFlag.parameterName(landscape).slice(1) })],
+    }));
+    // A mock landscape only: look up the source simulator's Function URL, to offer it as a run's source. Its settings
+    // are read from its own unauthenticated /health; nothing about it is changed.
+    if (sourceSimulatorFunctionName) {
+      this.lambda.addToRolePolicy(new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['lambda:GetFunctionUrlConfig'],
+        resources: [functionArn(sourceSimulatorFunctionName)],
+      }));
+    }
+    // A mock landscape only: read the last reset's record (Overview); the chunker subscriber, not the dashboard,
+    // runs and records a reset
+    if (atomicCounterTableName) {
+      this.lambda.addToRolePolicy(new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['dynamodb:GetItem'],
+        resources: [Stack.of(stack).formatArn({ service: 'dynamodb', resource: 'table', resourceName: atomicCounterTableName })],
+      }));
+    }
 
     // Lambda function url for the web app.
     this.functionUrl = new FunctionUrl(this.lambda, 'url', {

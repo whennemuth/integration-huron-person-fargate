@@ -336,7 +336,7 @@ SERVICE_TOGGLER_LANDSCAPE=dev
 # TASK options: capabilities | runs | summary | chunks | errors | changes | landscapes | lookup | preview | status
 DASHBOARD_SERVICE_PROVIDER_TASK=runs
 # true: the mock services, no AWS access
-DASHBOARD_SERVICE_PROVIDER_LOCALHOST_WITH_MOCKS=false
+DASHBOARD_SERVICE_PROVIDER_LOCAL_OFFLINE=false
 # The dashboard Lambda's environment for the landscape to read (run reporting, landscape registry)
 DASHBOARD_SERVICE_PROVIDER_LANDSCAPE=<landscape>
 DASHBOARD_SERVICE_PROVIDER_REGION=<aws-region>
@@ -362,6 +362,18 @@ DASHBOARD_SERVICE_PROVIDER_SEARCH_TYPE=buid
 # preview: optional create | update | delete
 # DASHBOARD_SERVICE_PROVIDER_OPERATION=update
 # DASHBOARD_SERVICE_PROVIDER_SECRET_ARN=<arn:aws:secretsmanager:region:account:secret:path-xxxxx>
+
+# ------- Harness Groups for dashboard\src\services\LaunchFlag.ts ------- #
+# A landscape's launch flag: the SSM parameter /hp-dashboard/launch-flags/<landscape>, which Bulk sync raises when it
+# launches a run and lowers once the run appears or the flag expires
+# TASK options: read | assess (lowers it if resolved or expired) | raise (a made-up launch) | lower
+DASHBOARD_LAUNCH_FLAG_TASK=read
+DASHBOARD_LAUNCH_FLAG_LANDSCAPE=<landscape>
+DASHBOARD_LAUNCH_FLAG_REGION=<aws-region>
+# assess: the newest listed run's syncRunId, which resolves a launch it is no earlier than (optional)
+# DASHBOARD_LAUNCH_FLAG_NEWEST_SYNC_RUN_ID=<iso-timestamp-sync-run-id>
+# raise: how long the made-up launch stands (default 5)
+DASHBOARD_LAUNCH_FLAG_LIFETIME_MINUTES=5
 
 # ------- Harness Groups for dashboard\src\ShibbolethSecret.ts ------- #
 # Reads or creates the active landscape's dashboard Shibboleth secret (DASHBOARD.SHIBBOLETH.secret in context/context.json)

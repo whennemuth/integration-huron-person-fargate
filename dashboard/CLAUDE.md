@@ -41,7 +41,7 @@ Workspace-wide agent instructions live in `<workspace root>/.claude/CLAUDE.md`, 
 - **Lambda handler abstractions**: Request routing, response formatting
 - **Template service patterns**: Mustache rendering, inline asset injection
 - **Origin verification**: Security header validation, request filtering
-- **Mock service implementations**: DashboardMocks behavior, local vs production switching
+- **Offline service implementations**: OfflineServices behavior, local vs production switching
 - **CDK infrastructure patterns**: Stack dependencies, CloudFront configurations, Lambda Function URL setup
 - **Authentication abstractions**: SAML/OIDC integration (when configured)
 
@@ -133,7 +133,7 @@ The Lambda function serves two primary roles:
 
 ### Development Features
 - Express-based local development server
-- Mock service implementations for standalone testing
+- Offline service implementations for standalone testing (no AWS access)
 - Hot reload with nodemon watch mode
 - Template build automation
 
@@ -146,8 +146,9 @@ The Lambda function serves two primary roles:
 - `POST /api/person-lookup` - Look up individual person by BUID or HRN
 - `POST /api/person-sync` - Sync individual person record
 - `GET /api/bulk-sync` - what starting a run would do and whether it's allowed now (`BulkSyncState`: the form's
-  defaults, the latest run, and `blocked` with the refusal a start would get, `NOT_CONFIGURED` included, so the
-  page shows even where starting isn't configured)
+  defaults, the latest run, `launch` while a run launched moments ago isn't listed yet (see "Launch flag" below), and
+  `blocked` with the refusal a start would get, `NOT_CONFIGURED` included, so the page shows even where starting
+  isn't configured)
 - `POST /api/bulk-sync/plan` - review a run: the same checks as a start, then what it would send (`BulkSyncPlan`:
   the choices, the `ApiChunkerEvent`, and every setting of the run, named as the manual Runner's `RunnerEnv`, each
   with its source: `form`, `landscape`, `fixed` or `unused`; the page shows the choices and the event, not the
@@ -155,16 +156,26 @@ The Lambda function serves two primary roles:
 - `POST /api/bulk-sync` - start a sync run, as the EventBridge schedule does (`BulkSync`,
   `src/services/BulkSync.ts`): `{ runType: 'full' | 'full-no-deactivations' | 'test', buid? (a test's,
   and only a test's), bulkReset?, iterationLimit? (0-50, 0 a single task; default 10; always 0 for a test), parallelStart? (0 to the chunker service's most tasks, at most 20; refused for a test or a single task),
-  overrideStalled? }`; `202` with what was started. A refused review
-  or start is a `BulkSyncError` as `{ error, code }` (400 invalid, 403 production, 409 a run underway or stalled or a
-  subscriber in `DRY_RUN`, 503 not configured)
+  overrideStalled?, and in a mock landscape only: source? ('real' | 'simulator'), simulator? ({ totalPopulation?,
+  simulatedDelaySeconds?, errorRate?, nonCurrentTermRate? }, with the simulator), resetState? }`; `202` with what was
+  started. A refused review
+  or start is a `BulkSyncError` as `{ error, code }` (400 invalid, 403 production, 409 a run underway or stalled, a
+  run launched moments ago and not yet listed (`RUN_LAUNCHING`), a mock landscape's reset running (`RESET_UNDERWAY`)
+  or a subscriber in `DRY_RUN`, 503 not configured)
+- `GET /api/mock-landscape/reset` - a mock landscape's last reset of its run state and whether one can be started now
+  (`MockLandscapeResetState`; `{ mockLandscape: false }` in any other landscape). `POST` starts one: the chunker
+  subscriber, invoked asynchronously with a reset-only event, empties the target simulator, Run history and the
+  fingerprints; `202` once it has accepted it. Refusals as Bulk sync's (`BulkSyncError`): 400 not a mock landscape,
+  409 a run underway (`RUN_UNDERWAY`) or launching (`RUN_LAUNCHING`), a reset still running (`RESET_UNDERWAY`) or the
+  subscriber in `DRY_RUN`, 503 not configured
 - `GET /api/status` - Get system health status and metrics
 
 **Run reporting** (this landscape's sync runs, read in-process from its tables and chunks bucket
 through fargate's `src/reporting/RunReporting.ts`; GET only, no `landscape` parameter):
 - `GET /api/runs` - `{ runs }`, the syncRunIds, oldest first
 - `GET /api/runs?include=report&limit&before` - a page of runs with their reports, newest first:
-  `{ items, before? }`. Up to `limit` runs (1-50, default 20) older than `before` (a syncRunId);
+  `{ items, before?, launch? }` (`launch` on the first page only, while a run launched moments ago isn't listed yet:
+  "Launch flag" below). Up to `limit` runs (1-50, default 20) older than `before` (a syncRunId);
   the response's `before` continues the list and is present only while older runs remain. A run
   with nothing recorded to report on is listed as `{ syncRunId, status: 'UNKNOWN' }`. Built by
   `RunList` (`src/handlers/RunList.ts`): `listRunPage({ limit, before })` (one Query of the statistics
@@ -213,29 +224,39 @@ const provider = new ServiceProvider(config);
 const personSync = provider.getPersonSyncService();
 ```
 
-### Mock Services for Local Development
-**Location**: `src/handlers/DashboardMocks.ts`
+### Offline Services for Local Development
+**Location**: `src/handlers/OfflineServices.ts`
 
-Provides mock implementations when `LOCALHOST_WITH_MOCKS=true` (ignored in Lambda):
-- Mock BU CDM data source responses
-- Mock Huron data target operations
+**"Offline" and "mock" are kept apart** (renamed 2026-11-15): *offline* is a local run whose dashboard services are
+stand-ins answering from built-in data, with no AWS access; *mock* means only a mock landscape (`isMockLandscape()`),
+a deployed pipeline whose target is the target simulator. The local stand-in for the sign-in edge functions is the
+*local sign-in*. An offline run can play a mock landscape (`--landscape mock`).
+
+Provides the offline implementations when `LOCAL_OFFLINE=true` (ignored in Lambda):
+- Sample BU CDM data source responses
+- Sample Huron data target operations
 - Simulated sync execution
-- Fake status data
-- A fake landscape registry ("local", plus `mock` and `Staging` at example.com urls). This `mock`
-  is unrelated to the deployed mock landscape.
-- Run reporting (`src/handlers/MockRunReporting.ts`): a deterministic history of 40 runs ending
-  with the nightly run of 2026-11-04. `MockRunCatalog` defines them: nightly delta syncs, a full
+- Sample status data
+- A sample landscape registry (`mock` and `Staging` at example.com urls), whose current landscape is the one the
+  offline services play: `LANDSCAPE`, which the launcher sets to `local`, or to `--landscape`'s
+  (`npm run dashboard:dev:offline:mock` plays `mock`, so the top bar shows mock selected, with the mock tint). The
+  entries' urls lead nowhere: a local run plays one landscape, and switching means restarting with the other command.
+- **The landscape the offline services play** (`LANDSCAPE`, else `local`) is the one Bulk sync
+  (`OfflineBulkSyncService`) and run reporting's capabilities report. A mock landscape's name (`mock`) shows Bulk
+  sync's mock landscape options.
+- Run reporting (`src/handlers/OfflineRunReporting.ts`): a deterministic history of 40 runs ending
+  with the nightly run of 2026-11-04. `OfflineRunCatalog` defines them: nightly delta syncs, a full
   sync every seventh night, and at fixed positions from the newest the special cases (an incomplete
   run, a terminal error, a failed and a post-processing-failed run, a dry run, a bulk reset, two
   single-person runs). The newest run has 260 errors across 400/404/429/500 and 130/240/12
   NEW/UPDATED/DELETED changes, enough for several pages. Chunk statistics, errors and changes agree
-  with each run's summary. `MockRunReportingService` pages them with offset cursors (`OffsetPager`)
-  under RunReporting's limits and `ReportingError` codes. `MOCK_STORAGE_MODE` (`dynamodb`, the
+  with each run's summary. `OfflineRunReportingService` pages them with offset cursors (`OffsetPager`)
+  under RunReporting's limits and `ReportingError` codes. `OFFLINE_STORAGE_MODE` (`dynamodb`, the
   default, or `s3`) sets the storage mode it reports; in S3 mode change lists are refused with
-  `UNSUPPORTED_IN_STORAGE_MODE`. Tests: `test/DashboardMockRunReporting.test.ts`.
+  `UNSUPPORTED_IN_STORAGE_MODE`. Tests: `test/DashboardOfflineRunReporting.test.ts`.
 
 **Benefit**: Enables full local testing without AWS credentials or external service access. The
-mocks ignore the integration config, so the person and bulk sync routes don't read it when they
+offline services ignore the integration config, so the person and bulk sync routes don't read it when they
 are in use (`serviceConfiguration()` in `DashboardHandler.ts`): no config secret is needed.
 
 ### Template Service Pattern
@@ -271,7 +292,8 @@ Request validation security layer:
 npm install
 npm run dashboard:build:templates  # Build Mustache templates with inline assets
 npm run dashboard:dev              # Start the local server at http://localhost:3000/dashboard
-npm run dashboard:dev -- --mocks   # The same with the mock services for one run (flags: see below)
+npm run dashboard:dev -- --offline  # The same offline (the offline services, no AWS access) for one run (flags: see below)
+npm run dashboard:dev:offline:mock # Offline, playing the mock landscape (--offline --landscape mock)
 ```
 
 `dashboard:dev` builds the templates, then runs `scripts/LocalLaunch.ts`, which starts
@@ -280,7 +302,7 @@ npm run dashboard:dev -- --mocks   # The same with the mock services for one run
 repository's `.env` is never read.
 - **The landscape**: `LANDSCAPE`, `REGION` and optional `STACK_ID` name the deployed dashboard Lambda to
   run as; `AWS_PROFILE` gives the credentials the server uses in place of the Lambda's role.
-- **Without mocks** (`MOCKED=false`) the launcher looks up that Lambda's environment at every launch
+- **Online** (`OFFLINE=false`) the launcher looks up that Lambda's environment at every launch
   (`LambdaFunction`, see "Test Harnesses" below), leaves out its secrets (`ORIGIN_VERIFY_SECRET`), and runs
   the server with it: the server reads the landscape's tables, config secret and registry. A redeploy
   that changes the environment is picked up at the next launch. An expired AWS session, or a landscape
@@ -290,31 +312,37 @@ repository's `.env` is never read.
 - **Overrides**: any other variable in `LocalLaunch.env` wins over the Lambda's value (the launcher marks
   each one in what it prints). Without a deployed dashboard Lambda, the whole environment can be given there
   by hand.
-- **Switches**: `MOCKED` (`LOCALHOST_WITH_MOCKS`; no lookup and no AWS access), `AUTHENTICATION` (`none`:
-  public mode, the app login/logout headers removed; `mock`: signed in as `USER_PRINCIPAL`, see below),
+- **Switches**: `OFFLINE` (`LOCAL_OFFLINE`; no lookup and no AWS access), `AUTHENTICATION` (`none`:
+  public mode, the app login/logout headers removed; `local`: signed in as `USER_PRINCIPAL`, see below),
   `WATCH` (nodemon restarts the server on a change under `dashboard/`; the environment is looked up once and
-  handed to each restart through `LOCAL_LAUNCH_RESOLVED`), `MOCK_STORAGE_MODE` (`dynamodb` | `s3`, the
-  storage mode the mock run reporting reports), `PORT` (default 3000).
-- **Flags** override a switch for one run, after `--`: `--mocks`, `--no-mocks`, `--auth <none|mock>`,
-  `--watch`, `--no-watch`, `--storage-mode <dynamodb|s3>` (mocks only), `--allow-production`.
-- **Production guard**: without mocks the launcher refuses a landscape whose `LANDSCAPE_TONE` (the Lambda's,
+  handed to each restart through `LOCAL_LAUNCH_RESOLVED`), `OFFLINE_STORAGE_MODE` (`dynamodb` | `s3`, the
+  storage mode the offline run reporting reports), `PORT` (default 3000).
+- **Flags** override a switch for one run, after `--`: `--offline`, `--online`, `--auth <none|local>`,
+  `--watch`, `--no-watch`, `--storage-mode <dynamodb|s3>` (offline only), `--landscape <name>` (offline only: the
+  landscape the offline services play, default `local`; `LocalLaunch.env`'s `LANDSCAPE` names a deployed landscape
+  and isn't used offline), `--allow-production`.
+- **Names before 2026-11-15** still work, each with a "Renamed:" warning saying what it is now
+  (`LocalLaunchOptions.RENAMED`): `MOCKED`, `MOCK_STORAGE_MODE` and `AUTHENTICATION=mock` in `LocalLaunch.env`,
+  `--mocks`, `--no-mocks` and `--auth mock`; and on the server `LOCALHOST_WITH_MOCKS` (`ServiceProvider.isOffline()`)
+  and `MOCK_STORAGE_MODE`. A new name set alongside an old one wins.
+- **Production guard**: online, the launcher refuses a landscape whose `LANDSCAPE_TONE` (the Lambda's,
   or an override) is `production`, since Sync and Bulk sync would write to its real target from local code,
   unless `ALLOW_PRODUCTION=true` or `--allow-production`. A local run also uses your profile's permissions,
   not the Lambda role's.
-- **Mock sign-in** (`AUTHENTICATION=mock`, `MockSignIn` in `scripts/MockSignIn.ts`): stands in for the sign-in
+- **Local sign-in** (`AUTHENTICATION=local`, `LocalSignIn` in `scripts/LocalSignIn.ts`): stands in for the sign-in
   edge functions, so every request arrives signed in as `USER_PRINCIPAL` without an IdP. The Lambda's own
   sign-in settings are kept (`APP_AUTHORIZATION`, the login/logout header names, `AUTH_COOKIE_NAME`), so
-  `Authenticator` runs as deployed. Before the handler sees a request, `MockSignIn` adds the `authenticated:
+  `Authenticator` runs as deployed. Before the handler sees a request, `LocalSignIn` adds the `authenticated:
   true` header and presents the JWT cookie, made as the edge functions make it: `JwtTools` signs
   `{ sub, user: <claims> }` (RS256) with a key pair generated when the server starts (`publicKey` keeps the
   public half), the claims array-valued as the IdP sends them (`buPrincipal`, and `eduPersonPrincipalName`,
   `mail`, `givenName`, `sn` from `USER_EPPN`, `USER_MAIL`, `USER_GIVEN_NAME`, `USER_SURNAME`). The top bar shows
-  the user. `/logout` is answered locally with a page saying the mock user can't sign out. Under mocks, with no
+  the user. `/logout` is answered locally with a page saying the local user can't sign out. Offline, with no
   Lambda to take them from, placeholder login/logout header names are set. The launcher passes
-  `LOCAL_MOCK_SIGN_IN=true` in the environment, so each watch restart puts it back in front of the handler.
+  `LOCAL_SIGN_IN=true` in the environment, so each watch restart puts it back in front of the handler.
   `LocalServer.ts` takes it through `startLocalServer({ requestDecorator })` (`LocalRequestDecorator`:
   `decorate(event)` and an optional `respond(path)`), and imports nothing from `scripts/`. Tests:
-  `test/DashboardMockSignIn.test.ts`.
+  `test/DashboardLocalSignIn.test.ts`.
 
 `LocalLaunchOptions` (`scripts/LocalLaunchOptions.ts`) decides all of this from the file and the flags
 without side effects; `LocalLaunch.ts` reads, looks up, prints the environment (secrets masked) and starts.
@@ -324,7 +352,7 @@ runs scripts in `cmd.exe` on Windows, where neither `VAR=value` prefixes nor `sh
 **Environment Variables** (set by the launcher, or in `LocalLaunch.env`):
 - `NODE_ENV=development` - Enables local mode, bypasses origin verification
 - `PORT=3000` - Local server port (default)
-- `LOCALHOST_WITH_MOCKS=true` - Enables mock services
+- `LOCAL_OFFLINE=true` - Enables the offline services
 - `OVERRIDE_CACHE_WITH_LOCAL_CONFIG=true` - Loads the integration config with fargate's
   `getConfig()` (same sources as the fargate harnesses) instead of reading `INTEGRATION_SECRETS_ARN`
 
@@ -340,7 +368,7 @@ pipeline harness's.
   provider and calls it as `DashboardHandler` does, read only. `TASK`: `capabilities`, `runs`,
   `summary`, `chunks`, `errors`, `changes`, `landscapes`, `lookup`, `preview`,
   `status`. The landscape's Lambda environment (`LANDSCAPE`, `REGION`, table names, ...) is
-  given with the prefix; `LOCALHOST_WITH_MOCKS=true` uses the mocks without loading any config.
+  given with the prefix; `LOCAL_OFFLINE=true` uses the offline services without loading any config.
 
 ```bash
 DASHBOARD_SERVICE_PROVIDER_TASK=summary npx ts-node -r dotenv/config dashboard/src/services/ServiceProvider.ts
@@ -363,6 +391,15 @@ DASHBOARD_SERVICE_PROVIDER_TASK=summary npx ts-node -r dotenv/config dashboard/s
 
 ```bash
 DASHBOARD_SHIBBOLETH_SECRET_TASK=read npx ts-node -r dotenv/config dashboard/src/ShibbolethSecret.ts
+```
+
+- `src/services/LaunchFlag.ts` (`DASHBOARD_LAUNCH_FLAG`) - a landscape's launch flag in SSM (see "Launch flag"
+  below). `TASK`: `read` (as kept), `assess` (lowers it if `NEWEST_SYNC_RUN_ID` resolves it or it has expired),
+  `raise` (a made-up launch lasting `LIFETIME_MINUTES`; refused if one is up), `lower`. Tests:
+  `test/DashboardLaunchFlag.test.ts`.
+
+```bash
+DASHBOARD_LAUNCH_FLAG_TASK=read npx ts-node -r dotenv/config dashboard/src/services/LaunchFlag.ts
 ```
 
 - `scripts/LambdaFunction.ts` (`DASHBOARD_LAMBDA_FUNCTION`) - a landscape's deployed dashboard Lambda
@@ -401,7 +438,7 @@ characters: the Shibboleth construct names a bucket `<stack name>-context-config
   statistics table, the person history table (DynamoDB mode) and the chunks bucket
   (`lib/LandscapeResources.ts`). To start a run (Bulk sync) it may also invoke the chunker subscriber
   (`chunker-subscriber-<landscape>`, which resets the chunker's counters for a run's start) and read its and
-  the processor subscriber's configuration (their `DRY_RUN`), and read the chunker service's most tasks (its scalable target, for Parallel start); it writes nothing. All by deterministic name -
+  the processor subscriber's configuration (their `DRY_RUN`), and read the chunker service's most tasks (its scalable target, for Parallel start); in a mock landscape only, it may also look up the source simulator's Function URL (`lambda:GetFunctionUrlConfig` on `source-simulator-<landscape>`, named in its `SOURCE_SIMULATOR_FUNCTION_NAME`), and read its last reset's record (`dynamodb:GetItem` on the atomic counter table). The one thing it writes is its landscape's launch flag (`ssm:PutParameter`, `GetParameter`, `DeleteParameter` on `/hp-dashboard/launch-flags/<landscape>`, "Launch flag" below). All by deterministic name -
   no CloudFormation imports from the pipeline stack.
 
 **Commands** (from the fargate root; `npm run deploy` deploys the pipeline and dashboard stacks):
@@ -649,7 +686,7 @@ landscape's runs from the run reporting routes. Its classes each do one thing:
 - **Started by** (`RunView.startedByLabel()`): a column after Started, and the first of a run's facts ("Started by
   jdoe"): the signed-in user's `buPrincipal` for a start from Bulk sync ("Dashboard" without one), "Schedule" or
   "Runner", from the summary's `startedBy` or else the flags' (fargate `src/chunking/StartedBy.ts`); a dash for a run
-  from before it was recorded. The mock catalog's newest 30 runs have one (`MockRunCatalog.STARTED_BY_RECORDED_FOR`):
+  from before it was recorded. The offline catalog's newest 30 runs have one (`OfflineRunCatalog.STARTED_BY_RECORDED_FOR`):
   the schedule's nightly runs, two single-person runs and the incomplete run from Bulk sync, the bulk reset from the
   Runner.
 - A single-person run is named by its BUID only when the report has metadata (the source URL's `buid`): a
@@ -659,12 +696,52 @@ landscape's runs from the run reporting routes. Its classes each do one thing:
 - `RunDetailView` is one run: the header (status, population, storage mode, duration, dry run, bulk
   reset), stat tiles, a note when the run failed, failed post-processing or has no summary yet (for
   a run with `progress`, saying its figures are summed from the chunks processed so far), and
-  four tabs, each loaded when first opened: **Overview** (summary, deletion outcome, flags),
+  four tabs, each loaded when first opened: **Overview** (summary; the deletion outcome, whose counts are Removed
+  from source, the deletion step's `totalProcessed`, then Deactivated and Failed, which add up to it; and the flags,
+  each shown as its value by `RunDetailView.flagValue()`, never as JSON: Started by as `startedByLabel()`, the terms
+  endpoint as one URL, any other object as `name: value` pairs, and a value longer than `WIDE_FLAG_LENGTH` under its
+  name across the card),
   **Chunks** (per-chunk statistics with totals), **Errors** (filtered by status code, with counts
   from the summary or else the chunk statistics) and **Changes** (by type; in S3 mode, where
   `changesSupported` is false, it says why there are none).
 Tests: `test/DashboardRunHistory.test.ts` runs the script in a vm (as written and minified) and drives
-`RunsApi` through the handler with the mock run history.
+`RunsApi` through the handler with the offline run history.
+
+### Launch flag
+
+A run started from Bulk sync isn't listed until its first chunker task writes its flags and metadata (the RUN marker
+in the statistics table), which can be minutes after Start: the chunker subscriber, invoked asynchronously, may first
+reset a mock landscape (up to 10 minutes) or seed a parallel start (its alarm wait up to about 6), and the chunker task
+chooses the run's syncRunId when it starts. A start from scratch also empties Run history. So until then the
+dashboard keeps a flag of its own, `LaunchFlag` (`src/services/LaunchFlag.ts`, since 2026-11-16,
+`mock-run-feedback-plan.md` issue 1); the pipeline knows nothing of it.
+- **One SSM String parameter per landscape**, `/hp-dashboard/launch-flags/<landscape>` (apart from the landscape
+  registry's path), holding a `Launch` as JSON: `launchedAt` (the start's `processedAt`, not the run's syncRunId),
+  `expiresAt`, `startedBy` and the choices. Its lifetime is 5 minutes, plus 7 for a parallel start, plus 10 for a start
+  from scratch (`LaunchFlag.lifetimeMs()`).
+- **Raised** by `BulkSync.start()` once the start's checks pass, just before it invokes the chunker subscriber, with
+  `PutParameter` `Overwrite: false`: of two starts that pass the checks together, only one put succeeds, and the other
+  is refused `RUN_LAUNCHING` without invoking anything. Lowered again if the invoke fails. A review never raises it.
+- **Assessed** (`LaunchFlag.assess(newestSyncRunId)`) by `BulkSync`'s state, start, review and reset checks, and by
+  the runs route's first page (`RunList`): lowered once the newest listed run is no earlier than `launchedAt` less
+  `CLOCK_SLACK_MS` (30 seconds: the chunker task's clock against the Lambda's), or once it has expired; otherwise
+  active. While active, a start or a mock landscape's reset is refused (`RUN_LAUNCHING`), and the pages show the launch
+  note (`RunFormat.launchNoteHtml()`, in `run-history.js`): what, by whom, how long ago, what it waits for (the reset,
+  the parallel start's tasks), and the time after which it didn't start. Overview shows it in place of "No runs yet"
+  or above the latest run, Run history above the list (`RunHistoryPage.showLaunch()`, `data-run-launch`), Bulk sync
+  as its status panel.
+- **Known trade-offs** (accepted 2026-11-16): a start that dies after the invoke (a failed reset, a dropped event, a
+  chunker task that never starts) only shows in CloudWatch; its flag simply expires. A page load that reads an expired
+  flag could, in the milliseconds before it deletes it, delete a new start's flag instead, leaving that start
+  unguarded.
+- **Also refused while a mock landscape's reset runs** (`RESET_UNDERWAY`, from its record): during a start from
+  scratch's reset the statistics table is empty, so the newest-run check alone would let a second start through.
+- **Offline** the flag is kept in memory (`MemoryLaunchFlagStore`), one per landscape played, shared by the offline
+  Bulk sync and the runs route (`ServiceProvider.getLaunchFlag()`). No offline run ever appears, so a launch shows until
+  it expires; restarting the server clears it. Tests clear it with `ServiceProvider.resetOfflineState()`.
+- A dashboard teardown leaves a flag that happens to be up; there is at most one, and it lives for minutes.
+- Tests: `test/DashboardLaunchFlag.test.ts`, the launch cases in `test/DashboardBulkSync.test.ts`, the pages' in
+  `DashboardBulkSyncPage`, `DashboardOverview` and `DashboardRunHistory`, and the grant in `DashboardStack`.
 
 ### Overview page
 
@@ -674,9 +751,22 @@ landing page. `OverviewPage` loads, each time the page is shown and on Refresh, 
 run page's note and stat tiles, figures so far for a run without a summary, and a link to its page) and the service checks (`/api/status`, in
 the `ServiceStatusTable` of `public/js/system-status.js`, which the Status page uses too). The two
 load independently, so one failing (the real `SystemStatus` service isn't implemented yet) leaves
-the other shown. Scripts load in dependency order: `page-state.js`, `run-history.js`,
+the other shown. While a run launched moments ago isn't listed yet (the runs route's `launch`), its launch note
+comes first, in place of "No runs yet" or above the latest run. Scripts load in dependency order: `page-state.js`, `run-history.js`,
 `system-status.js`, `overview.js`, `bulk-sync.js`, then `dashboard.js`, which creates the pages. Tests:
 `test/DashboardOverview.test.ts`.
+- **A mock landscape's own section** ("Mock landscape", hidden in any other landscape; since 2026-11-15,
+  `mock-landscape-options-plan.md` step 3a): loaded with the rest from `GET /api/mock-landscape/reset`. It explains in
+  plain words what a reset empties, says what the last reset did (`BulkSync.resetState()`, from the record the chunker
+  subscriber keeps in the atomic counter table: running, for how long and since when, up to 10 minutes; finished,
+  with each table's count and time to the second, `OverviewPage.resetDuration()`; failed, with why; or never finished,
+  most likely out of time), and offers Reset landscape. It asks first (`OverviewPage.RESET_CONFIRMATION`), then posts
+  (`BulkSync.requestReset()`), and says the reset runs in the background for up to 10 minutes: Refresh shows whether
+  it has finished (the page never polls). Disabled when one can't be started now, with the reason as a note, except
+  while a reset is running, which its own line already says (the reason is then only the button's title).
+- **Offline**, the stand-in service keeps the last reset in memory (one per landscape played,
+  `ServiceProvider.getBulkSyncService()`): a past one that emptied an old hybrid run's tables, replaced by a reset
+  requested there, which finds the tables empty. The sample Run history isn't emptied.
 
 ### Bulk sync page
 
@@ -689,6 +779,35 @@ routes above).
   settings: chunker tasks ("Chunks per task", 1-50, default 10, `BulkSyncRequest.CHUNKS_PER_TASK_DEFAULT`; or
   "Single task", sent as `iterationLimit: 0`; a test is always a single task, whatever the form sends, since a chained chunker task would fetch the same person again: with bulk reset it got ahead of the first while that built the person cache, and the person was chunked twice, preview 2026-11-12; `BulkSyncRequest.parse()`; on the page, choosing Test checks Single task and locks both chunk modes, and choosing another run type unlocks them and restores the mode chosen before, kept on the fieldset as `data-chosen-mode`: `BulkSyncPage.lockChunkMode()`) and Parallel start (below). The
   defaults are the scheduled run's (`ScheduledRun`, fargate `src/chunking/ScheduledRun.ts`).
+- **A mock landscape's own options** (`BulkSyncState.mock`, a "Mock landscape" section after Custom settings, only where
+  `isMockLandscape()`; `mock-landscape-options-plan.md`, since 2026-11-15):
+  - **Source**: the real source API (the default, a hybrid run) or the source simulator. With the simulator, the
+    event's source is its Function URL (looked up by `AwsSourceSimulatorService`), its people endpoint or
+    `/person?buid=` for a test, with the four simulator settings as query parameters of `fetchPath`
+    (`simulationSettings()` in `src/chunking/fetch/SourceSimulator.ts`), and its `/terms` as the `termsEndpoint`.
+    Nothing about the simulator Lambda is changed. Its settings start at its deployed ones, read from its
+    unauthenticated `/health`; refused out of range (`BulkSyncRequest.SIMULATOR_LIMITS`: at most 500,000 people, the
+    chunker's safety cutoff, and 30 seconds a response). When the simulator isn't deployed, its choice is disabled
+    with the reason.
+  - **A test with the simulator** reads one person, so the page doesn't send People and the simulator keeps its own
+    population, which only says which BUIDs it has. While Test and the simulator are both chosen, the form carries
+    `BulkSyncView.SIMULATOR_TEST_CLASS` (`BulkSyncPage.markSimulatorTest()`; `dashboard.css` does the rest): People is
+    hidden, the other settings' hints speak of one person (`SIMULATOR_FIELDS`' `testHint`), and the BUID box says the
+    simulator's range (`simulatorBuidHint()`: U0000001 to its population, from `/health`) with `U0000042` as its
+    placeholder. A BUID only has to be `U` and digits from 1: one past the simulator's people is allowed (since
+    2026-11-16, `mock-run-feedback-plan.md`), since the simulator then answers with no one and the test sees someone
+    who isn't in the source; the review says so (`simulatorTestLine()`, given the page's population).
+  - **Start from scratch** (`resetState`): the event carries it, and the chunker subscriber empties the target
+    simulator, the statistics (Run history) and the delta baseline before the run starts
+    (`src/chunking/MockLandscapeReset.ts`). The page says Run history starts again from this run.
+  - **Refused elsewhere** (`BulkSyncRequest.parse(body, { mockLandscape })`), and only a mock landscape's dashboard
+    has the simulator's name and lookup grant. The review's `sourceSimulator`, `sourceSimulatorMock*` and
+    `mockTargetResetState` settings come from the form in a mock landscape, and are fixed at `false` elsewhere.
+  - **The review** names the target simulator as the target, says which source, and notes a Parallel start seeded
+    past the simulator's people (from the review's `itemsPerChunk`).
+  - **Offline**: `npm run dashboard:dev:offline:mock` plays the mock landscape, with a stand-in simulator
+    (`OfflineBulkSyncService.STAND_IN_SIMULATOR`, mock's deployed settings) at an example URL. It is always found, so a
+    simulator that isn't deployed is seen only in the tests.
 - **Parallel start** (`parallelStart`, 0 by default): how many chunker tasks start the run at once, standing for the
   Runner's `MESSAGES_TO_PREPOPULATE` and `DESIRED_COUNT` together. 0 sends the chunker subscriber one message, and
   auto-scaling adds tasks. N above 0 goes on the event, and the subscriber seeds the queue with N messages (offsets
@@ -710,9 +829,8 @@ routes above).
   combination, and a missing `trustPreviousStorage` reads as `false` (a reset), so both are always sent.
 - **Not offered** (command line only, or not yet): addons, `CHUNKING_ONLY` / `MESSAGING_ONLY` (they switch the
   subscribers' `DRY_RUN`, which stays switched), skipping the counter reset (the chunker subscriber always resets),
-  `ITEMS_PER_CHUNK` (the chunker task's environment, set at deploy), and in mock landscapes the target reset and the
-  source simulator (later). The plan route's settings list them with their fixed values; the page doesn't show
-  that list.
+  and `ITEMS_PER_CHUNK` (the chunker task's environment, set at deploy). The plan route's settings list them with
+  their fixed values; the page doesn't show that list.
 - **The page's words are for people who don't know the pipeline**: bulk reset is explained as a fingerprint of
   each person's record rather than as hashes, and the page doesn't mention the schedule (a later page will
   describe what the schedule does).
@@ -727,9 +845,13 @@ routes above).
 - `BulkSyncPage` loads the state each time the page is shown and on Refresh. Review run locks the fields and asks
   the server for the review (`POST /api/bulk-sync/plan`), which a refusal answers under the fields (unlocked); Back
   unlocks them. So what is started is what was reviewed. Start posts the same request (`postSectionData()` in
-  `dashboard.js`, which also carries the server's error `code`); a refusal is shown under the review. After a start,
-  the status panel says when and what, and on Refresh links to the newest run once its syncRunId is no earlier than
-  the start (less `CLOCK_SLACK_MS`), since the chunker, not the page, creates it.
+  `dashboard.js`, which also carries the server's error `code`); a refusal is shown under the review.
+- **The status panel is the server's state at each load** (`BulkSyncView.statusHtml()`): while a run launched
+  moments ago isn't listed yet (`state.launch`), the launch note; else the newest run, as it is now, which
+  Refresh keeps current. It used to keep the started run as first found, so it said "Processing" after the run had
+  finished, until the page was reloaded (fixed 2026-11-16, `mock-run-feedback-plan.md` issue 3). After a start the
+  page simply reloads: the server raised the launch flag before answering, so the note shows at once, and Review run
+  is disabled with the `RUN_LAUNCHING` reason.
 - The Lambda's environment carries what the review shows: `PIPELINE_STACK_ID`, `ITEMS_PER_CHUNK`, and the config
   secret's name (`lib/FunctionUrl.ts`).
 - **Who starts it**: the handler passes the request's signed-in user (`Request.user`, the sign-in token's claims) to
@@ -737,7 +859,7 @@ routes above).
   (no principal in a public dashboard). It goes on the event, so the review shows it and the run records it (Run
   history's Started by). Never taken from the request body.
 Tests: `test/DashboardBulkSyncPage.test.ts` (the script in a vm, as written and minified, and once over the
-mock routes); the service: `test/DashboardBulkSync.test.ts`.
+offline routes); the service: `test/DashboardBulkSync.test.ts`.
 
 ## Dependencies
 
@@ -754,7 +876,7 @@ mock routes); the service: `test/DashboardBulkSync.test.ts`.
 1. Create service class in `src/services/`
 2. Define service interface in `ServiceTypes.ts`
 3. Register in `ServiceProvider.ts`
-4. Add mock implementation to `DashboardMocks.ts`
+4. Add an offline implementation to `OfflineServices.ts`
 5. Create handler method in `DashboardHandler.ts`
 6. Add route in Lambda handler
 
@@ -793,8 +915,8 @@ mock routes); the service: `test/DashboardBulkSync.test.ts`.
 
 ### Local Development Issues
 The launcher (`npm run dashboard:dev`, see "Local Development") sets `NODE_ENV=development`, which bypasses
-origin verification, and `LOCALHOST_WITH_MOCKS` from `MOCKED`; don't set them by hand.
-1. **No AWS access, or none wanted**: `MOCKED=true` in `scripts/LocalLaunch.env`, or `-- --mocks` for one run.
+origin verification, and `LOCAL_OFFLINE` from `OFFLINE`; don't set them by hand.
+1. **No AWS access, or none wanted**: `OFFLINE=true` in `scripts/LocalLaunch.env`, or `-- --offline` for one run.
 2. **The launch stops before the server starts**: an expired session for `AWS_PROFILE` (refresh it), or no
    dashboard Lambda by that name (check `LANDSCAPE`, `REGION` and `STACK_ID`); the message says which.
 3. **The port is already in use**: stopping `npm run dashboard:dev` (Ctrl+C, or closing its terminal) can leave
@@ -804,6 +926,6 @@ origin verification, and `LOCALHOST_WITH_MOCKS` from `MOCKED`; don't set them by
    `npm.cmd run dashboard:dev`, or use `cmd.exe` or Git Bash.
 5. **Works locally, fails deployed** (or the reverse): a local run uses your profile's AWS permissions, not the
    Lambda role's, so a missing grant only shows when deployed.
-6. **The top bar names the user differently**: deployed it shows the IdP's `eduPersonPrincipalName`; the mock
+6. **The top bar names the user differently**: deployed it shows the IdP's `eduPersonPrincipalName`; the local
    sign-in shows `USER_PRINCIPAL` unless `USER_EPPN` is set.
 7. Route errors are in the server's own output.

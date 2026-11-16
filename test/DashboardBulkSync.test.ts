@@ -2,15 +2,19 @@
  * Tests starting a sync run from the dashboard (dashboard/src/services/BulkSync.ts): the request it accepts, how
  * it reads the newest run (underway, stalled, finished), the guards, the chunker event it sends (the chunker
  * subscriber resets the counters for it), the review (plan) with every run setting, the real Lambda port against a
- * mocked client, and the routes (GET and POST /api/bulk-sync, POST /api/bulk-sync/plan) under mocks. The form's
+ * mocked client, and the routes (GET and POST /api/bulk-sync, POST /api/bulk-sync/plan) offline. The form's
  * defaults are the scheduled run's (src/chunking/ScheduledRun.ts; test/ScheduledRun.test.ts).
  */
-import { GetFunctionConfigurationCommand, InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
+import { GetFunctionConfigurationCommand, GetFunctionUrlConfigCommand, InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { mockClient } from 'aws-sdk-client-mock';
 import { handler } from '../dashboard/src/handlers/DashboardHandler';
+import { ServiceProvider } from '../dashboard/src/services/ServiceProvider';
+import { LaunchFlag } from '../dashboard/src/services/LaunchFlag';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
-import { MOCK_SOURCE_CONFIG, MockBulkSyncService } from '../dashboard/src/handlers/DashboardMocks';
-import { BulkSync, BulkSyncError, BulkSyncRequest, LambdaChunkerFunctions, RunActivity } from '../dashboard/src/services/BulkSync';
+import { OFFLINE_SOURCE_CONFIG, OfflineBulkSyncService } from '../dashboard/src/handlers/OfflineServices';
+import {
+  AwsSourceSimulatorService, BulkSync, BulkSyncError, BulkSyncRequest, LambdaChunkerFunctions, RunActivity
+} from '../dashboard/src/services/BulkSync';
 import { RunReport } from '../src/reporting/RunReporting';
 
 const MIN = 60_000;
@@ -129,7 +133,7 @@ describe('BulkSync', () => {
   const service = (params: {
     newest?: RunReport; dryRun?: string[]; tone?: string; config?: any; missing?: string[]; serviceMax?: number | 'none'
   } = {}) => {
-    const { newest = finishedRun, dryRun = [], tone, config = MOCK_SOURCE_CONFIG, missing, serviceMax } = params;
+    const { newest = finishedRun, dryRun = [], tone, config = OFFLINE_SOURCE_CONFIG, missing, serviceMax } = params;
     const functions = {
       isDryRun: jest.fn(async (name: string) => dryRun.includes(name)),
       invokeAsync: jest.fn(async () => undefined)
@@ -142,6 +146,83 @@ describe('BulkSync', () => {
     });
     return { bulkSync, functions };
   };
+
+  describe('a launch, until its run appears (LaunchFlag)', () => {
+    const launching = (params: { landscape?: string; newest?: RunReport; reset?: any; invokeFails?: boolean; flag?: LaunchFlag } = {}) => {
+      const { landscape = 'mock', newest = finishedRun, reset, invokeFails } = params;
+      const flag = params.flag ?? LaunchFlag.inMemory(landscape, () => NOW);
+      const functions = {
+        isDryRun: jest.fn(async () => false),
+        invokeAsync: jest.fn(async () => { if (invokeFails) throw new Error('throttled'); })
+      };
+      const bulkSync = new BulkSync({
+        config: OFFLINE_SOURCE_CONFIG,
+        settings: { ...settings, landscape, chunkerFunctionName: `chunker-subscriber-${landscape}`, processorSubscriberFunctionName: `processor-subscriber-${landscape}` },
+        runs: runsEndingWith(newest), functions, now: () => NOW, launchFlag: flag,
+        resetRecords: { read: async () => reset }
+      });
+      return { bulkSync, functions, flag };
+    };
+
+    it('raises the flag with the start, before the invoke, lasting as the start needs', async () => {
+      const { bulkSync, flag } = launching();
+      const started = await bulkSync.start({ runType: 'full', parallelStart: 2, resetState: true }, { by: 'dashboard', principal: 'wrh' } as any);
+      expect(await flag.read()).toEqual({
+        launchedAt: started.startedAt, expiresAt: new Date(NOW + 22 * 60_000).toISOString(),
+        startedBy: { by: 'dashboard', principal: 'wrh' }, choices: started.run
+      });
+      expect((await bulkSync.describe()).launch).toMatchObject({ launchedAt: started.startedAt });
+    });
+
+    it('refuses a second start, and a reset, while the first is launching', async () => {
+      const { bulkSync, functions } = launching();
+      await bulkSync.start({ runType: 'full' });
+      await expect(bulkSync.start({ runType: 'full' })).rejects.toMatchObject({ code: 'RUN_LAUNCHING', status: 409 });
+      await expect(bulkSync.plan({ runType: 'full' })).rejects.toMatchObject({ code: 'RUN_LAUNCHING' });
+      await expect(bulkSync.requestReset()).rejects.toMatchObject({ code: 'RUN_LAUNCHING', message: expect.stringContaining('a reset would empty the tables') });
+      expect((await bulkSync.resetState() as any).blocked).toMatchObject({ code: 'RUN_LAUNCHING' });
+      expect(functions.invokeAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets one of two starts through when both pass the checks together', async () => {
+      const flag = LaunchFlag.inMemory('mock', () => NOW);
+      const first = launching({ flag });
+      const second = launching({ flag });
+      const results = await Promise.allSettled([first.bulkSync.start({ runType: 'full' }), second.bulkSync.start({ runType: 'full' })]);
+      expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.find(result => result.status === 'rejected')).toMatchObject({ reason: { code: 'RUN_LAUNCHING' } });
+      expect(first.functions.invokeAsync.mock.calls.length + second.functions.invokeAsync.mock.calls.length).toBe(1);
+    });
+
+    it("lowers the flag when the chunker subscriber can't be invoked: nothing was launched", async () => {
+      const { bulkSync, flag } = launching({ invokeFails: true });
+      await expect(bulkSync.start({ runType: 'full' })).rejects.toThrow('throttled');
+      expect(await flag.read()).toBeUndefined();
+    });
+
+    it('lowers the flag once its run is listed, and allows the next start', async () => {
+      const flag = LaunchFlag.inMemory('mock', () => NOW);
+      await launching({ flag }).bulkSync.start({ runType: 'full' });
+      // The chunker has written the run's first records: it is the newest listed, a few seconds after the launch
+      const appeared = { ...finishedRun, syncRunId: new Date(NOW + 20_000).toISOString() } as RunReport;
+      const { bulkSync } = launching({ flag, newest: appeared });
+      const state = await bulkSync.describe();
+      expect(state.launch).toBeUndefined();
+      expect(state.blocked).toBeUndefined();
+      expect(await flag.read()).toBeUndefined();
+    });
+
+    it('refuses a start while a reset of the landscape is running', async () => {
+      const running = { status: 'running', via: 'overview', startedAt: new Date(NOW - 2 * 60_000).toISOString() };
+      const { bulkSync, functions } = launching({ reset: running });
+      expect((await bulkSync.describe()).blocked).toMatchObject({ code: 'RESET_UNDERWAY' });
+      await expect(bulkSync.start({ runType: 'full' })).rejects.toMatchObject({ code: 'RESET_UNDERWAY' });
+      expect(functions.invokeAsync).not.toHaveBeenCalled();
+      // One that stopped long ago (out of time) doesn't hold starts back
+      const stopped = launching({ reset: { ...running, startedAt: new Date(NOW - 60 * 60_000).toISOString() } });
+      expect((await stopped.bulkSync.describe()).blocked).toBeUndefined();
+    });
+  });
 
   describe('a parallel start', () => {
     it("offers up to 20 tasks, lowered to the chunker service's maximum when it can be read", async () => {
@@ -246,7 +327,8 @@ describe('BulkSync', () => {
       iterationLimit: { max: 50 },
       parallelStart: { max: 20, enabled: true },
       latestRun: { kind: 'finished', syncRunId: finishedRun.syncRunId },
-      warnings: []
+      warnings: [],
+      itemsPerChunk: 200
     });
     const stalled = await service({ newest: stalledRun }).bulkSync.describe();
     expect(stalled.latestRun.kind).toBe('stalled');
@@ -322,9 +404,216 @@ describe('BulkSync', () => {
     });
   });
 
+  it('plays the landscape the launcher names (LANDSCAPE), else local, in its listing and capabilities too', async () => {
+    const { OfflineLandscapeListingService, OfflineRunReportingService } = await import('../dashboard/src/handlers/OfflineServices');
+    const saved = process.env.LANDSCAPE;
+    try {
+      delete process.env.LANDSCAPE;
+      expect((await new OfflineBulkSyncService({ runs: runsEndingWith(finishedRun) }).describe()).landscape).toBe('local');
+      expect((await new OfflineLandscapeListingService().getLandscapes()).current).toBe('local');
+      process.env.LANDSCAPE = 'mock';
+      const state = await new OfflineBulkSyncService({ runs: runsEndingWith(finishedRun) }).describe();
+      expect(state.landscape).toBe('mock');
+      expect(state.mock).toBeDefined();
+      const listing = await new OfflineLandscapeListingService().getLandscapes();
+      expect(listing.current).toBe('mock');
+      expect(listing.landscapes.filter(entry => entry.current).map(entry => entry.landscape)).toEqual(['mock']);
+      expect((await new OfflineRunReportingService().getCapabilities()).landscape).toBe('mock');
+    } finally {
+      if (saved === undefined) delete process.env.LANDSCAPE; else process.env.LANDSCAPE = saved;
+    }
+  });
+
   it("warns that a mock landscape's run reads the real source", async () => {
-    const mock = new MockBulkSyncService({ runs: runsEndingWith(finishedRun), settings: { landscape: 'mock' } });
+    const mock = new OfflineBulkSyncService({ runs: runsEndingWith(finishedRun), settings: { landscape: 'mock' } });
     expect((await mock.describe()).warnings).toEqual([expect.stringContaining('mock is a mock landscape')]);
+  });
+
+  describe("a mock landscape's reset on its own (Overview)", () => {
+    const record = (status: string, startedAt = '2026-11-10T11:55:00.000Z') => ({ status, via: 'overview', startedAt } as any);
+    const mockSync = (params: { landscape?: string; newest?: RunReport; last?: any; dryRun?: string[]; readFails?: boolean } = {}) => {
+      const { landscape = 'mock', newest = finishedRun, last, dryRun = [], readFails } = params;
+      const functions = { isDryRun: jest.fn(async (name: string) => dryRun.includes(name)), invokeAsync: jest.fn(async () => undefined) };
+      const bulkSync = new BulkSync({
+        config: OFFLINE_SOURCE_CONFIG,
+        settings: { ...settings, landscape, chunkerFunctionName: `chunker-subscriber-${landscape}`, processorSubscriberFunctionName: `processor-subscriber-${landscape}` },
+        runs: runsEndingWith(newest), functions, now: () => NOW,
+        resetRecords: { read: async () => { if (readFails) throw new Error('AccessDenied'); return last; } }
+      });
+      return { bulkSync, functions };
+    };
+    const startedBy = { by: 'dashboard', principal: 'wrh' } as any;
+
+    it('is nothing outside a mock landscape, and refuses a reset there', async () => {
+      const { bulkSync, functions } = mockSync({ landscape: 'staging' });
+      expect(await bulkSync.resetState()).toEqual({ mockLandscape: false });
+      await expect(bulkSync.requestReset(startedBy)).rejects.toMatchObject({ code: 'INVALID_REQUEST', message: expect.stringContaining('not a mock landscape') });
+      expect(functions.invokeAsync).not.toHaveBeenCalled();
+    });
+
+    it("shows the last reset as of now: one running beyond 15 minutes has stopped", async () => {
+      expect(await mockSync({ last: record('succeeded') }).bulkSync.resetState()).toEqual({
+        mockLandscape: true, landscape: 'mock', last: record('succeeded')
+      });
+      expect((await mockSync({ last: record('running', '2026-11-10T11:30:00.000Z') }).bulkSync.resetState() as any).last.status).toBe('stopped');
+      expect(await mockSync({ readFails: true }).bulkSync.resetState()).toMatchObject({ mockLandscape: true, lastError: 'AccessDenied' });
+    });
+
+    it('hands a reset to the chunker subscriber, with who asked and when, and starts nothing else', async () => {
+      const { bulkSync, functions } = mockSync({ last: record('succeeded') });
+      expect(await bulkSync.requestReset(startedBy)).toEqual({ status: 'requested', landscape: 'mock', requestedAt: '2026-11-10T12:00:00.000Z' });
+      expect(functions.invokeAsync).toHaveBeenCalledTimes(1);
+      expect(functions.invokeAsync).toHaveBeenCalledWith('chunker-subscriber-mock', {
+        mockLandscapeReset: true, requestedAt: '2026-11-10T12:00:00.000Z', startedBy
+      });
+    });
+
+    it.each([
+      ['a run underway', { newest: report('2026-11-10T11:30:00.000Z', { chunks: 20, lastChunkAt: '2026-11-10T11:58:00.000Z' }) }, 'RUN_UNDERWAY'],
+      ['a reset still running', { last: record('running', '2026-11-10T11:58:00.000Z') }, 'RESET_UNDERWAY'],
+      ['the chunker subscriber in DRY_RUN', { dryRun: ['chunker-subscriber-mock'] }, 'SUBSCRIBER_DRY_RUN']
+    ])('refuses, and says so beforehand, with %s', async (_label, params, code) => {
+      const { bulkSync, functions } = mockSync(params as any);
+      expect((await bulkSync.resetState() as any).blocked).toMatchObject({ code });
+      await expect(bulkSync.requestReset(startedBy)).rejects.toMatchObject({ code });
+      expect(functions.invokeAsync).not.toHaveBeenCalled();
+    });
+
+    it('allows a reset after a stalled or a stopped one', async () => {
+      const stalled = mockSync({ newest: stalledRun, last: record('running', '2026-11-10T11:30:00.000Z') });
+      expect((await stalled.bulkSync.resetState() as any).blocked).toBeUndefined();
+      await expect(stalled.bulkSync.requestReset()).resolves.toMatchObject({ status: 'requested' });
+    });
+  });
+
+  describe("a mock landscape's options: the source and Start from scratch", () => {
+    const SIMULATOR_URL = 'https://example-simulator.lambda-url.us-east-2.on.aws/';
+    const mockService = (simulator?: any) => {
+      const service = new OfflineBulkSyncService({
+        runs: runsEndingWith(finishedRun), settings: { landscape: 'mock' }, now: () => NOW,
+        ...(simulator === undefined ? {} : { simulator })
+      });
+      return service;
+    };
+    const simulatedFull = { runType: 'full', source: 'simulator', simulator: { totalPopulation: 50, simulatedDelaySeconds: 0, errorRate: 0, nonCurrentTermRate: 0.25 } };
+
+    it('offers the simulator with its deployed settings, and nothing of the kind outside a mock landscape', async () => {
+      expect((await mockService().describe()).mock).toEqual({
+        simulator: { available: true, defaults: { totalPopulation: 1950, simulatedDelaySeconds: 3, errorRate: 0, nonCurrentTermRate: 0 } },
+        limits: { totalPopulation: 500_000, simulatedDelaySeconds: 30 }
+      });
+      expect(await service().bulkSync.describe()).not.toHaveProperty('mock');
+    });
+
+    it("says why the simulator can't be the source, and refuses a run that asks for it", async () => {
+      const missing = mockService({ lookup: async () => ({ reason: "The source simulator (source-simulator-mock) isn't deployed in this landscape" }), settings: async () => undefined });
+      expect((await missing.describe()).mock!.simulator).toEqual({
+        available: false, reason: "The source simulator (source-simulator-mock) isn't deployed in this landscape", defaults: BulkSync.SIMULATOR_DEFAULTS
+      });
+      await expect(missing.plan(simulatedFull)).rejects.toMatchObject({ code: 'INVALID_REQUEST', message: expect.stringContaining("can't be the source: The source simulator") });
+      expect((await mockService(null).describe()).mock!.simulator).toMatchObject({ available: false, reason: expect.stringContaining('redeploy its dashboard stack') });
+    });
+
+    it('sends the simulator as the source, its settings as query parameters, its terms, and the reset', async () => {
+      const service = mockService();
+      const plan = await service.plan({ ...simulatedFull, resetState: true });
+      expect(plan.event).toMatchObject({
+        baseUrl: 'https://example-simulator.lambda-url.us-east-2.on.aws',
+        fetchPath: '/?totalPopulation=50&simulatedDelaySeconds=0&errorRate=0&nonCurrentTermRate=0.25',
+        termsEndpoint: { baseUrl: 'https://example-simulator.lambda-url.us-east-2.on.aws', fetchPath: '/terms' },
+        populationType: 'person-full', resetState: true
+      });
+      expect(plan.choices).toMatchObject({ source: 'simulator', simulator: simulatedFull.simulator, resetState: true });
+      await service.start({ ...simulatedFull, resetState: true });
+      expect(service.invoked[0]).toMatchObject({ resetState: true, fetchPath: plan.event.fetchPath });
+    });
+
+    it("tests one of the simulator's people through its person endpoint", async () => {
+      const { event } = await mockService().plan({ runType: 'test', buid: 'U0000042', source: 'simulator', simulator: { totalPopulation: 100 } });
+      expect(event.fetchPath).toBe('/person?buid=U0000042&totalPopulation=100');
+      expect(event.iterationLimit).toBe(0);
+    });
+
+    it('reads the real source as before when it is chosen, and resets nothing unless asked', async () => {
+      const { event, choices } = await mockService().plan({ runType: 'full', source: 'real' });
+      expect(event).toMatchObject({ baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people' });
+      expect(event).not.toHaveProperty('termsEndpoint');
+      expect(event).not.toHaveProperty('resetState');
+      expect(choices).toMatchObject({ source: 'real', resetState: false });
+      expect(choices).not.toHaveProperty('simulator');
+    });
+
+    it('lists the mock settings from the form', async () => {
+      const byName = async (body: any, service: any = mockService()) =>
+        Object.fromEntries((await service.plan(body)).settings.map((row: any) => [row.name, row]));
+      const simulated = await byName({ ...simulatedFull, simulator: { totalPopulation: 50 }, resetState: true });
+      expect(simulated.sourceSimulator).toMatchObject({ value: true, source: 'form' });
+      expect(simulated.sourceSimulatorMockTotalPopulation).toMatchObject({ value: 50, source: 'form', note: expect.stringContaining('query parameter') });
+      expect(simulated.sourceSimulatorMockErrorRate).toMatchObject({ value: null, source: 'form', note: expect.stringContaining('own setting applies') });
+      expect(simulated.mockTargetResetState).toMatchObject({ value: true, source: 'form' });
+      const hybrid = await byName({ runType: 'full' });
+      expect(hybrid.sourceSimulator).toMatchObject({ value: false, source: 'form', note: expect.stringContaining('hybrid') });
+      expect(hybrid.sourceSimulatorMockTotalPopulation).toMatchObject({ source: 'unused' });
+      const elsewhere = Object.fromEntries((await service().bulkSync.plan({ runType: 'full' })).settings.map(row => [row.name, row]));
+      expect(elsewhere.sourceSimulator).toMatchObject({ value: false, source: 'fixed', note: 'Mock landscapes only' });
+      expect(elsewhere.mockTargetResetState).toMatchObject({ value: false, source: 'fixed', note: 'Mock landscapes only' });
+    });
+
+    it.each([
+      [{ runType: 'full', source: 'simulator' }, false, 'only for a mock landscape'],
+      [{ runType: 'full', resetState: true }, false, 'only for a mock landscape'],
+      [{ runType: 'full', simulator: {} }, false, 'only for a mock landscape'],
+      [{ runType: 'full', source: 'elsewhere' }, true, "source must be one of 'real', 'simulator'"],
+      [{ runType: 'full', resetState: 'yes' }, true, 'resetState must be true or false'],
+      [{ runType: 'full', simulator: { totalPopulation: 5 } }, true, 'Simulator settings are only for a run whose source is the source simulator'],
+      [{ runType: 'full', source: 'simulator', simulator: [] }, true, "simulator must be an object of the source simulator's settings"],
+      [{ runType: 'full', source: 'simulator', simulator: { people: 5 } }, true, "simulator.people isn't a source simulator setting"],
+      [{ runType: 'full', source: 'simulator', simulator: { totalPopulation: 0 } }, true, 'simulator.totalPopulation must be a whole number from 1 to 500000'],
+      [{ runType: 'full', source: 'simulator', simulator: { totalPopulation: 2.5 } }, true, 'simulator.totalPopulation must be a whole number'],
+      [{ runType: 'full', source: 'simulator', simulator: { simulatedDelaySeconds: 31 } }, true, 'simulator.simulatedDelaySeconds must be a number from 0 to 30'],
+      [{ runType: 'full', source: 'simulator', simulator: { errorRate: 1.5 } }, true, 'simulator.errorRate must be a number from 0 to 1'],
+      [{ runType: 'full', source: 'simulator', simulator: { nonCurrentTermRate: '0.5' } }, true, 'simulator.nonCurrentTermRate must be a number from 0 to 1'],
+      [{ runType: 'test', buid: 'U0000000', source: 'simulator' }, true, "The source simulator's BUIDs are a U followed by digits from 1"]
+    ])('refuses %j (mock landscape: %s) as INVALID_REQUEST', (body, mockLandscape, message) => {
+      expect(() => BulkSyncRequest.parse(body as any, { mockLandscape })).toThrow(message);
+    });
+
+    it("takes a test's BUID past the simulator's people, to see someone who isn't in the source", () => {
+      const request = BulkSyncRequest.parse(
+        { runType: 'test', buid: 'U0000101', source: 'simulator', simulator: { totalPopulation: 100 } } as any, { mockLandscape: true }
+      );
+      expect(request.buid).toBe('U0000101');
+      // Without People, as the page sends a test: the simulator keeps its own population
+      const withoutPeople = BulkSyncRequest.parse(
+        { runType: 'test', buid: 'U0005000', source: 'simulator', simulator: { errorRate: 0 } } as any, { mockLandscape: true }
+      );
+      expect(withoutPeople.choices().simulator).toEqual({ errorRate: 0 });
+      expect(BulkSync.simulatorSource(withoutPeople, 'https://sim.lambda-url.us-east-2.on.aws/').fetchPath)
+        .toBe('/person?buid=U0005000&errorRate=0');
+    });
+
+    it("reads the simulator's Function URL and its settings, changing nothing", async () => {
+      const lambda = mockClient(LambdaClient);
+      const fetched: string[] = [];
+      const realFetch = global.fetch;
+      global.fetch = jest.fn(async (url: any) => {
+        fetched.push(String(url));
+        return { ok: true, json: async () => ({ status: 'healthy', totalPopulation: 1950, errorRate: 0, simulatedDelaySeconds: 3 }) } as any;
+      }) as any;
+      try {
+        lambda.on(GetFunctionUrlConfigCommand, { FunctionName: 'source-simulator-mock' }).resolves({ FunctionUrl: SIMULATOR_URL } as any);
+        const simulator = new AwsSourceSimulatorService('source-simulator-mock', new LambdaClient({ region: 'us-east-2' }));
+        expect(await simulator.lookup()).toEqual({ url: SIMULATOR_URL });
+        expect(await simulator.settings(SIMULATOR_URL)).toEqual({ totalPopulation: 1950, errorRate: 0, simulatedDelaySeconds: 3 });
+        expect(fetched).toEqual([`${SIMULATOR_URL}health`]);
+        lambda.on(GetFunctionUrlConfigCommand).rejects(Object.assign(new Error('not found'), { name: 'ResourceNotFoundException' }));
+        expect(await simulator.lookup()).toEqual({ reason: "The source simulator (source-simulator-mock) isn't deployed in this landscape" });
+        expect(lambda.calls().every(call => call.args[0] instanceof GetFunctionUrlConfigCommand)).toBe(true);
+      } finally {
+        global.fetch = realFetch;
+        lambda.restore();
+      }
+    });
   });
 
   describe('from the environment', () => {
@@ -336,7 +625,7 @@ describe('BulkSync', () => {
         delete process.env[name];
       }
       process.env.LANDSCAPE = 'preview';
-      const bulkSync = BulkSync.fromEnvironment(MOCK_SOURCE_CONFIG, runsEndingWith(finishedRun));
+      const bulkSync = BulkSync.fromEnvironment(OFFLINE_SOURCE_CONFIG, runsEndingWith(finishedRun));
       expect((await bulkSync.describe()).blocked).toEqual({
         code: 'NOT_CONFIGURED', message: expect.stringContaining('missing REGION, CHUNKER_FUNCTION_NAME, PROCESSOR_SUBSCRIBER_FUNCTION_NAME')
       });
@@ -350,7 +639,15 @@ describe('BulkSync', () => {
         CHUNKER_FUNCTION_NAME: 'chunker-subscriber-preview', PROCESSOR_SUBSCRIBER_FUNCTION_NAME: 'processor-subscriber-preview',
         ITEMS_PER_CHUNK: '150'
       });
-      const bulkSync = BulkSync.fromEnvironment(MOCK_SOURCE_CONFIG, runsEndingWith(finishedRun));
+      const bulkSync = BulkSync.fromEnvironment(OFFLINE_SOURCE_CONFIG, runsEndingWith(finishedRun));
+      // The source simulator and the reset record only in a mock landscape
+      expect((bulkSync as any).deps.simulator).toBeUndefined();
+      expect((bulkSync as any).deps.resetRecords).toBeUndefined();
+      process.env.LANDSCAPE = 'mock';
+      expect((BulkSync.fromEnvironment(OFFLINE_SOURCE_CONFIG, runsEndingWith(finishedRun)) as any).deps.resetRecords).toBeDefined();
+      process.env.LANDSCAPE = 'preview';
+      process.env.SOURCE_SIMULATOR_FUNCTION_NAME = 'source-simulator-mock';
+      expect((BulkSync.fromEnvironment(OFFLINE_SOURCE_CONFIG, runsEndingWith(finishedRun)) as any).deps.simulator).toBeInstanceOf(AwsSourceSimulatorService);
       const request = BulkSyncRequest.parse({ runType: 'full' });
       expect(bulkSync.event(request)).toMatchObject({ iterationLimit: 10, bulkReset: false, trustPreviousStorage: true });
       const byName = Object.fromEntries(bulkSync.runSettings(request).map(row => [row.name, row.value]));
@@ -388,7 +685,7 @@ describe('LambdaChunkerFunctions', () => {
   });
 });
 
-describe('the bulk sync routes, under mocks', () => {
+describe('the bulk sync routes, offline', () => {
   const request = async (method: string, body?: unknown, path = '/api/bulk-sync') => {
     const result = await handler({
       rawPath: path, headers: {}, body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
@@ -397,13 +694,37 @@ describe('the bulk sync routes, under mocks', () => {
     return { status: result.statusCode, body: result.body ? JSON.parse(`${result.body}`) : undefined };
   };
 
-  beforeAll(() => { process.env.LOCALHOST_WITH_MOCKS = 'true'; });
-  afterAll(() => { delete process.env.LOCALHOST_WITH_MOCKS; });
+  beforeAll(() => { process.env.LOCAL_OFFLINE = 'true'; });
+  afterAll(() => { delete process.env.LOCAL_OFFLINE; });
   beforeEach(() => {
+    ServiceProvider.resetOfflineState();
     jest.spyOn(console, 'log').mockImplementation(() => undefined);
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
   });
   afterEach(() => jest.restoreAllMocks());
+
+  it('says a started run is launching until it appears: on Bulk sync and the first page of runs, refusing another start', async () => {
+    const started = await request('POST', { runType: 'full', parallelStart: 3 });
+    expect(started.status).toBe(202);
+    const state = await request('GET');
+    expect(state.body.launch).toMatchObject({ launchedAt: started.body.startedAt, choices: { runType: 'full', parallelStart: 3 } });
+    // 5 minutes, and 7 more for a parallel start
+    expect(Date.parse(state.body.launch.expiresAt) - Date.parse(state.body.launch.launchedAt)).toBe(12 * 60_000);
+    expect(state.body.blocked).toMatchObject({ code: 'RUN_LAUNCHING' });
+    expect(await request('POST', { runType: 'full' }, '/api/bulk-sync/plan')).toMatchObject({ status: 409, body: { code: 'RUN_LAUNCHING' } });
+    expect(await request('POST', { runType: 'full' })).toMatchObject({ status: 409, body: { code: 'RUN_LAUNCHING' } });
+    // The run list's first page carries it; an older page doesn't
+    const runs = await handler({
+      rawPath: '/api/runs', headers: {}, queryStringParameters: { include: 'report', limit: '1' },
+      requestContext: { http: { method: 'GET', path: '/api/runs' } }, isBase64Encoded: false
+    } as unknown as LambdaFunctionUrlEvent);
+    expect(JSON.parse(`${runs.body}`).launch).toMatchObject({ launchedAt: started.body.startedAt });
+    const older = await handler({
+      rawPath: '/api/runs', headers: {}, queryStringParameters: { include: 'report', limit: '1', before: '2026-11-04T02:00:00.000Z' },
+      requestContext: { http: { method: 'GET', path: '/api/runs' } }, isBase64Encoded: false
+    } as unknown as LambdaFunctionUrlEvent);
+    expect(JSON.parse(`${older.body}`).launch).toBeUndefined();
+  });
 
   it('describes a start (GET), reviews one (POST plan, 200), and starts one (POST, 202)', async () => {
     const state = await request('GET');

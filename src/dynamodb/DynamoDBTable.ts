@@ -23,8 +23,16 @@ export type QueryGSIPageParams = {
   limit: number, exclusiveStartKey?: Record<string, any>
 };
 
+/** How a truncation spreads its work (DynamoDBTable.truncateTable()) */
+export type TruncateOptions = {
+  /** Segments of the parallel scan (default TRUNCATE_SEGMENTS) */
+  segments?: number;
+  /** Delete batches each segment keeps in flight (default TRUNCATE_BATCHES_IN_FLIGHT) */
+  batchesInFlight?: number;
+};
+
 export type AbstractDynamoDbTable = {
-  truncateTable: (chunkSize?: number) => Promise<void>;
+  truncateTable: (chunkSize?: number, options?: TruncateOptions) => Promise<number>;
   scanAll: () => Promise<any[]>;
   deleteByPartitionKey: (
     { partitionKeyValue, chunkSize }: 
@@ -99,64 +107,83 @@ export class DynamoDBTable implements AbstractDynamoDbTable {
     );
   }
 
+  /** A truncation's parallel scan: segments scanned at once (DynamoDB's Segment / TotalSegments) */
+  static readonly TRUNCATE_SEGMENTS = 8;
+  /** Delete batches (BatchWriteItem, 25 keys each) each segment keeps in flight */
+  static readonly TRUNCATE_BATCHES_IN_FLIGHT = 4;
+  /** Attempts per delete batch: more than other writes, since a truncation's deletes in parallel invite throttling */
+  static readonly TRUNCATE_ATTEMPTS = 8;
+
   /**
-   * Truncate the DynamoDB table by scanning all items and deleting them in batches.
-   * This method handles pagination and batch deletion to efficiently clear the table.
-   * 
-   * Note: DynamoDB does not have a native truncate operation, so this is a workaround.
-   * Alternatively, the table could be deleted and recreated, but that may have 
-   * implications for table configuration and permissions, or stack drift.
-   * 
+   * Truncate the table: delete every item. DynamoDB has no truncate, so this scans the keys and deletes them in
+   * batches (the alternative, deleting and recreating the table, would drift from its stack). The scan is parallel
+   * (TRUNCATE_SEGMENTS segments at once), and each segment keeps TRUNCATE_BATCHES_IN_FLIGHT delete batches in flight,
+   * so a table of some 146,000 items (a mock landscape's after a hybrid full sync) empties within a Lambda's minutes
+   * rather than the tens of minutes one batch at a time took. Throttled deletes are retried with backoff
+   * (sendBatchWithRetry); a batch still unprocessed after its attempts fails the truncation.
+   *
    * Usage:
    * ```typescript
-   * await table.truncateTable(25); // Delete in batches of 25 (DynamoDB limit)
+   * const deleted = await table.truncateTable();
    * ```
-   * 
-   * @param chunkSize - Number of items to delete per batch (default: 25, max: 25)
+   *
+   * @param chunkSize - Keys per delete batch (default and most: 25, DynamoDB's limit)
+   * @param options - Segments and batches in flight (defaults: TRUNCATE_SEGMENTS, TRUNCATE_BATCHES_IN_FLIGHT)
+   * @returns The number of items deleted
    */
-  public truncateTable = async (chunkSize: number = 25): Promise<void> => {
+  public truncateTable = async (chunkSize: number = 25, options: TruncateOptions = {}): Promise<number> => {
+    const { params: { tableName } } = this;
+    const segments = Math.max(1, Math.floor(options.segments ?? DynamoDBTable.TRUNCATE_SEGMENTS));
+    const inFlight = Math.max(1, Math.floor(options.batchesInFlight ?? DynamoDBTable.TRUNCATE_BATCHES_IN_FLIGHT));
+    const batchSize = Math.min(25, Math.max(1, Math.floor(chunkSize || 25)));
+    console.log(`Truncating table: ${tableName} (${segments} segments, ${inFlight} batches of ${batchSize} in flight each)`);
+
+    const progress = { deleted: 0 };
+    const counts = await Promise.all(Array.from({ length: segments }, (_, segment) =>
+      this.truncateSegment(segment, segments, batchSize, inFlight, progress)));
+    const deleted = counts.reduce((sum, count) => sum + count, 0);
+    console.log(`Truncation complete. Deleted ${deleted} total items from ${tableName}.`);
+    return deleted;
+  }
+
+  /** One segment of truncateTable()'s parallel scan: its keys, page by page, deleted inFlight batches at a time */
+  private async truncateSegment(
+    segment: number, totalSegments: number, batchSize: number, inFlight: number, progress: { deleted: number }
+  ): Promise<number> {
     const { client, params: { tableName, partitionKey, sortKey } } = this;
-    console.log(`Truncating table: ${tableName}`);
-  
-    let itemsDeleted = 0;
-    let lastEvaluatedKey = undefined;
-    
+    const keyOf = (item: any) => ({ [partitionKey]: item[partitionKey], ...(sortKey ? { [sortKey]: item[sortKey] } : {}) });
+    let deleted = 0;
+    let lastEvaluatedKey: Record<string, any> | undefined = undefined;
     do {
       const scanParams: ScanCommandInput = {
         TableName: tableName,
-        ProjectionExpression: sortKey 
-          ? `${partitionKey}, ${sortKey}` 
-          : partitionKey,
+        // Keys only, under placeholders (a key's name may be a reserved word)
+        ProjectionExpression: sortKey ? '#pk, #sk' : '#pk',
+        ExpressionAttributeNames: sortKey ? { '#pk': partitionKey, '#sk': sortKey } : { '#pk': partitionKey },
+        ...(totalSegments > 1 ? { Segment: segment, TotalSegments: totalSegments } : {}),
         ExclusiveStartKey: lastEvaluatedKey
       };
-      
-      const scanResult = await client.send(new ScanCommand(scanParams));
-      
-      if (scanResult.Items && scanResult.Items.length > 0) {
-        // Process in batches of chunkSize (DynamoDB limit is 25)
-        for (let i = 0; i < scanResult.Items.length; i += chunkSize) {
-          const batch = scanResult.Items.slice(i, i + chunkSize);
-          const getKey = (item: any) => ({
-            [partitionKey]: item[partitionKey],
-            ...(sortKey ? { [sortKey]: item[sortKey] } : {})
-          });
-          const deleteRequests = batch.map(item => ({
-            DeleteRequest: {
-              Key: getKey(item)
-            }
-          }));
-          
-          await this.sendBatchWithRetry(deleteRequests);
-
-          itemsDeleted += batch.length;
-          console.log(`Deleted ${itemsDeleted} items so far...`);
-        }
+      const scanResult: any = await client.send(new ScanCommand(scanParams));
+      const keys = (scanResult.Items ?? []).map(keyOf);
+      const batches: any[][] = [];
+      for (let i = 0; i < keys.length; i += batchSize) {
+        batches.push(keys.slice(i, i + batchSize).map((Key: any) => ({ DeleteRequest: { Key } })));
       }
-      
+      // inFlight workers share the page's batches
+      let next = 0;
+      await Promise.all(Array.from({ length: Math.min(inFlight, batches.length) }, async () => {
+        for (let batch = batches[next++]; batch; batch = batches[next++]) {
+          await this.sendBatchWithRetry(batch, DynamoDBTable.TRUNCATE_ATTEMPTS);
+        }
+      }));
+      deleted += keys.length;
+      progress.deleted += keys.length;
+      if (keys.length > 0) {
+        console.log(`Deleted ${progress.deleted} items from ${tableName} so far...`);
+      }
       lastEvaluatedKey = scanResult.LastEvaluatedKey;
     } while (lastEvaluatedKey);
-    
-    console.log(`Truncation complete. Deleted ${itemsDeleted} total items.`);
+    return deleted;
   }
 
   /**
@@ -523,10 +550,10 @@ export class DynamoDBTable implements AbstractDynamoDbTable {
    * any remain after the final attempt, rather than letting writes be silently dropped.
    *
    * @param requests - PutRequest/DeleteRequest objects for this table
+   * @param maxAttempts - Attempts before giving up (default 5)
    */
-  private async sendBatchWithRetry(requests: any[]): Promise<void> {
+  private async sendBatchWithRetry(requests: any[], maxAttempts: number = 5): Promise<void> {
     const { client, params: { tableName } } = this;
-    const maxAttempts = 5;
     let pending: any[] | undefined = requests;
 
     for (let attempt = 1; pending && pending.length > 0; attempt++) {

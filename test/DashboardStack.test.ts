@@ -44,7 +44,15 @@ describe('landscapeResources', () => {
       chunkerServiceName: 'Chunker',
       pipelineStackId: 'huron-person-fargate-processor',
       itemsPerChunk: 200,
+      sourceSimulatorFunctionName: 'source-simulator-mock',
+      atomicCounterTableName: 'huron-person-fargate-processor-atomic-counter-mock',
     });
+  });
+
+  it('names the source simulator only in a mock landscape', () => {
+    const staging = landscapeResources({ ...makeLandscape('dynamodb'), TAGS: { Landscape: 'staging', Service: 'svc', Function: 'fn' } } as any);
+    expect(staging).not.toHaveProperty('sourceSimulatorFunctionName');
+    expect(staging).not.toHaveProperty('atomicCounterTableName');
   });
 
   it("takes none of a start's choices from the context: not its chunksPerTask, nor its previous-state flags", () => {
@@ -130,7 +138,9 @@ describe('FunctionUrlOrigin', () => {
     expect(resources).toContain('table/huron-person-fargate-processor-statistics-mock/index/*');
     expect(resources).toContain('table/huron-person-fargate-processor-person-history-mock');
     expect(resources).toContain(':::huron-person-chunks-mock/*');
-    expect(resources).not.toContain('atomic-counter');
+    // The atomic counter table only to read a mock landscape's reset record (GetItem: tested below)
+    const counterActions = statements.filter((s: any) => JSON.stringify(s.Resource).includes('atomic-counter')).flatMap((s: any) => [s.Action].flat());
+    expect(counterActions).toEqual(['dynamodb:GetItem']);
   });
 
   it('may start a run as the schedule does: invoke the chunker subscriber, read both subscribers, nothing else', () => {
@@ -144,7 +154,44 @@ describe('FunctionUrlOrigin', () => {
     expect(resourcesOf('lambda:InvokeFunction')).not.toContain('processor-subscriber');
     expect(resourcesOf('lambda:GetFunctionConfiguration')).toContain('function:chunker-subscriber-mock');
     expect(resourcesOf('lambda:GetFunctionConfiguration')).toContain('function:processor-subscriber-mock');
-    expect(statements.flatMap((s: any) => [s.Action].flat()).every((a: string) => ['lambda:InvokeFunction', 'lambda:GetFunctionConfiguration'].includes(a))).toBe(true);
+    // Besides, in a mock landscape (this one), only the source simulator's URL lookup (tested below)
+    expect(statements.flatMap((s: any) => [s.Action].flat()).every((a: string) =>
+      ['lambda:InvokeFunction', 'lambda:GetFunctionConfiguration', 'lambda:GetFunctionUrlConfig'].includes(a))).toBe(true);
+  });
+
+  it("may keep its landscape's launch flag (put, get, delete one SSM parameter), and no other parameter", () => {
+    const statements = Object.values(synth('dynamodb').findResources('AWS::IAM::Policy'))
+      .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+    const writes = statements.filter((s: any) => [s.Action].flat().some((a: string) => /^ssm:(Put|Delete)Parameter$/.test(a)));
+    expect(writes).toHaveLength(1);
+    expect([writes[0].Action].flat()).toEqual(['ssm:PutParameter', 'ssm:GetParameter', 'ssm:DeleteParameter']);
+    const resource = JSON.stringify(writes[0].Resource);
+    expect(resource).toContain(':parameter/hp-dashboard/launch-flags/mock');
+    expect(resource).not.toContain('*');
+  });
+
+  it("may read a mock landscape's reset record (GetItem on its atomic counter table), and write nothing there", () => {
+    const statements = Object.values(synth('dynamodb').findResources('AWS::IAM::Policy'))
+      .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+    const reads = statements.filter((s: any) => JSON.stringify(s.Resource).includes('atomic-counter'));
+    expect(reads).toHaveLength(1);
+    expect([reads[0].Action].flat()).toEqual(['dynamodb:GetItem']);
+    expect(JSON.stringify(reads[0].Resource)).toContain('table/huron-person-fargate-processor-atomic-counter-mock');
+  });
+
+  it("may look up a mock landscape's source simulator's Function URL, and only that", () => {
+    const template = synth('dynamodb');
+    const statements = Object.values(template.findResources('AWS::IAM::Policy'))
+      .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+    const lookup = statements.filter((s: any) => [s.Action].flat().includes('lambda:GetFunctionUrlConfig'));
+    expect(lookup).toHaveLength(1);
+    expect([lookup[0].Action].flat()).toEqual(['lambda:GetFunctionUrlConfig']);
+    expect(JSON.stringify(lookup[0].Resource)).toContain('function:source-simulator-mock');
+    // Nothing that changes the simulator
+    expect(statements.flatMap((s: any) => [s.Action].flat()).filter((a: string) => /^lambda:(Update|Put|Create|Delete)/.test(a))).toEqual([]);
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: { Variables: Match.objectLike({ SOURCE_SIMULATOR_FUNCTION_NAME: 'source-simulator-mock' }) }
+    });
   });
 
   it("may read the chunker service's maximum for Parallel start, and change no scaling itself", () => {
@@ -210,8 +257,13 @@ describe('FunctionUrlOrigin', () => {
   it('grants read-only access to the registry path', () => {
     const statements = Object.values(synth('dynamodb').findResources('AWS::IAM::Policy'))
       .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
-    const ssm = statements.filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('ssm:')));
+    // The registry's statements; the launch flag's own parameter is tested above
+    const ssm = statements.filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('ssm:'))
+      && JSON.stringify(s.Resource).includes('/hp-dashboard/landscapes'));
     expect(ssm.flatMap((s: any) => [s.Action].flat())).toEqual(['ssm:GetParametersByPath']);
+    // Nothing else may touch SSM besides reading the registry and keeping the launch flag
+    const others = statements.filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('ssm:')) && !ssm.includes(s));
+    expect(others.map((s: any) => JSON.stringify(s.Resource))).toEqual([expect.stringContaining('/hp-dashboard/launch-flags/mock')]);
     const resources = JSON.stringify(ssm.map((s: any) => s.Resource));
     expect(resources).toContain(':parameter/hp-dashboard/landscapes\"');
     expect(resources).toContain(':parameter/hp-dashboard/landscapes/*');

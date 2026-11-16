@@ -4,8 +4,8 @@
  * rows it builds. The script is browser code with no module system, so it is run in a vm context, as written
  * and as the Lambda build minifies it.
  *
- * RunsApi is driven through the dashboard handler with the mock services (LOCALHOST_WITH_MOCKS), so the page's
- * requests are checked against the routes and the mock run history they will meet under `dashboard:dev -- --mocks`.
+ * RunsApi is driven through the dashboard handler with the offline services (LOCAL_OFFLINE), so the page's
+ * requests are checked against the routes and the offline run history they will meet under `dashboard:dev -- --offline`.
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -13,7 +13,7 @@ import { Script, createContext } from 'vm';
 import { minifyJS } from '../dashboard/scripts/BuildTemplates';
 import { handler } from '../dashboard/src/handlers/DashboardHandler';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
-import { MOCK_RUN_COUNT, NEWEST_MOCK_RUN } from '../dashboard/src/handlers/MockRunReporting';
+import { OFFLINE_RUN_COUNT, NEWEST_OFFLINE_RUN } from '../dashboard/src/handlers/OfflineRunReporting';
 
 const JS_DIR = join(__dirname, '../dashboard/public/js');
 const CLASSES = ['Html', 'RunFormat', 'RunView', 'RunsApi', 'CursorPager', 'PagedTable', 'RunListTable', 'RunDetailView', 'RunHistoryPage'];
@@ -190,6 +190,22 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       const run = new RunView({ syncRunId: '2026-11-01T02:00:00.000Z', status: 'UNKNOWN' });
       expect(RunFormat.status(run.status).label).toBe('Unknown');
       expect(run.startedAt).toBe('2026-11-01T02:00:00.000Z');
+    });
+  });
+
+  describe('a run launched moments ago', () => {
+    it("is passed on from the first page of runs only, for the page to show above the list", async () => {
+      const launch = { launchedAt: '2026-11-16T14:00:00.000Z', expiresAt: '2026-11-16T14:05:00.000Z', choices: { runType: 'full' } };
+      const api = new RunsApi(async (path: string) => path.includes('before=')
+        ? { items: [] }
+        : { items: [{ syncRunId: '2026-11-15T02:00:00.000Z', status: 'UNKNOWN' }], before: '2026-11-15T02:00:00.000Z', launch });
+      expect((await api.listRuns({ limit: 1 })).launch).toEqual(launch);
+      const seen: any[] = [];
+      const container: any = { innerHTML: '', querySelector: () => ({ insertAdjacentHTML: () => undefined, addEventListener: () => undefined, innerHTML: '' }) };
+      const table = RunListTable.create(api, container, 1, (shown: any) => seen.push(shown));
+      await table.pager.next();
+      await table.pager.next();
+      expect(seen).toEqual([launch]);
     });
   });
 
@@ -523,6 +539,43 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       expect(finished).not.toContain('stat-progress');
     });
 
+    it('shows each flag as its value, never as JSON, and wraps long ones', () => {
+      const flags = {
+        syncPopulation: 'person-full', bulkReset: false,
+        startedBy: { by: 'dashboard', principal: 'wrh' },
+        termsEndpoint: { baseUrl: 'https://sim.lambda-url.us-east-2.on.aws', fetchPath: '/terms' },
+        somethingNew: { mode: 'fast', retries: 2, nested: { on: true } },
+        listed: ['a', 'b'],
+        runFailed: true
+      };
+      const view = Object.assign(Object.create(RunDetailView.prototype), { run: { flags }, capabilities: {} });
+      const html = view.flagsHtml();
+      expect(html).not.toContain('{');
+      expect(html).toContain('<dt>Started by</dt><dd>wrh</dd>');
+      // A long value goes under its name, across the card; a short one stays beside it
+      expect(html).toContain('<dt>Terms endpoint</dt><dd class="fact-wide">https://sim.lambda-url.us-east-2.on.aws/terms</dd>');
+      expect(html).toContain('<dd class="fact-wide">mode: fast, retries: 2, nested: on: Yes</dd>');
+      expect(html).toContain('<dt>listed</dt><dd>a, b</dd>');
+      expect(html).not.toContain('runFailed');
+      expect(RunDetailView.flagValue('startedBy', { by: 'schedule' })).toBe('Schedule');
+      expect(RunDetailView.flagValue('startedBy', { by: 'nobody-knows' })).toBe(RunFormat.NONE);
+      expect(RunDetailView.flagValue('anything', null)).toBe(RunFormat.NONE);
+    });
+
+    it('counts the people removed from the source first, then those deactivated and failed, and says what they are', () => {
+      const deletion = { status: 'COMPLETED', deletedCount: 11, failedCount: 1, totalProcessed: 12, message: 'Soft-deleted 11 of 12 records' };
+      const view = Object.assign(Object.create(RunDetailView.prototype), { run: { deletion }, capabilities: {} });
+      const html = view.deletionHtml();
+      expect(html).not.toContain('Considered');
+      const terms = [...html.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]);
+      expect(terms).toEqual(['Removed from source', 'Deactivated', 'Failed']);
+      expect(html).toContain('<dt>Removed from source</dt><dd>12</dd>');
+      expect(html).toContain('deletion-explanation');
+      expect(html).toContain('Each is deactivated in Huron, or counted as failed.');
+      const skipped = Object.assign(Object.create(RunDetailView.prototype), { run: { deletion: { status: 'SKIPPED', reason: 'X' } }, capabilities: {} });
+      expect(skipped.deletionHtml()).not.toContain('deletion-explanation');
+    });
+
     it("lists an unfinished run's known facts: chunks processed, last chunk, duration so far", () => {
       const view = Object.assign(Object.create(RunDetailView.prototype), { run: new RunView(incomplete), capabilities: {} });
       const facts = Object.fromEntries(view.summaryFacts());
@@ -555,8 +608,8 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
 describe('run-history.js against the dashboard routes and mock run history', () => {
   const { RunsApi, CursorPager } = loadRunHistory();
 
-  beforeAll(() => { process.env.LOCALHOST_WITH_MOCKS = 'true'; });
-  afterAll(() => { delete process.env.LOCALHOST_WITH_MOCKS; });
+  beforeAll(() => { process.env.LOCAL_OFFLINE = 'true'; });
+  afterAll(() => { delete process.env.LOCAL_OFFLINE; });
   beforeEach(() => {
     jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -571,8 +624,8 @@ describe('run-history.js against the dashboard routes and mock run history', () 
       pages.push((await pager.next()).length);
     }
     expect(pages).toEqual([20, 20]);
-    expect(pager.items).toHaveLength(MOCK_RUN_COUNT);
-    expect(pager.items[0].syncRunId).toBe(NEWEST_MOCK_RUN);
+    expect(pager.items).toHaveLength(OFFLINE_RUN_COUNT);
+    expect(pager.items[0].syncRunId).toBe(NEWEST_OFFLINE_RUN);
     const startedAt = pager.items.map((run: any) => run.startedAt);
     expect([...startedAt].sort().reverse()).toEqual(startedAt);
     expect(new Set(pager.items.map((run: any) => run.status))).toEqual(
@@ -604,8 +657,8 @@ describe('run-history.js against the dashboard routes and mock run history', () 
 
   it("pages through one status code's errors, and counts them as the summary does", async () => {
     const api = new RunsApi(getJson);
-    const run = await api.run(NEWEST_MOCK_RUN);
-    const pager = new CursorPager((cursor?: string) => api.errors(NEWEST_MOCK_RUN, { statusCode: 429, cursor, limit: 50 }));
+    const run = await api.run(NEWEST_OFFLINE_RUN);
+    const pager = new CursorPager((cursor?: string) => api.errors(NEWEST_OFFLINE_RUN, { statusCode: 429, cursor, limit: 50 }));
     while (pager.hasMore) {
       await pager.next();
     }
@@ -615,9 +668,9 @@ describe('run-history.js against the dashboard routes and mock run history', () 
 
   it("pages through a run's changes of one type, as many as the summary counts", async () => {
     const api = new RunsApi(getJson);
-    const run = await api.run(NEWEST_MOCK_RUN);
+    const run = await api.run(NEWEST_OFFLINE_RUN);
     for (const changeType of ['NEW', 'UPDATED', 'DELETED']) {
-      const pager = new CursorPager((cursor?: string) => api.changes(NEWEST_MOCK_RUN, { changeType, cursor, limit: 50 }));
+      const pager = new CursorPager((cursor?: string) => api.changes(NEWEST_OFFLINE_RUN, { changeType, cursor, limit: 50 }));
       while (pager.hasMore) {
         await pager.next();
       }
@@ -627,18 +680,18 @@ describe('run-history.js against the dashboard routes and mock run history', () 
 
   it('rejects with the status and message the page shows: an invalid cursor, a run that does not exist', async () => {
     const api = new RunsApi(getJson);
-    await expect(api.errors(NEWEST_MOCK_RUN, { cursor: 'not-a-cursor' })).rejects.toMatchObject({ status: 400 });
+    await expect(api.errors(NEWEST_OFFLINE_RUN, { cursor: 'not-a-cursor' })).rejects.toMatchObject({ status: 400 });
     await expect(api.run('2001-01-01T00:00:00.000Z')).rejects.toMatchObject({ status: 404 });
   });
 
   it('is told, in S3 mode, that changes are not recorded', async () => {
-    process.env.MOCK_STORAGE_MODE = 's3';
+    process.env.OFFLINE_STORAGE_MODE = 's3';
     try {
       const api = new RunsApi(getJson);
       expect(await api.capabilities()).toMatchObject({ storageMode: 's3', changesSupported: false });
-      await expect(api.changes(NEWEST_MOCK_RUN, { changeType: 'NEW' })).rejects.toMatchObject({ status: 400 });
+      await expect(api.changes(NEWEST_OFFLINE_RUN, { changeType: 'NEW' })).rejects.toMatchObject({ status: 400 });
     } finally {
-      delete process.env.MOCK_STORAGE_MODE;
+      delete process.env.OFFLINE_STORAGE_MODE;
     }
   });
 });

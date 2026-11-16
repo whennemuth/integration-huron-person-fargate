@@ -7,6 +7,14 @@ export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-a
 export const DYNAMODB_PARTITION_KEY = 'counter_name';
 
 /**
+ * The prefix of an item that borrows this table and is not a counter: its `counter_name` is NOT_A_COUNTER_PREFIX plus
+ * what it is, and its `purpose` attribute says why it is here. Anything that clears, lists or rebuilds the counters must
+ * leave these items alone. The one so far: `not-a-counter:mock-landscape-reset`, the last mock landscape reset's record
+ * (src/chunking/MockLandscapeReset.ts), kept here because no reset empties this table.
+ */
+export const NOT_A_COUNTER_PREFIX = 'not-a-counter:';
+
+/**
  * Utility class to manage an atomic counter stored in DynamoDB. Provides methods to 
  * increment and retrieve the counter value. DynamoDB's UpdateItem with ADD operation is 
  * used to ensure atomic increments even under high concurrency, and by "atomic" is meant 

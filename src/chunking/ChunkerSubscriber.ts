@@ -35,12 +35,14 @@
  * - REGION: AWS region (e.g., 'us-east-2')
  * - DRY_RUN: If set to 'true', the function will not send messages (default: 'false')
  * - STACK_ID, LANDSCAPE: name the landscape's atomic counter table, for the counter reset
+ * - CHUNKS_BUCKET_NAME: a mock landscape's chunks bucket, for its run state reset (resetState); not set elsewhere
  */
 
 import { handleS3Event } from './filedrop/ChunkerS3Subscriber';
 import { handleApiEvent } from './fetch/ChunkerApiSubscriber';
 import { isRunStartEvent, resetRunCounters, RunCounterLocation } from './RunCounters';
 import { ParallelStart } from './ParallelStart';
+import { MockLandscapeLocation, MockLandscapeReset, MockLandscapeResetVia } from './MockLandscapeReset';
 import { SourceEndpoint, SyncPopulation } from '../../docker/chunkTypes';
 import type { StartedBy } from './StartedBy';
 
@@ -89,10 +91,29 @@ export interface ApiChunkerEvent {
    * starts with one message. Never forwarded to the seeded or chained messages.
    */
   parallelStart?: number;
+  /**
+   * Start the run from scratch in a mock landscape (src/chunking/MockLandscapeReset.ts): empty the mock target, the
+   * statistics (Run history) and the delta baseline before the run starts. Only on a run's first event, and refused
+   * outside a mock landscape. Never forwarded to the seeded or chained messages.
+   */
+  resetState?: boolean;
   processingMetadata?: {
     processedAt?: string;
     processorVersion?: string;
   };
+}
+
+/**
+ * A mock landscape's reset on its own, not a run's start (the dashboard's Overview, Reset landscape): the chunker
+ * subscriber empties the landscape's run state (MockLandscapeReset) and records it, within the same timeout as a run's
+ * Start from scratch, and starts nothing.
+ */
+export interface MockLandscapeResetEvent {
+  mockLandscapeReset: true;
+  /** Who asked for it (the dashboard's signed-in user), recorded with the reset */
+  startedBy?: StartedBy;
+  /** When the dashboard sent it */
+  requestedAt?: string;
 }
 
 /**
@@ -124,28 +145,142 @@ export async function resetCountersForRunStart(
   return true;
 }
 
+/** The environment a mock landscape's reset needs: its tables' names and its chunks bucket */
+const RESET_ENVIRONMENT = ['STACK_ID', 'LANDSCAPE', 'REGION', 'CHUNKS_BUCKET_NAME'];
+
+/**
+ * Why an event's reset (ApiChunkerEvent.resetState) can't be done, or undefined when it can or none is asked for:
+ * only on a run's first event, only in a mock landscape (the Lambda's LANDSCAPE), and only with the environment the
+ * reset needs (CDK gives a mock landscape's subscriber CHUNKS_BUCKET_NAME and the grants, and no other's).
+ */
+export function resetRefusal(event: ApiChunkerEvent, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (!event.resetState) {
+    return undefined;
+  }
+  if (!isRunStartEvent(event)) {
+    return "resetState is only for a run's first event (offset 0, no chunkDirectory)";
+  }
+  const notMock = MockLandscapeReset.refusal(env.LANDSCAPE);
+  if (notMock) {
+    return notMock;
+  }
+  const missing = RESET_ENVIRONMENT.filter(name => !env[name]);
+  return missing.length > 0
+    ? `Can't reset the mock landscape's run state: ${missing.join(', ')} isn't set in this Lambda's environment`
+    : undefined;
+}
+
+/**
+ * Before a run that asks for it starts (ApiChunkerEvent.resetState, already checked by resetRefusal()), reset the
+ * mock landscape's run state: the mock target, the statistics and the delta baseline (MockLandscapeReset). It comes
+ * before the counter reset and before anything is queued, so the run starts from scratch. Skipped in DRY_RUN
+ * (nothing starts). A failed reset fails the invocation, which isn't retried, so the run doesn't start.
+ *
+ * @returns Whether the run state was reset
+ */
+export async function resetMockLandscapeForRunStart(
+  event: ApiChunkerEvent,
+  env: NodeJS.ProcessEnv = process.env,
+  reset: (location: MockLandscapeLocation, via: MockLandscapeResetVia, startedBy?: StartedBy) => Promise<unknown> = resetMockLandscape
+): Promise<boolean> {
+  if (!event.resetState) {
+    return false;
+  }
+  const { STACK_ID, LANDSCAPE, REGION, CHUNKS_BUCKET_NAME, DRY_RUN = 'false' } = env;
+  if (DRY_RUN.toLowerCase() === 'true') {
+    console.log(`[DRY RUN] Would reset the run state of mock landscape ${LANDSCAPE}`);
+    return false;
+  }
+  await reset({ stackId: STACK_ID!, landscape: LANDSCAPE!, region: REGION!, chunksBucketName: CHUNKS_BUCKET_NAME! }, 'bulk-sync', event.startedBy);
+  return true;
+}
+
+/** A mock landscape's reset, recorded in its atomic counter table (MockLandscapeReset.recorder()) */
+export async function resetMockLandscape(location: MockLandscapeLocation, via: MockLandscapeResetVia, startedBy?: StartedBy): Promise<unknown> {
+  return new MockLandscapeReset(MockLandscapeReset.awsDeps(location))
+    .run({ via, startedBy, recorder: MockLandscapeReset.recorder(location) });
+}
+
+/** Why a reset on its own can't be done here, or undefined when it can: a mock landscape's, with its environment */
+export function resetEventRefusal(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const notMock = MockLandscapeReset.refusal(env.LANDSCAPE);
+  if (notMock) {
+    return notMock;
+  }
+  const missing = RESET_ENVIRONMENT.filter(name => !env[name]);
+  return missing.length > 0
+    ? `Can't reset the mock landscape's run state: ${missing.join(', ')} isn't set in this Lambda's environment`
+    : undefined;
+}
+
+/**
+ * A mock landscape's reset on its own (MockLandscapeResetEvent): refused with a 400 outside a mock landscape (nothing
+ * touched), skipped in DRY_RUN, otherwise run and recorded. A failed reset fails the invocation (not retried), after
+ * recording the failure.
+ */
+export async function handleResetEvent(
+  event: MockLandscapeResetEvent,
+  env: NodeJS.ProcessEnv = process.env,
+  reset: (location: MockLandscapeLocation, via: MockLandscapeResetVia, startedBy?: StartedBy) => Promise<unknown> = resetMockLandscape
+): Promise<{ statusCode: number; body: string }> {
+  const refusal = resetEventRefusal(env);
+  if (refusal) {
+    console.error(`Mock landscape reset refused: ${refusal}`);
+    return { statusCode: 400, body: refusal };
+  }
+  const { STACK_ID, LANDSCAPE, REGION, CHUNKS_BUCKET_NAME, DRY_RUN = 'false' } = env;
+  if (DRY_RUN.toLowerCase() === 'true') {
+    const body = `[DRY RUN] Would reset the run state of mock landscape ${LANDSCAPE}`;
+    console.log(body);
+    return { statusCode: 200, body };
+  }
+  const result = await reset({ stackId: STACK_ID!, landscape: LANDSCAPE!, region: REGION!, chunksBucketName: CHUNKS_BUCKET_NAME! }, 'overview', event.startedBy);
+  return { statusCode: 200, body: JSON.stringify(result) };
+}
+
+/**
+ * Why a run's first event can't be started, checked before anything is reset or sent: its reset (resetRefusal()), then
+ * its parallel start (ParallelStart.refusal()). Undefined when it can be.
+ */
+export function runStartRefusal(event: ApiChunkerEvent, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return resetRefusal(event, env)
+    ?? (ParallelStart.requested(event) > 0 ? ParallelStart.refusal(event, env) : undefined);
+}
+
 /**
  * The Lambda handler function that dispatches based on event type.
  *
- * An API event asking for a parallel start (ApiChunkerEvent.parallelStart > 0) is checked first (ParallelStart.refusal(),
- * before the counters are reset or anything is sent), then started with that many chunker tasks; the wait inside is
- * bounded by the Lambda's remaining time (context). Any other API event is queued as one message.
+ * An API event is checked first (runStartRefusal(): a reset it asks for, then a parallel start), before anything is
+ * reset or sent; a refusal is returned as a 400 rather than thrown. Then a mock landscape's run state is reset if the
+ * event asks for it (resetState). An event asking for a parallel start (parallelStart > 0) is started with that many
+ * chunker tasks, the wait inside bounded by the Lambda's remaining time (context); any other is queued as one message.
  *
  * @param event - Either an S3ChunkerEvent or ApiChunkerEvent
  * @param context - The Lambda context (its getRemainingTimeInMillis() bounds a parallel start's wait)
  * @returns Response with status code and message
  */
-export async function handler(event: S3ChunkerEvent | ApiChunkerEvent, context?: { getRemainingTimeInMillis?: () => number }): Promise<any> {
+export async function handler(event: S3ChunkerEvent | ApiChunkerEvent | MockLandscapeResetEvent, context?: { getRemainingTimeInMillis?: () => number }): Promise<any> {
   console.log('Received event:', JSON.stringify(event, null, 2));
 
+  if (isResetEvent(event)) {
+    console.log('Event type: mock landscape reset');
+    return await handleResetEvent(event);
+  }
   // Determine event type by checking for API-specific fields
   if (isApiEvent(event)) {
     console.log('Event type: API-based chunking');
-    if (ParallelStart.requested(event) > 0) {
-      return await startInParallel(event, context);
+    const apiEvent = event as ApiChunkerEvent;
+    const refusal = runStartRefusal(apiEvent);
+    if (refusal) {
+      console.error(`Run start refused: ${refusal}`);
+      return { statusCode: 400, body: refusal };
     }
-    await resetCountersForRunStart(event as ApiChunkerEvent);
-    return await handleApiEvent(event as ApiChunkerEvent);
+    await resetMockLandscapeForRunStart(apiEvent);
+    if (ParallelStart.requested(apiEvent) > 0) {
+      return await startInParallel(apiEvent, context);
+    }
+    await resetCountersForRunStart(apiEvent);
+    return await handleApiEvent(apiEvent);
   } else if (isS3Event(event)) {
     console.log('Event type: S3-based chunking');
     return await handleS3Event(event as S3ChunkerEvent);
@@ -175,6 +310,11 @@ export async function startInParallel(
   }
   await resetCountersForRunStart(event, env, reset);
   return await parallelStart(event).run(event, context?.getRemainingTimeInMillis?.());
+}
+
+/** Type guard: a mock landscape's reset on its own */
+function isResetEvent(event: any): event is MockLandscapeResetEvent {
+  return event?.mockLandscapeReset === true;
 }
 
 /**

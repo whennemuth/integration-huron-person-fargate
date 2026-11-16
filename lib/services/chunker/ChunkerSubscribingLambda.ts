@@ -7,6 +7,12 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { FUNCTION_BASE_NAME } from '../../../src/chunking/fetch/ChunkerApiSubscriber';
 import { DYNAMODB_TABLE_NAME as atomicCounterTableName } from '../../../src/dynamodb/AtomicCounter';
+import { DYNAMODB_TABLE_NAME as mockTargetPersonTableName } from '../../../src/dynamodb/MockTargetPersonTable';
+import { DYNAMODB_TABLE_NAME as statisticsTableName } from '../../../src/dynamodb/StatisticsTable';
+import { DYNAMODB_TABLE_NAME as personCurrentStateTableName } from '../../../src/dynamodb/PersonCurrentStateTable';
+import { DYNAMODB_TABLE_NAME as personHistoryTableName } from '../../../src/dynamodb/PersonHistoryTable';
+import { MockLandscapeReset } from '../../../src/chunking/MockLandscapeReset';
+import { isMockLandscape } from '../../../src/Utils';
 import { IContext } from '../../../context/IContext';
 
 export interface ChunkerSubscribingLambdaProps {
@@ -20,6 +26,12 @@ export interface ChunkerSubscribingLambdaProps {
   /** The chunker service's cluster and service names, which a parallel start scales (src/chunking/ParallelStart.ts) */
   chunkerClusterName: string;
   chunkerServiceName: string;
+  /**
+   * The landscape's chunks bucket. In a mock landscape only, it goes in the environment (CHUNKS_BUCKET_NAME) with the
+   * grants a run that starts from scratch needs (ApiChunkerEvent.resetState, src/chunking/MockLandscapeReset.ts);
+   * any other landscape's subscriber gets neither, so it can't reset anything.
+   */
+  chunksBucketName?: string;
   /** Long enough for a parallel start's wait for the scale-in alarm (up to 6 minutes): see the context's LAMBDA */
   timeoutSeconds: number;
   memorySizeMb: number;
@@ -154,6 +166,10 @@ export class ChunkerSubscribingLambda extends Construct {
       resources: [`arn:aws:cloudwatch:${region}:${account}:alarm:*`],
     }));
 
+    if (isMockLandscape(props.landscape) && props.chunksBucketName) {
+      this.grantMockLandscapeReset(props.chunksBucketName, props);
+    }
+
     // No automatic retry: Lambda retries a failed or timed-out asynchronous invocation twice by default, and a retried
     // run start would reset the counters and seed again into a run already started (duplicate chunks). A failed start
     // is started again by a person. An event that waited longer than this in Lambda's queue is dropped, not started late.
@@ -166,5 +182,36 @@ export class ChunkerSubscribingLambda extends Construct {
         Tags.of(lambdaRole).add(key, value);
       });
     }
+  }
+
+  /**
+   * A mock landscape's run state reset (src/chunking/MockLandscapeReset.ts), for a run that starts from scratch: the
+   * chunks bucket in the environment; scan and batch-delete on the four tables it truncates (BulkPurger), and describe
+   * on them (the person current-state table's existence decides the storage mode, and the person tables are absent in
+   * S3 mode); list and delete under the chunks bucket's delta-storage/ only.
+   */
+  private grantMockLandscapeReset(chunksBucketName: string, props: ChunkerSubscribingLambdaProps): void {
+    this.function.addEnvironment('CHUNKS_BUCKET_NAME', chunksBucketName);
+    const context = { STACK_ID: props.stackId, TAGS: { Landscape: props.landscape } } as IContext;
+    const tableArn = (name: string) => Stack.of(this).formatArn({ service: 'dynamodb', resource: 'table', resourceName: name });
+    const tables = [mockTargetPersonTableName, statisticsTableName, personCurrentStateTableName, personHistoryTableName]
+      .map(name => tableArn(name(context)));
+    this.function.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['dynamodb:Scan', 'dynamodb:BatchWriteItem', 'dynamodb:DescribeTable'],
+      resources: tables,
+    }));
+    const prefix = `${MockLandscapeReset.SHARED_DELTA_STORAGE_DIR}/`;
+    this.function.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['s3:ListBucket'],
+      resources: [`arn:aws:s3:::${chunksBucketName}`],
+      conditions: { StringLike: { 's3:prefix': [`${prefix}*`] } },
+    }));
+    this.function.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['s3:DeleteObject'],
+      resources: [`arn:aws:s3:::${chunksBucketName}/${prefix}*`],
+    }));
   }
 }

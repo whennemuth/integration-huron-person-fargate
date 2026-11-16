@@ -166,6 +166,43 @@ class RunFormat {
         return RunFormat.POPULATIONS[population] || (population ? String(population) : RunFormat.NONE);
     }
 
+    /** What a launched or started run is, from its choices (BulkSyncChoices): its run type, or a test's BUID */
+    static runWhat(choices) {
+        const labels = { full: 'Full sync (with deactivations)', 'full-no-deactivations': 'Full sync (no deactivations)' };
+        if ( ! choices) {
+            return 'A run';
+        }
+        return choices.buid ? `Test of ${choices.buid}` : (labels[choices.runType] || RunFormat.population(choices.population));
+    }
+
+    /**
+     * A run launched moments ago that isn't listed yet (a Launch, from the dashboard's LaunchFlag): what, when and by
+     * whom, what it waits for, and until when. Overview, Run history and Bulk sync all show it so.
+     */
+    static launchNoteHtml(launch, now = Date.now()) {
+        const choices = launch.choices || {};
+        const by = RunView.startedByLabel(launch.startedBy);
+        const title = `A run is starting: ${RunFormat.runWhat(choices)}, launched ${RunFormat.ago(launch.launchedAt, now)}${by ? ` by ${by}` : ''}`;
+        const waits = [];
+        if (choices.resetState) {
+            waits.push('The landscape is being reset first, which takes up to 10 minutes.');
+        }
+        if (choices.parallelStart > 0) {
+            waits.push(`Its ${choices.parallelStart} chunker tasks start once the chunker's scaling catches up, within a few minutes.`);
+        }
+        waits.push('It is listed in Run history once its chunker has written its first records: Refresh to check.');
+        waits.push(`If it isn't by ${RunFormat.clockTime(Date.parse(launch.expiresAt), now)}, it didn't start, and the chunker subscriber's log says why.`);
+        return `
+            <div class="run-note run-note-warning launch-note" role="status" data-launch-note>
+                <i class="fas fa-hourglass-half run-note-icon" aria-hidden="true"></i>
+                <div>
+                    <p class="run-note-title">${Html.escape(title)}</p>
+                    <p class="run-note-message">${Html.escape(waits.join(' '))}</p>
+                </div>
+            </div>
+        `;
+    }
+
     static storageMode(mode) {
         return RunFormat.STORAGE_MODES[String(mode || '').toLowerCase()] || (mode ? String(mode) : RunFormat.NONE);
     }
@@ -519,7 +556,7 @@ class RunsApi {
     /** A page of runs, newest first; cursor is the previous page's (the route's `before`) */
     async listRuns({ cursor, limit } = {}) {
         const data = await this.getJson(`/api/runs${RunsApi.query({ include: 'report', limit, before: cursor })}`);
-        return { items: (data.items || []).map(item => new RunView(item)), cursor: data.before };
+        return { items: (data.items || []).map(item => new RunView(item)), cursor: data.before, launch: data.launch };
     }
 
     async run(syncRunId) {
@@ -768,10 +805,17 @@ class RunListTable {
         `;
     }
 
-    static create(api, container, pageSize = 20) {
+    /** @param onLaunch Called with the first page's launch (a run launched moments ago, not yet listed), or undefined */
+    static create(api, container, pageSize = 20, onLaunch = () => undefined) {
         return new PagedTable({
             container,
-            loadPage: cursor => api.listRuns({ cursor, limit: pageSize }),
+            loadPage: async cursor => {
+                const page = await api.listRuns({ cursor, limit: pageSize });
+                if (cursor === undefined) {
+                    onLaunch(page.launch);
+                }
+                return page;
+            },
             headHtml: RunListTable.HEAD_HTML,
             rowHtml: RunListTable.rowHtml,
             rowLinks: true,
@@ -1118,10 +1162,16 @@ class RunDetailView {
         return run.hasSummary ? facts : facts.filter(([, value]) => value !== RunFormat.NONE);
     }
 
+    /** Terms and values in two columns; a fact marked { wide: true } puts its value under its term, across both */
     static factsHtml(facts) {
-        return `<dl class="fact-list">${facts.map(([term, value]) => `
-            <dt>${Html.escape(term)}</dt><dd>${Html.escape(value)}</dd>
+        return `<dl class="fact-list">${facts.map(([term, value, { wide = false } = {}]) => `
+            <dt>${Html.escape(term)}</dt><dd${wide ? ' class="fact-wide"' : ''}>${Html.escape(value)}</dd>
         `).join('')}</dl>`;
+    }
+
+    /** A flag value longer than this goes under its name (a URL, an object's fields), not in the narrow column */
+    static get WIDE_FLAG_LENGTH() {
+        return 20;
     }
 
     deletionHtml() {
@@ -1132,18 +1182,54 @@ class RunDetailView {
         const reason = deletion.status === 'SKIPPED' && RunFormat.SKIP_REASONS[deletion.reason]
             ? ` <span class="fact-note">(${Html.escape(RunFormat.SKIP_REASONS[deletion.reason])})</span>`
             : '';
+        // totalProcessed: the people the deletion step found removed from the source (in the previous run's records,
+        // not in this run's source data); each is deactivated, or fails, so Deactivated + Failed adds up to it
         const counts = deletion.status === 'COMPLETED'
             ? RunDetailView.factsHtml([
+                ['Removed from source', RunFormat.number(deletion.totalProcessed)],
                 ['Deactivated', RunFormat.number(deletion.deletedCount)],
-                ['Failed', RunFormat.number(deletion.failedCount)],
-                ['Considered', RunFormat.number(deletion.totalProcessed)]
-            ])
+                ['Failed', RunFormat.number(deletion.failedCount)]
+            ]) + `<p class="fact-note deletion-explanation">${Html.escape(RunDetailView.REMOVED_FROM_SOURCE_NOTE)}</p>`
             : '';
         return `
             <p class="deletion-status">${RunFormat.deletionBadge(deletion.status)}${reason}</p>
             ${deletion.message ? `<p class="deletion-message">${Html.escape(deletion.message)}</p>` : ''}
             ${counts}
         `;
+    }
+
+    /** What the Deletion card's "Removed from source" counts */
+    static get REMOVED_FROM_SOURCE_NOTE() {
+        return "Removed from source: people in the previous run's records who aren't in this run's source. Each is deactivated in Huron, or counted as failed.";
+    }
+
+    /**
+     * A flag's value as the Flags card shows it, never as JSON: yes or no, the population's name, who started the run
+     * (RunView.startedByLabel()), the terms endpoint as one URL, and any other object as its fields' name: value pairs
+     */
+    static flagValue(name, value) {
+        if (typeof value === 'boolean') {
+            return RunFormat.yesNo(value);
+        }
+        if (value === null || value === undefined) {
+            return RunFormat.NONE;
+        }
+        if (name === 'syncPopulation') {
+            return RunFormat.population(value);
+        }
+        if (name === 'startedBy') {
+            return RunView.startedByLabel(value) || RunFormat.NONE;
+        }
+        if (name === 'termsEndpoint' && typeof value === 'object' && (value.baseUrl || value.fetchPath)) {
+            return `${value.baseUrl || ''}${value.fetchPath || ''}`;
+        }
+        if (Array.isArray(value)) {
+            return value.map(item => RunDetailView.flagValue(undefined, item)).join(', ');
+        }
+        if (typeof value === 'object') {
+            return Object.entries(value).map(([key, item]) => `${key}: ${RunDetailView.flagValue(key, item)}`).join(', ');
+        }
+        return String(value);
     }
 
     /** The run's flags (recorded for a run that has no summary), less the failure, which the note shows */
@@ -1157,18 +1243,16 @@ class RunDetailView {
             bulkReset: 'Bulk reset',
             trustPreviousStorage: 'Trust previous storage',
             personRecordProcessorAddons: 'Record processor addons',
-            termsEndpoint: 'Terms endpoint'
+            termsEndpoint: 'Terms endpoint',
+            startedBy: 'Started by'
         };
         const hidden = ['runFailed', 'runFailureMessage', 'runFailureTimestamp'];
         const facts = Object.entries(flags)
             .filter(([name]) => ! hidden.includes(name))
-            .map(([name, value]) => [
-                labels[name] || name,
-                typeof value === 'boolean' ? RunFormat.yesNo(value)
-                    : name === 'syncPopulation' ? RunFormat.population(value)
-                    : value !== null && typeof value === 'object' ? JSON.stringify(value)
-                    : String(value)
-            ]);
+            .map(([name, value]) => {
+                const shown = RunDetailView.flagValue(name, value);
+                return [labels[name] || name, shown, { wide: shown.length > RunDetailView.WIDE_FLAG_LENGTH }];
+            });
         if (facts.length === 0) {
             return '';
         }
@@ -1430,7 +1514,8 @@ class RunHistoryPage {
         this.listView = root.querySelector('[data-view="list"]');
         this.detailContainer = root.querySelector('[data-view="detail"]');
         this.stamp = root.querySelector('[data-refresh-stamp="runs"]');
-        this.list = RunListTable.create(api, root.querySelector('[data-run-list]'));
+        this.launchContainer = root.querySelector('[data-run-launch]');
+        this.list = RunListTable.create(api, root.querySelector('[data-run-list]'), 20, launch => this.showLaunch(launch));
         this.listLoaded = false;
         this.detail = undefined;
         root.querySelector('[data-action="refresh-runs"]').addEventListener('click', () => this.refreshList());
@@ -1457,6 +1542,15 @@ class RunHistoryPage {
             RefreshStamp.set(this.stamp);
         }
         return shown;
+    }
+
+    /** A run launched moments ago, above the list until it is listed */
+    showLaunch(launch) {
+        if ( ! this.launchContainer) {
+            return;
+        }
+        this.launchContainer.hidden = ! launch;
+        this.launchContainer.innerHTML = launch ? RunFormat.launchNoteHtml(launch, Date.now()) : '';
     }
 
     showRun(syncRunId) {

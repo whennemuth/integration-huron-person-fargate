@@ -779,7 +779,38 @@ code, pre, kbd, samp {
 
 .fact-list dd {
     margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
     font-variant-numeric: tabular-nums;
+}
+
+/* A long value (a URL) under its term, across both columns */
+.fact-list dd.fact-wide {
+    grid-column: 1 / -1;
+    margin-top: -0.25rem;
+}
+
+/*
+ * Bulk sync: a test with the source simulator (BulkSyncView.SIMULATOR_TEST_CLASS on the form) reads one person, so
+ * People is hidden, the simulator's hints speak of one person, and the BUID box says which BUIDs the simulator has
+ */
+.bulk-sim-test-hint,
+.bulk-buid-simulator {
+    display: none;
+}
+
+.bulk-simulator-test .bulk-sim-run-only,
+.bulk-simulator-test .bulk-sim-run-hint {
+    display: none;
+}
+
+.bulk-simulator-test .bulk-sim-test-hint,
+.bulk-simulator-test .bulk-buid-simulator {
+    display: block;
+}
+
+.deletion-explanation {
+    margin-top: 0.75rem;
 }
 
 .fact-note,
@@ -1279,4 +1310,14 @@ code, pre, kbd, samp {
 .landscape-navigator[class*="landscape-tone-"]:focus {
     border-color: var(--hp-tone);
     box-shadow: 0 0 0 0.2rem rgba(var(--hp-tone-rgb), 0.2);
+}
+
+/* A run launched moments ago, not listed yet (RunFormat.launchNoteHtml(): Overview, Run history, Bulk sync) */
+.launch-note {
+    margin-top: 0;
+    margin-bottom: 1rem;
+}
+
+.launch-note .run-note-icon {
+    color: var(--hp-warning);
 }

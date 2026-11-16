@@ -162,8 +162,8 @@ export class StatisticsTable {
     return new StatisticsTable({} as IContext, table, tableName, resolvedRegion);
   }
 
-  public truncate = async (chunkSize?: number): Promise<void> => {
-    await this.table.truncateTable(chunkSize);
+  public truncate = async (chunkSize?: number): Promise<number> => {
+    return this.table.truncateTable(chunkSize);
   }
 
   /**

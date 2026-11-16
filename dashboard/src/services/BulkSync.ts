@@ -1,17 +1,23 @@
-import { GetFunctionConfigurationCommand, InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
+import { GetFunctionConfigurationCommand, GetFunctionUrlConfigCommand, InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { Config } from 'integration-huron-person';
 import { SyncPopulation } from '../../../docker/chunkTypes';
-import type { ApiChunkerEvent } from '../../../src/chunking/ChunkerSubscriber';
+import type { ApiChunkerEvent, MockLandscapeResetEvent } from '../../../src/chunking/ChunkerSubscriber';
+import { MockLandscapeReset, MockLandscapeResetRecord } from '../../../src/chunking/MockLandscapeReset';
 import { ScheduledRun } from '../../../src/chunking/ScheduledRun';
 import { RunStarter, StartedBy } from '../../../src/chunking/StartedBy';
 import type { RunReport } from '../../../src/reporting/RunReporting';
 import type { RunnerEnv } from '../../../src/runner/RunnerTypes';
 import { DesiredCount } from '../../../src/DesiredCount';
 import { isMockLandscape } from '../../../src/Utils';
+import {
+  DEFAULT_TOTAL_POPULATION, MAX_SIMULATED_DELAY_SECONDS, PERSON_PATH, SIMULATION_QUERY_PARAMETERS, TERMS_PATH, personIndexFromBuid
+} from '../../../src/chunking/fetch/SourceSimulator';
 import { CACHE_SECRET } from '../handlers/DashboardCache';
+import { Launch, LaunchFlag } from './LaunchFlag';
 import {
   BulkSyncChoices, BulkSyncErrorCode, BulkSyncPlan, BulkSyncPopulation, BulkSyncRequestBody, BulkSyncResult,
-  BulkSyncRunType, BulkSyncService, BulkSyncSetting, BulkSyncState, RunActivityState, RunReportingService
+  BulkSyncRunType, BulkSyncService, BulkSyncSetting, BulkSyncSource, BulkSyncState, MockLandscapeOptions,
+  MockLandscapeResetRequested, MockLandscapeResetState, RunActivityState, RunReportingService, SimulatorSettings
 } from './ServiceTypes';
 
 /** Refused starts, each with the HTTP status the route answers with */
@@ -22,6 +28,8 @@ export class BulkSyncError extends Error {
     RUN_UNDERWAY: 409,
     RUN_STALLED: 409,
     SUBSCRIBER_DRY_RUN: 409,
+    RESET_UNDERWAY: 409,
+    RUN_LAUNCHING: 409,
     NOT_CONFIGURED: 503
   };
 
@@ -54,8 +62,27 @@ export class BulkSyncRequest {
     readonly bulkReset: boolean,
     readonly iterationLimit: number,
     readonly parallelStart: number,
-    readonly overrideStalled: boolean
+    readonly overrideStalled: boolean,
+    /** A mock landscape's run: the source and Start from scratch are its own options */
+    readonly mockLandscape: boolean = false,
+    readonly source: BulkSyncSource = 'real',
+    readonly simulator: Partial<SimulatorSettings> = {},
+    readonly resetState: boolean = false
   ) {}
+
+  static readonly SOURCES: BulkSyncSource[] = ['real', 'simulator'];
+  /**
+   * The most people the source simulator may be asked for: the chunker's default safety cutoff
+   * (DEFAULT_MAX_TOTAL_RECORDS in docker/chunkTypes.ts), past which a run would fail as a glitched source
+   */
+  static readonly TOTAL_POPULATION_MAX = 500_000;
+  /** Each simulator setting a request may give: its range, and whether it must be a whole number */
+  static readonly SIMULATOR_LIMITS: Record<keyof SimulatorSettings, { min: number; max: number; whole?: boolean }> = {
+    totalPopulation: { min: 1, max: BulkSyncRequest.TOTAL_POPULATION_MAX, whole: true },
+    simulatedDelaySeconds: { min: 0, max: MAX_SIMULATED_DELAY_SECONDS },
+    errorRate: { min: 0, max: 1 },
+    nonCurrentTermRate: { min: 0, max: 1 }
+  };
 
   /** A BUID: U followed by digits */
   static readonly BUID = /^U\d+$/;
@@ -71,12 +98,17 @@ export class BulkSyncRequest {
    */
   static readonly PARALLEL_START_MAX = 20;
 
-  /** @throws BulkSyncError INVALID_REQUEST naming what is wrong */
-  static parse(body: BulkSyncRequestBody): BulkSyncRequest {
+  /**
+   * @param options.mockLandscape Whether the landscape is a mock landscape, the only kind whose runs may choose their
+   *   source and start from scratch
+   * @throws BulkSyncError INVALID_REQUEST naming what is wrong
+   */
+  static parse(body: BulkSyncRequestBody, options: { mockLandscape?: boolean } = {}): BulkSyncRequest {
     const invalid = (message: string) => new BulkSyncError('INVALID_REQUEST', message);
+    const mockLandscape = !!options.mockLandscape;
     const {
       runType, buid, bulkReset = ScheduledRun.BULK_RESET, iterationLimit = BulkSyncRequest.CHUNKS_PER_TASK_DEFAULT, parallelStart = 0,
-      overrideStalled = false
+      overrideStalled = false, source = 'real', simulator, resetState = false
     } = body || {};
     if (!BulkSyncRequest.RUN_TYPES.includes(runType as BulkSyncRunType)) {
       throw invalid(`runType must be one of ${BulkSyncRequest.RUN_TYPES.map(type => `'${type}'`).join(', ')}`);
@@ -111,12 +143,53 @@ export class BulkSyncRequest {
     if (parallelStart !== 0 && iterationLimit === 0) {
       throw invalid("A single task can't be started in parallel: parallelStart needs chunks per task above 0");
     }
+    if (!BulkSyncRequest.SOURCES.includes(source as BulkSyncSource)) {
+      throw invalid(`source must be one of ${BulkSyncRequest.SOURCES.map(name => `'${name}'`).join(', ')}`);
+    }
+    if (typeof resetState !== 'boolean') {
+      throw invalid('resetState must be true or false');
+    }
+    if (!mockLandscape && (source === 'simulator' || resetState || simulator !== undefined)) {
+      throw invalid('The source simulator and Start from scratch are only for a mock landscape');
+    }
+    if (simulator !== undefined && source !== 'simulator') {
+      throw invalid('Simulator settings are only for a run whose source is the source simulator');
+    }
+    const settings = BulkSyncRequest.parseSimulator(simulator, invalid);
+    const index = person && source === 'simulator' ? personIndexFromBuid(person) : undefined;
+    if (person && source === 'simulator' && index === undefined) {
+      throw invalid(`The source simulator's BUIDs are a U followed by digits from 1 (got '${person}')`);
+    }
+    // A BUID past the simulator's people is allowed: the simulator answers with no one, so a test sees someone who
+    // isn't in the source (mock-run-feedback-plan.md, issue 4)
     // A test is a single chunker task, whatever chunks per task the form sent (see the class's comment)
     const chunksPerTask = runType === 'test' ? 0 : iterationLimit as number;
     return new BulkSyncRequest(
       runType as BulkSyncRunType, person, bulkReset as boolean, chunksPerTask, parallelStart as number,
-      overrideStalled as boolean
+      overrideStalled as boolean, mockLandscape, source as BulkSyncSource, settings, resetState
     );
+  }
+
+  /** The simulator's settings a request gives, each checked against SIMULATOR_LIMITS */
+  private static parseSimulator(simulator: unknown, invalid: (message: string) => BulkSyncError): Partial<SimulatorSettings> {
+    if (simulator === undefined || simulator === null) {
+      return {};
+    }
+    if (typeof simulator !== 'object' || Array.isArray(simulator)) {
+      throw invalid("simulator must be an object of the source simulator's settings");
+    }
+    const settings: Partial<SimulatorSettings> = {};
+    for (const [name, value] of Object.entries(simulator as Record<string, unknown>)) {
+      const limits = BulkSyncRequest.SIMULATOR_LIMITS[name as keyof SimulatorSettings];
+      if (!limits) {
+        throw invalid(`simulator.${name} isn't a source simulator setting (${Object.keys(BulkSyncRequest.SIMULATOR_LIMITS).join(', ')})`);
+      }
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < limits.min || value > limits.max || (limits.whole && !Number.isInteger(value))) {
+        throw invalid(`simulator.${name} must be ${limits.whole ? 'a whole number' : 'a number'} from ${limits.min} to ${limits.max}`);
+      }
+      settings[name as keyof SimulatorSettings] = value;
+    }
+    return settings;
   }
 
   /** Only a full sync with deactivations deactivates people missing from its source */
@@ -129,8 +202,15 @@ export class BulkSyncRequest {
   }
 
   choices(): BulkSyncChoices {
-    const { runType, population, buid, bulkReset, trustPreviousStorage, iterationLimit, parallelStart, overrideStalled } = this;
-    return { runType, population, ...(buid ? { buid } : {}), bulkReset, trustPreviousStorage, iterationLimit, parallelStart, overrideStalled };
+    const {
+      runType, population, buid, bulkReset, trustPreviousStorage, iterationLimit, parallelStart, overrideStalled, mockLandscape,
+      source, simulator, resetState
+    } = this;
+    return {
+      runType, population, ...(buid ? { buid } : {}), bulkReset, trustPreviousStorage, iterationLimit, parallelStart, overrideStalled,
+      // A mock landscape's own options, only there
+      ...(mockLandscape ? { source, ...(source === 'simulator' ? { simulator } : {}), resetState } : {})
+    };
   }
 }
 
@@ -200,12 +280,59 @@ export class AwsChunkerService implements ChunkerService {
   }
 }
 
+/** A mock landscape's source simulator, as far as starting a run is concerned */
+export interface SourceSimulatorService {
+  /** Its Function URL, or why there is none to use */
+  lookup(): Promise<{ url?: string; reason?: string }>;
+  /** Its deployed settings (its /health), or undefined if they can't be read */
+  settings(url: string): Promise<Partial<SimulatorSettings> | undefined>;
+}
+
+/**
+ * The simulator Lambda by name: its Function URL (lambda:GetFunctionUrlConfig, granted only to a mock landscape's
+ * dashboard), and its settings from its own unauthenticated /health. Nothing about it is changed.
+ */
+export class AwsSourceSimulatorService implements SourceSimulatorService {
+  static readonly HEALTH_TIMEOUT_MS = 5000;
+
+  constructor(private readonly functionName: string, private readonly client: LambdaClient) {}
+
+  async lookup(): Promise<{ url?: string; reason?: string }> {
+    try {
+      const { FunctionUrl } = await this.client.send(new GetFunctionUrlConfigCommand({ FunctionName: this.functionName }));
+      return FunctionUrl ? { url: FunctionUrl } : { reason: `The source simulator (${this.functionName}) has no Function URL` };
+    } catch (error: any) {
+      if (error?.name === 'ResourceNotFoundException') {
+        return { reason: `The source simulator (${this.functionName}) isn't deployed in this landscape` };
+      }
+      console.warn(`Couldn't look up the source simulator (${this.functionName}): ${error?.message ?? error}`);
+      return { reason: `The source simulator (${this.functionName}) couldn't be looked up: ${error?.message ?? error}` };
+    }
+  }
+
+  async settings(url: string): Promise<Partial<SimulatorSettings> | undefined> {
+    try {
+      const response = await fetch(new URL('health', url), { signal: AbortSignal.timeout(AwsSourceSimulatorService.HEALTH_TIMEOUT_MS) });
+      if (!response.ok) {
+        return undefined;
+      }
+      const { totalPopulation, simulatedDelaySeconds, errorRate } = await response.json() as Record<string, unknown>;
+      const numbers = Object.entries({ totalPopulation, simulatedDelaySeconds, errorRate })
+        .filter(([, value]) => typeof value === 'number' && Number.isFinite(value));
+      return Object.fromEntries(numbers) as Partial<SimulatorSettings>;
+    } catch (error: any) {
+      console.warn(`Couldn't read the source simulator's settings (${url}health): ${error?.message ?? error}`);
+      return undefined;
+    }
+  }
+}
+
 /** The pipeline's Lambda functions a start touches: the subscribers' DRY_RUN switch, and the chunker's invocation */
 export interface ChunkerFunctions {
   /** Whether the function's DRY_RUN environment variable is 'true' (the manual Runner's decorators set it) */
   isDryRun(functionName: string): Promise<boolean>;
-  /** Invoke asynchronously, as the EventBridge schedule does */
-  invokeAsync(functionName: string, event: ApiChunkerEvent): Promise<void>;
+  /** Invoke asynchronously, as the EventBridge schedule does (a run's start, or a mock landscape's reset on its own) */
+  invokeAsync(functionName: string, event: ApiChunkerEvent | MockLandscapeResetEvent): Promise<void>;
 }
 
 export class LambdaChunkerFunctions implements ChunkerFunctions {
@@ -216,7 +343,7 @@ export class LambdaChunkerFunctions implements ChunkerFunctions {
     return (Environment?.Variables?.DRY_RUN ?? 'false').toLowerCase() === 'true';
   }
 
-  async invokeAsync(functionName: string, event: ApiChunkerEvent): Promise<void> {
+  async invokeAsync(functionName: string, event: ApiChunkerEvent | MockLandscapeResetEvent): Promise<void> {
     const { StatusCode, FunctionError } = await this.client.send(new InvokeCommand({
       FunctionName: functionName,
       InvocationType: 'Event',
@@ -274,15 +401,30 @@ export class BulkSync implements BulkSyncService {
     functions: ChunkerFunctions;
     /** Absent: Parallel start goes up to PARALLEL_START_MAX, and the chunker subscriber checks the service's maximum */
     chunkerService?: ChunkerService;
+    /** A mock landscape's source simulator; absent elsewhere (or where the dashboard isn't told its name) */
+    simulator?: SourceSimulatorService;
+    /** A mock landscape's reset record (MockLandscapeReset.readRecord()); absent elsewhere */
+    resetRecords?: { read(): Promise<MockLandscapeResetRecord | undefined> };
+    /** The landscape's launch flag (a run launched moments ago, not yet listed); absent: none is kept */
+    launchFlag?: LaunchFlag;
     now?: () => number;
   }) {}
+
+  /** The source simulator's settings when neither the request nor the simulator gives them (src/chunking/fetch/SourceSimulator.ts) */
+  static readonly SIMULATOR_DEFAULTS: SimulatorSettings = {
+    totalPopulation: DEFAULT_TOTAL_POPULATION, simulatedDelaySeconds: 0, errorRate: 0, nonCurrentTermRate: 0
+  };
+
+  private get mockLandscape(): boolean {
+    return isMockLandscape(this.deps.settings.landscape);
+  }
 
   /** The real service, from the dashboard Lambda's environment. Missing settings refuse starts; the page still shows */
   static fromEnvironment(config: Config, runs: Pick<RunReportingService, 'listRunPage' | 'getRunReport'>): BulkSync {
     const env = process.env;
     const {
       LANDSCAPE, LANDSCAPE_TONE, REGION, PIPELINE_STACK_ID, CHUNKER_FUNCTION_NAME, PROCESSOR_SUBSCRIBER_FUNCTION_NAME,
-      ITEMS_PER_CHUNK, CHUNKER_CLUSTER_NAME, CHUNKER_SERVICE_NAME
+      ITEMS_PER_CHUNK, CHUNKER_CLUSTER_NAME, CHUNKER_SERVICE_NAME, SOURCE_SIMULATOR_FUNCTION_NAME
     } = env;
     const missing = Object.entries({ LANDSCAPE, REGION, CHUNKER_FUNCTION_NAME, PROCESSOR_SUBSCRIBER_FUNCTION_NAME })
       .filter(([, value]) => !value).map(([name]) => name);
@@ -299,10 +441,19 @@ export class BulkSync implements BulkSyncService {
       chunkerServiceName: CHUNKER_SERVICE_NAME,
       missing
     };
+    const lambda = new LambdaClient({ region: REGION });
     return new BulkSync({
       config, settings, runs,
-      functions: new LambdaChunkerFunctions(new LambdaClient({ region: REGION })),
-      chunkerService: new AwsChunkerService({ clusterName: CHUNKER_CLUSTER_NAME, serviceName: CHUNKER_SERVICE_NAME, region: REGION })
+      functions: new LambdaChunkerFunctions(lambda),
+      chunkerService: new AwsChunkerService({ clusterName: CHUNKER_CLUSTER_NAME, serviceName: CHUNKER_SERVICE_NAME, region: REGION }),
+      // A mock landscape's dashboard only is told the simulator's name (dashboard/lib/LandscapeResources.ts)
+      ...(SOURCE_SIMULATOR_FUNCTION_NAME ? { simulator: new AwsSourceSimulatorService(SOURCE_SIMULATOR_FUNCTION_NAME, lambda) } : {}),
+      // A mock landscape's reset record, in its atomic counter table (GetItem granted to a mock landscape's dashboard only)
+      ...(isMockLandscape(LANDSCAPE) && PIPELINE_STACK_ID && REGION ? {
+        resetRecords: { read: () => MockLandscapeReset.readRecord({ stackId: PIPELINE_STACK_ID, region: REGION, landscape: LANDSCAPE! }) }
+      } : {}),
+      // Its SSM parameter (dashboard/lib/FunctionUrl.ts grants it)
+      ...(LANDSCAPE && REGION ? { launchFlag: LaunchFlag.forLandscape({ landscape: LANDSCAPE, region: REGION }) } : {})
     });
   }
 
@@ -330,10 +481,10 @@ export class BulkSync implements BulkSyncService {
 
   async describe(): Promise<BulkSyncState> {
     const { settings } = this.deps;
-    const latestRun = await this.latestRun();
+    const { latestRun, launch } = await this.activity();
     let blocked: BulkSyncState['blocked'];
     try {
-      await this.checkGuards(latestRun, { overrideStalled: false });
+      await this.checkGuards(latestRun, { overrideStalled: false }, launch);
     } catch (error) {
       if (!(error instanceof BulkSyncError)) {
         throw error;
@@ -352,8 +503,156 @@ export class BulkSync implements BulkSyncService {
       parallelStart: { max: await this.parallelStartMax(), enabled: true },
       latestRun,
       ...(blocked ? { blocked } : {}),
-      warnings: this.warnings()
+      warnings: this.warnings(),
+      ...(settings.itemsPerChunk !== undefined ? { itemsPerChunk: settings.itemsPerChunk } : {}),
+      ...(this.mockLandscape ? { mock: await this.mockOptions() } : {}),
+      ...(launch ? { launch } : {})
     };
+  }
+
+  /**
+   * The newest run's state, and a run launched moments ago that isn't listed yet (LaunchFlag.assess(), which lowers a
+   * flag whose run has appeared or whose time is up)
+   */
+  private async activity(): Promise<{ latestRun: RunActivityState; launch?: Launch }> {
+    const latestRun = await this.latestRun();
+    return { latestRun, launch: await this.assessLaunch(latestRun.syncRunId) };
+  }
+
+  /** The launch still waiting for its run, given the newest listed run; none when no flag is kept */
+  async assessLaunch(newestSyncRunId: string | undefined): Promise<Launch | undefined> {
+    return this.deps.launchFlag?.assess(newestSyncRunId);
+  }
+
+  /**
+   * Overview's Mock landscape section: the last reset (recorded by the chunker subscriber, as of now), and why a reset
+   * can't be started now. Not a mock landscape: just that.
+   */
+  async resetState(): Promise<MockLandscapeResetState> {
+    if (!this.mockLandscape) {
+      return { mockLandscape: false };
+    }
+    let record: MockLandscapeResetRecord | undefined;
+    let lastError: string | undefined;
+    try {
+      record = await this.deps.resetRecords?.read();
+    } catch (error: any) {
+      lastError = `${error?.message ?? error}`;
+    }
+    const last = record ? { ...record, status: MockLandscapeReset.statusOf(record, this.now) } : undefined;
+    let blocked: { code: BulkSyncErrorCode; message: string } | undefined;
+    try {
+      await this.checkResetGuards(last?.status);
+    } catch (error) {
+      if (!(error instanceof BulkSyncError)) {
+        throw error;
+      }
+      blocked = { code: error.code, message: error.message };
+    }
+    return {
+      mockLandscape: true, landscape: this.deps.settings.landscape,
+      ...(last ? { last } : {}), ...(lastError ? { lastError } : {}), ...(blocked ? { blocked } : {})
+    };
+  }
+
+  /**
+   * Start a mock landscape's reset on its own (Overview's Reset landscape): the chunker subscriber, invoked
+   * asynchronously with a MockLandscapeResetEvent, empties the target simulator, Run history and the fingerprints, and
+   * records it. Nothing is started besides.
+   * @throws BulkSyncError when refused: not a mock landscape, not configured, a run underway, a reset still running,
+   *   or the chunker subscriber in DRY_RUN
+   */
+  async requestReset(startedBy?: StartedBy): Promise<MockLandscapeResetRequested> {
+    const { settings, functions } = this.deps;
+    if (!this.mockLandscape) {
+      throw new BulkSyncError('INVALID_REQUEST', `${settings.landscape} is not a mock landscape: only a mock landscape can be reset`);
+    }
+    let record: MockLandscapeResetRecord | undefined;
+    try {
+      record = await this.deps.resetRecords?.read();
+    } catch (error: any) {
+      console.warn(`Couldn't read the last mock landscape reset: ${error?.message ?? error}`);
+    }
+    await this.checkResetGuards(record ? MockLandscapeReset.statusOf(record, this.now) : undefined);
+    const requestedAt = new Date(this.now).toISOString();
+    const event: MockLandscapeResetEvent = { mockLandscapeReset: true, requestedAt, ...(startedBy ? { startedBy } : {}) };
+    await functions.invokeAsync(settings.chunkerFunctionName!, event);
+    console.log(`Mock landscape reset requested in ${settings.landscape}: ${JSON.stringify({ startedBy })}`);
+    return { status: 'requested', landscape: settings.landscape, requestedAt };
+  }
+
+  /** @throws BulkSyncError when a reset would be refused now */
+  private async checkResetGuards(lastStatus?: string): Promise<void> {
+    const { settings, functions } = this.deps;
+    if (settings.missing && settings.missing.length > 0) {
+      throw new BulkSyncError('NOT_CONFIGURED',
+        `Resetting isn't configured in this landscape's dashboard: missing ${settings.missing.join(', ')} (redeploy its dashboard stack)`);
+    }
+    const { latestRun, launch } = await this.activity();
+    if (launch) {
+      throw new BulkSyncError('RUN_LAUNCHING',
+        'A run was just launched and its chunker is starting: a reset would empty the tables it is about to write to. Wait for it to appear in Run history');
+    }
+    if (latestRun.kind === 'underway') {
+      throw new BulkSyncError('RUN_UNDERWAY',
+        `The run of ${latestRun.syncRunId} is still underway: a reset would empty the tables it is writing to. Wait for it to finish`);
+    }
+    if (lastStatus === 'running') {
+      throw new BulkSyncError('RESET_UNDERWAY', 'A reset is still running: wait for it to finish (Refresh to see it)');
+    }
+    if (await functions.isDryRun(settings.chunkerFunctionName!)) {
+      throw new BulkSyncError('SUBSCRIBER_DRY_RUN',
+        `The chunker subscriber (${settings.chunkerFunctionName}) is in DRY_RUN, left by the manual Runner, so a reset would do nothing: clear it first`);
+    }
+  }
+
+  /** Whether a mock landscape's reset is running now (its record, as of now); false when it can't be read */
+  private async resetRunning(): Promise<boolean> {
+    if (!this.mockLandscape || !this.deps.resetRecords) {
+      return false;
+    }
+    try {
+      const record = await this.deps.resetRecords.read();
+      return !!record && MockLandscapeReset.statusOf(record, this.now) === 'running';
+    } catch (error: any) {
+      console.warn(`Couldn't read the last mock landscape reset: ${error?.message ?? error}`);
+      return false;
+    }
+  }
+
+  /** A mock landscape's options: whether the simulator can be the source, and its settings to start the form from */
+  private async mockOptions(): Promise<MockLandscapeOptions> {
+    const { url, reason } = await this.simulatorLookup();
+    const deployed = url ? await this.deps.simulator!.settings(url) : undefined;
+    return {
+      simulator: {
+        available: !!url,
+        ...(url ? {} : { reason }),
+        defaults: { ...BulkSync.SIMULATOR_DEFAULTS, ...(deployed ?? {}) }
+      },
+      limits: { totalPopulation: BulkSyncRequest.TOTAL_POPULATION_MAX, simulatedDelaySeconds: MAX_SIMULATED_DELAY_SECONDS }
+    };
+  }
+
+  private async simulatorLookup(): Promise<{ url?: string; reason?: string }> {
+    return this.deps.simulator
+      ? this.deps.simulator.lookup()
+      : { reason: "This landscape's dashboard isn't told the source simulator's name (redeploy its dashboard stack)" };
+  }
+
+  /**
+   * The simulator's Function URL for a request whose source is the simulator; undefined for any other
+   * @throws BulkSyncError INVALID_REQUEST when the simulator can't be used
+   */
+  private async simulatorUrlFor(request: BulkSyncRequest): Promise<string | undefined> {
+    if (request.source !== 'simulator') {
+      return undefined;
+    }
+    const { url, reason } = await this.simulatorLookup();
+    if (!url) {
+      throw new BulkSyncError('INVALID_REQUEST', `The source simulator can't be the source: ${reason}`);
+    }
+    return url;
   }
 
   /**
@@ -369,10 +668,11 @@ export class BulkSync implements BulkSyncService {
   /** What a start would send, after the same checks; nothing is started */
   async plan(body: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncPlan> {
     const { settings } = this.deps;
-    const request = BulkSyncRequest.parse(body);
+    const request = BulkSyncRequest.parse(body, { mockLandscape: this.mockLandscape });
     await this.checkParallelStart(request);
-    await this.checkGuards(await this.latestRun(), request);
-    const event = this.event(request, startedBy);
+    const { latestRun, launch } = await this.activity();
+    await this.checkGuards(latestRun, request, launch);
+    const event = this.event(request, startedBy, await this.simulatorUrlFor(request));
     return {
       landscape: settings.landscape,
       choices: request.choices(),
@@ -383,22 +683,63 @@ export class BulkSync implements BulkSyncService {
 
   async start(body: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncResult> {
     const { settings, functions } = this.deps;
-    const request = BulkSyncRequest.parse(body);
+    const request = BulkSyncRequest.parse(body, { mockLandscape: this.mockLandscape });
     await this.checkParallelStart(request);
-    await this.checkGuards(await this.latestRun(), request);
-    const event = this.event(request, startedBy);
-    await functions.invokeAsync(settings.chunkerFunctionName!, event);
+    const { latestRun, launch: earlier } = await this.activity();
+    await this.checkGuards(latestRun, request, earlier);
+    const event = this.event(request, startedBy, await this.simulatorUrlFor(request));
+    const startedAt = event.processingMetadata!.processedAt!;
+    // Raised only if none is up: of two starts that pass the checks together, one is refused here
+    const launch = LaunchFlag.launch(startedAt, request.choices(), startedBy);
+    const { launchFlag } = this.deps;
+    if (launchFlag && !(await launchFlag.raise(launch))) {
+      throw BulkSync.launchingError();
+    }
+    try {
+      await functions.invokeAsync(settings.chunkerFunctionName!, event);
+    } catch (error) {
+      // Nothing was launched
+      await launchFlag?.lower().catch(lowering => console.warn(`Couldn't lower the launch flag: ${lowering?.message ?? lowering}`));
+      throw error;
+    }
     console.log(`Bulk sync started in ${settings.landscape}: ${JSON.stringify({ ...request.choices(), startedBy })}`);
     return {
       status: 'started',
-      startedAt: event.processingMetadata!.processedAt!,
+      startedAt,
       landscape: settings.landscape,
       run: request.choices()
     };
   }
 
-  /** The chunker event for a request, as the schedule (or, for a test, RunnerForSinglePerson) builds it */
-  event(request: BulkSyncRequest, startedBy?: StartedBy): ApiChunkerEvent {
+  /**
+   * The chunker event for a request, as the schedule (or, for a test, RunnerForSinglePerson) builds it. With the
+   * source simulator as the source (simulatorUrl, its Function URL), the source is the simulator as
+   * SourceSimulatorRunnerDecorator makes it: its people endpoint, or /person?buid= for a test, with the request's
+   * simulator settings as query parameters (which every page request keeps), and its /terms as the termsEndpoint.
+   */
+  event(request: BulkSyncRequest, startedBy?: StartedBy, simulatorUrl?: string): ApiChunkerEvent {
+    const { baseUrl, fetchPath, termsEndpoint } = simulatorUrl
+      ? BulkSync.simulatorSource(request, simulatorUrl)
+      : this.configuredSource(request);
+    return {
+      baseUrl,
+      fetchPath,
+      ...(termsEndpoint ? { termsEndpoint } : {}),
+      populationType: request.population as ApiChunkerEvent['populationType'],
+      ...ScheduledRun.previousStateFlags(request.bulkReset),
+      iterationLimit: request.iterationLimit,
+      offset: 0,
+      // The chunker subscriber seeds this many messages, waits for the scale-in alarm, and sets the desired count
+      ...(request.parallelStart > 0 ? { parallelStart: request.parallelStart } : {}),
+      // A mock landscape's start from scratch: the chunker subscriber empties its run state first
+      ...(request.resetState ? { resetState: true } : {}),
+      ...(startedBy ? { startedBy } : {}),
+      processingMetadata: { processedAt: new Date(this.now).toISOString(), processorVersion: '1.0.0' }
+    };
+  }
+
+  /** The source endpoint in the landscape's integration config: the people endpoint, or the person endpoint for a test */
+  private configuredSource(request: BulkSyncRequest): { baseUrl: string; fetchPath: string; termsEndpoint?: undefined } {
     const { config } = this.deps;
     const source = request.buid ? config.dataSource?.person : config.dataSource?.people;
     const baseUrl = (source as any)?.endpointConfig?.baseUrl as string | undefined;
@@ -407,17 +748,37 @@ export class BulkSync implements BulkSyncService {
       throw new BulkSyncError('NOT_CONFIGURED',
         `The integration config has no ${request.buid ? 'person' : 'people'} endpoint (dataSource.${request.buid ? 'person' : 'people'}) to start a run from`);
     }
+    return { baseUrl, fetchPath: request.buid ? `${fetchPath}?buid=${encodeURIComponent(request.buid)}` : fetchPath };
+  }
+
+  /** The source simulator as a run's source, from its Function URL (see event()) */
+  static simulatorSource(
+    request: BulkSyncRequest, simulatorUrl: string
+  ): { baseUrl: string; fetchPath: string; termsEndpoint: { baseUrl: string; fetchPath: string } } {
+    const url = new URL(simulatorUrl);
+    const baseUrl = `${url.protocol}//${url.host}`;
+    const query = new URLSearchParams();
+    if (request.buid) {
+      query.set('buid', request.buid);
+    }
+    const parameters: [keyof SimulatorSettings, string][] = [
+      ['totalPopulation', SIMULATION_QUERY_PARAMETERS.TOTAL_POPULATION],
+      ['simulatedDelaySeconds', SIMULATION_QUERY_PARAMETERS.SIMULATED_DELAY_SECONDS],
+      ['errorRate', SIMULATION_QUERY_PARAMETERS.ERROR_RATE],
+      ['nonCurrentTermRate', SIMULATION_QUERY_PARAMETERS.NON_CURRENT_TERM_RATE]
+    ];
+    for (const [name, parameter] of parameters) {
+      const value = request.simulator[name];
+      if (value !== undefined) {
+        query.set(parameter, String(value));
+      }
+    }
+    const path = request.buid ? PERSON_PATH : (url.pathname || '/');
+    const queryText = query.toString();
     return {
       baseUrl,
-      fetchPath: request.buid ? `${fetchPath}?buid=${encodeURIComponent(request.buid)}` : fetchPath,
-      populationType: request.population as ApiChunkerEvent['populationType'],
-      ...ScheduledRun.previousStateFlags(request.bulkReset),
-      iterationLimit: request.iterationLimit,
-      offset: 0,
-      // The chunker subscriber seeds this many messages, waits for the scale-in alarm, and sets the desired count
-      ...(request.parallelStart > 0 ? { parallelStart: request.parallelStart } : {}),
-      ...(startedBy ? { startedBy } : {}),
-      processingMetadata: { processedAt: new Date(this.now).toISOString(), processorVersion: '1.0.0' }
+      fetchPath: queryText ? `${path}?${queryText}` : path,
+      termsEndpoint: { baseUrl, fetchPath: TERMS_PATH }
     };
   }
 
@@ -436,6 +797,16 @@ export class BulkSync implements BulkSyncService {
       ? 'Parallel start: the chunker subscriber sends this many messages, waits for the scale-in alarm, then sets the desired count'
       : 'Parallel start 0: one message, and auto-scaling adds tasks';
     const dryRunSwitch = "Not offered here: it switches the subscribers' DRY_RUN, which stays switched";
+    const simulated = request.source === 'simulator';
+    const simulatorSetting = (name: keyof SimulatorSettings): SettingValue => {
+      if (!simulated) {
+        return unused('Only with the source simulator');
+      }
+      const value = request.simulator[name];
+      return value === undefined
+        ? form(null, "Not sent: the simulator's own setting applies")
+        : form(value, "Sent to the simulator as a query parameter of the run's fetchPath, not set in its Lambda");
+    };
     const runner: Record<keyof RunnerEnv, SettingValue> = {
       secretArn: landscape(settings.secretName, "The landscape's integration config secret (its name), which the chunker reads"),
       configPath: unused('The chunker reads the config secret, not a file'),
@@ -462,11 +833,17 @@ export class BulkSync implements BulkSyncService {
       serviceName: seeded ? landscape(settings.chunkerServiceName, 'The chunker service a parallel start scales') : unused('Only for a parallel start'),
       messagingOnly: fixed(false, dryRunSwitch),
       chunkingOnly: fixed(false, dryRunSwitch),
-      sourceSimulator: fixed(false, 'Mock landscapes only, not offered here yet'),
-      sourceSimulatorMockTotalPopulation: unused('Only with the source simulator'),
-      sourceSimulatorMockSimulatedDelaySeconds: unused('Only with the source simulator'),
-      sourceSimulatorMockErrorRate: unused('Only with the source simulator'),
-      mockTargetResetState: fixed(false, 'Mock landscapes only, not offered here yet'),
+      sourceSimulator: request.mockLandscape
+        ? form(simulated, simulated ? 'The source is the source simulator' : 'The source is the real source API (a hybrid run)')
+        : fixed(false, 'Mock landscapes only'),
+      sourceSimulatorMockTotalPopulation: simulatorSetting('totalPopulation'),
+      sourceSimulatorMockSimulatedDelaySeconds: simulatorSetting('simulatedDelaySeconds'),
+      sourceSimulatorMockErrorRate: simulatorSetting('errorRate'),
+      mockTargetResetState: request.mockLandscape
+        ? form(request.resetState, request.resetState
+          ? 'The chunker subscriber empties the mock target, Run history and fingerprints before the run starts'
+          : undefined)
+        : fixed(false, 'Mock landscapes only'),
       personRecordProcessorAddons: fixed(null, 'None: addons are a command-line (Runner) option')
     };
     return [
@@ -485,8 +862,14 @@ export class BulkSync implements BulkSyncService {
     return RunActivity.of((await runs.getRunReport(newest)) ?? { syncRunId: newest, status: 'UNKNOWN' }, this.now);
   }
 
+  /** A start refused because a run launched moments ago hasn't appeared yet */
+  static launchingError(): BulkSyncError {
+    return new BulkSyncError('RUN_LAUNCHING',
+      "A run was just launched and its chunker is starting: wait for it to appear in Run history before starting another");
+  }
+
   /** @throws BulkSyncError when a start would be refused */
-  private async checkGuards(latestRun: RunActivityState, request: { overrideStalled: boolean }): Promise<void> {
+  private async checkGuards(latestRun: RunActivityState, request: { overrideStalled: boolean }, launch?: Launch): Promise<void> {
     const { settings, functions } = this.deps;
     if ((settings.landscapeTone ?? '').toLowerCase() === 'production') {
       throw new BulkSyncError('PRODUCTION_LANDSCAPE',
@@ -495,6 +878,14 @@ export class BulkSync implements BulkSyncService {
     if (settings.missing && settings.missing.length > 0) {
       throw new BulkSyncError('NOT_CONFIGURED',
         `Starting runs isn't configured in this landscape's dashboard: missing ${settings.missing.join(', ')} (redeploy its dashboard stack)`);
+    }
+    if (launch) {
+      throw BulkSync.launchingError();
+    }
+    // A mock landscape's reset, on its own or a start from scratch's, empties the tables a run would write to
+    if (await this.resetRunning()) {
+      throw new BulkSyncError('RESET_UNDERWAY',
+        "A reset of this landscape is running: wait for it to finish before starting a run (Overview shows it)");
     }
     if (latestRun.kind === 'underway') {
       throw new BulkSyncError('RUN_UNDERWAY', `The run of ${latestRun.syncRunId} is still underway: wait for it to finish`);
@@ -514,7 +905,7 @@ export class BulkSync implements BulkSyncService {
   private warnings(): string[] {
     const { landscape } = this.deps.settings;
     return isMockLandscape(landscape)
-      ? [`${landscape} is a mock landscape: its target is the target simulator, but its source is the real source API, which a run reads as any landscape's does`]
+      ? [`${landscape} is a mock landscape: its target is the target simulator, never the real Huron. Its source is the real source API, which a run reads as any landscape's does, unless the source simulator is chosen below.`]
       : [];
   }
 }

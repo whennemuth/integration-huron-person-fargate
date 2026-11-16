@@ -21,6 +21,37 @@ class BulkSyncView {
         return /^U\d+$/;
     }
 
+    /**
+     * A mock landscape's source simulator settings: the form field each is read from, its label, its hint, and its hint
+     * for a test (testHint), which reads one person. People has none: a test doesn't send it, so the simulator keeps its
+     * own population, which only says which BUIDs it has (the BUID box says so)
+     */
+    static get SIMULATOR_FIELDS() {
+        return [
+            { name: 'totalPopulation', field: 'simTotalPopulation', label: 'People', step: '1',
+                hint: 'How many people the simulator makes up. The run reads them all, then finds the end.' },
+            { name: 'simulatedDelaySeconds', field: 'simDelay', label: 'Seconds per response', step: 'any',
+                hint: 'How long each response takes, as a slow source would.',
+                testHint: "How long the person's one response takes, as a slow source would." },
+            { name: 'errorRate', field: 'simErrorRate', label: 'Failing responses (0 to 1)', step: 'any',
+                hint: 'The share of responses that fail, to see how the run copes. 0: none fail.',
+                testHint: "The chance that the person's one response fails, to see how the run copes. 0: it succeeds." },
+            { name: 'nonCurrentTermRate', field: 'simNonCurrentTermRate', label: 'Students not in a current term (0 to 1)', step: 'any',
+                hint: 'The share of students given a term that is not current. 0: every student is in a current term.',
+                testHint: 'The share of students given a term that is not current; whether this person is one of them depends on their BUID. 0: every student is in a current term.' }
+        ];
+    }
+
+    /** The simulator's BUID for a person's number from 1 (U0000042 is the 42nd person), as its people endpoint makes them */
+    static simulatorBuid(number) {
+        return `U${String(number).padStart(7, '0')}`;
+    }
+
+    /** A test with the source simulator: the form's class while one is chosen (BulkSyncPage.markSimulatorTest()) */
+    static get SIMULATOR_TEST_CLASS() {
+        return 'bulk-simulator-test';
+    }
+
     /** The newest run's state (RunActivityState), as the status panel names it */
     static latestRunHtml(latestRun) {
         const { kind, syncRunId } = latestRun || {};
@@ -78,8 +109,12 @@ class BulkSyncView {
         const entered = values || {};
         const pick = (name) => entered[name] === undefined ? defaults[name] : entered[name];
         const iterationLimit = pick('iterationLimit');
+        const simulatorDefaults = state.mock ? state.mock.simulator.defaults : {};
         return {
             runType: entered.runType || defaults.runType,
+            source: entered.source || 'real',
+            simulator: Object.assign({}, simulatorDefaults, entered.simulator || {}),
+            resetState: !! entered.resetState,
             buid: entered.buid || '',
             bulkReset: pick('bulkReset'),
             custom: !! entered.custom,
@@ -106,6 +141,8 @@ class BulkSyncView {
         const form = BulkSyncView.formValues(state, values);
         const test = form.runType === 'test';
         const single = form.singleTask || test;
+        const simulator = state.mock && state.mock.simulator && state.mock.simulator.available ? state.mock.simulator : undefined;
+        const simulatorTest = test && !! simulator && form.source === 'simulator';
         const stalled = latestRun.kind === 'stalled';
         const refused = blocked && blocked.code !== 'RUN_STALLED' ? blocked : undefined;
         const options = (from, to, selected) => {
@@ -117,7 +154,7 @@ class BulkSyncView {
         };
         return `
             ${warnings.map(warning => BulkSyncView.noteHtml('info', 'Before you start', warning)).join('')}
-            <form data-bulk-sync-form novalidate>
+            <form data-bulk-sync-form novalidate${simulatorTest ? ` class="${BulkSyncView.SIMULATOR_TEST_CLASS}"` : ''}>
                 <fieldset class="bulk-fields" data-bulk-fields>
                 <fieldset class="mb-3">
                     <legend class="form-label">Run type</legend>
@@ -146,7 +183,8 @@ class BulkSyncView {
                     </p>
                     <label class="form-label" for="bulk-buid">BUID</label>
                     <input class="form-control bulk-buid" type="text" name="buid" id="bulk-buid" value="${Html.escape(form.buid)}"
-                           placeholder="U12345678" autocomplete="off" spellcheck="false">
+                           placeholder="${simulatorTest ? BulkSyncView.SIMULATOR_BUID_PLACEHOLDER : BulkSyncView.BUID_PLACEHOLDER}" autocomplete="off" spellcheck="false">
+                    ${simulator ? `<div class="form-text bulk-buid-simulator">${Html.escape(BulkSyncView.simulatorBuidHint(simulator.defaults.totalPopulation))}</div>` : ''}
                 </div>
                 ${BulkSyncView.checkboxHtml({
                     name: 'bulkReset', label: 'Bulk reset', checked: form.bulkReset,
@@ -189,6 +227,7 @@ class BulkSyncView {
                         </div>
                     </div>
                 </fieldset>
+                ${state.mock ? BulkSyncView.mockHtml(state.mock, form) : ''}
                 ${stalled ? BulkSyncView.checkboxHtml({
                     name: 'overrideStalled', label: 'Start despite the stalled run', checked: form.overrideStalled,
                     hint: `The run of ${RunFormat.dateTime(latestRun.syncRunId)} has stalled without finishing. Check that it has stopped first.`
@@ -205,19 +244,80 @@ class BulkSyncView {
         `;
     }
 
-    /** What a run will do, one sentence a line, from its choices (BulkSyncChoices) */
-    static summaryLines(choices, landscape, latestRun) {
+    /**
+     * A mock landscape's own options (BulkSyncState.mock): the source, the simulator's settings while it is the
+     * source, and Start from scratch. The simulator's settings start at its deployed ones.
+     */
+    static mockHtml(mock, form) {
+        const { simulator } = mock;
+        const simulated = form.source === 'simulator' && simulator.available;
+        return `
+            <fieldset class="bulk-mock mb-3" data-bulk-mock aria-label="Mock landscape">
+                <legend class="form-label">Mock landscape</legend>
+                <div class="form-text mt-0 mb-2">
+                    This landscape's target is the target simulator, a stand-in for Huron, so nothing here reaches the real Huron.
+                </div>
+                ${BulkSyncView.radioHtml({
+                    name: 'source', value: 'real', label: 'Real source', checked: ! simulated,
+                    hint: 'Read people from the real source API, as any landscape does. Its people are real, and reading them uses the source as any run does.'
+                })}
+                ${BulkSyncView.radioHtml({
+                    name: 'source', value: 'simulator', label: 'Source simulator', checked: simulated, disabled: ! simulator.available,
+                    hint: simulator.available
+                        ? 'Read made-up people from the source simulator instead, without touching the real source.'
+                        : `Not available: ${simulator.reason || 'the source simulator is not deployed in this landscape'}.`
+                })}
+                <div class="bulk-simulator" data-bulk-simulator${simulated ? '' : ' hidden'}>
+                    ${BulkSyncView.SIMULATOR_FIELDS.map(({ name, field, label, step, hint, testHint }) => `
+                        <div class="mb-2${testHint ? '' : ' bulk-sim-run-only'}" data-sim-field="${name}">
+                            <label class="form-label" for="bulk-${field}">${Html.escape(label)}</label>
+                            <input class="form-control bulk-number" type="number" name="${field}" id="bulk-${field}" min="0"
+                                   step="${step}" value="${Html.escape(String(form.simulator[name] === undefined ? '' : form.simulator[name]))}">
+                            <div class="form-text${testHint ? ' bulk-sim-run-hint' : ''}">${Html.escape(hint)}</div>
+                            ${testHint ? `<div class="form-text bulk-sim-test-hint">${Html.escape(testHint)}</div>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+                ${BulkSyncView.checkboxHtml({
+                    name: 'resetState', label: 'Start from scratch', checked: form.resetState,
+                    hint: "Before the run starts, empty this landscape's target simulator and its Run history, and forget every person's fingerprint, so everyone is created again. Use it to see a first sync as it would happen. Run history then starts again from this run."
+                })}
+            </fieldset>
+        `;
+    }
+
+    /**
+     * What a run will do, one sentence a line, from its choices (BulkSyncChoices) and the chunker's chunk size.
+     * simulatorPeople: the source simulator's own population, which a test with it doesn't send (BulkSyncState.mock)
+     */
+    static summaryLines(choices, landscape, latestRun, itemsPerChunk, simulatorPeople) {
         const lines = [];
+        // A mock landscape's run (its choices have a source) goes into its target simulator
+        const target = choices.source ? `${landscape}'s target simulator` : `${landscape}'s Huron`;
         if (choices.runType === 'test') {
-            lines.push(`Test of ${choices.buid} alone, into ${landscape}'s Huron. No one is deactivated.`);
+            lines.push(`Test of ${choices.buid} alone, into ${target}. No one is deactivated.`);
         } else if (choices.runType === 'full') {
-            lines.push(`Full sync of everyone in the source, into ${landscape}'s Huron. People no longer in the source are deactivated afterward.`);
+            lines.push(`Full sync of everyone in the source, into ${target}. People no longer in the source are deactivated afterward.`);
         } else {
-            lines.push(`Full sync of everyone in the source, into ${landscape}'s Huron. No one is deactivated.`);
+            lines.push(`Full sync of everyone in the source, into ${target}. No one is deactivated.`);
         }
-        lines.push(choices.bulkReset
-            ? 'Bulk reset: everyone is looked up in Huron and created or updated as needed.'
-            : 'People whose record has not changed since their last sync are skipped, and Huron is not contacted for them.');
+        if (choices.source === 'simulator') {
+            lines.push(choices.runType === 'test'
+                ? BulkSyncView.simulatorTestLine(choices.simulator || {}, choices.buid, simulatorPeople)
+                : BulkSyncView.simulatorLine(choices.simulator || {}));
+        } else if (choices.source === 'real') {
+            lines.push('The source is the real source API, read as any landscape reads it.');
+        }
+        if (choices.resetState) {
+            lines.push("It starts from scratch: the target simulator, Run history and every person's fingerprint are emptied first, so everyone is created again.");
+        }
+        // A mock landscape's target is its target simulator; after a start from scratch no one has a fingerprint to skip by
+        const huron = choices.source ? 'the target simulator' : 'Huron';
+        if (choices.bulkReset) {
+            lines.push(`Bulk reset: everyone is looked up in ${huron} and created or updated as needed.`);
+        } else if ( ! choices.resetState) {
+            lines.push(`People whose record has not changed since their last sync are skipped, and ${huron} is not contacted for them.`);
+        }
         if (choices.runType !== 'test') {
             lines.push(choices.iterationLimit === 0
                 ? 'A single chunker task reads the whole source.'
@@ -225,11 +325,73 @@ class BulkSyncView {
         }
         if (choices.parallelStart > 0) {
             lines.push(`It starts with ${choices.parallelStart} chunker tasks at once. The start takes up to a few minutes while the chunker's scaling catches up.`);
+            const people = choices.source === 'simulator' && choices.simulator ? choices.simulator.totalPopulation : undefined;
+            const perTask = choices.iterationLimit * (itemsPerChunk || 0);
+            if (people && perTask > 0 && choices.parallelStart * perTask > people + perTask) {
+                lines.push(`Its ${choices.parallelStart} tasks are set to read ${RunFormat.number(choices.parallelStart * perTask)} people, more than the simulator's ${RunFormat.number(people)}: the tasks past the end find no one and stop.`);
+            }
         }
         if (choices.overrideStalled && latestRun && latestRun.syncRunId) {
             lines.push(`The stalled run of ${RunFormat.dateTime(latestRun.syncRunId)} is left as it is.`);
         }
         return lines;
+    }
+
+    /**
+     * The simulator as a test's source, in words: one made-up person, and whether the simulator has them (a BUID past
+     * its people reads as someone who isn't in the source, which a test may want to see)
+     */
+    static simulatorTestLine(simulator, buid, simulatorPeople) {
+        const people = simulator.totalPopulation !== undefined ? simulator.totalPopulation : simulatorPeople;
+        const number = buid ? Number(buid.slice(1)) : NaN;
+        const parts = [`one made-up person, ${buid}`];
+        if (simulator.simulatedDelaySeconds) {
+            parts.push(`its response taking ${simulator.simulatedDelaySeconds} s`);
+        }
+        if (simulator.errorRate) {
+            parts.push(`a ${Math.round(simulator.errorRate * 100)}% chance its response fails`);
+        }
+        if (simulator.nonCurrentTermRate) {
+            parts.push(`${Math.round(simulator.nonCurrentTermRate * 100)}% of students not in a current term`);
+        }
+        const line = `The source is the source simulator: ${parts.join(', ')}.`;
+        return Number.isInteger(people) && number > people
+            ? `${line} ${buid} isn't in the source: the simulator has ${RunFormat.number(people)} people, so the run sees someone missing from it.`
+            : line;
+    }
+
+    /** The BUID box's hint with the source simulator: its range, and what a BUID past it is for */
+    static simulatorBuidHint(people) {
+        const last = Number.isInteger(people) && people >= 1 ? BulkSyncView.simulatorBuid(people) : undefined;
+        return last
+            ? `A made-up person from the source simulator, ${BulkSyncView.simulatorBuid(1)} to ${last}. One past the end is someone who isn't in the source, to test that case.`
+            : `A made-up person from the source simulator, from ${BulkSyncView.simulatorBuid(1)}. One past its people is someone who isn't in the source, to test that case.`;
+    }
+
+    static get BUID_PLACEHOLDER() {
+        return 'U12345678';
+    }
+
+    static get SIMULATOR_BUID_PLACEHOLDER() {
+        return 'U0000042';
+    }
+
+    /** The simulator as the source, in words, from the settings sent to it */
+    static simulatorLine(simulator) {
+        const parts = [];
+        if (simulator.totalPopulation !== undefined) {
+            parts.push(`${RunFormat.number(simulator.totalPopulation)} made-up people`);
+        }
+        if (simulator.simulatedDelaySeconds) {
+            parts.push(`each response taking ${simulator.simulatedDelaySeconds} s`);
+        }
+        if (simulator.errorRate) {
+            parts.push(`${Math.round(simulator.errorRate * 100)}% of responses failing`);
+        }
+        if (simulator.nonCurrentTermRate) {
+            parts.push(`${Math.round(simulator.nonCurrentTermRate * 100)}% of students not in a current term`);
+        }
+        return `The source is the source simulator${parts.length ? `: ${parts.join(', ')}` : ''}.`;
     }
 
     /** A setting's value as shown: text as it is, objects as JSON, and nothing as a dash */
@@ -263,13 +425,16 @@ class BulkSyncView {
     }
 
     /** The review: what will run, and the event the chunker subscriber will receive (from BulkSyncPlan) */
-    static confirmationHtml(plan, latestRun) {
+    /** The review of a run (BulkSyncPlan); simulatorPeople is the source simulator's own population, as summaryLines() takes */
+    static confirmationHtml(plan, latestRun, simulatorPeople) {
         const eventRows = Object.entries(plan.event).map(([name, value]) => ({ name, value }));
+        const chunkSize = (plan.settings || []).find(setting => setting.name === 'itemsPerChunk');
+        const itemsPerChunk = chunkSize && Number(chunkSize.value) > 0 ? Number(chunkSize.value) : undefined;
         return `
             <div class="bulk-confirm" role="group" aria-label="Confirm the run">
                 <p class="bulk-confirm-title">Start this run?</p>
                 <ul class="bulk-confirm-list">
-                    ${BulkSyncView.summaryLines(plan.choices, plan.landscape, latestRun).map(line => `<li>${Html.escape(line)}</li>`).join('')}
+                    ${BulkSyncView.summaryLines(plan.choices, plan.landscape, latestRun, itemsPerChunk, simulatorPeople).map(line => `<li>${Html.escape(line)}</li>`).join('')}
                 </ul>
                 ${BulkSyncView.settingsTableHtml('The event sent to the chunker subscriber', eventRows)}
                 <p class="bulk-form-error" data-bulk-start-error role="alert" hidden></p>
@@ -294,47 +459,56 @@ class BulkSyncView {
         if (request.iterationLimit !== undefined && ! (Number.isInteger(request.iterationLimit) && request.iterationLimit >= 0)) {
             return 'Choose how many chunks each chunker task reads, or a single task.';
         }
+        return request.source === 'simulator' ? BulkSyncView.simulatorError(request) : undefined;
+    }
+
+    /**
+     * A problem with the simulator's settings, or a test's BUID it can't have (U0000000); undefined when they are fine.
+     * A test doesn't send People, and its BUID may be past them: that person reads as missing from the source.
+     */
+    static simulatorError(request) {
+        const simulator = request.simulator || {};
+        const people = simulator.totalPopulation;
+        if (request.runType !== 'test' && ! (Number.isInteger(people) && people >= 1)) {
+            return 'The simulator needs a whole number of people, at least 1.';
+        }
+        if ( ! (Number.isFinite(simulator.simulatedDelaySeconds) && simulator.simulatedDelaySeconds >= 0)) {
+            return 'Seconds per response is a number, 0 or more.';
+        }
+        for (const name of ['errorRate', 'nonCurrentTermRate']) {
+            const value = simulator[name];
+            if ( ! (Number.isFinite(value) && value >= 0 && value <= 1)) {
+                const label = BulkSyncView.SIMULATOR_FIELDS.find(field => field.name === name).label;
+                return `${label} is a number from 0 to 1.`;
+            }
+        }
+        if (request.buid && BulkSyncView.BUID.test(request.buid)) {
+            const index = Number(request.buid.slice(1)) - 1;
+            if (index < 0) {
+                return `The simulator's BUIDs start at U0000001 (got '${request.buid}').`;
+            }
+        }
         return undefined;
     }
 
-    /** The status panel once a run has been started: when, what, and the run itself once it appears */
-    static startedHtml(started, now) {
-        const { result, run } = started;
-        const when = `Started ${RunFormat.ago(result.startedAt, now)}`;
-        const labels = { full: 'Full sync (with deactivations)', 'full-no-deactivations': 'Full sync (no deactivations)' };
-        const what = result.run.buid ? `Test of ${result.run.buid}` : (labels[result.run.runType] || RunFormat.population(result.run.population));
-        if (run) {
-            return `
-                <p class="bulk-status-line">
-                    ${Html.escape(when)}:
-                    <a class="run-link" href="${Html.escape(RunHistoryPage.detailHref(run.syncRunId))}">Run of ${Html.escape(RunFormat.dateTime(run.startedAt))}</a>
-                    ${run.statusBadgeHtml ? run.statusBadgeHtml(now) : RunFormat.statusBadge(run.status)}
-                </p>
-                <p class="bulk-status-hint">${Html.escape(what)}. Follow it in Run history or on Overview.</p>
-            `;
-        }
-        const parallel = result.run.parallelStart > 0
-            ? `Its ${result.run.parallelStart} chunker tasks start within a few minutes, once the chunker's scaling catches up. `
-            : '';
-        return `
-            <p class="bulk-status-line">${Html.escape(when)}: ${Html.escape(what)}.</p>
-            <p class="bulk-status-hint">${Html.escape(parallel)}It appears in Run history once its chunker has written its first records. Refresh to look for it.</p>
-        `;
+    /**
+     * The status panel, from the server's state at each load: a run launched moments ago and not listed yet (its
+     * LaunchFlag), else the newest run listed, which is current by definition
+     */
+    static statusHtml(state, now) {
+        return state.launch
+            ? RunFormat.launchNoteHtml(state.launch, now)
+            : BulkSyncView.latestRunHtml(state.latestRun);
     }
 }
 
 /** The Bulk sync page */
 class BulkSyncPage {
 
-    /** How much earlier than its start a run's syncRunId may be (the chunker's clock against the Lambda's) */
-    static get CLOCK_SLACK_MS() {
-        return 2 * 60000;
-    }
-
     /**
      * @param {{ getJson: function(string): Promise<any>, postJson: function(string, any): Promise<any>, runs: RunsApi,
      *   root: HTMLElement, now?: function(): number }} options
-     *   getJson and postJson read and send a route's JSON (dashboard.js); runs finds the started run
+     *   getJson and postJson read and send a route's JSON (dashboard.js); runs is the run reporting API
      */
     constructor({ getJson, postJson, runs, root, now = () => Date.now() }) {
         this.getJson = getJson;
@@ -347,7 +521,6 @@ class BulkSyncPage {
         this.state = undefined;
         this.values = undefined;
         this.request = undefined;
-        this.started = undefined;
         this.loads = 0;
         root.querySelector('[data-action="refresh-bulk"]').addEventListener('click', () => this.load());
         this.formContainer.addEventListener('submit', event => {
@@ -374,6 +547,18 @@ class BulkSyncPage {
         const buid = String(fields.buid.value || '').trim().toUpperCase();
         const custom = !! fields.custom.checked;
         const single = runType === 'test' || checked('chunkMode') === 'single';
+        // A mock landscape's own options, only when its section is on the page
+        const source = fields.source ? (checked('source') || 'real') : undefined;
+        const simulator = {};
+        if (source === 'simulator') {
+            for (const { name, field } of BulkSyncView.SIMULATOR_FIELDS) {
+                if (runType === 'test' && name === 'totalPopulation') {
+                    continue;
+                }
+                const value = String(fields[field].value).trim();
+                simulator[name] = value === '' ? NaN : Number(value);
+            }
+        }
         return {
             runType,
             ...(runType === 'test' ? { buid } : {}),
@@ -383,6 +568,7 @@ class BulkSyncPage {
                 parallelStart: single ? 0 : Number(fields.parallelStart.value)
             } : {}),
             ...(fields.overrideStalled ? { overrideStalled: !! fields.overrideStalled.checked } : {}),
+            ...(source ? { source, ...(source === 'simulator' ? { simulator } : {}), resetState: !! fields.resetState.checked } : {}),
             custom
         };
     }
@@ -402,6 +588,7 @@ class BulkSyncPage {
             if (test) test.hidden = event.target.value !== 'test';
             const mode = BulkSyncPage.lockChunkMode(form, event.target.value === 'test');
             BulkSyncPage.lockParallelStart(form, mode === 'single');
+            BulkSyncPage.markSimulatorTest(form);
         }
         if (event.target.name === 'chunkMode') {
             const chunks = form.querySelector('[data-bulk-chunks]');
@@ -417,6 +604,33 @@ class BulkSyncPage {
         if (event.target.name === 'custom') {
             const custom = form.querySelector('[data-bulk-custom]');
             if (custom) custom.hidden = ! event.target.checked;
+        }
+        if (event.target.name === 'source') {
+            const simulator = form.querySelector('[data-bulk-simulator]');
+            if (simulator) simulator.hidden = event.target.value !== 'simulator';
+            BulkSyncPage.markSimulatorTest(form);
+        }
+    }
+
+    /** The source simulator's own population (its deployed setting, from its /health), if this landscape has one */
+    static simulatorPeople(state) {
+        const simulator = state && state.mock && state.mock.simulator;
+        return simulator && simulator.defaults ? simulator.defaults.totalPopulation : undefined;
+    }
+
+    /**
+     * While Test and the source simulator are both chosen, mark the form (SIMULATOR_TEST_CLASS): People is hidden, the
+     * simulator's hints speak of one person, and the BUID box says which BUIDs the simulator has (dashboard.css)
+     */
+    static markSimulatorTest(form) {
+        const fields = form.elements || {};
+        const checked = name => ([...(fields[name] || [])].find(radio => radio.checked) || {}).value;
+        const simulatorTest = checked('runType') === 'test' && checked('source') === 'simulator';
+        if (form.classList) {
+            form.classList.toggle(BulkSyncView.SIMULATOR_TEST_CLASS, simulatorTest);
+        }
+        if (fields.buid) {
+            fields.buid.placeholder = simulatorTest ? BulkSyncView.SIMULATOR_BUID_PLACEHOLDER : BulkSyncView.BUID_PLACEHOLDER;
         }
     }
 
@@ -452,13 +666,11 @@ class BulkSyncPage {
         select.value = single ? '0' : ((parallel && parallel.dataset.chosenParallel) || '0');
     }
 
-    /** Load what a start would do, and, after a start, look for the run it started. Resolves true once shown */
+    /** Load what a start would do, and the status: a run launched moments ago, else the newest run. Resolves true once shown */
     async load() {
         const load = ++this.loads;
         PageState.loading(this.formContainer, 'Checking whether a run can start');
-        if ( ! this.started) {
-            PageState.loading(this.statusContainer, 'Reading the latest run', { compact: true });
-        }
+        PageState.loading(this.statusContainer, 'Reading the latest run', { compact: true });
         let state;
         try {
             state = await this.getJson('/api/bulk-sync');
@@ -469,9 +681,6 @@ class BulkSyncPage {
             PageState.error(this.formContainer, 'Bulk sync could not be read', error.message);
             PageState.error(this.statusContainer, 'The latest run could not be read', undefined, { compact: true });
             return false;
-        }
-        if (this.started && ! this.started.run) {
-            await this.findStartedRun();
         }
         if (load !== this.loads) {
             return false;
@@ -485,9 +694,7 @@ class BulkSyncPage {
 
     render() {
         this.formContainer.innerHTML = BulkSyncView.formHtml(this.state, this.values);
-        this.statusContainer.innerHTML = this.started
-            ? BulkSyncView.startedHtml(this.started, this.now())
-            : BulkSyncView.latestRunHtml(this.state.latestRun);
+        this.statusContainer.innerHTML = BulkSyncView.statusHtml(this.state, this.now());
     }
 
     /** Say a problem with the form under its fields, or clear it */
@@ -537,7 +744,7 @@ class BulkSyncPage {
         this.request = body;
         this.plan = plan;
         this.formContainer.querySelector('[data-bulk-confirm]').innerHTML =
-            BulkSyncView.confirmationHtml(plan, this.state.latestRun);
+            BulkSyncView.confirmationHtml(plan, this.state.latestRun, BulkSyncPage.simulatorPeople(this.state));
         return true;
     }
 
@@ -556,8 +763,8 @@ class BulkSyncPage {
         const buttons = [...this.formContainer.querySelectorAll('[data-bulk-confirm] button')];
         buttons.forEach(button => { button.disabled = true; });
         try {
-            const result = await this.postJson('/api/bulk-sync', this.request);
-            this.started = { result };
+            // The server raised the launch flag before answering, so the load below shows the run starting
+            await this.postJson('/api/bulk-sync', this.request);
             this.values = undefined;
             this.plan = undefined;
             await this.load();
@@ -570,20 +777,6 @@ class BulkSyncPage {
                 message.hidden = false;
             }
             return false;
-        }
-    }
-
-    /** The newest run, once it is one this page started (its syncRunId no earlier than the start, give or take the clocks) */
-    async findStartedRun() {
-        try {
-            const { items } = await this.runs.listRuns({ limit: 1 });
-            const newest = items[0];
-            const earliest = new Date(Date.parse(this.started.result.startedAt) - BulkSyncPage.CLOCK_SLACK_MS).toISOString();
-            if (newest && newest.syncRunId >= earliest) {
-                this.started.run = newest;
-            }
-        } catch (error) {
-            // Not found yet is the same as not listed: the next Refresh looks again
         }
     }
 }

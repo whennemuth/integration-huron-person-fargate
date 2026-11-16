@@ -8,15 +8,15 @@ import {
   PersonLookupParams
 } from './ServiceTypes';
 
-// Import mock implementations
+// The offline services: built-in data, no AWS access (a local run with LOCAL_OFFLINE=true)
 import {
-  MockPersonLookupService,
-  MockPersonSyncService,
-  MockBulkSyncService,
-  MockSystemStatusService,
-  MockRunReportingService,
-  MockLandscapeListingService
-} from '../handlers/DashboardMocks';
+  OfflinePersonLookupService,
+  OfflinePersonSyncService,
+  OfflineBulkSyncService,
+  OfflineSystemStatusService,
+  OfflineRunReportingService,
+  OfflineLandscapeListingService
+} from '../handlers/OfflineServices';
 
 // Import concrete implementations
 import { PersonLookup } from './PersonLookup';
@@ -24,41 +24,55 @@ import { PersonSync } from './PersonSync';
 import { BulkSync } from './BulkSync';
 import { SystemStatus } from './SystemStatus';
 import { runReportingFromEnvironment } from './RunReports';
-import { LandscapeRegistry } from './LandscapeRegistry';
+import { LandscapeRegistry, LOCAL_LANDSCAPE } from './LandscapeRegistry';
+import { LaunchFlag } from './LaunchFlag';
 import { Config } from 'integration-huron-person';
 import { CrudOperation, TestEnvironment } from 'integration-core';
 import { getConfig } from '../../../src/Utils';
 import { ChangeType } from '../../../src/reporting/RunReporting';
 
 /**
- * Service provider that provides mock or concrete implementations
+ * Service provider that provides the offline or the real implementations
  * based on environment configuration
  */
 export class ServiceProvider {
   // Kept for the life of the Lambda instance: the registry caches what it reads from SSM
   private static runReporting?: RunReportingService;
   private static landscapeListing?: LandscapeListingService;
+  /** The offline Bulk sync service, for the landscape it plays */
+  private static offlineBulkSync?: { landscape: string; service: OfflineBulkSyncService };
+  private static launchFlags = new Map<string, LaunchFlag>();
   
   /**
-   * Determine if we should use mock implementations. The mocks ignore the integration config, so
-   * callers that only read it to hand to a service can skip reading it when this is true.
+   * Whether to use the offline services (a local run with LOCAL_OFFLINE=true; never in Lambda). They ignore the
+   * integration config, so callers that only read it to hand to a service can skip reading it when this is true.
+   * LOCALHOST_WITH_MOCKS, its name before 2026-11-15, still works, with a warning.
    */
-  static shouldUseMocks(): boolean {
+  static isOffline(): boolean {
     // In Lambda environment, always use concrete implementations
     if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
       return false;
     }
     
-    // In local environment, use mocks if explicitly requested
-    return process.env.LOCALHOST_WITH_MOCKS === 'true';
+    // In local environment, offline if explicitly requested
+    if (process.env.LOCAL_OFFLINE === undefined && process.env.LOCALHOST_WITH_MOCKS !== undefined) {
+      if (!ServiceProvider.renameWarned) {
+        ServiceProvider.renameWarned = true;
+        console.warn('Renamed: LOCALHOST_WITH_MOCKS is now LOCAL_OFFLINE');
+      }
+      return process.env.LOCALHOST_WITH_MOCKS === 'true';
+    }
+    return process.env.LOCAL_OFFLINE === 'true';
   }
+
+  private static renameWarned = false;
 
   /**
    * Get person lookup service implementation
    */
   static getPersonLookupService(config:Config): PersonLookupService {
-    if (this.shouldUseMocks()) {
-      return new MockPersonLookupService();
+    if (this.isOffline()) {
+      return new OfflinePersonLookupService();
     } else {
       return new PersonLookup(config);
     }
@@ -68,8 +82,8 @@ export class ServiceProvider {
    * Get person sync service implementation
    */
   static getPersonSyncService(config:Config): PersonSyncService {
-    if (this.shouldUseMocks()) {
-      return new MockPersonSyncService();
+    if (this.isOffline()) {
+      return new OfflinePersonSyncService();
     } else {
       return new PersonSync(config);
     }
@@ -79,19 +93,53 @@ export class ServiceProvider {
    * Get bulk sync service implementation
    */
   static getBulkSyncService(config:Config): BulkSyncService {
-    if (this.shouldUseMocks()) {
-      return new MockBulkSyncService({ runs: this.getRunReportingService() });
+    if (this.isOffline()) {
+      // One per landscape played, so its state (the last mock landscape reset) lasts from request to request
+      const landscape = process.env.LANDSCAPE || '';
+      if (!this.offlineBulkSync || this.offlineBulkSync.landscape !== landscape) {
+        this.offlineBulkSync = {
+          landscape, service: new OfflineBulkSyncService({ runs: this.getRunReportingService(), launchFlag: this.getLaunchFlag() })
+        };
+      }
+      return this.offlineBulkSync.service;
     } else {
       return BulkSync.fromEnvironment(config, this.getRunReportingService());
     }
   }
 
   /**
+   * Forget the offline services' state (the last mock landscape reset, a launch flag): for tests, which share one
+   * module instance, so that a run started in one doesn't hold back the next
+   */
+  static resetOfflineState(): void {
+    this.offlineBulkSync = undefined;
+    this.launchFlags.clear();
+  }
+
+  /**
+   * The landscape's launch flag (a run launched moments ago from Bulk sync, not yet listed): its SSM parameter, or
+   * offline one kept in memory, shared with the offline Bulk sync. Undefined where LANDSCAPE or REGION isn't set.
+   */
+  static getLaunchFlag(): LaunchFlag | undefined {
+    const offline = this.isOffline();
+    const landscape = offline ? (process.env.LANDSCAPE || LOCAL_LANDSCAPE) : process.env.LANDSCAPE;
+    const region = process.env.REGION;
+    if (landscape === undefined || (!offline && (!landscape || !region))) {
+      return undefined;
+    }
+    const key = `${offline ? 'offline' : 'ssm'}:${landscape}`;
+    if (!this.launchFlags.has(key)) {
+      this.launchFlags.set(key, offline ? LaunchFlag.inMemory(landscape) : LaunchFlag.forLandscape({ landscape, region: region! }));
+    }
+    return this.launchFlags.get(key);
+  }
+
+  /**
    * Get system status service implementation
    */
   static getSystemStatusService(): SystemStatusService {
-    if (this.shouldUseMocks()) {
-      return new MockSystemStatusService();
+    if (this.isOffline()) {
+      return new OfflineSystemStatusService();
     } else {
       return new SystemStatus();
     }
@@ -101,8 +149,8 @@ export class ServiceProvider {
    * Get run reporting service implementation (this landscape's run data)
    */
   static getRunReportingService(): RunReportingService {
-    if (this.shouldUseMocks()) {
-      return new MockRunReportingService();
+    if (this.isOffline()) {
+      return new OfflineRunReportingService();
     }
     return this.runReporting ??= runReportingFromEnvironment();
   }
@@ -111,8 +159,8 @@ export class ServiceProvider {
    * Get landscape listing service implementation (the landscape picker's data)
    */
   static getLandscapeListingService(): LandscapeListingService {
-    if (this.shouldUseMocks()) {
-      return new MockLandscapeListingService();
+    if (this.isOffline()) {
+      return new OfflineLandscapeListingService();
     }
     return this.landscapeListing ??= LandscapeRegistry.fromEnvironment();
   }
@@ -123,20 +171,22 @@ export class ServiceProvider {
  * Harness: get a service from the provider and call it the way DashboardHandler does, without the
  * Lambda, CloudFront or authentication in front of it. Real services read the landscape named by
  * the environment (the same variables the dashboard stack gives the Lambda); set
- * LOCALHOST_WITH_MOCKS=true for the mocks. Read only: person sync is previewed, never pushed.
+ * LOCAL_OFFLINE=true for the offline services. Read only: person sync is previewed, never pushed.
  *
  * Tasks:
  *   capabilities | runs | summary | chunks | errors | changes  (run reporting; SYNC_RUN_ID for a run,
  *                                                                default: the latest run)
  *   landscapes                                                  (landscape registry in SSM)
  *   lookup | preview                                            (person lookup / sync preview by PERSON_ID,
- *                                                                with the config from getConfig(), unless mocked)
- *   status                                                      (a stub: only the mocks answer)
+ *                                                                with the config from getConfig(), unless offline)
+ *   status                                                      (a stub: only the offline services answer)
  */
 if (require.main === module) {
   const testEnvironment = TestEnvironment('DASHBOARD_SERVICE_PROVIDER');
   [
     'TASK',
+    'LOCAL_OFFLINE',
+    // LOCAL_OFFLINE's name before 2026-11-15, still read (with a warning)
     'LOCALHOST_WITH_MOCKS',
     // The dashboard Lambda's environment, for run reporting and the landscape registry
     'LANDSCAPE',
@@ -190,8 +240,8 @@ if (require.main === module) {
       return runs[runs.length - 1];
     };
     const page = () => ({ limit: optionalNumber('LIMIT'), cursor: testEnvironment.getVar('CURSOR') });
-    // The mocks ignore the config, so don't load it (no Secrets Manager or file access)
-    const config = async (): Promise<Config> => ServiceProvider.shouldUseMocks() ? {} as Config : getConfig();
+    // The offline services ignore the config, so don't load it (no Secrets Manager or file access)
+    const config = async (): Promise<Config> => ServiceProvider.isOffline() ? {} as Config : getConfig();
 
     switch (task) {
       case 'capabilities':

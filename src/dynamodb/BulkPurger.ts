@@ -29,6 +29,14 @@ export enum BulkPurgerTables {
   STATISTICS = 'statistics'
 }
 
+/** What a truncation deleted from one table, and how long it took */
+export type TableTruncation = {
+  table: BulkPurgerTables;
+  tableName: string;
+  itemsDeleted: number;
+  durationMs: number;
+};
+
 export type BulkPurgerConfig = {
   mode: BulkPurgerMode;
   tables?: BulkPurgerTables[];
@@ -104,7 +112,8 @@ export class BulkPurger {
     return context;
   }
 
-  public purge = async (): Promise<void> => {
+  /** @returns What a truncation deleted from each table (nothing for a dry run or the DELETE mode) */
+  public purge = async (): Promise<TableTruncation[]> => {
     const { mode, loadContext, Delete, truncate, force } = this;
     const context = await loadContext.call(this);
     const landscape = context.TAGS.Landscape.toLowerCase();
@@ -119,11 +128,11 @@ export class BulkPurger {
     switch(mode) {
       case DELETE:
         await Delete(context);
-        break;
+        return [];
       case TRUNCATE:
-        await truncate(context);
-        break;
+        return truncate(context);
     }
+    return [];
   }
 
   private Delete = async (context: IContext): Promise<void> => {
@@ -158,14 +167,19 @@ export class BulkPurger {
     }
   }
 
-  private truncate = async (context: IContext): Promise<void> => {
+  /**
+   * Truncate the configured tables at the same time (each in parallel itself: DynamoDBTable.truncateTable()), timing
+   * each. A dry run truncates nothing and reports nothing.
+   */
+  private truncate = async (context: IContext): Promise<TableTruncation[]> => {
     const { mode, tables, chunkSize, dryRun } = this;
     const { MOCK_TARGET_PERSON, PERSON_CURRENT_STATE, PERSON_HISTORY, STATISTICS } = BulkPurgerTables;
     const { REGION: region } = context;
 
+    const purges: { table: BulkPurgerTables; tableName: string; purge: () => Promise<number> }[] = [];
     for (const table of tables) {
       let tableName: string;
-      let purge: () => Promise<void>;
+      let purge: () => Promise<number>;
 
       switch(table) {
         case MOCK_TARGET_PERSON:
@@ -195,8 +209,14 @@ export class BulkPurger {
         continue;
       }
       console.log(msg);
-      await purge();
+      purges.push({ table, tableName, purge });
     }
+
+    return Promise.all(purges.map(async ({ table, tableName, purge }) => {
+      const started = Date.now();
+      const itemsDeleted = await purge();
+      return { table, tableName, itemsDeleted, durationMs: Date.now() - started };
+    }));
   }
 }
 

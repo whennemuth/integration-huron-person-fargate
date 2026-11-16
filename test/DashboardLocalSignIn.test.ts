@@ -1,11 +1,11 @@
 /**
- * Tests the local launcher's mock sign-in (dashboard/scripts/MockSignIn.ts): the claims it signs in with, the
+ * Tests the local launcher's local sign-in (dashboard/scripts/LocalSignIn.ts): the claims it signs in with, the
  * JWT it signs as the sign-in edge functions do, the request it hands the Lambda handler, and /logout. Then,
  * through the handler with a landscape's sign-in settings (APP_AUTHORIZATION=true), that a decorated request is
  * served signed in where a bare one is sent to sign in.
  */
 import { JwtTools } from 'shibboleth-sp';
-import { MockSignIn } from '../dashboard/scripts/MockSignIn';
+import { LocalSignIn } from '../dashboard/scripts/LocalSignIn';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
 import { SIGN_OUT_PATH } from '../dashboard/src/handlers/NavigationBar';
 
@@ -20,27 +20,27 @@ const tokenOf = (headers: Record<string, string>, publicKey?: string): any => {
   return jwtTools.getToken({ headers: { cookie: [{ key: 'Cookie', value: headers.cookie }] } } as any, !!publicKey);
 };
 
-describe('MockSignIn', () => {
-  const mockSignIn = MockSignIn.fromEnvironment({
+describe('LocalSignIn', () => {
+  const localSignIn = LocalSignIn.fromEnvironment({
     USER_PRINCIPAL: 'jdoe', USER_EPPN: 'jdoe@bu.edu', USER_MAIL: ' ', AUTH_COOKIE_NAME: COOKIE
   });
 
   it('signs in with array-valued claims from LocalLaunch.env, leaving out those not set', () => {
-    expect(mockSignIn.claims).toEqual({ buPrincipal: ['jdoe'], eduPersonPrincipalName: ['jdoe@bu.edu'] });
-    expect(MockSignIn.claimsFrom({ USER_PRINCIPAL: 'a', USER_MAIL: 'a@bu.edu', USER_GIVEN_NAME: 'Ann', USER_SURNAME: 'Lee' }))
+    expect(localSignIn.claims).toEqual({ buPrincipal: ['jdoe'], eduPersonPrincipalName: ['jdoe@bu.edu'] });
+    expect(LocalSignIn.claimsFrom({ USER_PRINCIPAL: 'a', USER_MAIL: 'a@bu.edu', USER_GIVEN_NAME: 'Ann', USER_SURNAME: 'Lee' }))
       .toEqual({ buPrincipal: ['a'], mail: ['a@bu.edu'], givenName: ['Ann'], sn: ['Lee'] });
-    expect(mockSignIn.userName).toBe('jdoe@bu.edu');
-    expect(MockSignIn.fromEnvironment({ USER_PRINCIPAL: 'jdoe' }).userName).toBe('jdoe');
+    expect(localSignIn.userName).toBe('jdoe@bu.edu');
+    expect(LocalSignIn.fromEnvironment({ USER_PRINCIPAL: 'jdoe' }).userName).toBe('jdoe');
   });
 
   it('needs a user principal, and uses the default cookie name when the Lambda names none', () => {
-    expect(() => MockSignIn.fromEnvironment({ USER_EPPN: 'jdoe@bu.edu' })).toThrow('needs a buPrincipal claim (USER_PRINCIPAL)');
-    expect(MockSignIn.fromEnvironment({ USER_PRINCIPAL: 'jdoe' }).cookieName).toBe(JwtTools.COOKIE_NAME);
+    expect(() => LocalSignIn.fromEnvironment({ USER_EPPN: 'jdoe@bu.edu' })).toThrow('needs a buPrincipal claim (USER_PRINCIPAL)');
+    expect(LocalSignIn.fromEnvironment({ USER_PRINCIPAL: 'jdoe' }).cookieName).toBe(JwtTools.COOKIE_NAME);
   });
 
   it('marks the request signed in, presenting its JWT cookie in place of one of the same name', () => {
     const headers: Record<string, string> = { cookie: `other=1; ${COOKIE}=stale; theme=dark` };
-    mockSignIn.decorate({ headers });
+    localSignIn.decorate({ headers });
     expect(headers.authenticated).toBe('true');
     const cookies = headers.cookie.split('; ');
     expect(cookies.filter(cookie => cookie.startsWith(`${COOKIE}=`))).toHaveLength(1);
@@ -50,46 +50,46 @@ describe('MockSignIn', () => {
 
   it('adds the cookie header to a request without one', () => {
     const headers: Record<string, string> = {};
-    mockSignIn.decorate({ headers });
+    localSignIn.decorate({ headers });
     expect(headers.cookie.startsWith(`${COOKIE}=`)).toBe(true);
   });
 
   it('signs the JWT as the sign-in does, verifiable with its public key', () => {
     const headers: Record<string, string> = {};
-    mockSignIn.decorate({ headers });
-    const verified = tokenOf(headers, mockSignIn.publicKey);
-    expect(verified[JwtTools.TOKEN_NAME]).toEqual({ sub: 'jdoe@bu.edu', user: mockSignIn.claims });
-    // A key pair of its own: another mock sign-in's key does not verify it
-    expect(tokenOf(headers, MockSignIn.fromEnvironment({ USER_PRINCIPAL: 'x' }).publicKey)).toBeNull();
+    localSignIn.decorate({ headers });
+    const verified = tokenOf(headers, localSignIn.publicKey);
+    expect(verified[JwtTools.TOKEN_NAME]).toEqual({ sub: 'jdoe@bu.edu', user: localSignIn.claims });
+    // A key pair of its own: another local sign-in's key does not verify it
+    expect(tokenOf(headers, LocalSignIn.fromEnvironment({ USER_PRINCIPAL: 'x' }).publicKey)).toBeNull();
   });
 
   it('answers /logout itself, and passes every other path on', () => {
-    const response = mockSignIn.respond(SIGN_OUT_PATH);
+    const response = localSignIn.respond(SIGN_OUT_PATH);
     expect(response?.statusCode).toBe(200);
     expect(response?.headers?.['Content-Type']).toContain('text/html');
-    expect(response?.body).toContain('Signed in as jdoe@bu.edu (mock sign-in)');
+    expect(response?.body).toContain('Signed in as jdoe@bu.edu (local sign-in)');
     expect(response?.body).toContain('href="/dashboard"');
-    expect(mockSignIn.respond('/dashboard')).toBeUndefined();
-    expect(mockSignIn.respond('/api/runs')).toBeUndefined();
+    expect(localSignIn.respond('/dashboard')).toBeUndefined();
+    expect(localSignIn.respond('/api/runs')).toBeUndefined();
   });
 
   it('escapes the user name on the /logout page', () => {
-    expect(MockSignIn.fromEnvironment({ USER_PRINCIPAL: '<b>x</b>' }).respond(SIGN_OUT_PATH)?.body).not.toContain('<b>x</b>');
+    expect(LocalSignIn.fromEnvironment({ USER_PRINCIPAL: '<b>x</b>' }).respond(SIGN_OUT_PATH)?.body).not.toContain('<b>x</b>');
   });
 });
 
-describe('MockSignIn in front of the dashboard handler', () => {
+describe('LocalSignIn in front of the dashboard handler', () => {
   /** A landscape's sign-in settings, as its Lambda has them */
   const SIGN_IN_ENV = {
     APP_LOGIN_HEADER: 'SHIB-HANDLER',
     APP_LOGOUT_HEADER: 'SHIB-IDP-LOGOUT',
     APP_AUTHORIZATION: 'true',
     AUTH_COOKIE_NAME: COOKIE,
-    LOCALHOST_WITH_MOCKS: 'true'
+    LOCAL_OFFLINE: 'true'
   };
 
   /** GET a path from a fresh handler (Authentication.ts reads the sign-in settings when it loads) */
-  const get = async (path: string, decorator?: MockSignIn): Promise<{ status: number, body: string, user?: any }> => {
+  const get = async (path: string, decorator?: LocalSignIn): Promise<{ status: number, body: string, user?: any }> => {
     const saved = { ...process.env };
     Object.assign(process.env, SIGN_IN_ENV);
     jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -116,7 +116,7 @@ describe('MockSignIn in front of the dashboard handler', () => {
     }
   };
 
-  const mockSignIn = MockSignIn.fromEnvironment({ ...SIGN_IN_ENV, USER_PRINCIPAL: 'jdoe' });
+  const localSignIn = LocalSignIn.fromEnvironment({ ...SIGN_IN_ENV, USER_PRINCIPAL: 'jdoe' });
 
   it('sends a bare request to sign in, as the Lambda does without the edge functions', async () => {
     const { status } = await get('/dashboard');
@@ -124,7 +124,7 @@ describe('MockSignIn in front of the dashboard handler', () => {
   });
 
   it('serves a decorated request signed in, naming the user in the top bar', async () => {
-    const { status, body, user } = await get('/dashboard', mockSignIn);
+    const { status, body, user } = await get('/dashboard', localSignIn);
     expect(status).toBe(200);
     expect(user).toEqual({ buPrincipal: ['jdoe'] });
     expect(body).toMatch(/href="(\/|&#x2F;)logout"/);
@@ -132,7 +132,7 @@ describe('MockSignIn in front of the dashboard handler', () => {
   });
 
   it('lets a decorated request reach the API', async () => {
-    const { status } = await get('/api/capabilities', mockSignIn);
+    const { status } = await get('/api/capabilities', localSignIn);
     expect(status).toBe(200);
   });
 });

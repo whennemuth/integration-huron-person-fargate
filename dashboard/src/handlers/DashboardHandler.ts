@@ -22,11 +22,11 @@ import { Config } from 'integration-huron-person';
 let cache: DashboardCache = new DashboardCache();
 
 /**
- * The integration config for the person and bulk sync services. The mock services ignore it, so
- * none is read when they're in use: running locally with mocks needs no config secret.
+ * The integration config for the person and bulk sync services. The offline services ignore it, so
+ * none is read when they're in use: running locally offline needs no config secret.
  */
 async function serviceConfiguration(cache: DashboardCache): Promise<Config> {
-  return ServiceProvider.shouldUseMocks() ? {} as Config : cache.getConfiguration();
+  return ServiceProvider.isOffline() ? {} as Config : cache.getConfiguration();
 }
 
 /**
@@ -102,6 +102,9 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
 
       case '/api/bulk-sync/plan':
         return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user, plan: true });
+
+      case '/api/mock-landscape/reset':
+        return await handleMockLandscapeReset({ method: request.method, cache, user: request.user });
       
       case '/api/status':
         return await getSystemStatus();
@@ -420,6 +423,37 @@ async function handleBulkSync(params: {
 }
 
 /**
+ * A mock landscape's reset on its own (Overview's Reset landscape; BulkSync.resetState() / requestReset()):
+ * - GET /api/mock-landscape/reset: the last reset and whether one can be started now (MockLandscapeResetState;
+ *   `{ mockLandscape: false }` in any other landscape)
+ * - POST /api/mock-landscape/reset: start one; 202 once the chunker subscriber has accepted it
+ * A refusal is a BulkSyncError, answered with its status (400 not a mock landscape, 409 a run underway, a reset
+ * running or the subscriber in DRY_RUN, 503 not configured) and { error, code }.
+ */
+async function handleMockLandscapeReset(params: { method: string, cache: DashboardCache, user?: any }): Promise<LambdaFunctionUrlResult> {
+  const { method, cache, user } = params;
+  if (!['GET', 'POST'].includes(method)) {
+    const response = jsonResponse(405, { error: 'Method not allowed' });
+    return { ...response, headers: { ...response.headers, Allow: 'GET, POST' } };
+  }
+  try {
+    const bulkSyncService = ServiceProvider.getBulkSyncService(await serviceConfiguration(cache));
+    return method === 'GET'
+      ? jsonResponse(200, await bulkSyncService.resetState())
+      : jsonResponse(202, await bulkSyncService.requestReset(BulkSync.startedBy(user)));
+  } catch (error) {
+    if (error instanceof BulkSyncError) {
+      return jsonResponse(error.status, { error: error.message, code: error.code });
+    }
+    console.error('Error in the mock landscape reset:', error);
+    return jsonResponse(500, {
+      error: method === 'GET' ? 'The last reset could not be read' : 'The reset could not be started',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+}
+
+/**
  * Get current system status and health
  */
 async function getSystemStatus(): Promise<LambdaFunctionUrlResult> {
@@ -472,7 +506,7 @@ async function handleListRuns(method: string, queryParams: { [key: string]: stri
     return jsonResponse(400, { error: 'before must be a syncRunId (an ISO timestamp, e.g. 2026-10-01T02:00:00.000Z)' });
   }
   try {
-    return jsonResponse(200, await new RunList(ServiceProvider.getRunReportingService()).page({ limit: limitValue, before }));
+    return jsonResponse(200, await new RunList(ServiceProvider.getRunReportingService(), ServiceProvider.getLaunchFlag()).page({ limit: limitValue, before }));
   } catch (error) {
     return runReportingErrorResponse(error, 'Failed to list runs');
   }
