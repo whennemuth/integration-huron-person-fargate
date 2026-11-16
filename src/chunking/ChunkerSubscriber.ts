@@ -42,7 +42,7 @@ import { handleS3Event } from './filedrop/ChunkerS3Subscriber';
 import { handleApiEvent } from './fetch/ChunkerApiSubscriber';
 import { isRunStartEvent, resetRunCounters, RunCounterLocation } from './RunCounters';
 import { ParallelStart } from './ParallelStart';
-import { MockLandscapeLocation, MockLandscapeReset } from './MockLandscapeReset';
+import { MockLandscapeLocation, MockLandscapeReset, MockLandscapeResetVia } from './MockLandscapeReset';
 import { SourceEndpoint, SyncPopulation } from '../../docker/chunkTypes';
 import type { StartedBy } from './StartedBy';
 
@@ -101,6 +101,19 @@ export interface ApiChunkerEvent {
     processedAt?: string;
     processorVersion?: string;
   };
+}
+
+/**
+ * A mock landscape's reset on its own, not a run's start (the dashboard's Overview, Reset landscape): the chunker
+ * subscriber empties the landscape's run state (MockLandscapeReset) and records it, within the same timeout as a run's
+ * Start from scratch, and starts nothing.
+ */
+export interface MockLandscapeResetEvent {
+  mockLandscapeReset: true;
+  /** Who asked for it (the dashboard's signed-in user), recorded with the reset */
+  startedBy?: StartedBy;
+  /** When the dashboard sent it */
+  requestedAt?: string;
 }
 
 /**
@@ -168,7 +181,7 @@ export function resetRefusal(event: ApiChunkerEvent, env: NodeJS.ProcessEnv = pr
 export async function resetMockLandscapeForRunStart(
   event: ApiChunkerEvent,
   env: NodeJS.ProcessEnv = process.env,
-  reset: (location: MockLandscapeLocation) => Promise<unknown> = location => new MockLandscapeReset(MockLandscapeReset.awsDeps(location)).run()
+  reset: (location: MockLandscapeLocation, via: MockLandscapeResetVia, startedBy?: StartedBy) => Promise<unknown> = resetMockLandscape
 ): Promise<boolean> {
   if (!event.resetState) {
     return false;
@@ -178,8 +191,51 @@ export async function resetMockLandscapeForRunStart(
     console.log(`[DRY RUN] Would reset the run state of mock landscape ${LANDSCAPE}`);
     return false;
   }
-  await reset({ stackId: STACK_ID!, landscape: LANDSCAPE!, region: REGION!, chunksBucketName: CHUNKS_BUCKET_NAME! });
+  await reset({ stackId: STACK_ID!, landscape: LANDSCAPE!, region: REGION!, chunksBucketName: CHUNKS_BUCKET_NAME! }, 'bulk-sync', event.startedBy);
   return true;
+}
+
+/** A mock landscape's reset, recorded in its atomic counter table (MockLandscapeReset.recorder()) */
+export async function resetMockLandscape(location: MockLandscapeLocation, via: MockLandscapeResetVia, startedBy?: StartedBy): Promise<unknown> {
+  return new MockLandscapeReset(MockLandscapeReset.awsDeps(location))
+    .run({ via, startedBy, recorder: MockLandscapeReset.recorder(location) });
+}
+
+/** Why a reset on its own can't be done here, or undefined when it can: a mock landscape's, with its environment */
+export function resetEventRefusal(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const notMock = MockLandscapeReset.refusal(env.LANDSCAPE);
+  if (notMock) {
+    return notMock;
+  }
+  const missing = RESET_ENVIRONMENT.filter(name => !env[name]);
+  return missing.length > 0
+    ? `Can't reset the mock landscape's run state: ${missing.join(', ')} isn't set in this Lambda's environment`
+    : undefined;
+}
+
+/**
+ * A mock landscape's reset on its own (MockLandscapeResetEvent): refused with a 400 outside a mock landscape (nothing
+ * touched), skipped in DRY_RUN, otherwise run and recorded. A failed reset fails the invocation (not retried), after
+ * recording the failure.
+ */
+export async function handleResetEvent(
+  event: MockLandscapeResetEvent,
+  env: NodeJS.ProcessEnv = process.env,
+  reset: (location: MockLandscapeLocation, via: MockLandscapeResetVia, startedBy?: StartedBy) => Promise<unknown> = resetMockLandscape
+): Promise<{ statusCode: number; body: string }> {
+  const refusal = resetEventRefusal(env);
+  if (refusal) {
+    console.error(`Mock landscape reset refused: ${refusal}`);
+    return { statusCode: 400, body: refusal };
+  }
+  const { STACK_ID, LANDSCAPE, REGION, CHUNKS_BUCKET_NAME, DRY_RUN = 'false' } = env;
+  if (DRY_RUN.toLowerCase() === 'true') {
+    const body = `[DRY RUN] Would reset the run state of mock landscape ${LANDSCAPE}`;
+    console.log(body);
+    return { statusCode: 200, body };
+  }
+  const result = await reset({ stackId: STACK_ID!, landscape: LANDSCAPE!, region: REGION!, chunksBucketName: CHUNKS_BUCKET_NAME! }, 'overview', event.startedBy);
+  return { statusCode: 200, body: JSON.stringify(result) };
 }
 
 /**
@@ -203,9 +259,13 @@ export function runStartRefusal(event: ApiChunkerEvent, env: NodeJS.ProcessEnv =
  * @param context - The Lambda context (its getRemainingTimeInMillis() bounds a parallel start's wait)
  * @returns Response with status code and message
  */
-export async function handler(event: S3ChunkerEvent | ApiChunkerEvent, context?: { getRemainingTimeInMillis?: () => number }): Promise<any> {
+export async function handler(event: S3ChunkerEvent | ApiChunkerEvent | MockLandscapeResetEvent, context?: { getRemainingTimeInMillis?: () => number }): Promise<any> {
   console.log('Received event:', JSON.stringify(event, null, 2));
 
+  if (isResetEvent(event)) {
+    console.log('Event type: mock landscape reset');
+    return await handleResetEvent(event);
+  }
   // Determine event type by checking for API-specific fields
   if (isApiEvent(event)) {
     console.log('Event type: API-based chunking');
@@ -250,6 +310,11 @@ export async function startInParallel(
   }
   await resetCountersForRunStart(event, env, reset);
   return await parallelStart(event).run(event, context?.getRemainingTimeInMillis?.());
+}
+
+/** Type guard: a mock landscape's reset on its own */
+function isResetEvent(event: any): event is MockLandscapeResetEvent {
+  return event?.mockLandscapeReset === true;
 }
 
 /**

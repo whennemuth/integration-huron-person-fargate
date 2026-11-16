@@ -45,12 +45,14 @@ describe('landscapeResources', () => {
       pipelineStackId: 'huron-person-fargate-processor',
       itemsPerChunk: 200,
       sourceSimulatorFunctionName: 'source-simulator-mock',
+      atomicCounterTableName: 'huron-person-fargate-processor-atomic-counter-mock',
     });
   });
 
   it('names the source simulator only in a mock landscape', () => {
     const staging = landscapeResources({ ...makeLandscape('dynamodb'), TAGS: { Landscape: 'staging', Service: 'svc', Function: 'fn' } } as any);
     expect(staging).not.toHaveProperty('sourceSimulatorFunctionName');
+    expect(staging).not.toHaveProperty('atomicCounterTableName');
   });
 
   it("takes none of a start's choices from the context: not its chunksPerTask, nor its previous-state flags", () => {
@@ -136,7 +138,9 @@ describe('FunctionUrlOrigin', () => {
     expect(resources).toContain('table/huron-person-fargate-processor-statistics-mock/index/*');
     expect(resources).toContain('table/huron-person-fargate-processor-person-history-mock');
     expect(resources).toContain(':::huron-person-chunks-mock/*');
-    expect(resources).not.toContain('atomic-counter');
+    // The atomic counter table only to read a mock landscape's reset record (GetItem: tested below)
+    const counterActions = statements.filter((s: any) => JSON.stringify(s.Resource).includes('atomic-counter')).flatMap((s: any) => [s.Action].flat());
+    expect(counterActions).toEqual(['dynamodb:GetItem']);
   });
 
   it('may start a run as the schedule does: invoke the chunker subscriber, read both subscribers, nothing else', () => {
@@ -153,6 +157,15 @@ describe('FunctionUrlOrigin', () => {
     // Besides, in a mock landscape (this one), only the source simulator's URL lookup (tested below)
     expect(statements.flatMap((s: any) => [s.Action].flat()).every((a: string) =>
       ['lambda:InvokeFunction', 'lambda:GetFunctionConfiguration', 'lambda:GetFunctionUrlConfig'].includes(a))).toBe(true);
+  });
+
+  it("may read a mock landscape's reset record (GetItem on its atomic counter table), and write nothing there", () => {
+    const statements = Object.values(synth('dynamodb').findResources('AWS::IAM::Policy'))
+      .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+    const reads = statements.filter((s: any) => JSON.stringify(s.Resource).includes('atomic-counter'));
+    expect(reads).toHaveLength(1);
+    expect([reads[0].Action].flat()).toEqual(['dynamodb:GetItem']);
+    expect(JSON.stringify(reads[0].Resource)).toContain('table/huron-person-fargate-processor-atomic-counter-mock');
   });
 
   it("may look up a mock landscape's source simulator's Function URL, and only that", () => {

@@ -38,6 +38,8 @@ export class ServiceProvider {
   // Kept for the life of the Lambda instance: the registry caches what it reads from SSM
   private static runReporting?: RunReportingService;
   private static landscapeListing?: LandscapeListingService;
+  /** The offline Bulk sync service, for the landscape it plays */
+  private static offlineBulkSync?: { landscape: string; service: OfflineBulkSyncService };
   
   /**
    * Whether to use the offline services (a local run with LOCAL_OFFLINE=true; never in Lambda). They ignore the
@@ -90,7 +92,12 @@ export class ServiceProvider {
    */
   static getBulkSyncService(config:Config): BulkSyncService {
     if (this.isOffline()) {
-      return new OfflineBulkSyncService({ runs: this.getRunReportingService() });
+      // One per landscape played, so its state (the last mock landscape reset) lasts from request to request
+      const landscape = process.env.LANDSCAPE || '';
+      if (!this.offlineBulkSync || this.offlineBulkSync.landscape !== landscape) {
+        this.offlineBulkSync = { landscape, service: new OfflineBulkSyncService({ runs: this.getRunReportingService() }) };
+      }
+      return this.offlineBulkSync.service;
     } else {
       return BulkSync.fromEnvironment(config, this.getRunReportingService());
     }

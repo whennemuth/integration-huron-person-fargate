@@ -14,7 +14,7 @@ import { ChunkerSubscribingLambda } from '../lib/services/chunker/ChunkerSubscri
 import { BulkPurgerTables } from '../src/dynamodb/BulkPurger';
 import { MockLandscapeReset, MockLandscapeResetDeps } from '../src/chunking/MockLandscapeReset';
 import {
-  handler, resetMockLandscapeForRunStart, resetRefusal, runStartRefusal
+  handleResetEvent, handler, resetMockLandscapeForRunStart, resetRefusal, runStartRefusal
 } from '../src/chunking/ChunkerSubscriber';
 import { handleApiEvent } from '../src/chunking/fetch/ChunkerApiSubscriber';
 import { resetRunCounters, runCounterNames } from '../src/chunking/RunCounters';
@@ -50,7 +50,8 @@ describe('the shared reset (MockLandscapeReset)', () => {
     const { deps, calls } = depsFor('dynamodb');
     await expect(new MockLandscapeReset(deps).run()).resolves.toEqual({
       storageMode: 'dynamodb',
-      tablesTruncated: ['mock_target_person', 'person_current_state', 'person_history', 'statistics']
+      tablesTruncated: ['mock_target_person', 'person_current_state', 'person_history', 'statistics'],
+      tables: [], durationMs: expect.any(Number)
     });
     expect(calls).toEqual(['detect', 'truncate mock_target_person,person_current_state,person_history,statistics']);
   });
@@ -58,9 +59,50 @@ describe('the shared reset (MockLandscapeReset)', () => {
   it('S3 mode: truncates the mock target and the statistics, then deletes the S3 baseline', async () => {
     const { deps, calls } = depsFor('s3');
     await expect(new MockLandscapeReset(deps).run()).resolves.toEqual({
-      storageMode: 's3', tablesTruncated: ['mock_target_person', 'statistics'], baselineObjectsDeleted: 2
+      storageMode: 's3', tablesTruncated: ['mock_target_person', 'statistics'], tables: [], baselineObjectsDeleted: 2,
+      durationMs: expect.any(Number)
     });
     expect(calls).toEqual(['detect', 'truncate mock_target_person,statistics', 'delete baseline']);
+  });
+
+  it('records itself when it starts and when it ends, with each table\'s count and time', async () => {
+    const records: any[] = [];
+    const tables = [{ table: 'mock_target_person', tableName: 't', itemsDeleted: 146554, durationMs: 61000 }];
+    const deps: MockLandscapeResetDeps = {
+      detectStorageMode: async () => 'dynamodb', truncateTables: async () => tables as any, deleteS3Baseline: async () => 0
+    };
+    let clock = Date.parse('2026-11-15T12:00:00.000Z');
+    const now = () => (clock += 1000);
+    const startedBy = { by: 'dashboard', principal: 'wrh' } as any;
+    await new MockLandscapeReset(deps).run({ via: 'overview', startedBy, recorder: async record => { records.push(record); }, now });
+    expect(records).toEqual([
+      { via: 'overview', startedAt: '2026-11-15T12:00:01.000Z', startedBy, status: 'running' },
+      {
+        via: 'overview', startedAt: '2026-11-15T12:00:01.000Z', startedBy, status: 'succeeded', finishedAt: '2026-11-15T12:00:02.000Z',
+        durationMs: 1000, storageMode: 'dynamodb', tables
+      }
+    ]);
+  });
+
+  it('records a failure, then fails; and a record it can\'t write never fails the reset', async () => {
+    const records: any[] = [];
+    const failing: MockLandscapeResetDeps = {
+      detectStorageMode: async () => 'dynamodb', truncateTables: async () => { throw new Error('AccessDenied'); }, deleteS3Baseline: async () => 0
+    };
+    await expect(new MockLandscapeReset(failing).run({ recorder: async record => { records.push(record); } })).rejects.toThrow('AccessDenied');
+    expect(records.map(record => record.status)).toEqual(['running', 'failed']);
+    expect(records[1]).toMatchObject({ via: 'overview', error: 'AccessDenied', durationMs: expect.any(Number) });
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { deps } = depsFor('dynamodb');
+    await expect(new MockLandscapeReset(deps).run({ recorder: async () => { throw new Error('throttled'); } })).resolves.toMatchObject({ storageMode: 'dynamodb' });
+  });
+
+  it('calls a reset still running after 15 minutes stopped', () => {
+    const record = { status: 'running', via: 'overview', startedAt: '2026-11-15T12:00:00.000Z' } as any;
+    const at = (minutes: number) => Date.parse('2026-11-15T12:00:00.000Z') + minutes * 60_000;
+    expect(MockLandscapeReset.statusOf(record, at(14))).toBe('running');
+    expect(MockLandscapeReset.statusOf(record, at(16))).toBe('stopped');
+    expect(MockLandscapeReset.statusOf({ ...record, status: 'succeeded' }, at(60))).toBe('succeeded');
   });
 
   it('refuses a landscape that is not a mock landscape', () => {
@@ -94,8 +136,11 @@ describe("the chunker subscriber's reset at a run's start", () => {
 
   it('resets the landscape the environment names, only when asked, and not in DRY_RUN', async () => {
     const reset = jest.fn(async () => undefined);
-    expect(await resetMockLandscapeForRunStart({ ...runStart, resetState: true }, MOCK_ENV, reset)).toBe(true);
-    expect(reset).toHaveBeenCalledWith({ stackId: STACK_ID, landscape: 'mock', region: 'us-east-2', chunksBucketName: 'huron-person-chunks-mock' });
+    const startedBy = { by: 'dashboard', principal: 'wrh' } as any;
+    expect(await resetMockLandscapeForRunStart({ ...runStart, resetState: true, startedBy }, MOCK_ENV, reset)).toBe(true);
+    expect(reset).toHaveBeenCalledWith(
+      { stackId: STACK_ID, landscape: 'mock', region: 'us-east-2', chunksBucketName: 'huron-person-chunks-mock' }, 'bulk-sync', startedBy
+    );
     reset.mockClear();
     expect(await resetMockLandscapeForRunStart(runStart, MOCK_ENV, reset)).toBe(false);
     expect(await resetMockLandscapeForRunStart({ ...runStart, resetState: true }, { ...MOCK_ENV, DRY_RUN: 'true' }, reset)).toBe(false);
@@ -115,7 +160,7 @@ describe("the chunker subscriber's reset at a run's start", () => {
       dynamo.on(UpdateCommand).callsFake(input => { calls.push(`reset counter ${input.Key.counter_name}`); return {}; });
       jest.spyOn(MockLandscapeReset.prototype, 'run').mockImplementation(async () => {
         calls.push('reset run state');
-        return { storageMode: 'dynamodb', tablesTruncated: [] };
+        return { storageMode: 'dynamodb', tablesTruncated: [], tables: [], durationMs: 1 };
       });
       (handleApiEvent as jest.Mock).mockClear();
       (handleApiEvent as jest.Mock).mockImplementation(async () => {
@@ -150,6 +195,43 @@ describe("the chunker subscriber's reset at a run's start", () => {
       expect(calls).not.toContain('reset run state');
       expect(calls[calls.length - 1]).toBe('queue');
     });
+  });
+});
+
+describe('a reset on its own (MockLandscapeResetEvent, Overview\'s Reset landscape)', () => {
+  const startedBy = { by: 'dashboard', principal: 'wrh' } as any;
+
+  it('resets and records a mock landscape, via overview', async () => {
+    const reset = jest.fn(async () => ({ durationMs: 5 }));
+    expect(await handleResetEvent({ mockLandscapeReset: true, startedBy }, MOCK_ENV, reset)).toEqual({ statusCode: 200, body: '{"durationMs":5}' });
+    expect(reset).toHaveBeenCalledWith(
+      { stackId: STACK_ID, landscape: 'mock', region: 'us-east-2', chunksBucketName: 'huron-person-chunks-mock' }, 'overview', startedBy
+    );
+  });
+
+  it('refuses outside a mock landscape or without its environment, and does nothing in DRY_RUN', async () => {
+    const reset = jest.fn(async () => undefined);
+    expect(await handleResetEvent({ mockLandscapeReset: true }, { ...MOCK_ENV, LANDSCAPE: 'staging' }, reset))
+      .toEqual({ statusCode: 400, body: expect.stringContaining('"staging" is not a mock landscape') });
+    expect((await handleResetEvent({ mockLandscapeReset: true }, { ...MOCK_ENV, CHUNKS_BUCKET_NAME: undefined }, reset)).statusCode).toBe(400);
+    expect(await handleResetEvent({ mockLandscapeReset: true }, { ...MOCK_ENV, DRY_RUN: 'true' }, reset))
+      .toEqual({ statusCode: 200, body: '[DRY RUN] Would reset the run state of mock landscape mock' });
+    expect(reset).not.toHaveBeenCalled();
+  });
+
+  it('is what the handler does with the event, queuing nothing and touching no counter', async () => {
+    const saved = { ...process.env };
+    Object.assign(process.env, MOCK_ENV);
+    const run = jest.spyOn(MockLandscapeReset.prototype, 'run').mockImplementation(async () => ({ storageMode: 'dynamodb', tablesTruncated: [], tables: [], durationMs: 3 }));
+    (handleApiEvent as jest.Mock).mockClear();
+    try {
+      const response = await handler({ mockLandscapeReset: true, startedBy });
+      expect(response.statusCode).toBe(200);
+      expect(run).toHaveBeenCalledWith(expect.objectContaining({ via: 'overview', startedBy, recorder: expect.any(Function) }));
+      expect(handleApiEvent).not.toHaveBeenCalled();
+    } finally {
+      process.env = saved;
+    }
   });
 });
 

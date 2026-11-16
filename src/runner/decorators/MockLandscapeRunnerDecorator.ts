@@ -1,6 +1,6 @@
 import { ChunkingServiceRunner } from "../AbstractRunner";
 import { MockTargetPersonTable } from "../../dynamodb/MockTargetPersonTable";
-import { BulkPurgerTables } from "../../dynamodb/BulkPurger";
+import { BulkPurgerTables, TableTruncation } from "../../dynamodb/BulkPurger";
 import { MockLandscapeReset, StorageMode } from "../../chunking/MockLandscapeReset";
 import { Config } from "integration-huron-person";
 import { IContext } from "../../../context/IContext";
@@ -113,8 +113,8 @@ export class MockLandscapeRunnerDecorator extends ChunkingServiceRunner {
   }
 
   /** Truncates the given tables of the landscape (BulkPurger refuses a non-mock landscape) */
-  protected async truncateTables(context: IContext, tables: BulkPurgerTables[]): Promise<void> {
-    await MockLandscapeReset.truncateTables(this.locationOf(context), tables);
+  protected async truncateTables(context: IContext, tables: BulkPurgerTables[]): Promise<TableTruncation[]> {
+    return MockLandscapeReset.truncateTables(this.locationOf(context), tables);
   }
 
   /**

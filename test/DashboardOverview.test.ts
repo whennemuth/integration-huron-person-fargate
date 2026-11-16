@@ -152,6 +152,98 @@ describe.each([false, true])('overview.js and system-status.js (minified: %s)', 
     });
   });
 
+  describe("the Mock landscape section (a mock landscape's reset)", () => {
+    const table = (name: string, itemsDeleted: number, durationMs: number) => ({ table: name, tableName: `t-${name}`, itemsDeleted, durationMs });
+    const succeededReset = {
+      status: 'succeeded', via: 'overview', startedAt: '2026-11-06T11:50:00.000Z', finishedAt: '2026-11-06T11:51:42.000Z', durationMs: 102_000,
+      startedBy: { by: 'dashboard', principal: 'wrh' }, storageMode: 'dynamodb',
+      tables: [table('mock_target_person', 146554, 101_000), table('statistics', 1489, 4_000)]
+    };
+    const state = (last?: any, extra: any = {}) => ({ mockLandscape: true, landscape: 'mock', ...(last ? { last } : {}), ...extra });
+
+    it('says what the last reset emptied and how long each table took, to the second', () => {
+      const html = OverviewPage.resetHtml(state(succeededReset), NOW);
+      expect(html).toContain('The last reset, started 10 min ago from Overview by wrh, finished in 1 min 42 s.');
+      expect(html).toMatch(/Target simulator&#39;s people<\/td>\s*<td class="num">146,554<\/td>\s*<td class="num">1 min 41 s<\/td>/);
+      expect(html).toMatch(/Run history \(statistics\)<\/td>\s*<td class="num">1,489<\/td>\s*<td class="num">4.0 s<\/td>/);
+      expect(html).toContain('data-action="reset-landscape"');
+      expect(html).not.toMatch(/data-action="reset-landscape" disabled/);
+    });
+
+    it('says a reset is underway, never finished, failed, or has not happened', () => {
+      expect(OverviewPage.lastResetHtml({ ...succeededReset, status: 'running', durationMs: undefined }, NOW))
+        .toContain('A reset started 10 min ago from Overview by wrh is underway.');
+      expect(OverviewPage.lastResetHtml({ ...succeededReset, status: 'stopped', via: 'bulk-sync' }, NOW))
+        .toContain("by Bulk sync&#39;s Start from scratch by wrh, never finished: it most likely ran out of the chunker subscriber's 10 minutes");
+      expect(OverviewPage.lastResetHtml({ ...succeededReset, status: 'failed', durationMs: 3_000, error: 'AccessDenied <x>' }, NOW))
+        .toContain('failed after 3.0 s: AccessDenied &lt;x&gt;');
+      expect(OverviewPage.lastResetHtml(undefined, NOW)).toContain('No reset recorded yet.');
+      expect(OverviewPage.resetHtml(state(undefined, { lastError: 'denied' }), NOW)).toContain('The last reset could not be read: denied');
+    });
+
+    it("disables Reset landscape, saying why, when one can't be started now", () => {
+      const html = OverviewPage.resetHtml(state(succeededReset, { blocked: { code: 'RUN_UNDERWAY', message: 'The run of x is still underway' } }), NOW);
+      expect(html).toContain("A reset can't be started now: The run of x is still underway");
+      expect(html).toMatch(/data-action="reset-landscape" disabled/);
+    });
+
+    /** The Overview partial's parts, with the Mock landscape section and what its content holds */
+    const resetPage = (reset: () => Promise<any>, options: { confirm?: boolean; post?: () => Promise<any> } = {}) => {
+      const { root, parts } = fakeOverview();
+      const section = Object.assign(new FakeElement('section'), { hidden: true });
+      const message = Object.assign(new FakeElement('p'), { hidden: true });
+      const button = Object.assign(new FakeElement('button'), { disabled: false });
+      const container = Object.assign(new FakeElement(), {
+        querySelector: (selector: string) => ({ '[data-mock-reset-message]': message, '[data-action="reset-landscape"]': button } as any)[selector]
+      });
+      parts['[data-mock-reset-section]'] = section;
+      parts['[data-mock-reset]'] = container as any;
+      const posted: string[] = [];
+      const getJson = async (path: string) => path === '/api/mock-landscape/reset' ? reset() : path === '/api/status' ? { services: {} } : {};
+      const postJson = async (path: string) => { posted.push(path); return options.post ? options.post() : { status: 'requested' }; };
+      const page = new OverviewPage({
+        api: { listRuns: async () => ({ items: [] }) }, getJson, postJson, root, now: () => NOW, confirm: () => options.confirm ?? true
+      });
+      return { page, section, container, message, button, posted };
+    };
+
+    it('shows the section only in a mock landscape, and says when its state can\'t be read', async () => {
+      const elsewhere = resetPage(async () => ({ mockLandscape: false }));
+      await elsewhere.page.load();
+      expect(elsewhere.section.hidden).toBe(true);
+      const mock = resetPage(async () => state(succeededReset));
+      await mock.page.load();
+      expect(mock.section.hidden).toBe(false);
+      expect(mock.container.innerHTML).toContain('finished in 1 min 42 s');
+      const failing = resetPage(async () => { throw new Error('denied'); });
+      await failing.page.load();
+      expect(failing.section.hidden).toBe(false);
+      expect(failing.container.stateText).toBe("The mock landscape's last reset could not be read denied");
+    });
+
+    it('asks before a reset, then hands it to the chunker subscriber and says it has started', async () => {
+      const declined = resetPage(async () => state(succeededReset), { confirm: false });
+      await declined.page.load();
+      expect(await declined.page.reset()).toBe(false);
+      expect(declined.posted).toEqual([]);
+
+      const confirmed = resetPage(async () => state(succeededReset));
+      await confirmed.page.load();
+      expect(await confirmed.page.reset()).toBe(true);
+      expect(confirmed.posted).toEqual(['/api/mock-landscape/reset']);
+      expect(confirmed.button.disabled).toBe(true);
+      expect(confirmed.message).toMatchObject({ hidden: false, textContent: expect.stringContaining('The reset has started') });
+    });
+
+    it("says why a reset wasn't started, and lets it be tried again", async () => {
+      const refused = resetPage(async () => state(succeededReset), { post: async () => { throw new Error('A reset is still running'); } });
+      await refused.page.load();
+      expect(await refused.page.reset()).toBe(false);
+      expect(refused.button.disabled).toBe(false);
+      expect(refused.message.textContent).toBe("The reset wasn't started: A reset is still running");
+    });
+  });
+
   describe('OverviewPage', () => {
     const createPage = (listRuns: () => Promise<any>, getJson: (path: string) => Promise<any>) => {
       const { root, parts } = fakeOverview();
@@ -235,10 +327,35 @@ describe('overview.js against the dashboard routes and offline services', () => 
   beforeEach(() => jest.spyOn(console, 'log').mockImplementation(() => {}));
   afterEach(() => jest.restoreAllMocks());
 
-  it('shows the newest mock run and the mock service checks', async () => {
+  it('shows the newest offline run and the offline service checks', async () => {
     const { root, parts } = fakeOverview();
     await new OverviewPage({ api: new RunsApi(getJson), getJson, root }).load();
     expect(parts['[data-latest-run]'].innerHTML).toContain(`#runs/${NEWEST_OFFLINE_RUN}`);
     expect(parts['[data-services]'].innerHTML).toContain('Target API (Huron)');
+  });
+
+  it("serves a mock landscape's reset: its last one, then a reset requested, then that one (offline, playing mock)", async () => {
+    const call = async (method: string): Promise<{ statusCode: number; data: any }> => {
+      const result = await handler({
+        rawPath: '/api/mock-landscape/reset', queryStringParameters: {}, headers: {}, body: method === 'POST' ? '{}' : undefined,
+        requestContext: { http: { method, path: '/api/mock-landscape/reset' } }, isBase64Encoded: false
+      } as unknown as LambdaFunctionUrlEvent);
+      return { statusCode: result.statusCode, data: JSON.parse(`${result.body}`) };
+    };
+    expect((await call('GET')).data).toEqual({ mockLandscape: false });
+    process.env.LANDSCAPE = 'mock';
+    try {
+      const before = await call('GET');
+      expect(before).toMatchObject({ statusCode: 200, data: { mockLandscape: true, landscape: 'mock', last: { status: 'succeeded', via: 'overview' } } });
+      expect(before.data.last.tables).toHaveLength(4);
+      const requested = await call('POST');
+      expect(requested).toMatchObject({ statusCode: 202, data: { status: 'requested', landscape: 'mock' } });
+      const after = await call('GET');
+      expect(after.data.last).toMatchObject({ status: 'succeeded', startedAt: requested.data.requestedAt });
+      expect(after.data.last.tables.every((table: any) => table.itemsDeleted === 0)).toBe(true);
+      expect((await call('PUT')).statusCode).toBe(405);
+    } finally {
+      delete process.env.LANDSCAPE;
+    }
   });
 });

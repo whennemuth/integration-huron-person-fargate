@@ -1,7 +1,8 @@
 import { GetFunctionConfigurationCommand, GetFunctionUrlConfigCommand, InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { Config } from 'integration-huron-person';
 import { SyncPopulation } from '../../../docker/chunkTypes';
-import type { ApiChunkerEvent } from '../../../src/chunking/ChunkerSubscriber';
+import type { ApiChunkerEvent, MockLandscapeResetEvent } from '../../../src/chunking/ChunkerSubscriber';
+import { MockLandscapeReset, MockLandscapeResetRecord } from '../../../src/chunking/MockLandscapeReset';
 import { ScheduledRun } from '../../../src/chunking/ScheduledRun';
 import { RunStarter, StartedBy } from '../../../src/chunking/StartedBy';
 import type { RunReport } from '../../../src/reporting/RunReporting';
@@ -14,8 +15,8 @@ import {
 import { CACHE_SECRET } from '../handlers/DashboardCache';
 import {
   BulkSyncChoices, BulkSyncErrorCode, BulkSyncPlan, BulkSyncPopulation, BulkSyncRequestBody, BulkSyncResult,
-  BulkSyncRunType, BulkSyncService, BulkSyncSetting, BulkSyncSource, BulkSyncState, MockLandscapeOptions, RunActivityState,
-  RunReportingService, SimulatorSettings
+  BulkSyncRunType, BulkSyncService, BulkSyncSetting, BulkSyncSource, BulkSyncState, MockLandscapeOptions,
+  MockLandscapeResetRequested, MockLandscapeResetState, RunActivityState, RunReportingService, SimulatorSettings
 } from './ServiceTypes';
 
 /** Refused starts, each with the HTTP status the route answers with */
@@ -26,6 +27,7 @@ export class BulkSyncError extends Error {
     RUN_UNDERWAY: 409,
     RUN_STALLED: 409,
     SUBSCRIBER_DRY_RUN: 409,
+    RESET_UNDERWAY: 409,
     NOT_CONFIGURED: 503
   };
 
@@ -328,8 +330,8 @@ export class AwsSourceSimulatorService implements SourceSimulatorService {
 export interface ChunkerFunctions {
   /** Whether the function's DRY_RUN environment variable is 'true' (the manual Runner's decorators set it) */
   isDryRun(functionName: string): Promise<boolean>;
-  /** Invoke asynchronously, as the EventBridge schedule does */
-  invokeAsync(functionName: string, event: ApiChunkerEvent): Promise<void>;
+  /** Invoke asynchronously, as the EventBridge schedule does (a run's start, or a mock landscape's reset on its own) */
+  invokeAsync(functionName: string, event: ApiChunkerEvent | MockLandscapeResetEvent): Promise<void>;
 }
 
 export class LambdaChunkerFunctions implements ChunkerFunctions {
@@ -340,7 +342,7 @@ export class LambdaChunkerFunctions implements ChunkerFunctions {
     return (Environment?.Variables?.DRY_RUN ?? 'false').toLowerCase() === 'true';
   }
 
-  async invokeAsync(functionName: string, event: ApiChunkerEvent): Promise<void> {
+  async invokeAsync(functionName: string, event: ApiChunkerEvent | MockLandscapeResetEvent): Promise<void> {
     const { StatusCode, FunctionError } = await this.client.send(new InvokeCommand({
       FunctionName: functionName,
       InvocationType: 'Event',
@@ -400,6 +402,8 @@ export class BulkSync implements BulkSyncService {
     chunkerService?: ChunkerService;
     /** A mock landscape's source simulator; absent elsewhere (or where the dashboard isn't told its name) */
     simulator?: SourceSimulatorService;
+    /** A mock landscape's reset record (MockLandscapeReset.readRecord()); absent elsewhere */
+    resetRecords?: { read(): Promise<MockLandscapeResetRecord | undefined> };
     now?: () => number;
   }) {}
 
@@ -440,7 +444,11 @@ export class BulkSync implements BulkSyncService {
       functions: new LambdaChunkerFunctions(lambda),
       chunkerService: new AwsChunkerService({ clusterName: CHUNKER_CLUSTER_NAME, serviceName: CHUNKER_SERVICE_NAME, region: REGION }),
       // A mock landscape's dashboard only is told the simulator's name (dashboard/lib/LandscapeResources.ts)
-      ...(SOURCE_SIMULATOR_FUNCTION_NAME ? { simulator: new AwsSourceSimulatorService(SOURCE_SIMULATOR_FUNCTION_NAME, lambda) } : {})
+      ...(SOURCE_SIMULATOR_FUNCTION_NAME ? { simulator: new AwsSourceSimulatorService(SOURCE_SIMULATOR_FUNCTION_NAME, lambda) } : {}),
+      // A mock landscape's reset record, in its atomic counter table (GetItem granted to a mock landscape's dashboard only)
+      ...(isMockLandscape(LANDSCAPE) && PIPELINE_STACK_ID && REGION ? {
+        resetRecords: { read: () => MockLandscapeReset.readRecord({ stackId: PIPELINE_STACK_ID, region: REGION, landscape: LANDSCAPE! }) }
+      } : {})
     });
   }
 
@@ -494,6 +502,84 @@ export class BulkSync implements BulkSyncService {
       ...(settings.itemsPerChunk !== undefined ? { itemsPerChunk: settings.itemsPerChunk } : {}),
       ...(this.mockLandscape ? { mock: await this.mockOptions() } : {})
     };
+  }
+
+  /**
+   * Overview's Mock landscape section: the last reset (recorded by the chunker subscriber, as of now), and why a reset
+   * can't be started now. Not a mock landscape: just that.
+   */
+  async resetState(): Promise<MockLandscapeResetState> {
+    if (!this.mockLandscape) {
+      return { mockLandscape: false };
+    }
+    let record: MockLandscapeResetRecord | undefined;
+    let lastError: string | undefined;
+    try {
+      record = await this.deps.resetRecords?.read();
+    } catch (error: any) {
+      lastError = `${error?.message ?? error}`;
+    }
+    const last = record ? { ...record, status: MockLandscapeReset.statusOf(record, this.now) } : undefined;
+    let blocked: { code: BulkSyncErrorCode; message: string } | undefined;
+    try {
+      await this.checkResetGuards(last?.status);
+    } catch (error) {
+      if (!(error instanceof BulkSyncError)) {
+        throw error;
+      }
+      blocked = { code: error.code, message: error.message };
+    }
+    return {
+      mockLandscape: true, landscape: this.deps.settings.landscape,
+      ...(last ? { last } : {}), ...(lastError ? { lastError } : {}), ...(blocked ? { blocked } : {})
+    };
+  }
+
+  /**
+   * Start a mock landscape's reset on its own (Overview's Reset landscape): the chunker subscriber, invoked
+   * asynchronously with a MockLandscapeResetEvent, empties the target simulator, Run history and the fingerprints, and
+   * records it. Nothing is started besides.
+   * @throws BulkSyncError when refused: not a mock landscape, not configured, a run underway, a reset still running,
+   *   or the chunker subscriber in DRY_RUN
+   */
+  async requestReset(startedBy?: StartedBy): Promise<MockLandscapeResetRequested> {
+    const { settings, functions } = this.deps;
+    if (!this.mockLandscape) {
+      throw new BulkSyncError('INVALID_REQUEST', `${settings.landscape} is not a mock landscape: only a mock landscape can be reset`);
+    }
+    let record: MockLandscapeResetRecord | undefined;
+    try {
+      record = await this.deps.resetRecords?.read();
+    } catch (error: any) {
+      console.warn(`Couldn't read the last mock landscape reset: ${error?.message ?? error}`);
+    }
+    await this.checkResetGuards(record ? MockLandscapeReset.statusOf(record, this.now) : undefined);
+    const requestedAt = new Date(this.now).toISOString();
+    const event: MockLandscapeResetEvent = { mockLandscapeReset: true, requestedAt, ...(startedBy ? { startedBy } : {}) };
+    await functions.invokeAsync(settings.chunkerFunctionName!, event);
+    console.log(`Mock landscape reset requested in ${settings.landscape}: ${JSON.stringify({ startedBy })}`);
+    return { status: 'requested', landscape: settings.landscape, requestedAt };
+  }
+
+  /** @throws BulkSyncError when a reset would be refused now */
+  private async checkResetGuards(lastStatus?: string): Promise<void> {
+    const { settings, functions } = this.deps;
+    if (settings.missing && settings.missing.length > 0) {
+      throw new BulkSyncError('NOT_CONFIGURED',
+        `Resetting isn't configured in this landscape's dashboard: missing ${settings.missing.join(', ')} (redeploy its dashboard stack)`);
+    }
+    const latestRun = await this.latestRun();
+    if (latestRun.kind === 'underway') {
+      throw new BulkSyncError('RUN_UNDERWAY',
+        `The run of ${latestRun.syncRunId} is still underway: a reset would empty the tables it is writing to. Wait for it to finish`);
+    }
+    if (lastStatus === 'running') {
+      throw new BulkSyncError('RESET_UNDERWAY', 'A reset is still running: wait for it to finish (Refresh to see it)');
+    }
+    if (await functions.isDryRun(settings.chunkerFunctionName!)) {
+      throw new BulkSyncError('SUBSCRIBER_DRY_RUN',
+        `The chunker subscriber (${settings.chunkerFunctionName}) is in DRY_RUN, left by the manual Runner, so a reset would do nothing: clear it first`);
+    }
   }
 
   /** A mock landscape's options: whether the simulator can be the source, and its settings to start the form from */

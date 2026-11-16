@@ -30,7 +30,7 @@ window.addEventListener('load', function() {
     }
     const overviewRoot = document.getElementById('overview');
     if (overviewRoot) {
-        overviewPage = new OverviewPage({ api: runsApi, getJson: fetchSectionData, root: overviewRoot });
+        overviewPage = new OverviewPage({ api: runsApi, getJson: fetchSectionData, postJson: postSectionData, root: overviewRoot });
     }
     const bulkRoot = document.getElementById('bulk');
     if (bulkRoot) {

@@ -22,6 +22,8 @@ import { CrudOperation } from 'integration-core';
 import { Config, PersonPushRequest } from 'integration-huron-person';
 import type { ApiChunkerEvent } from '../../../src/chunking/ChunkerSubscriber';
 import { BulkSync, BulkSyncSettings, SourceSimulatorService } from '../services/BulkSync';
+import type { MockLandscapeResetRecord } from '../../../src/chunking/MockLandscapeReset';
+import { MockLandscapeResetRequested, MockLandscapeResetState } from '../services/ServiceTypes';
 import { isMockLandscape } from '../../../src/Utils';
 import type { StartedBy } from '../../../src/chunking/StartedBy';
 import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
@@ -129,7 +131,21 @@ export class OfflineBulkSyncService implements BulkSyncService {
     settings: async () => ({ totalPopulation: 1950, simulatedDelaySeconds: 3, errorRate: 0 })
   };
   /** The chunker events this instance's starts would have sent, oldest first */
-  readonly invoked: ApiChunkerEvent[] = [];
+  readonly invoked: (ApiChunkerEvent | { mockLandscapeReset: true })[] = [];
+  /**
+   * A mock landscape's last reset, as the chunker subscriber would have recorded it: one from Overview that emptied
+   * an old hybrid run's tables; a reset requested here replaces it with one that found them empty
+   */
+  private resetRecord: MockLandscapeResetRecord = {
+    status: 'succeeded', via: 'overview', startedAt: '2026-11-04T08:00:00.000Z', finishedAt: '2026-11-04T08:01:42.000Z',
+    durationMs: 102_000, startedBy: { by: 'dashboard', principal: 'jdoe' } as any, storageMode: 'dynamodb',
+    tables: [
+      { table: 'mock_target_person' as any, tableName: 'huron-person-fargate-processor-mock-target-person-mock', itemsDeleted: 146554, durationMs: 101_000 },
+      { table: 'person_current_state' as any, tableName: 'huron-person-fargate-processor-person-current-state-mock', itemsDeleted: 145793, durationMs: 97_000 },
+      { table: 'person_history' as any, tableName: 'huron-person-fargate-processor-person-history-mock', itemsDeleted: 145795, durationMs: 98_000 },
+      { table: 'statistics' as any, tableName: 'huron-person-fargate-processor-statistics-mock', itemsDeleted: 1489, durationMs: 4_000 }
+    ]
+  };
   private readonly service: BulkSync;
 
   constructor(params: {
@@ -162,11 +178,22 @@ export class OfflineBulkSyncService implements BulkSyncService {
       runs,
       functions: {
         isDryRun: async functionName => dryRun.includes(functionName),
-        invokeAsync: async (_functionName, event) => { this.invoked.push(event); }
+        invokeAsync: async (_functionName, event) => {
+          this.invoked.push(event as any);
+          if ((event as any).mockLandscapeReset) {
+            // The tables are empty offline: the reset finds nothing to delete, at once
+            const at = new Date((now ?? Date.now)()).toISOString();
+            this.resetRecord = {
+              status: 'succeeded', via: 'overview', startedAt: at, finishedAt: at, durationMs: 0, startedBy: (event as any).startedBy, storageMode: 'dynamodb',
+              tables: (this.resetRecord.tables ?? []).map(table => ({ ...table, itemsDeleted: 0, durationMs: 0 }))
+            };
+          }
+        }
       },
       // As preview's chunker service: at most 15 tasks
       chunkerService: { maxTasks: async () => OfflineBulkSyncService.CHUNKER_MAX_TASKS },
       ...(simulator ? { simulator } : {}),
+      resetRecords: { read: async () => this.resetRecord },
       now
     });
   }
@@ -181,6 +208,14 @@ export class OfflineBulkSyncService implements BulkSyncService {
 
   start(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncResult> {
     return this.service.start(request, startedBy);
+  }
+
+  resetState(): Promise<MockLandscapeResetState> {
+    return this.service.resetState();
+  }
+
+  requestReset(startedBy?: StartedBy): Promise<MockLandscapeResetRequested> {
+    return this.service.requestReset(startedBy);
   }
 }
 

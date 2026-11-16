@@ -93,12 +93,37 @@ describe('BulkPurger landscape guard', () => {
   it('purges a non-mock landscape only when forced', async () => {
     jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     const purger = new BulkPurger({ mode: BulkPurgerMode.TRUNCATE, context: contextFor('preview'), dryRun: true, force: true });
-    await expect(purger.purge()).resolves.toBeUndefined();
+    await expect(purger.purge()).resolves.toEqual([]);
   });
 
   it('purges a mock landscape (dry run)', async () => {
     const purger = new BulkPurger({ mode: BulkPurgerMode.TRUNCATE, context: contextFor('mock'), dryRun: true });
-    await expect(purger.purge()).resolves.toBeUndefined();
+    await expect(purger.purge()).resolves.toEqual([]);
+  });
+
+  it('truncates the tables at the same time, reporting what each deleted and how long it took', async () => {
+    const { MockTargetPersonTable: Target } = await import('../src/dynamodb/MockTargetPersonTable');
+    const { PersonCurrentStateTable } = await import('../src/dynamodb/PersonCurrentStateTable');
+    const running: string[] = [];
+    let together = 0;
+    const slow = (name: string, count: number) => async () => {
+      running.push(name);
+      together = Math.max(together, running.length);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      running.splice(running.indexOf(name), 1);
+      return count;
+    };
+    jest.spyOn(Target.prototype, 'truncate').mockImplementation(slow('target', 146554));
+    jest.spyOn(PersonCurrentStateTable.prototype, 'truncate').mockImplementation(slow('current state', 145793));
+    const results = await new BulkPurger({
+      mode: BulkPurgerMode.TRUNCATE, context: contextFor('mock'), dryRun: false,
+      tables: [BulkPurgerTables.MOCK_TARGET_PERSON, BulkPurgerTables.PERSON_CURRENT_STATE]
+    }).purge();
+    expect(together).toBe(2);
+    expect(results).toEqual([
+      { table: 'mock_target_person', tableName: `${STACK_ID}-mock-target-person-mock`, itemsDeleted: 146554, durationMs: expect.any(Number) },
+      { table: 'person_current_state', tableName: `${STACK_ID}-person-current-state-mock`, itemsDeleted: 145793, durationMs: expect.any(Number) }
+    ]);
   });
 });
 

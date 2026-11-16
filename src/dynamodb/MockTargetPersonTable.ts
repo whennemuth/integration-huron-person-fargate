@@ -1,6 +1,7 @@
 import { IContext } from '../../context/IContext';
 import { DynamoDBClient, DescribeTableCommand } from '@aws-sdk/client-dynamodb';
-import { DeleteCommand, DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBTable } from './DynamoDBTable';
 
 /**
  * Mock Target Person Table
@@ -61,6 +62,7 @@ export class MockTargetPersonTable implements MockTargetPersonStore {
   private client: DynamoDBDocumentClient;
   private rawClient: DynamoDBClient;
   private tableName: string;
+  private region?: string;
 
   constructor(params: { context?: IContext; tableName?: string; region?: string }) {
     const { context, tableName, region } = params;
@@ -74,7 +76,8 @@ export class MockTargetPersonTable implements MockTargetPersonStore {
       throw new Error('MockTargetPersonTable requires tableName, context, or DYNAMODB_MOCK_TARGET_PERSON_TABLE_NAME');
     }
 
-    this.rawClient = new DynamoDBClient({ region: region || context?.REGION || process.env.REGION });
+    this.region = region || context?.REGION || process.env.REGION;
+    this.rawClient = new DynamoDBClient({ region: this.region });
     this.client = DynamoDBDocumentClient.from(this.rawClient, { marshallOptions: { removeUndefinedValues: true } });
   }
 
@@ -112,39 +115,16 @@ export class MockTargetPersonTable implements MockTargetPersonStore {
   /**
    * Truncate the table (delete all records).
    * WARNING: This is destructive and irreversible.
-   * Use for resetting mock target state before a new test run.
+   * Use for resetting mock target state before a new test run. Through DynamoDBTable.truncateTable(): keys only, in
+   * parallel batches. (It used to read every whole record into memory, some 93 MB for 146,554 people, then delete
+   * them one DeleteItem at a time, which a mock landscape's chunker subscriber isn't granted.)
    *
-   * @param chunkSize - Number of concurrent deletes per batch (default: 25)
+   * @param chunkSize - Keys per delete batch (default and most: 25)
+   * @returns The number of records deleted
    */
-  public async truncate(chunkSize: number = 25): Promise<void> {
-    console.log(`[MockTargetPersonTable] Truncating table: ${this.tableName}`);
-
-    const allRecords = await this.listAll();
-    console.log(`[MockTargetPersonTable] Found ${allRecords.length} records to delete`);
-
-    if (allRecords.length === 0) {
-      console.log(`[MockTargetPersonTable] Table is already empty`);
-      return;
-    }
-
-    let deleteCount = 0;
-    for (let i = 0; i < allRecords.length; i += chunkSize) {
-      const batch = allRecords.slice(i, i + chunkSize);
-
-      await Promise.all(
-        batch.map(record =>
-          this.client.send(new DeleteCommand({
-            TableName: this.tableName,
-            Key: { [DYNAMODB_PARTITION_KEY]: record.personId }
-          }))
-        )
-      );
-
-      deleteCount += batch.length;
-      console.log(`[MockTargetPersonTable] Deleted ${deleteCount}/${allRecords.length} records`);
-    }
-
-    console.log(`[MockTargetPersonTable] ✓ Truncation complete`);
+  public async truncate(chunkSize: number = 25): Promise<number> {
+    return new DynamoDBTable({ region: this.region as string, tableName: this.tableName, partitionKey: DYNAMODB_PARTITION_KEY })
+      .truncateTable(chunkSize);
   }
 
   /**

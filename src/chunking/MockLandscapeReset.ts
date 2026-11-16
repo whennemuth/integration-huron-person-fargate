@@ -1,7 +1,10 @@
 import { DeleteObjectsCommand, ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import { DescribeTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { IContext } from '../../context/IContext';
-import { BulkPurger, BulkPurgerMode, BulkPurgerTables } from '../dynamodb/BulkPurger';
+import { BulkPurger, BulkPurgerMode, BulkPurgerTables, TableTruncation } from '../dynamodb/BulkPurger';
+import { DYNAMODB_TABLE_NAME as atomicCounterTableName } from '../dynamodb/AtomicCounter';
+import type { StartedBy } from './StartedBy';
 import { DYNAMODB_TABLE_NAME as personCurrentStateTableName } from '../dynamodb/PersonCurrentStateTable';
 import { isMockLandscape, MOCK_LANDSCAPE_PATTERN } from '../Utils';
 
@@ -20,7 +23,8 @@ export type StorageMode = 'dynamodb' | 's3';
 /** What a reset does to AWS, injectable for tests */
 export type MockLandscapeResetDeps = {
   detectStorageMode: () => Promise<StorageMode>;
-  truncateTables: (tables: BulkPurgerTables[]) => Promise<void>;
+  /** @returns What each table's truncation deleted, and how long it took */
+  truncateTables: (tables: BulkPurgerTables[]) => Promise<TableTruncation[] | void>;
   /** @returns The number of objects deleted */
   deleteS3Baseline: () => Promise<number>;
 };
@@ -28,9 +32,36 @@ export type MockLandscapeResetDeps = {
 export type MockLandscapeResetResult = {
   storageMode: StorageMode;
   tablesTruncated: BulkPurgerTables[];
+  /** Each table's count and time */
+  tables: TableTruncation[];
   /** S3 mode only */
   baselineObjectsDeleted?: number;
+  durationMs: number;
 };
+
+/** How a reset was started: Overview's Reset landscape, or Bulk sync's Start from scratch (a run's resetState) */
+export type MockLandscapeResetVia = 'overview' | 'bulk-sync';
+
+/**
+ * A reset's record (MockLandscapeReset.RECORD_NAME in the landscape's atomic counter table, which no reset empties):
+ * written when it starts and again when it ends, so the dashboard can say what the last reset did and how long each
+ * table took. One that starts and never ends (its Lambda timed out) stays `running`: statusOf() calls it stopped.
+ */
+export type MockLandscapeResetRecord = {
+  status: 'running' | 'succeeded' | 'failed';
+  via: MockLandscapeResetVia;
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+  startedBy?: StartedBy;
+  storageMode?: StorageMode;
+  tables?: TableTruncation[];
+  baselineObjectsDeleted?: number;
+  error?: string;
+};
+
+/** Writes a reset's record; recording never fails the reset */
+export type MockLandscapeResetRecorder = (record: MockLandscapeResetRecord) => Promise<void>;
 
 /**
  * Resets a mock landscape's run state, so a run starts from scratch with the delta baseline and the mock target in
@@ -42,9 +73,11 @@ export type MockLandscapeResetResult = {
  * The mode is detected from the deployed stack rather than read from config: the person current-state table exists
  * only in DynamoDB mode (CDK creates it only then, and deletes it when the stack is switched to S3 mode).
  *
- * Shared by the manual Runner (MockLandscapeRunnerDecorator, MOCK_TARGET_RESET_STATE) and the chunker subscriber's
- * run start (ApiChunkerEvent.resetState, the dashboard's Bulk sync). Emptying the statistics table empties the
- * landscape's Run history too.
+ * Shared by the manual Runner (MockLandscapeRunnerDecorator, MOCK_TARGET_RESET_STATE) and the chunker subscriber: a
+ * run's start (ApiChunkerEvent.resetState, Bulk sync's Start from scratch), or a reset on its own (a
+ * MockLandscapeResetEvent, Overview's Reset landscape). The subscriber records each reset (MockLandscapeResetRecord) in
+ * the atomic counter table. The tables are truncated at the same time, each with a parallel scan
+ * (DynamoDBTable.truncateTable()). Emptying the statistics table empties the landscape's Run history too.
  */
 export class MockLandscapeReset {
   /**
@@ -52,6 +85,14 @@ export class MockLandscapeReset {
    * unless the integration config's storage.config has a keyPrefix, which a reset doesn't cover.
    */
   static readonly SHARED_DELTA_STORAGE_DIR = 'delta-storage';
+
+  /** The atomic counter table item that holds the last reset's record (MockLandscapeResetRecord) */
+  static readonly RECORD_NAME = 'mock-landscape-reset';
+  /**
+   * A reset still `running` this long after it started has stopped: no Lambda runs longer (15 minutes, its maximum),
+   * so it ran out of time or failed without recording it
+   */
+  static readonly STOPPED_AFTER_MS = 15 * 60_000;
 
   constructor(private readonly deps: MockLandscapeResetDeps) {}
 
@@ -79,15 +120,82 @@ export class MockLandscapeReset {
     };
   }
 
-  /** Resets the run state (see the class comment) */
-  async run(): Promise<MockLandscapeResetResult> {
-    const storageMode = await this.deps.detectStorageMode();
-    console.log(`   🗑️  Resetting mock landscape run state (${storageMode} storage mode)...`);
-    const tablesTruncated = MockLandscapeReset.tablesFor(storageMode);
-    await this.deps.truncateTables(tablesTruncated);
-    const baselineObjectsDeleted = storageMode === 's3' ? await this.deps.deleteS3Baseline() : undefined;
-    console.log('   ✓ Mock landscape reset complete');
-    return { storageMode, tablesTruncated, ...(baselineObjectsDeleted === undefined ? {} : { baselineObjectsDeleted }) };
+  /**
+   * Resets the run state (see the class comment). With a recorder, records the reset when it starts and when it
+   * ends, succeeded or failed (a failure is then rethrown).
+   */
+  async run(options: { via?: MockLandscapeResetVia; startedBy?: StartedBy; recorder?: MockLandscapeResetRecorder; now?: () => number } = {}): Promise<MockLandscapeResetResult> {
+    const { via = 'overview', startedBy, recorder, now = Date.now } = options;
+    const started = now();
+    const base = { via, startedAt: new Date(started).toISOString(), ...(startedBy ? { startedBy } : {}) };
+    const record = async (entry: MockLandscapeResetRecord) => {
+      try {
+        await recorder?.(entry);
+      } catch (error: any) {
+        console.warn(`Couldn't record the mock landscape reset (${entry.status}): ${error?.message ?? error}`);
+      }
+    };
+    await record({ ...base, status: 'running' });
+    try {
+      const storageMode = await this.deps.detectStorageMode();
+      console.log(`   🗑️  Resetting mock landscape run state (${storageMode} storage mode)...`);
+      const tablesTruncated = MockLandscapeReset.tablesFor(storageMode);
+      const tables = (await this.deps.truncateTables(tablesTruncated)) || [];
+      tables.forEach(({ tableName, itemsDeleted, durationMs }) => console.log(`   Deleted ${itemsDeleted} item(s) from ${tableName} in ${durationMs} ms`));
+      const baselineObjectsDeleted = storageMode === 's3' ? await this.deps.deleteS3Baseline() : undefined;
+      const finished = now();
+      const result: MockLandscapeResetResult = {
+        storageMode, tablesTruncated, tables, durationMs: finished - started,
+        ...(baselineObjectsDeleted === undefined ? {} : { baselineObjectsDeleted })
+      };
+      console.log(`   ✓ Mock landscape reset complete in ${result.durationMs} ms`);
+      await record({
+        ...base, status: 'succeeded', finishedAt: new Date(finished).toISOString(), durationMs: result.durationMs, storageMode, tables,
+        ...(baselineObjectsDeleted === undefined ? {} : { baselineObjectsDeleted })
+      });
+      return result;
+    } catch (error: any) {
+      const finished = now();
+      await record({
+        ...base, status: 'failed', finishedAt: new Date(finished).toISOString(), durationMs: finished - started,
+        error: `${error?.message ?? error}`
+      });
+      throw error;
+    }
+  }
+
+  /** A record's status as of now: `running` beyond STOPPED_AFTER_MS is `stopped` */
+  static statusOf(record: MockLandscapeResetRecord, now: number = Date.now()): MockLandscapeResetRecord['status'] | 'stopped' {
+    return record.status === 'running' && now - Date.parse(record.startedAt) > MockLandscapeReset.STOPPED_AFTER_MS
+      ? 'stopped'
+      : record.status;
+  }
+
+  /**
+   * Writes a reset's record to the landscape's atomic counter table (UpdateItem, which the chunker subscriber is
+   * granted there for the run counters), whole: the item's `reset` attribute is replaced.
+   */
+  static recorder(location: Pick<MockLandscapeLocation, 'stackId' | 'region' | 'landscape'>): MockLandscapeResetRecorder {
+    const client = DynamoDBDocumentClient.from(new DynamoDBClient({ region: location.region }), { marshallOptions: { removeUndefinedValues: true } });
+    return async record => {
+      await client.send(new UpdateCommand({
+        TableName: atomicCounterTableName(MockLandscapeReset.contextFor(location)),
+        Key: { counter_name: MockLandscapeReset.RECORD_NAME },
+        UpdateExpression: 'SET #reset = :reset, LastUpdated = :now',
+        ExpressionAttributeNames: { '#reset': 'reset' },
+        ExpressionAttributeValues: { ':reset': record, ':now': new Date().toISOString() }
+      }));
+    };
+  }
+
+  /** Reads the last reset's record (GetItem on the atomic counter table), or undefined if there has been none */
+  static async readRecord(location: Pick<MockLandscapeLocation, 'stackId' | 'region' | 'landscape'>): Promise<MockLandscapeResetRecord | undefined> {
+    const client = DynamoDBDocumentClient.from(new DynamoDBClient({ region: location.region }));
+    const { Item } = await client.send(new GetCommand({
+      TableName: atomicCounterTableName(MockLandscapeReset.contextFor(location)),
+      Key: { counter_name: MockLandscapeReset.RECORD_NAME }
+    }));
+    return Item?.reset as MockLandscapeResetRecord | undefined;
   }
 
   /** The minimal context BulkPurger and the table names need */
@@ -109,10 +217,10 @@ export class MockLandscapeReset {
     }
   }
 
-  /** Truncates the given tables of the landscape (BulkPurger refuses a non-mock landscape) */
-  static async truncateTables(location: Pick<MockLandscapeLocation, 'stackId' | 'region' | 'landscape'>, tables: BulkPurgerTables[]): Promise<void> {
+  /** Truncates the given tables of the landscape, at the same time (BulkPurger refuses a non-mock landscape) */
+  static async truncateTables(location: Pick<MockLandscapeLocation, 'stackId' | 'region' | 'landscape'>, tables: BulkPurgerTables[]): Promise<TableTruncation[]> {
     const context = MockLandscapeReset.contextFor(location);
-    await new BulkPurger({ mode: BulkPurgerMode.TRUNCATE, tables, context, dryRun: false }).purge();
+    return new BulkPurger({ mode: BulkPurgerMode.TRUNCATE, tables, context, dryRun: false }).purge();
   }
 
   /**

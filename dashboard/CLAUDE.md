@@ -160,6 +160,12 @@ The Lambda function serves two primary roles:
   started. A refused review
   or start is a `BulkSyncError` as `{ error, code }` (400 invalid, 403 production, 409 a run underway or stalled or a
   subscriber in `DRY_RUN`, 503 not configured)
+- `GET /api/mock-landscape/reset` - a mock landscape's last reset of its run state and whether one can be started now
+  (`MockLandscapeResetState`; `{ mockLandscape: false }` in any other landscape). `POST` starts one: the chunker
+  subscriber, invoked asynchronously with a reset-only event, empties the target simulator, Run history and the
+  fingerprints; `202` once it has accepted it. Refusals as Bulk sync's (`BulkSyncError`): 400 not a mock landscape,
+  409 a run underway (`RUN_UNDERWAY`), a reset still running (`RESET_UNDERWAY`) or the subscriber in `DRY_RUN`, 503 not
+  configured
 - `GET /api/status` - Get system health status and metrics
 
 **Run reporting** (this landscape's sync runs, read in-process from its tables and chunks bucket
@@ -420,7 +426,7 @@ characters: the Shibboleth construct names a bucket `<stack name>-context-config
   statistics table, the person history table (DynamoDB mode) and the chunks bucket
   (`lib/LandscapeResources.ts`). To start a run (Bulk sync) it may also invoke the chunker subscriber
   (`chunker-subscriber-<landscape>`, which resets the chunker's counters for a run's start) and read its and
-  the processor subscriber's configuration (their `DRY_RUN`), and read the chunker service's most tasks (its scalable target, for Parallel start); in a mock landscape only, it may also look up the source simulator's Function URL (`lambda:GetFunctionUrlConfig` on `source-simulator-<landscape>`, named in its `SOURCE_SIMULATOR_FUNCTION_NAME`). It writes nothing. All by deterministic name -
+  the processor subscriber's configuration (their `DRY_RUN`), and read the chunker service's most tasks (its scalable target, for Parallel start); in a mock landscape only, it may also look up the source simulator's Function URL (`lambda:GetFunctionUrlConfig` on `source-simulator-<landscape>`, named in its `SOURCE_SIMULATOR_FUNCTION_NAME`), and read its last reset's record (`dynamodb:GetItem` on the atomic counter table). It writes nothing. All by deterministic name -
   no CloudFormation imports from the pipeline stack.
 
 **Commands** (from the fargate root; `npm run deploy` deploys the pipeline and dashboard stacks):
@@ -696,6 +702,16 @@ load independently, so one failing (the real `SystemStatus` service isn't implem
 the other shown. Scripts load in dependency order: `page-state.js`, `run-history.js`,
 `system-status.js`, `overview.js`, `bulk-sync.js`, then `dashboard.js`, which creates the pages. Tests:
 `test/DashboardOverview.test.ts`.
+- **A mock landscape's own section** ("Mock landscape", hidden in any other landscape; since 2026-11-15,
+  `mock-landscape-options-plan.md` step 3a): loaded with the rest from `GET /api/mock-landscape/reset`. It explains in
+  plain words what a reset empties, says what the last reset did (`BulkSync.resetState()`, from the record the chunker
+  subscriber keeps in the atomic counter table: underway; finished, with each table's count and time to the second,
+  `OverviewPage.resetDuration()`; failed, with why; or never finished, most likely out of time), and offers Reset
+  landscape. It asks first (`OverviewPage.RESET_CONFIRMATION`), then posts (`BulkSync.requestReset()`), and says the
+  reset runs in the background: Refresh shows it. Disabled, with the reason, when one can't be started now.
+- **Offline**, the stand-in service keeps the last reset in memory (one per landscape played,
+  `ServiceProvider.getBulkSyncService()`): a past one that emptied an old hybrid run's tables, replaced by a reset
+  requested there, which finds the tables empty. The sample Run history isn't emptied.
 
 ### Bulk sync page
 

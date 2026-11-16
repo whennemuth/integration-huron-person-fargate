@@ -350,6 +350,63 @@ describe('BulkSync', () => {
     expect((await mock.describe()).warnings).toEqual([expect.stringContaining('mock is a mock landscape')]);
   });
 
+  describe("a mock landscape's reset on its own (Overview)", () => {
+    const record = (status: string, startedAt = '2026-11-10T11:55:00.000Z') => ({ status, via: 'overview', startedAt } as any);
+    const mockSync = (params: { landscape?: string; newest?: RunReport; last?: any; dryRun?: string[]; readFails?: boolean } = {}) => {
+      const { landscape = 'mock', newest = finishedRun, last, dryRun = [], readFails } = params;
+      const functions = { isDryRun: jest.fn(async (name: string) => dryRun.includes(name)), invokeAsync: jest.fn(async () => undefined) };
+      const bulkSync = new BulkSync({
+        config: OFFLINE_SOURCE_CONFIG,
+        settings: { ...settings, landscape, chunkerFunctionName: `chunker-subscriber-${landscape}`, processorSubscriberFunctionName: `processor-subscriber-${landscape}` },
+        runs: runsEndingWith(newest), functions, now: () => NOW,
+        resetRecords: { read: async () => { if (readFails) throw new Error('AccessDenied'); return last; } }
+      });
+      return { bulkSync, functions };
+    };
+    const startedBy = { by: 'dashboard', principal: 'wrh' } as any;
+
+    it('is nothing outside a mock landscape, and refuses a reset there', async () => {
+      const { bulkSync, functions } = mockSync({ landscape: 'staging' });
+      expect(await bulkSync.resetState()).toEqual({ mockLandscape: false });
+      await expect(bulkSync.requestReset(startedBy)).rejects.toMatchObject({ code: 'INVALID_REQUEST', message: expect.stringContaining('not a mock landscape') });
+      expect(functions.invokeAsync).not.toHaveBeenCalled();
+    });
+
+    it("shows the last reset as of now: one running beyond 15 minutes has stopped", async () => {
+      expect(await mockSync({ last: record('succeeded') }).bulkSync.resetState()).toEqual({
+        mockLandscape: true, landscape: 'mock', last: record('succeeded')
+      });
+      expect((await mockSync({ last: record('running', '2026-11-10T11:30:00.000Z') }).bulkSync.resetState() as any).last.status).toBe('stopped');
+      expect(await mockSync({ readFails: true }).bulkSync.resetState()).toMatchObject({ mockLandscape: true, lastError: 'AccessDenied' });
+    });
+
+    it('hands a reset to the chunker subscriber, with who asked and when, and starts nothing else', async () => {
+      const { bulkSync, functions } = mockSync({ last: record('succeeded') });
+      expect(await bulkSync.requestReset(startedBy)).toEqual({ status: 'requested', landscape: 'mock', requestedAt: '2026-11-10T12:00:00.000Z' });
+      expect(functions.invokeAsync).toHaveBeenCalledTimes(1);
+      expect(functions.invokeAsync).toHaveBeenCalledWith('chunker-subscriber-mock', {
+        mockLandscapeReset: true, requestedAt: '2026-11-10T12:00:00.000Z', startedBy
+      });
+    });
+
+    it.each([
+      ['a run underway', { newest: report('2026-11-10T11:30:00.000Z', { chunks: 20, lastChunkAt: '2026-11-10T11:58:00.000Z' }) }, 'RUN_UNDERWAY'],
+      ['a reset still running', { last: record('running', '2026-11-10T11:58:00.000Z') }, 'RESET_UNDERWAY'],
+      ['the chunker subscriber in DRY_RUN', { dryRun: ['chunker-subscriber-mock'] }, 'SUBSCRIBER_DRY_RUN']
+    ])('refuses, and says so beforehand, with %s', async (_label, params, code) => {
+      const { bulkSync, functions } = mockSync(params as any);
+      expect((await bulkSync.resetState() as any).blocked).toMatchObject({ code });
+      await expect(bulkSync.requestReset(startedBy)).rejects.toMatchObject({ code });
+      expect(functions.invokeAsync).not.toHaveBeenCalled();
+    });
+
+    it('allows a reset after a stalled or a stopped one', async () => {
+      const stalled = mockSync({ newest: stalledRun, last: record('running', '2026-11-10T11:30:00.000Z') });
+      expect((await stalled.bulkSync.resetState() as any).blocked).toBeUndefined();
+      await expect(stalled.bulkSync.requestReset()).resolves.toMatchObject({ status: 'requested' });
+    });
+  });
+
   describe("a mock landscape's options: the source and Start from scratch", () => {
     const SIMULATOR_URL = 'https://example-simulator.lambda-url.us-east-2.on.aws/';
     const mockService = (simulator?: any) => {
@@ -491,8 +548,12 @@ describe('BulkSync', () => {
         ITEMS_PER_CHUNK: '150'
       });
       const bulkSync = BulkSync.fromEnvironment(OFFLINE_SOURCE_CONFIG, runsEndingWith(finishedRun));
-      // The source simulator only when the environment names it, as only a mock landscape's does
+      // The source simulator and the reset record only in a mock landscape
       expect((bulkSync as any).deps.simulator).toBeUndefined();
+      expect((bulkSync as any).deps.resetRecords).toBeUndefined();
+      process.env.LANDSCAPE = 'mock';
+      expect((BulkSync.fromEnvironment(OFFLINE_SOURCE_CONFIG, runsEndingWith(finishedRun)) as any).deps.resetRecords).toBeDefined();
+      process.env.LANDSCAPE = 'preview';
       process.env.SOURCE_SIMULATOR_FUNCTION_NAME = 'source-simulator-mock';
       expect((BulkSync.fromEnvironment(OFFLINE_SOURCE_CONFIG, runsEndingWith(finishedRun)) as any).deps.simulator).toBeInstanceOf(AwsSourceSimulatorService);
       const request = BulkSyncRequest.parse({ runType: 'full' });

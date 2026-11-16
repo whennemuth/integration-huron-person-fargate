@@ -255,8 +255,8 @@ export class PersonCurrentStateTable {
    * 
    * @param chunkSize - Batch size for deletion (default: 25, max: 25)
    */
-  public async truncate(chunkSize?: number): Promise<void> {
-    await this.table.truncateTable(chunkSize);
+  public async truncate(chunkSize?: number): Promise<number> {
+    return this.table.truncateTable(chunkSize);
   }
 
   /**

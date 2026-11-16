@@ -37,7 +37,7 @@ export class FunctionUrlOrigin {
     const {
       landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName,
       chunkerFunctionName, processorSubscriberFunctionName, pipelineStackId, itemsPerChunk, chunkerClusterName,
-      sourceSimulatorFunctionName,
+      sourceSimulatorFunctionName, atomicCounterTableName,
       chunkerServiceName
     } = landscapeResources;
 
@@ -174,6 +174,15 @@ export class FunctionUrlOrigin {
         effect: Effect.ALLOW,
         actions: ['lambda:GetFunctionUrlConfig'],
         resources: [functionArn(sourceSimulatorFunctionName)],
+      }));
+    }
+    // A mock landscape only: read the last reset's record (Overview); the chunker subscriber, not the dashboard,
+    // runs and records a reset
+    if (atomicCounterTableName) {
+      this.lambda.addToRolePolicy(new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['dynamodb:GetItem'],
+        resources: [Stack.of(stack).formatArn({ service: 'dynamodb', resource: 'table', resourceName: atomicCounterTableName })],
       }));
     }
 

@@ -17,7 +17,7 @@ This directory contains utility classes for interacting with DynamoDB tables use
 Generic wrapper for DynamoDB operations. Provides common functionality used by all table-specific wrappers.
 
 ### Features
-- **Batch operations**: `batchWrite()`, `truncateTable()`
+- **Batch operations**: `batchWrite()`, `truncateTable()` (a parallel scan, several delete batches in flight; returns the count)
 - **Single-item operations**: `getItem()`, `putItem()`
 - **Query operations**: `queryByPartitionKey()`, `queryGSI()`
 - **Pagination handling**: Automatically handles LastEvaluatedKey for large result sets

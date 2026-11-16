@@ -1,4 +1,5 @@
 import type { StartedBy } from '../../../src/chunking/StartedBy';
+import type { MockLandscapeResetRecord } from '../../../src/chunking/MockLandscapeReset';
 import { CrudOperation } from 'integration-core';
 import { PersonPushRequest } from "integration-huron-person";
 import { StatisticsItem } from '../../../src/ApiErrorTracking';
@@ -33,6 +34,10 @@ export interface BulkSyncService {
   /** @param startedBy - who is starting it (the signed-in user), shown in the event and recorded with the run */
   plan(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncPlan>;
   start(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncResult>;
+  /** A mock landscape's reset on its own (Overview): the last one, and whether one can be started now */
+  resetState(): Promise<MockLandscapeResetState>;
+  /** Start a mock landscape's reset on its own; throws a BulkSyncError when refused */
+  requestReset(startedBy?: StartedBy): Promise<MockLandscapeResetRequested>;
 }
 
 export interface SystemStatusService {
@@ -194,7 +199,29 @@ export type BulkSyncState = {
 };
 
 export type BulkSyncErrorCode =
-  'INVALID_REQUEST' | 'PRODUCTION_LANDSCAPE' | 'RUN_UNDERWAY' | 'RUN_STALLED' | 'SUBSCRIBER_DRY_RUN' | 'NOT_CONFIGURED';
+  'INVALID_REQUEST' | 'PRODUCTION_LANDSCAPE' | 'RUN_UNDERWAY' | 'RUN_STALLED' | 'SUBSCRIBER_DRY_RUN' | 'NOT_CONFIGURED' |
+  'RESET_UNDERWAY';
+
+/** A mock landscape reset's status as of now: `running` beyond 15 minutes is `stopped` (MockLandscapeReset.statusOf()) */
+export type MockLandscapeResetStatus = 'running' | 'succeeded' | 'failed' | 'stopped';
+
+/**
+ * Overview's Mock landscape section (GET /api/mock-landscape/reset): not a mock landscape; or the last reset, as
+ * recorded by the chunker subscriber, and why a reset can't be started now
+ */
+export type MockLandscapeResetState =
+  | { mockLandscape: false }
+  | {
+      mockLandscape: true;
+      landscape: string;
+      last?: Omit<MockLandscapeResetRecord, 'status'> & { status: MockLandscapeResetStatus };
+      /** Why the last reset couldn't be read, if it couldn't */
+      lastError?: string;
+      blocked?: { code: BulkSyncErrorCode; message: string };
+    };
+
+/** A reset handed to the chunker subscriber (POST /api/mock-landscape/reset, 202) */
+export type MockLandscapeResetRequested = { status: 'requested'; landscape: string; requestedAt: string };
 
 /** A validated request's choices, as the page summarizes them */
 export type BulkSyncChoices = {
