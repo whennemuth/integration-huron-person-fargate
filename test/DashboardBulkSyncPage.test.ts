@@ -347,14 +347,17 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       expect(enough.join(' ')).not.toContain('find no one');
     });
 
-    it("refuses the simulator's settings the server would refuse, and a test's BUID beyond its people", () => {
+    it("refuses the simulator's settings the server would refuse, but not a test's BUID past its people", () => {
       const simulated = (simulator: any, extra: any = {}) => ({ runType: 'full', source: 'simulator', simulator: { totalPopulation: 50, simulatedDelaySeconds: 0, errorRate: 0, nonCurrentTermRate: 0, ...simulator }, ...extra });
       expect(BulkSyncView.requestError(simulated({}))).toBeUndefined();
       expect(BulkSyncView.requestError(simulated({ totalPopulation: NaN }))).toBe('The simulator needs a whole number of people, at least 1.');
       expect(BulkSyncView.requestError(simulated({ totalPopulation: 2.5 }))).toBe('The simulator needs a whole number of people, at least 1.');
       expect(BulkSyncView.requestError(simulated({ simulatedDelaySeconds: -1 }))).toBe('Seconds per response is a number, 0 or more.');
       expect(BulkSyncView.requestError(simulated({ errorRate: 2 }))).toBe('Failing responses (0 to 1) is a number from 0 to 1.');
-      expect(BulkSyncView.requestError(simulated({}, { runType: 'test', buid: 'U0000051' }))).toBe("U0000051 is beyond the simulator's 50 people.");
+      // Past the simulator's people is allowed: that person isn't in the source, which a test may want to see
+      expect(BulkSyncView.requestError(simulated({}, { runType: 'test', buid: 'U0000051' }))).toBeUndefined();
+      // A test sends no People
+      expect(BulkSyncView.requestError(simulated({ totalPopulation: undefined }, { runType: 'test', buid: 'U0000051' }))).toBeUndefined();
       expect(BulkSyncView.requestError(simulated({}, { runType: 'test', buid: 'U0000000' }))).toBe("The simulator's BUIDs start at U0000001 (got 'U0000000').");
       expect(BulkSyncView.requestError(simulated({}, { runType: 'test', buid: 'U0000050' }))).toBeUndefined();
       // The real source: none of it applies
@@ -478,6 +481,75 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
         runType: 'full', bulkReset: false, source: 'simulator', resetState: false, custom: false,
         simulator: { totalPopulation: 40, simulatedDelaySeconds: 0, errorRate: 0.1, nonCurrentTermRate: NaN }
       });
+    });
+
+    it("asks a test with the simulator for a BUID in its range, without People, and speaks of one person", () => {
+      const mock = () => ({
+        simulator: { available: true, defaults: { totalPopulation: 1950, simulatedDelaySeconds: 3, errorRate: 0, nonCurrentTermRate: 0 } },
+        limits: { totalPopulation: 500000, simulatedDelaySeconds: 30 }
+      });
+      const test = BulkSyncView.formHtml(state({ mock: mock() }), { runType: 'test', buid: '', source: 'simulator' });
+      expect(test).toContain('<form data-bulk-sync-form novalidate class="bulk-simulator-test">');
+      expect(test).toContain('placeholder="U0000042"');
+      expect(test).toContain('A made-up person from the source simulator, U0000001 to U0001950. One past the end is someone who isn&#39;t in the source, to test that case.');
+      // People is marked to hide in a test; the others carry a hint for one person
+      expect(test).toMatch(/class="mb-2 bulk-sim-run-only" data-sim-field="totalPopulation"/);
+      expect(test).toContain('<div class="form-text bulk-sim-test-hint">The chance that the person&#39;s one response fails, to see how the run copes. 0: it succeeds.</div>');
+      // A full sync with the simulator, or a test from the real source: not marked
+      expect(BulkSyncView.formHtml(state({ mock: mock() }), { runType: 'full', source: 'simulator' })).toContain('<form data-bulk-sync-form novalidate>');
+      const real = BulkSyncView.formHtml(state({ mock: mock() }), { runType: 'test', buid: '', source: 'real' });
+      expect(real).toContain('<form data-bulk-sync-form novalidate>');
+      expect(real).toContain('placeholder="U12345678"');
+      // Without a simulator, no simulator hint at all
+      expect(BulkSyncView.formHtml(state(), { runType: 'test', buid: '' })).not.toContain('bulk-buid-simulator');
+      expect(BulkSyncView.simulatorBuidHint(undefined)).toContain('from U0000001.');
+    });
+
+    it("spells out a test with the simulator as one made-up person, and one past its people as missing from the source", () => {
+      const lines = (choices: any) => BulkSyncView.summaryLines(choices, 'mock', finished, undefined, 1950);
+      const choices = (buid: string, simulator: any = {}) => ({ runType: 'test', buid, bulkReset: false, iterationLimit: 0, source: 'simulator', resetState: false, simulator });
+      expect(lines(choices('U0000042', { simulatedDelaySeconds: 2, errorRate: 0.1 }))[1])
+        .toBe('The source is the source simulator: one made-up person, U0000042, its response taking 2 s, a 10% chance its response fails.');
+      expect(lines(choices('U0001950'))[1]).toBe('The source is the source simulator: one made-up person, U0001950.');
+      expect(lines(choices('U0001951'))[1]).toBe(
+        "The source is the source simulator: one made-up person, U0001951. U0001951 isn't in the source: the simulator has 1,950 people, so the run sees someone missing from it.");
+      // People sent with the test bound it instead
+      expect(lines(choices('U0000101', { totalPopulation: 100 }))[1]).toContain('the simulator has 100 people');
+      // The review passes the page's simulator population on
+      const review = BulkSyncView.confirmationHtml({ landscape: 'mock', choices: choices('U0005000'), event: {}, settings: [] }, finished, 1950);
+      expect(review).toContain('U0005000 isn&#39;t in the source: the simulator has 1,950 people');
+    });
+
+    it("doesn't send People for a test with the simulator, and marks the form while both are chosen", () => {
+      const mock = () => ({
+        simulator: { available: true, defaults: { totalPopulation: 1950, simulatedDelaySeconds: 3, errorRate: 0, nonCurrentTermRate: 0 } },
+        limits: { totalPopulation: 500000, simulatedDelaySeconds: 30 }
+      });
+      const radio = (value: string, checked: boolean) => ({ value, checked });
+      const elements = (runType: string, source: string) => ({
+        runType: ['full', 'full-no-deactivations', 'delta', 'test'].map(type => radio(type, type === runType)),
+        buid: { value: 'u0000042', placeholder: 'U12345678' }, bulkReset: { checked: false }, custom: { checked: false },
+        chunkMode: ['perTask', 'single'].map(mode => radio(mode, mode === 'perTask')),
+        chunksPerTask: { value: '10' }, parallelStart: { value: '0' },
+        source: ['real', 'simulator'].map(name => radio(name, name === source)),
+        simTotalPopulation: { value: '1950' }, simDelay: { value: '0' }, simErrorRate: { value: '0' }, simNonCurrentTermRate: { value: '0' },
+        resetState: { checked: false }
+      });
+      expect(BulkSyncPage.readRequest({ elements: elements('test', 'simulator') })).toEqual({
+        runType: 'test', buid: 'U0000042', bulkReset: false, source: 'simulator', resetState: false, custom: false,
+        simulator: { simulatedDelaySeconds: 0, errorRate: 0, nonCurrentTermRate: 0 }
+      });
+      const toggles: [string, boolean][] = [];
+      const form: any = { elements: elements('test', 'simulator'), classList: { toggle: (name: string, on: boolean) => toggles.push([name, on]) } };
+      BulkSyncPage.markSimulatorTest(form);
+      expect(toggles.pop()).toEqual(['bulk-simulator-test', true]);
+      expect(form.elements.buid.placeholder).toBe('U0000042');
+      form.elements = elements('full', 'simulator');
+      BulkSyncPage.markSimulatorTest(form);
+      expect(toggles.pop()).toEqual(['bulk-simulator-test', false]);
+      expect(form.elements.buid.placeholder).toBe('U12345678');
+      expect(BulkSyncPage.simulatorPeople({ mock: mock() })).toBe(1950);
+      expect(BulkSyncPage.simulatorPeople({})).toBeUndefined();
     });
 
     it('shows the simulator\'s settings while it is the source', () => {

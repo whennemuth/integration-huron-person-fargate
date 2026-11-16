@@ -738,8 +738,16 @@ routes above).
     (`simulationSettings()` in `src/chunking/fetch/SourceSimulator.ts`), and its `/terms` as the `termsEndpoint`.
     Nothing about the simulator Lambda is changed. Its settings start at its deployed ones, read from its
     unauthenticated `/health`; refused out of range (`BulkSyncRequest.SIMULATOR_LIMITS`: at most 500,000 people, the
-    chunker's safety cutoff, and 30 seconds a response), and a test's BUID must be one of its people. When the
-    simulator isn't deployed, its choice is disabled with the reason.
+    chunker's safety cutoff, and 30 seconds a response). When the simulator isn't deployed, its choice is disabled
+    with the reason.
+  - **A test with the simulator** reads one person, so the page doesn't send People and the simulator keeps its own
+    population, which only says which BUIDs it has. While Test and the simulator are both chosen, the form carries
+    `BulkSyncView.SIMULATOR_TEST_CLASS` (`BulkSyncPage.markSimulatorTest()`; `dashboard.css` does the rest): People is
+    hidden, the other settings' hints speak of one person (`SIMULATOR_FIELDS`' `testHint`), and the BUID box says the
+    simulator's range (`simulatorBuidHint()`: U0000001 to its population, from `/health`) with `U0000042` as its
+    placeholder. A BUID only has to be `U` and digits from 1: one past the simulator's people is allowed (since
+    2026-11-16, `mock-run-feedback-plan.md`), since the simulator then answers with no one and the test sees someone
+    who isn't in the source; the review says so (`simulatorTestLine()`, given the page's population).
   - **Start from scratch** (`resetState`): the event carries it, and the chunker subscriber empties the target
     simulator, the statistics (Run history) and the delta baseline before the run starts
     (`src/chunking/MockLandscapeReset.ts`). The page says Run history starts again from this run.

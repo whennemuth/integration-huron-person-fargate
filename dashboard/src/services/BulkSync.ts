@@ -158,9 +158,8 @@ export class BulkSyncRequest {
     if (person && source === 'simulator' && index === undefined) {
       throw invalid(`The source simulator's BUIDs are a U followed by digits from 1 (got '${person}')`);
     }
-    if (index !== undefined && settings.totalPopulation !== undefined && index >= settings.totalPopulation) {
-      throw invalid(`${person} is beyond the source simulator's ${settings.totalPopulation} people`);
-    }
+    // A BUID past the simulator's people is allowed: the simulator answers with no one, so a test sees someone who
+    // isn't in the source (mock-run-feedback-plan.md, issue 4)
     // A test is a single chunker task, whatever chunks per task the form sent (see the class's comment)
     const chunksPerTask = runType === 'test' ? 0 : iterationLimit as number;
     return new BulkSyncRequest(

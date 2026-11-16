@@ -494,10 +494,23 @@ describe('BulkSync', () => {
       [{ runType: 'full', source: 'simulator', simulator: { simulatedDelaySeconds: 31 } }, true, 'simulator.simulatedDelaySeconds must be a number from 0 to 30'],
       [{ runType: 'full', source: 'simulator', simulator: { errorRate: 1.5 } }, true, 'simulator.errorRate must be a number from 0 to 1'],
       [{ runType: 'full', source: 'simulator', simulator: { nonCurrentTermRate: '0.5' } }, true, 'simulator.nonCurrentTermRate must be a number from 0 to 1'],
-      [{ runType: 'test', buid: 'U0000000', source: 'simulator' }, true, "The source simulator's BUIDs are a U followed by digits from 1"],
-      [{ runType: 'test', buid: 'U0000101', source: 'simulator', simulator: { totalPopulation: 100 } }, true, "U0000101 is beyond the source simulator's 100 people"]
+      [{ runType: 'test', buid: 'U0000000', source: 'simulator' }, true, "The source simulator's BUIDs are a U followed by digits from 1"]
     ])('refuses %j (mock landscape: %s) as INVALID_REQUEST', (body, mockLandscape, message) => {
       expect(() => BulkSyncRequest.parse(body as any, { mockLandscape })).toThrow(message);
+    });
+
+    it("takes a test's BUID past the simulator's people, to see someone who isn't in the source", () => {
+      const request = BulkSyncRequest.parse(
+        { runType: 'test', buid: 'U0000101', source: 'simulator', simulator: { totalPopulation: 100 } } as any, { mockLandscape: true }
+      );
+      expect(request.buid).toBe('U0000101');
+      // Without People, as the page sends a test: the simulator keeps its own population
+      const withoutPeople = BulkSyncRequest.parse(
+        { runType: 'test', buid: 'U0005000', source: 'simulator', simulator: { errorRate: 0 } } as any, { mockLandscape: true }
+      );
+      expect(withoutPeople.choices().simulator).toEqual({ errorRate: 0 });
+      expect(BulkSync.simulatorSource(withoutPeople, 'https://sim.lambda-url.us-east-2.on.aws/').fetchPath)
+        .toBe('/person?buid=U0005000&errorRate=0');
     });
 
     it("reads the simulator's Function URL and its settings, changing nothing", async () => {

@@ -790,6 +790,25 @@ code, pre, kbd, samp {
     margin-top: -0.25rem;
 }
 
+/*
+ * Bulk sync: a test with the source simulator (BulkSyncView.SIMULATOR_TEST_CLASS on the form) reads one person, so
+ * People is hidden, the simulator's hints speak of one person, and the BUID box says which BUIDs the simulator has
+ */
+.bulk-sim-test-hint,
+.bulk-buid-simulator {
+    display: none;
+}
+
+.bulk-simulator-test .bulk-sim-run-only,
+.bulk-simulator-test .bulk-sim-run-hint {
+    display: none;
+}
+
+.bulk-simulator-test .bulk-sim-test-hint,
+.bulk-simulator-test .bulk-buid-simulator {
+    display: block;
+}
+
 .deletion-explanation {
     margin-top: 0.75rem;
 }
