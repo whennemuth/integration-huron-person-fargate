@@ -1,6 +1,7 @@
 // The offline services: a local run's stand-ins for the dashboard's services, answering from built-in data with no
 // AWS access (LOCAL_OFFLINE=true, the launcher's OFFLINE switch). Not to be confused with a mock landscape, whose
 // pipeline's target is mocked: --landscape mock plays one.
+import { LaunchFlag } from '../services/LaunchFlag';
 import {
   PersonLookupService,
   PersonSyncService,
@@ -147,6 +148,7 @@ export class OfflineBulkSyncService implements BulkSyncService {
     ]
   };
   private readonly service: BulkSync;
+  readonly launchFlag: LaunchFlag;
 
   constructor(params: {
     runs?: Pick<RunReportingService, 'listRunPage' | 'getRunReport'>;
@@ -154,10 +156,13 @@ export class OfflineBulkSyncService implements BulkSyncService {
     dryRun?: string[];
     /** A mock landscape's source simulator (default: STAND_IN_SIMULATOR in a mock landscape, none elsewhere) */
     simulator?: SourceSimulatorService | null;
+    /** The launch flag, kept in memory (default: one of its own) */
+    launchFlag?: LaunchFlag;
     now?: () => number;
   } = {}) {
     const { runs = new OfflineRunReportingService(), settings = {}, dryRun = [], now } = params;
     const landscape = settings.landscape ?? (process.env.LANDSCAPE || LOCAL_LANDSCAPE);
+    this.launchFlag = params.launchFlag ?? LaunchFlag.inMemory(landscape, now);
     const simulator = params.simulator === undefined
       ? (isMockLandscape(landscape) ? OfflineBulkSyncService.STAND_IN_SIMULATOR : undefined)
       : params.simulator ?? undefined;
@@ -194,6 +199,8 @@ export class OfflineBulkSyncService implements BulkSyncService {
       chunkerService: { maxTasks: async () => OfflineBulkSyncService.CHUNKER_MAX_TASKS },
       ...(simulator ? { simulator } : {}),
       resetRecords: { read: async () => this.resetRecord },
+      // Offline no run ever appears, so a launch shows until its flag expires
+      launchFlag: this.launchFlag,
       now
     });
   }

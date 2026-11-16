@@ -506,7 +506,7 @@ async function handleListRuns(method: string, queryParams: { [key: string]: stri
     return jsonResponse(400, { error: 'before must be a syncRunId (an ISO timestamp, e.g. 2026-10-01T02:00:00.000Z)' });
   }
   try {
-    return jsonResponse(200, await new RunList(ServiceProvider.getRunReportingService()).page({ limit: limitValue, before }));
+    return jsonResponse(200, await new RunList(ServiceProvider.getRunReportingService(), ServiceProvider.getLaunchFlag()).page({ limit: limitValue, before }));
   } catch (error) {
     return runReportingErrorResponse(error, 'Failed to list runs');
   }

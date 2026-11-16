@@ -13,6 +13,7 @@ import {
   DEFAULT_TOTAL_POPULATION, MAX_SIMULATED_DELAY_SECONDS, PERSON_PATH, SIMULATION_QUERY_PARAMETERS, TERMS_PATH, personIndexFromBuid
 } from '../../../src/chunking/fetch/SourceSimulator';
 import { CACHE_SECRET } from '../handlers/DashboardCache';
+import { Launch, LaunchFlag } from './LaunchFlag';
 import {
   BulkSyncChoices, BulkSyncErrorCode, BulkSyncPlan, BulkSyncPopulation, BulkSyncRequestBody, BulkSyncResult,
   BulkSyncRunType, BulkSyncService, BulkSyncSetting, BulkSyncSource, BulkSyncState, MockLandscapeOptions,
@@ -28,6 +29,7 @@ export class BulkSyncError extends Error {
     RUN_STALLED: 409,
     SUBSCRIBER_DRY_RUN: 409,
     RESET_UNDERWAY: 409,
+    RUN_LAUNCHING: 409,
     NOT_CONFIGURED: 503
   };
 
@@ -403,6 +405,8 @@ export class BulkSync implements BulkSyncService {
     simulator?: SourceSimulatorService;
     /** A mock landscape's reset record (MockLandscapeReset.readRecord()); absent elsewhere */
     resetRecords?: { read(): Promise<MockLandscapeResetRecord | undefined> };
+    /** The landscape's launch flag (a run launched moments ago, not yet listed); absent: none is kept */
+    launchFlag?: LaunchFlag;
     now?: () => number;
   }) {}
 
@@ -447,7 +451,9 @@ export class BulkSync implements BulkSyncService {
       // A mock landscape's reset record, in its atomic counter table (GetItem granted to a mock landscape's dashboard only)
       ...(isMockLandscape(LANDSCAPE) && PIPELINE_STACK_ID && REGION ? {
         resetRecords: { read: () => MockLandscapeReset.readRecord({ stackId: PIPELINE_STACK_ID, region: REGION, landscape: LANDSCAPE! }) }
-      } : {})
+      } : {}),
+      // Its SSM parameter (dashboard/lib/FunctionUrl.ts grants it)
+      ...(LANDSCAPE && REGION ? { launchFlag: LaunchFlag.forLandscape({ landscape: LANDSCAPE, region: REGION }) } : {})
     });
   }
 
@@ -475,10 +481,10 @@ export class BulkSync implements BulkSyncService {
 
   async describe(): Promise<BulkSyncState> {
     const { settings } = this.deps;
-    const latestRun = await this.latestRun();
+    const { latestRun, launch } = await this.activity();
     let blocked: BulkSyncState['blocked'];
     try {
-      await this.checkGuards(latestRun, { overrideStalled: false });
+      await this.checkGuards(latestRun, { overrideStalled: false }, launch);
     } catch (error) {
       if (!(error instanceof BulkSyncError)) {
         throw error;
@@ -499,8 +505,23 @@ export class BulkSync implements BulkSyncService {
       ...(blocked ? { blocked } : {}),
       warnings: this.warnings(),
       ...(settings.itemsPerChunk !== undefined ? { itemsPerChunk: settings.itemsPerChunk } : {}),
-      ...(this.mockLandscape ? { mock: await this.mockOptions() } : {})
+      ...(this.mockLandscape ? { mock: await this.mockOptions() } : {}),
+      ...(launch ? { launch } : {})
     };
+  }
+
+  /**
+   * The newest run's state, and a run launched moments ago that isn't listed yet (LaunchFlag.assess(), which lowers a
+   * flag whose run has appeared or whose time is up)
+   */
+  private async activity(): Promise<{ latestRun: RunActivityState; launch?: Launch }> {
+    const latestRun = await this.latestRun();
+    return { latestRun, launch: await this.assessLaunch(latestRun.syncRunId) };
+  }
+
+  /** The launch still waiting for its run, given the newest listed run; none when no flag is kept */
+  async assessLaunch(newestSyncRunId: string | undefined): Promise<Launch | undefined> {
+    return this.deps.launchFlag?.assess(newestSyncRunId);
   }
 
   /**
@@ -567,7 +588,11 @@ export class BulkSync implements BulkSyncService {
       throw new BulkSyncError('NOT_CONFIGURED',
         `Resetting isn't configured in this landscape's dashboard: missing ${settings.missing.join(', ')} (redeploy its dashboard stack)`);
     }
-    const latestRun = await this.latestRun();
+    const { latestRun, launch } = await this.activity();
+    if (launch) {
+      throw new BulkSyncError('RUN_LAUNCHING',
+        'A run was just launched and its chunker is starting: a reset would empty the tables it is about to write to. Wait for it to appear in Run history');
+    }
     if (latestRun.kind === 'underway') {
       throw new BulkSyncError('RUN_UNDERWAY',
         `The run of ${latestRun.syncRunId} is still underway: a reset would empty the tables it is writing to. Wait for it to finish`);
@@ -578,6 +603,20 @@ export class BulkSync implements BulkSyncService {
     if (await functions.isDryRun(settings.chunkerFunctionName!)) {
       throw new BulkSyncError('SUBSCRIBER_DRY_RUN',
         `The chunker subscriber (${settings.chunkerFunctionName}) is in DRY_RUN, left by the manual Runner, so a reset would do nothing: clear it first`);
+    }
+  }
+
+  /** Whether a mock landscape's reset is running now (its record, as of now); false when it can't be read */
+  private async resetRunning(): Promise<boolean> {
+    if (!this.mockLandscape || !this.deps.resetRecords) {
+      return false;
+    }
+    try {
+      const record = await this.deps.resetRecords.read();
+      return !!record && MockLandscapeReset.statusOf(record, this.now) === 'running';
+    } catch (error: any) {
+      console.warn(`Couldn't read the last mock landscape reset: ${error?.message ?? error}`);
+      return false;
     }
   }
 
@@ -631,7 +670,8 @@ export class BulkSync implements BulkSyncService {
     const { settings } = this.deps;
     const request = BulkSyncRequest.parse(body, { mockLandscape: this.mockLandscape });
     await this.checkParallelStart(request);
-    await this.checkGuards(await this.latestRun(), request);
+    const { latestRun, launch } = await this.activity();
+    await this.checkGuards(latestRun, request, launch);
     const event = this.event(request, startedBy, await this.simulatorUrlFor(request));
     return {
       landscape: settings.landscape,
@@ -645,13 +685,27 @@ export class BulkSync implements BulkSyncService {
     const { settings, functions } = this.deps;
     const request = BulkSyncRequest.parse(body, { mockLandscape: this.mockLandscape });
     await this.checkParallelStart(request);
-    await this.checkGuards(await this.latestRun(), request);
+    const { latestRun, launch: earlier } = await this.activity();
+    await this.checkGuards(latestRun, request, earlier);
     const event = this.event(request, startedBy, await this.simulatorUrlFor(request));
-    await functions.invokeAsync(settings.chunkerFunctionName!, event);
+    const startedAt = event.processingMetadata!.processedAt!;
+    // Raised only if none is up: of two starts that pass the checks together, one is refused here
+    const launch = LaunchFlag.launch(startedAt, request.choices(), startedBy);
+    const { launchFlag } = this.deps;
+    if (launchFlag && !(await launchFlag.raise(launch))) {
+      throw BulkSync.launchingError();
+    }
+    try {
+      await functions.invokeAsync(settings.chunkerFunctionName!, event);
+    } catch (error) {
+      // Nothing was launched
+      await launchFlag?.lower().catch(lowering => console.warn(`Couldn't lower the launch flag: ${lowering?.message ?? lowering}`));
+      throw error;
+    }
     console.log(`Bulk sync started in ${settings.landscape}: ${JSON.stringify({ ...request.choices(), startedBy })}`);
     return {
       status: 'started',
-      startedAt: event.processingMetadata!.processedAt!,
+      startedAt,
       landscape: settings.landscape,
       run: request.choices()
     };
@@ -808,8 +862,14 @@ export class BulkSync implements BulkSyncService {
     return RunActivity.of((await runs.getRunReport(newest)) ?? { syncRunId: newest, status: 'UNKNOWN' }, this.now);
   }
 
+  /** A start refused because a run launched moments ago hasn't appeared yet */
+  static launchingError(): BulkSyncError {
+    return new BulkSyncError('RUN_LAUNCHING',
+      "A run was just launched and its chunker is starting: wait for it to appear in Run history before starting another");
+  }
+
   /** @throws BulkSyncError when a start would be refused */
-  private async checkGuards(latestRun: RunActivityState, request: { overrideStalled: boolean }): Promise<void> {
+  private async checkGuards(latestRun: RunActivityState, request: { overrideStalled: boolean }, launch?: Launch): Promise<void> {
     const { settings, functions } = this.deps;
     if ((settings.landscapeTone ?? '').toLowerCase() === 'production') {
       throw new BulkSyncError('PRODUCTION_LANDSCAPE',
@@ -818,6 +878,14 @@ export class BulkSync implements BulkSyncService {
     if (settings.missing && settings.missing.length > 0) {
       throw new BulkSyncError('NOT_CONFIGURED',
         `Starting runs isn't configured in this landscape's dashboard: missing ${settings.missing.join(', ')} (redeploy its dashboard stack)`);
+    }
+    if (launch) {
+      throw BulkSync.launchingError();
+    }
+    // A mock landscape's reset, on its own or a start from scratch's, empties the tables a run would write to
+    if (await this.resetRunning()) {
+      throw new BulkSyncError('RESET_UNDERWAY',
+        "A reset of this landscape is running: wait for it to finish before starting a run (Overview shows it)");
     }
     if (latestRun.kind === 'underway') {
       throw new BulkSyncError('RUN_UNDERWAY', `The run of ${latestRun.syncRunId} is still underway: wait for it to finish`);

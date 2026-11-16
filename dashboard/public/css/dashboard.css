@@ -1311,3 +1311,13 @@ code, pre, kbd, samp {
     border-color: var(--hp-tone);
     box-shadow: 0 0 0 0.2rem rgba(var(--hp-tone-rgb), 0.2);
 }
+
+/* A run launched moments ago, not listed yet (RunFormat.launchNoteHtml(): Overview, Run history, Bulk sync) */
+.launch-note {
+    margin-top: 0;
+    margin-bottom: 1rem;
+}
+
+.launch-note .run-note-icon {
+    color: var(--hp-warning);
+}

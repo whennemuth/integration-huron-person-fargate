@@ -491,47 +491,24 @@ class BulkSyncView {
         return undefined;
     }
 
-    /** The status panel once a run has been started: when, what, and the run itself once it appears */
-    static startedHtml(started, now) {
-        const { result, run } = started;
-        const when = `Started ${RunFormat.ago(result.startedAt, now)}`;
-        const labels = { full: 'Full sync (with deactivations)', 'full-no-deactivations': 'Full sync (no deactivations)' };
-        const what = result.run.buid ? `Test of ${result.run.buid}` : (labels[result.run.runType] || RunFormat.population(result.run.population));
-        if (run) {
-            return `
-                <p class="bulk-status-line">
-                    ${Html.escape(when)}:
-                    <a class="run-link" href="${Html.escape(RunHistoryPage.detailHref(run.syncRunId))}">Run of ${Html.escape(RunFormat.dateTime(run.startedAt))}</a>
-                    ${run.statusBadgeHtml ? run.statusBadgeHtml(now) : RunFormat.statusBadge(run.status)}
-                </p>
-                <p class="bulk-status-hint">${Html.escape(what)}. Follow it in Run history or on Overview.</p>
-            `;
-        }
-        const parallel = result.run.parallelStart > 0
-            ? `Its ${result.run.parallelStart} chunker tasks start within a few minutes, once the chunker's scaling catches up. `
-            : '';
-        const scratch = result.run.resetState
-            ? 'Run history was emptied first, so this run will be the only one listed. '
-            : '';
-        return `
-            <p class="bulk-status-line">${Html.escape(when)}: ${Html.escape(what)}.</p>
-            <p class="bulk-status-hint">${Html.escape(scratch + parallel)}It appears in Run history once its chunker has written its first records. Refresh to look for it.</p>
-        `;
+    /**
+     * The status panel, from the server's state at each load: a run launched moments ago and not listed yet (its
+     * LaunchFlag), else the newest run listed, which is current by definition
+     */
+    static statusHtml(state, now) {
+        return state.launch
+            ? RunFormat.launchNoteHtml(state.launch, now)
+            : BulkSyncView.latestRunHtml(state.latestRun);
     }
 }
 
 /** The Bulk sync page */
 class BulkSyncPage {
 
-    /** How much earlier than its start a run's syncRunId may be (the chunker's clock against the Lambda's) */
-    static get CLOCK_SLACK_MS() {
-        return 2 * 60000;
-    }
-
     /**
      * @param {{ getJson: function(string): Promise<any>, postJson: function(string, any): Promise<any>, runs: RunsApi,
      *   root: HTMLElement, now?: function(): number }} options
-     *   getJson and postJson read and send a route's JSON (dashboard.js); runs finds the started run
+     *   getJson and postJson read and send a route's JSON (dashboard.js); runs is the run reporting API
      */
     constructor({ getJson, postJson, runs, root, now = () => Date.now() }) {
         this.getJson = getJson;
@@ -544,7 +521,6 @@ class BulkSyncPage {
         this.state = undefined;
         this.values = undefined;
         this.request = undefined;
-        this.started = undefined;
         this.loads = 0;
         root.querySelector('[data-action="refresh-bulk"]').addEventListener('click', () => this.load());
         this.formContainer.addEventListener('submit', event => {
@@ -690,13 +666,11 @@ class BulkSyncPage {
         select.value = single ? '0' : ((parallel && parallel.dataset.chosenParallel) || '0');
     }
 
-    /** Load what a start would do, and, after a start, look for the run it started. Resolves true once shown */
+    /** Load what a start would do, and the status: a run launched moments ago, else the newest run. Resolves true once shown */
     async load() {
         const load = ++this.loads;
         PageState.loading(this.formContainer, 'Checking whether a run can start');
-        if ( ! this.started) {
-            PageState.loading(this.statusContainer, 'Reading the latest run', { compact: true });
-        }
+        PageState.loading(this.statusContainer, 'Reading the latest run', { compact: true });
         let state;
         try {
             state = await this.getJson('/api/bulk-sync');
@@ -707,9 +681,6 @@ class BulkSyncPage {
             PageState.error(this.formContainer, 'Bulk sync could not be read', error.message);
             PageState.error(this.statusContainer, 'The latest run could not be read', undefined, { compact: true });
             return false;
-        }
-        if (this.started && ! this.started.run) {
-            await this.findStartedRun();
         }
         if (load !== this.loads) {
             return false;
@@ -723,9 +694,7 @@ class BulkSyncPage {
 
     render() {
         this.formContainer.innerHTML = BulkSyncView.formHtml(this.state, this.values);
-        this.statusContainer.innerHTML = this.started
-            ? BulkSyncView.startedHtml(this.started, this.now())
-            : BulkSyncView.latestRunHtml(this.state.latestRun);
+        this.statusContainer.innerHTML = BulkSyncView.statusHtml(this.state, this.now());
     }
 
     /** Say a problem with the form under its fields, or clear it */
@@ -794,8 +763,8 @@ class BulkSyncPage {
         const buttons = [...this.formContainer.querySelectorAll('[data-bulk-confirm] button')];
         buttons.forEach(button => { button.disabled = true; });
         try {
-            const result = await this.postJson('/api/bulk-sync', this.request);
-            this.started = { result };
+            // The server raised the launch flag before answering, so the load below shows the run starting
+            await this.postJson('/api/bulk-sync', this.request);
             this.values = undefined;
             this.plan = undefined;
             await this.load();
@@ -808,20 +777,6 @@ class BulkSyncPage {
                 message.hidden = false;
             }
             return false;
-        }
-    }
-
-    /** The newest run, once it is one this page started (its syncRunId no earlier than the start, give or take the clocks) */
-    async findStartedRun() {
-        try {
-            const { items } = await this.runs.listRuns({ limit: 1 });
-            const newest = items[0];
-            const earliest = new Date(Date.parse(this.started.result.startedAt) - BulkSyncPage.CLOCK_SLACK_MS).toISOString();
-            if (newest && newest.syncRunId >= earliest) {
-                this.started.run = newest;
-            }
-        } catch (error) {
-            // Not found yet is the same as not listed: the next Refresh looks again
         }
     }
 }

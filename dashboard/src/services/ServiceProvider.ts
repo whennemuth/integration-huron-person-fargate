@@ -24,7 +24,8 @@ import { PersonSync } from './PersonSync';
 import { BulkSync } from './BulkSync';
 import { SystemStatus } from './SystemStatus';
 import { runReportingFromEnvironment } from './RunReports';
-import { LandscapeRegistry } from './LandscapeRegistry';
+import { LandscapeRegistry, LOCAL_LANDSCAPE } from './LandscapeRegistry';
+import { LaunchFlag } from './LaunchFlag';
 import { Config } from 'integration-huron-person';
 import { CrudOperation, TestEnvironment } from 'integration-core';
 import { getConfig } from '../../../src/Utils';
@@ -40,6 +41,7 @@ export class ServiceProvider {
   private static landscapeListing?: LandscapeListingService;
   /** The offline Bulk sync service, for the landscape it plays */
   private static offlineBulkSync?: { landscape: string; service: OfflineBulkSyncService };
+  private static launchFlags = new Map<string, LaunchFlag>();
   
   /**
    * Whether to use the offline services (a local run with LOCAL_OFFLINE=true; never in Lambda). They ignore the
@@ -95,12 +97,41 @@ export class ServiceProvider {
       // One per landscape played, so its state (the last mock landscape reset) lasts from request to request
       const landscape = process.env.LANDSCAPE || '';
       if (!this.offlineBulkSync || this.offlineBulkSync.landscape !== landscape) {
-        this.offlineBulkSync = { landscape, service: new OfflineBulkSyncService({ runs: this.getRunReportingService() }) };
+        this.offlineBulkSync = {
+          landscape, service: new OfflineBulkSyncService({ runs: this.getRunReportingService(), launchFlag: this.getLaunchFlag() })
+        };
       }
       return this.offlineBulkSync.service;
     } else {
       return BulkSync.fromEnvironment(config, this.getRunReportingService());
     }
+  }
+
+  /**
+   * Forget the offline services' state (the last mock landscape reset, a launch flag): for tests, which share one
+   * module instance, so that a run started in one doesn't hold back the next
+   */
+  static resetOfflineState(): void {
+    this.offlineBulkSync = undefined;
+    this.launchFlags.clear();
+  }
+
+  /**
+   * The landscape's launch flag (a run launched moments ago from Bulk sync, not yet listed): its SSM parameter, or
+   * offline one kept in memory, shared with the offline Bulk sync. Undefined where LANDSCAPE or REGION isn't set.
+   */
+  static getLaunchFlag(): LaunchFlag | undefined {
+    const offline = this.isOffline();
+    const landscape = offline ? (process.env.LANDSCAPE || LOCAL_LANDSCAPE) : process.env.LANDSCAPE;
+    const region = process.env.REGION;
+    if (landscape === undefined || (!offline && (!landscape || !region))) {
+      return undefined;
+    }
+    const key = `${offline ? 'offline' : 'ssm'}:${landscape}`;
+    if (!this.launchFlags.has(key)) {
+      this.launchFlags.set(key, offline ? LaunchFlag.inMemory(landscape) : LaunchFlag.forLandscape({ landscape, region: region! }));
+    }
+    return this.launchFlags.get(key);
   }
 
   /**

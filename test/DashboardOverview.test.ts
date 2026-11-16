@@ -287,6 +287,25 @@ describe.each([false, true])('overview.js and system-status.js (minified: %s)', 
       expect(empty.parts['[data-latest-run]'].stateText).toMatch(/^No runs yet/);
     });
 
+    it('says a run launched moments ago is starting, in place of "No runs yet" or above the latest run', async () => {
+      const launch = {
+        launchedAt: new Date(NOW - 3 * 60_000).toISOString(), expiresAt: new Date(NOW + 9 * 60_000).toISOString(),
+        startedBy: { by: 'dashboard', principal: 'wrh' }, choices: { runType: 'full', population: 'person-full', resetState: true }
+      };
+      const alone = createPage(async () => ({ items: [], launch }), async () => ({ services: {} }));
+      await alone.page.load();
+      const html = alone.parts['[data-latest-run]'].innerHTML;
+      expect(html).toContain('A run is starting: Full sync (with deactivations), launched 3 min ago by wrh');
+      expect(html).toContain('The landscape is being reset first, which takes up to 10 minutes.');
+      expect(html).not.toContain('No runs yet');
+
+      const above = createPage(async () => ({ items: [new RunView(succeeded)], launch }), async () => ({ services: {} }));
+      await above.page.load();
+      const both = above.parts['[data-latest-run]'].innerHTML;
+      expect(both.indexOf('A run is starting')).toBeLessThan(both.indexOf('#runs/2026-11-04T02:00:00.000Z'));
+      expect(both.indexOf('A run is starting')).toBeGreaterThanOrEqual(0);
+    });
+
     it('leaves the refresh time alone when nothing loaded', async () => {
       const { page, parts } = createPage(
         async () => { throw new Error('down'); },

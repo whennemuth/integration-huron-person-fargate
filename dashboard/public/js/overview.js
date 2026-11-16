@@ -68,11 +68,17 @@ class OverviewPage {
             return;
         }
         const run = (result.value.items || [])[0];
+        // A run launched moments ago, not listed yet: said first, above the latest run listed (if any)
+        const launch = result.value.launch ? RunFormat.launchNoteHtml(result.value.launch, this.now()) : '';
         if ( ! run) {
+            if (launch) {
+                this.runContainer.innerHTML = launch;
+                return;
+            }
             PageState.empty(this.runContainer, 'No runs yet', 'The latest sync run in this landscape will be shown here once the first one starts.');
             return;
         }
-        this.runContainer.innerHTML = OverviewPage.latestRunHtml(run, this.now());
+        this.runContainer.innerHTML = launch + OverviewPage.latestRunHtml(run, this.now());
     }
 
     renderServices(result) {

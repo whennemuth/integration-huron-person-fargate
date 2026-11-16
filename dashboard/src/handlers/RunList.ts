@@ -1,4 +1,5 @@
 import { RunReport } from '../../../src/reporting/RunReporting';
+import type { Launch, LaunchFlag } from '../services/LaunchFlag';
 import { RunReportingService } from '../services/ServiceTypes';
 
 export const RUN_LIST_DEFAULT_LIMIT = 20;
@@ -10,8 +11,11 @@ export const RUN_LIST_MAX_LIMIT = 50;
  */
 export type RunListItem = RunReport | { syncRunId: string; status: 'UNKNOWN' };
 
-/** One page of the run list, newest first. `before` continues it, and is present only when older runs remain */
-export type RunListPage = { items: RunListItem[]; before?: string };
+/**
+ * One page of the run list, newest first. `before` continues it, and is present only when older runs remain. The
+ * first page also carries `launch`: a run launched moments ago that isn't listed yet (LaunchFlag), if there is one.
+ */
+export type RunListPage = { items: RunListItem[]; before?: string; launch?: Launch };
 
 /**
  * Pages through a landscape's runs newest first, each with its report, so a page of the run history costs
@@ -20,7 +24,8 @@ export type RunListPage = { items: RunListItem[]; before?: string };
  * page's reports are read in parallel.
  */
 export class RunList {
-  constructor(private readonly reporting: RunReportingService) {}
+  /** @param launchFlag The landscape's launch flag, assessed for the first page (absent: none is kept) */
+  constructor(private readonly reporting: RunReportingService, private readonly launchFlag?: LaunchFlag) {}
 
   async page(params: { limit?: number; before?: string } = {}): Promise<RunListPage> {
     const { limit = RUN_LIST_DEFAULT_LIMIT, before } = params;
@@ -31,9 +36,21 @@ export class RunList {
     const items = await Promise.all(syncRunIds.map(async (syncRunId): Promise<RunListItem> =>
       (await this.reporting.getRunReport(syncRunId)) ?? { syncRunId, status: 'UNKNOWN' }
     ));
+    const launch = before === undefined ? await this.launch(syncRunIds[0]) : undefined;
     return {
       items,
-      ...(hasOlder && syncRunIds.length > 0 ? { before: syncRunIds[syncRunIds.length - 1] } : {})
+      ...(hasOlder && syncRunIds.length > 0 ? { before: syncRunIds[syncRunIds.length - 1] } : {}),
+      ...(launch ? { launch } : {})
     };
+  }
+
+  /** The launch still waiting for its run, given the newest run; a flag that can't be read leaves the list as it is */
+  private async launch(newestSyncRunId: string | undefined): Promise<Launch | undefined> {
+    try {
+      return await this.launchFlag?.assess(newestSyncRunId);
+    } catch (error: any) {
+      console.warn(`Couldn't read the launch flag: ${error?.message ?? error}`);
+      return undefined;
+    }
   }
 }

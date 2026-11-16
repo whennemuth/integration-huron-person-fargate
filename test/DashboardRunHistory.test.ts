@@ -193,6 +193,22 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
     });
   });
 
+  describe('a run launched moments ago', () => {
+    it("is passed on from the first page of runs only, for the page to show above the list", async () => {
+      const launch = { launchedAt: '2026-11-16T14:00:00.000Z', expiresAt: '2026-11-16T14:05:00.000Z', choices: { runType: 'full' } };
+      const api = new RunsApi(async (path: string) => path.includes('before=')
+        ? { items: [] }
+        : { items: [{ syncRunId: '2026-11-15T02:00:00.000Z', status: 'UNKNOWN' }], before: '2026-11-15T02:00:00.000Z', launch });
+      expect((await api.listRuns({ limit: 1 })).launch).toEqual(launch);
+      const seen: any[] = [];
+      const container: any = { innerHTML: '', querySelector: () => ({ insertAdjacentHTML: () => undefined, addEventListener: () => undefined, innerHTML: '' }) };
+      const table = RunListTable.create(api, container, 1, (shown: any) => seen.push(shown));
+      await table.pager.next();
+      await table.pager.next();
+      expect(seen).toEqual([launch]);
+    });
+  });
+
   describe('RunsApi', () => {
     it('asks for the routes the handler serves', async () => {
       const paths: string[] = [];

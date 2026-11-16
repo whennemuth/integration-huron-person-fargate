@@ -8,6 +8,8 @@
 import { GetFunctionConfigurationCommand, GetFunctionUrlConfigCommand, InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { mockClient } from 'aws-sdk-client-mock';
 import { handler } from '../dashboard/src/handlers/DashboardHandler';
+import { ServiceProvider } from '../dashboard/src/services/ServiceProvider';
+import { LaunchFlag } from '../dashboard/src/services/LaunchFlag';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
 import { OFFLINE_SOURCE_CONFIG, OfflineBulkSyncService } from '../dashboard/src/handlers/OfflineServices';
 import {
@@ -144,6 +146,83 @@ describe('BulkSync', () => {
     });
     return { bulkSync, functions };
   };
+
+  describe('a launch, until its run appears (LaunchFlag)', () => {
+    const launching = (params: { landscape?: string; newest?: RunReport; reset?: any; invokeFails?: boolean; flag?: LaunchFlag } = {}) => {
+      const { landscape = 'mock', newest = finishedRun, reset, invokeFails } = params;
+      const flag = params.flag ?? LaunchFlag.inMemory(landscape, () => NOW);
+      const functions = {
+        isDryRun: jest.fn(async () => false),
+        invokeAsync: jest.fn(async () => { if (invokeFails) throw new Error('throttled'); })
+      };
+      const bulkSync = new BulkSync({
+        config: OFFLINE_SOURCE_CONFIG,
+        settings: { ...settings, landscape, chunkerFunctionName: `chunker-subscriber-${landscape}`, processorSubscriberFunctionName: `processor-subscriber-${landscape}` },
+        runs: runsEndingWith(newest), functions, now: () => NOW, launchFlag: flag,
+        resetRecords: { read: async () => reset }
+      });
+      return { bulkSync, functions, flag };
+    };
+
+    it('raises the flag with the start, before the invoke, lasting as the start needs', async () => {
+      const { bulkSync, flag } = launching();
+      const started = await bulkSync.start({ runType: 'full', parallelStart: 2, resetState: true }, { by: 'dashboard', principal: 'wrh' } as any);
+      expect(await flag.read()).toEqual({
+        launchedAt: started.startedAt, expiresAt: new Date(NOW + 22 * 60_000).toISOString(),
+        startedBy: { by: 'dashboard', principal: 'wrh' }, choices: started.run
+      });
+      expect((await bulkSync.describe()).launch).toMatchObject({ launchedAt: started.startedAt });
+    });
+
+    it('refuses a second start, and a reset, while the first is launching', async () => {
+      const { bulkSync, functions } = launching();
+      await bulkSync.start({ runType: 'full' });
+      await expect(bulkSync.start({ runType: 'full' })).rejects.toMatchObject({ code: 'RUN_LAUNCHING', status: 409 });
+      await expect(bulkSync.plan({ runType: 'full' })).rejects.toMatchObject({ code: 'RUN_LAUNCHING' });
+      await expect(bulkSync.requestReset()).rejects.toMatchObject({ code: 'RUN_LAUNCHING', message: expect.stringContaining('a reset would empty the tables') });
+      expect((await bulkSync.resetState() as any).blocked).toMatchObject({ code: 'RUN_LAUNCHING' });
+      expect(functions.invokeAsync).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets one of two starts through when both pass the checks together', async () => {
+      const flag = LaunchFlag.inMemory('mock', () => NOW);
+      const first = launching({ flag });
+      const second = launching({ flag });
+      const results = await Promise.allSettled([first.bulkSync.start({ runType: 'full' }), second.bulkSync.start({ runType: 'full' })]);
+      expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.find(result => result.status === 'rejected')).toMatchObject({ reason: { code: 'RUN_LAUNCHING' } });
+      expect(first.functions.invokeAsync.mock.calls.length + second.functions.invokeAsync.mock.calls.length).toBe(1);
+    });
+
+    it("lowers the flag when the chunker subscriber can't be invoked: nothing was launched", async () => {
+      const { bulkSync, flag } = launching({ invokeFails: true });
+      await expect(bulkSync.start({ runType: 'full' })).rejects.toThrow('throttled');
+      expect(await flag.read()).toBeUndefined();
+    });
+
+    it('lowers the flag once its run is listed, and allows the next start', async () => {
+      const flag = LaunchFlag.inMemory('mock', () => NOW);
+      await launching({ flag }).bulkSync.start({ runType: 'full' });
+      // The chunker has written the run's first records: it is the newest listed, a few seconds after the launch
+      const appeared = { ...finishedRun, syncRunId: new Date(NOW + 20_000).toISOString() } as RunReport;
+      const { bulkSync } = launching({ flag, newest: appeared });
+      const state = await bulkSync.describe();
+      expect(state.launch).toBeUndefined();
+      expect(state.blocked).toBeUndefined();
+      expect(await flag.read()).toBeUndefined();
+    });
+
+    it('refuses a start while a reset of the landscape is running', async () => {
+      const running = { status: 'running', via: 'overview', startedAt: new Date(NOW - 2 * 60_000).toISOString() };
+      const { bulkSync, functions } = launching({ reset: running });
+      expect((await bulkSync.describe()).blocked).toMatchObject({ code: 'RESET_UNDERWAY' });
+      await expect(bulkSync.start({ runType: 'full' })).rejects.toMatchObject({ code: 'RESET_UNDERWAY' });
+      expect(functions.invokeAsync).not.toHaveBeenCalled();
+      // One that stopped long ago (out of time) doesn't hold starts back
+      const stopped = launching({ reset: { ...running, startedAt: new Date(NOW - 60 * 60_000).toISOString() } });
+      expect((await stopped.bulkSync.describe()).blocked).toBeUndefined();
+    });
+  });
 
   describe('a parallel start', () => {
     it("offers up to 20 tasks, lowered to the chunker service's maximum when it can be read", async () => {
@@ -618,10 +697,34 @@ describe('the bulk sync routes, offline', () => {
   beforeAll(() => { process.env.LOCAL_OFFLINE = 'true'; });
   afterAll(() => { delete process.env.LOCAL_OFFLINE; });
   beforeEach(() => {
+    ServiceProvider.resetOfflineState();
     jest.spyOn(console, 'log').mockImplementation(() => undefined);
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
   });
   afterEach(() => jest.restoreAllMocks());
+
+  it('says a started run is launching until it appears: on Bulk sync and the first page of runs, refusing another start', async () => {
+    const started = await request('POST', { runType: 'full', parallelStart: 3 });
+    expect(started.status).toBe(202);
+    const state = await request('GET');
+    expect(state.body.launch).toMatchObject({ launchedAt: started.body.startedAt, choices: { runType: 'full', parallelStart: 3 } });
+    // 5 minutes, and 7 more for a parallel start
+    expect(Date.parse(state.body.launch.expiresAt) - Date.parse(state.body.launch.launchedAt)).toBe(12 * 60_000);
+    expect(state.body.blocked).toMatchObject({ code: 'RUN_LAUNCHING' });
+    expect(await request('POST', { runType: 'full' }, '/api/bulk-sync/plan')).toMatchObject({ status: 409, body: { code: 'RUN_LAUNCHING' } });
+    expect(await request('POST', { runType: 'full' })).toMatchObject({ status: 409, body: { code: 'RUN_LAUNCHING' } });
+    // The run list's first page carries it; an older page doesn't
+    const runs = await handler({
+      rawPath: '/api/runs', headers: {}, queryStringParameters: { include: 'report', limit: '1' },
+      requestContext: { http: { method: 'GET', path: '/api/runs' } }, isBase64Encoded: false
+    } as unknown as LambdaFunctionUrlEvent);
+    expect(JSON.parse(`${runs.body}`).launch).toMatchObject({ launchedAt: started.body.startedAt });
+    const older = await handler({
+      rawPath: '/api/runs', headers: {}, queryStringParameters: { include: 'report', limit: '1', before: '2026-11-04T02:00:00.000Z' },
+      requestContext: { http: { method: 'GET', path: '/api/runs' } }, isBase64Encoded: false
+    } as unknown as LambdaFunctionUrlEvent);
+    expect(JSON.parse(`${older.body}`).launch).toBeUndefined();
+  });
 
   it('describes a start (GET), reviews one (POST plan, 200), and starts one (POST, 202)', async () => {
     const state = await request('GET');

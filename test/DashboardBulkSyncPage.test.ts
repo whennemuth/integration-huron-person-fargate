@@ -11,6 +11,7 @@ import { join } from 'path';
 import { Script, createContext } from 'vm';
 import { minifyJS } from '../dashboard/scripts/BuildTemplates';
 import { handler } from '../dashboard/src/handlers/DashboardHandler';
+import { ServiceProvider } from '../dashboard/src/services/ServiceProvider';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
 
 const JS_DIR = join(__dirname, '../dashboard/public/js');
@@ -275,22 +276,25 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       expect(BulkSyncView.requestError({ runType: 'full' })).toBeUndefined();
     });
 
-    it('says a started run will appear, then links to it once it has', () => {
-      const result = { startedAt: '2026-11-10T11:58:00.000Z', run: { population: 'person-delta', buid: 'U12345678' } };
-      const waiting = BulkSyncView.startedHtml({ result }, NOW);
-      expect(waiting).toContain('Started 2 min ago: Test of U12345678.');
-      expect(waiting).toContain('Refresh to look for it.');
-      const run = { syncRunId: '2026-11-10T11:58:20.000Z', startedAt: '2026-11-10T11:58:20.000Z', status: 'INCOMPLETE', populationLabel: 'Person U12345678' };
-      const found = BulkSyncView.startedHtml({ result, run }, NOW);
-      expect(found).toContain('href="#runs/2026-11-10T11:58:20.000Z"');
-      expect(found).toContain('status-badge-warning');
-      const full = { startedAt: '2026-11-10T11:58:00.000Z', run: { runType: 'full-no-deactivations', population: 'person-delta' } };
-      expect(BulkSyncView.startedHtml({ result: full }, NOW)).toContain('Started 2 min ago: Full sync (no deactivations).');
-      expect(BulkSyncView.startedHtml({ result: full }, NOW)).not.toContain('chunker tasks start');
+    it('shows a run launched moments ago while the server says so, else the newest run', () => {
+      const launch = (choices: Record<string, any>) => ({
+        launchedAt: '2026-11-10T11:58:00.000Z', expiresAt: '2026-11-10T12:03:00.000Z', startedBy: { by: 'dashboard', principal: 'wrh' }, choices
+      });
+      const test = BulkSyncView.statusHtml(state({ launch: launch({ runType: 'test', population: 'person-delta', buid: 'U12345678' }) }), NOW);
+      expect(test).toContain('data-launch-note');
+      expect(test).toContain('A run is starting: Test of U12345678, launched 2 min ago by wrh');
+      expect(test).toContain('It is listed in Run history once its chunker has written its first records: Refresh to check.');
+      expect(test).toContain('If it isn&#39;t by ');
+      expect(test).not.toContain('chunker tasks start');
+      const full = BulkSyncView.statusHtml(state({ launch: launch({ runType: 'full-no-deactivations', population: 'person-delta' }) }), NOW);
+      expect(full).toContain('A run is starting: Full sync (no deactivations), launched 2 min ago by wrh');
       // A parallel start says its tasks take a few minutes to start
-      const parallel = { startedAt: '2026-11-10T11:58:00.000Z', run: { runType: 'full', population: 'person-full', parallelStart: 5 } };
-      expect(BulkSyncView.startedHtml({ result: parallel }, NOW))
-        .toContain('Its 5 chunker tasks start within a few minutes, once the chunker&#39;s scaling catches up. It appears in Run history');
+      expect(BulkSyncView.statusHtml(state({ launch: launch({ runType: 'full', population: 'person-full', parallelStart: 5 }) }), NOW))
+        .toContain('Its 5 chunker tasks start once the chunker&#39;s scaling catches up, within a few minutes.');
+      // No launch: the newest run, as it is now
+      expect(BulkSyncView.statusHtml(state(), NOW)).toContain('finished.');
+      expect(BulkSyncView.statusHtml(state({ latestRun: { kind: 'underway', syncRunId: '2026-11-10T11:58:20.000Z' } }), NOW))
+        .toContain('href="#runs/2026-11-10T11:58:20.000Z"');
     });
   });
 
@@ -364,9 +368,11 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       expect(BulkSyncView.requestError({ runType: 'full', source: 'real' })).toBeUndefined();
     });
 
-    it('says a run that started from scratch empties Run history', () => {
-      const result = { startedAt: '2026-11-10T11:58:00.000Z', run: { runType: 'full', population: 'person-full', resetState: true } };
-      expect(BulkSyncView.startedHtml({ result }, NOW)).toContain('Run history was emptied first, so this run will be the only one listed.');
+    it('says a run that starts from scratch waits for the reset first', () => {
+      const launch = { launchedAt: '2026-11-10T11:58:00.000Z', expiresAt: '2026-11-10T12:13:00.000Z', choices: { runType: 'full', population: 'person-full', resetState: true } };
+      const html = BulkSyncView.statusHtml(state({ launch }), NOW);
+      expect(html).toContain('A run is starting: Full sync (with deactivations), launched 2 min ago</p>');
+      expect(html).toContain('The landscape is being reset first, which takes up to 10 minutes.');
     });
   });
 
@@ -424,19 +430,27 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       expect(bulkPage.request).toBeUndefined();
     });
 
-    it('starts the reviewed run, then links to it once it is the newest run', async () => {
-      const newest = { syncRunId: '2026-11-10T11:58:20.000Z', startedAt: '2026-11-10T11:58:20.000Z', status: 'INCOMPLETE', populationLabel: 'Person U1' };
-      const listRuns = jest.fn().mockResolvedValueOnce({ items: [{ syncRunId: '2026-11-09T02:00:00.000Z' }] }).mockResolvedValue({ items: [newest] });
-      const { bulkPage, parts, postJson } = page({ runs: { listRuns } });
+    it('starts the reviewed run, shows it launching, then follows the run once it is listed', async () => {
+      const launch = { launchedAt: '2026-11-10T11:58:00.000Z', expiresAt: '2026-11-10T12:03:00.000Z', choices: { runType: 'test', population: 'person-delta', buid: 'U1' } };
+      const getJson = jest.fn()
+        .mockResolvedValueOnce(state())
+        .mockResolvedValueOnce(state({ launch, blocked: { code: 'RUN_LAUNCHING', message: 'A run was just launched' } }))
+        .mockResolvedValueOnce(state({ latestRun: { kind: 'underway', syncRunId: '2026-11-10T11:58:20.000Z' } }))
+        .mockResolvedValue(state({ latestRun: { kind: 'finished', syncRunId: '2026-11-10T11:58:20.000Z' } }));
+      const { bulkPage, parts, postJson } = page({ getJson });
       await bulkPage.load();
       await bulkPage.review({ runType: 'test', buid: 'U1', bulkReset: true, iterationLimit: 2, parallelStart: 0, custom: true });
 
       expect(await bulkPage.confirm()).toBe(true);
       expect(postJson).toHaveBeenLastCalledWith('/api/bulk-sync', { runType: 'test', buid: 'U1', bulkReset: true, iterationLimit: 2, parallelStart: 0 });
-      // The newest run is still the older one: the run hasn't appeared yet
-      expect(parts['[data-bulk-status]'].innerHTML).toContain('Refresh to look for it.');
+      // The server's state after the start: the run is launching, and another start is refused
+      expect(parts['[data-bulk-status]'].innerHTML).toContain('A run is starting: Test of U1');
 
+      // Each Refresh shows the run as it is now: underway, then finished (it used to stay at its first state)
       await bulkPage.load();
+      expect(parts['[data-bulk-status]'].innerHTML).toContain('is still underway');
+      await bulkPage.load();
+      expect(parts['[data-bulk-status]'].innerHTML).toContain('finished.');
       expect(parts['[data-bulk-status]'].innerHTML).toContain('href="#runs/2026-11-10T11:58:20.000Z"');
     });
 
@@ -454,7 +468,6 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
         hidden: false, textContent: "The run wasn't started: The run of x is still underway: wait for it to finish"
       });
       expect(form.buttons.every(button => !button.disabled)).toBe(true);
-      expect(bulkPage.started).toBeUndefined();
     });
 
     it("reads a mock landscape's options only from its section: the source, the simulator's settings, Start from scratch", () => {
@@ -706,6 +719,7 @@ describe('bulk-sync.js against the dashboard routes and offline services', () =>
   beforeAll(() => { process.env.LOCAL_OFFLINE = 'true'; });
   afterAll(() => { delete process.env.LOCAL_OFFLINE; });
   beforeEach(() => {
+    ServiceProvider.resetOfflineState();
     jest.spyOn(console, 'log').mockImplementation(() => undefined);
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
   });
@@ -724,7 +738,9 @@ describe('bulk-sync.js against the dashboard routes and offline services', () =>
     expect(review).toContain('<code>/api/person?buid=U0000042</code>');
     expect(review).toContain('<code>trustPreviousStorage</code>');
     expect(await bulkPage.confirm()).toBe(true);
-    expect(bulkPage.started.result).toMatchObject({ status: 'started', run: { population: 'person-delta', buid: 'U0000042' } });
+    // The offline launch flag, raised by the start: the page shows the run launching, and another start is refused
+    expect(parts['[data-bulk-status]'].innerHTML).toContain('A run is starting: Test of U0000042, launched just now');
+    expect(bulkPage.state.blocked).toMatchObject({ code: 'RUN_LAUNCHING' });
   });
 
   it('offers a mock landscape its options when the mocks play one (LANDSCAPE=mock), and reviews a run from the simulator', async () => {

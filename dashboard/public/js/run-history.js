@@ -166,6 +166,43 @@ class RunFormat {
         return RunFormat.POPULATIONS[population] || (population ? String(population) : RunFormat.NONE);
     }
 
+    /** What a launched or started run is, from its choices (BulkSyncChoices): its run type, or a test's BUID */
+    static runWhat(choices) {
+        const labels = { full: 'Full sync (with deactivations)', 'full-no-deactivations': 'Full sync (no deactivations)' };
+        if ( ! choices) {
+            return 'A run';
+        }
+        return choices.buid ? `Test of ${choices.buid}` : (labels[choices.runType] || RunFormat.population(choices.population));
+    }
+
+    /**
+     * A run launched moments ago that isn't listed yet (a Launch, from the dashboard's LaunchFlag): what, when and by
+     * whom, what it waits for, and until when. Overview, Run history and Bulk sync all show it so.
+     */
+    static launchNoteHtml(launch, now = Date.now()) {
+        const choices = launch.choices || {};
+        const by = RunView.startedByLabel(launch.startedBy);
+        const title = `A run is starting: ${RunFormat.runWhat(choices)}, launched ${RunFormat.ago(launch.launchedAt, now)}${by ? ` by ${by}` : ''}`;
+        const waits = [];
+        if (choices.resetState) {
+            waits.push('The landscape is being reset first, which takes up to 10 minutes.');
+        }
+        if (choices.parallelStart > 0) {
+            waits.push(`Its ${choices.parallelStart} chunker tasks start once the chunker's scaling catches up, within a few minutes.`);
+        }
+        waits.push('It is listed in Run history once its chunker has written its first records: Refresh to check.');
+        waits.push(`If it isn't by ${RunFormat.clockTime(Date.parse(launch.expiresAt), now)}, it didn't start, and the chunker subscriber's log says why.`);
+        return `
+            <div class="run-note run-note-warning launch-note" role="status" data-launch-note>
+                <i class="fas fa-hourglass-half run-note-icon" aria-hidden="true"></i>
+                <div>
+                    <p class="run-note-title">${Html.escape(title)}</p>
+                    <p class="run-note-message">${Html.escape(waits.join(' '))}</p>
+                </div>
+            </div>
+        `;
+    }
+
     static storageMode(mode) {
         return RunFormat.STORAGE_MODES[String(mode || '').toLowerCase()] || (mode ? String(mode) : RunFormat.NONE);
     }
@@ -519,7 +556,7 @@ class RunsApi {
     /** A page of runs, newest first; cursor is the previous page's (the route's `before`) */
     async listRuns({ cursor, limit } = {}) {
         const data = await this.getJson(`/api/runs${RunsApi.query({ include: 'report', limit, before: cursor })}`);
-        return { items: (data.items || []).map(item => new RunView(item)), cursor: data.before };
+        return { items: (data.items || []).map(item => new RunView(item)), cursor: data.before, launch: data.launch };
     }
 
     async run(syncRunId) {
@@ -768,10 +805,17 @@ class RunListTable {
         `;
     }
 
-    static create(api, container, pageSize = 20) {
+    /** @param onLaunch Called with the first page's launch (a run launched moments ago, not yet listed), or undefined */
+    static create(api, container, pageSize = 20, onLaunch = () => undefined) {
         return new PagedTable({
             container,
-            loadPage: cursor => api.listRuns({ cursor, limit: pageSize }),
+            loadPage: async cursor => {
+                const page = await api.listRuns({ cursor, limit: pageSize });
+                if (cursor === undefined) {
+                    onLaunch(page.launch);
+                }
+                return page;
+            },
             headHtml: RunListTable.HEAD_HTML,
             rowHtml: RunListTable.rowHtml,
             rowLinks: true,
@@ -1470,7 +1514,8 @@ class RunHistoryPage {
         this.listView = root.querySelector('[data-view="list"]');
         this.detailContainer = root.querySelector('[data-view="detail"]');
         this.stamp = root.querySelector('[data-refresh-stamp="runs"]');
-        this.list = RunListTable.create(api, root.querySelector('[data-run-list]'));
+        this.launchContainer = root.querySelector('[data-run-launch]');
+        this.list = RunListTable.create(api, root.querySelector('[data-run-list]'), 20, launch => this.showLaunch(launch));
         this.listLoaded = false;
         this.detail = undefined;
         root.querySelector('[data-action="refresh-runs"]').addEventListener('click', () => this.refreshList());
@@ -1497,6 +1542,15 @@ class RunHistoryPage {
             RefreshStamp.set(this.stamp);
         }
         return shown;
+    }
+
+    /** A run launched moments ago, above the list until it is listed */
+    showLaunch(launch) {
+        if ( ! this.launchContainer) {
+            return;
+        }
+        this.launchContainer.hidden = ! launch;
+        this.launchContainer.innerHTML = launch ? RunFormat.launchNoteHtml(launch, Date.now()) : '';
     }
 
     showRun(syncRunId) {

@@ -14,6 +14,7 @@ import { JwtTools } from "shibboleth-sp";
 import { AuthenticatedContext, AuthenticationMode, IContext } from "../context/IContext";
 import { CACHE_SECRET } from "../src/handlers/DashboardCache";
 import { LandscapeTone } from "../src/handlers/LandscapeTone";
+import { LaunchFlag } from "../src/services/LaunchFlag";
 import { dashboardFunctionName } from "./DashboardFunctionName";
 import { LandscapeResources } from "./LandscapeResources";
 import { registerLandscape } from "./LandscapeRegistration";
@@ -166,6 +167,14 @@ export class FunctionUrlOrigin {
       effect: Effect.ALLOW,
       actions: ['application-autoscaling:DescribeScalableTargets'],
       resources: ['*'],
+    }));
+    // Bulk sync's launch flag (src/services/LaunchFlag.ts): this landscape's one SSM parameter, put when a run is
+    // launched (only if absent), read by the routes that show runs, and deleted once its run appears or it expires.
+    // The pipeline never reads it.
+    this.lambda.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['ssm:PutParameter', 'ssm:GetParameter', 'ssm:DeleteParameter'],
+      resources: [Stack.of(stack).formatArn({ service: 'ssm', resource: 'parameter', resourceName: LaunchFlag.parameterName(landscape).slice(1) })],
     }));
     // A mock landscape only: look up the source simulator's Function URL, to offer it as a run's source. Its settings
     // are read from its own unauthenticated /health; nothing about it is changed.

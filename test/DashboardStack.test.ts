@@ -159,6 +159,17 @@ describe('FunctionUrlOrigin', () => {
       ['lambda:InvokeFunction', 'lambda:GetFunctionConfiguration', 'lambda:GetFunctionUrlConfig'].includes(a))).toBe(true);
   });
 
+  it("may keep its landscape's launch flag (put, get, delete one SSM parameter), and no other parameter", () => {
+    const statements = Object.values(synth('dynamodb').findResources('AWS::IAM::Policy'))
+      .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+    const writes = statements.filter((s: any) => [s.Action].flat().some((a: string) => /^ssm:(Put|Delete)Parameter$/.test(a)));
+    expect(writes).toHaveLength(1);
+    expect([writes[0].Action].flat()).toEqual(['ssm:PutParameter', 'ssm:GetParameter', 'ssm:DeleteParameter']);
+    const resource = JSON.stringify(writes[0].Resource);
+    expect(resource).toContain(':parameter/hp-dashboard/launch-flags/mock');
+    expect(resource).not.toContain('*');
+  });
+
   it("may read a mock landscape's reset record (GetItem on its atomic counter table), and write nothing there", () => {
     const statements = Object.values(synth('dynamodb').findResources('AWS::IAM::Policy'))
       .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
@@ -246,8 +257,13 @@ describe('FunctionUrlOrigin', () => {
   it('grants read-only access to the registry path', () => {
     const statements = Object.values(synth('dynamodb').findResources('AWS::IAM::Policy'))
       .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
-    const ssm = statements.filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('ssm:')));
+    // The registry's statements; the launch flag's own parameter is tested above
+    const ssm = statements.filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('ssm:'))
+      && JSON.stringify(s.Resource).includes('/hp-dashboard/landscapes'));
     expect(ssm.flatMap((s: any) => [s.Action].flat())).toEqual(['ssm:GetParametersByPath']);
+    // Nothing else may touch SSM besides reading the registry and keeping the launch flag
+    const others = statements.filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('ssm:')) && !ssm.includes(s));
+    expect(others.map((s: any) => JSON.stringify(s.Resource))).toEqual([expect.stringContaining('/hp-dashboard/launch-flags/mock')]);
     const resources = JSON.stringify(ssm.map((s: any) => s.Resource));
     expect(resources).toContain(':parameter/hp-dashboard/landscapes\"');
     expect(resources).toContain(':parameter/hp-dashboard/landscapes/*');

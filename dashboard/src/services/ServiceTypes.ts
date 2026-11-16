@@ -1,3 +1,4 @@
+import type { Launch } from './LaunchFlag';
 import type { StartedBy } from '../../../src/chunking/StartedBy';
 import type { MockLandscapeResetRecord } from '../../../src/chunking/MockLandscapeReset';
 import { CrudOperation } from 'integration-core';
@@ -196,11 +197,13 @@ export type BulkSyncState = {
   itemsPerChunk?: number;
   /** A mock landscape only: the source and Start from scratch */
   mock?: MockLandscapeOptions;
+  /** A run launched moments ago whose chunker hasn't written its first records yet (LaunchFlag); absent otherwise */
+  launch?: Launch;
 };
 
 export type BulkSyncErrorCode =
   'INVALID_REQUEST' | 'PRODUCTION_LANDSCAPE' | 'RUN_UNDERWAY' | 'RUN_STALLED' | 'SUBSCRIBER_DRY_RUN' | 'NOT_CONFIGURED' |
-  'RESET_UNDERWAY';
+  'RESET_UNDERWAY' | 'RUN_LAUNCHING';
 
 /** A mock landscape reset's status as of now: `running` beyond 15 minutes is `stopped` (MockLandscapeReset.statusOf()) */
 export type MockLandscapeResetStatus = 'running' | 'succeeded' | 'failed' | 'stopped';

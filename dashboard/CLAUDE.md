@@ -146,8 +146,9 @@ The Lambda function serves two primary roles:
 - `POST /api/person-lookup` - Look up individual person by BUID or HRN
 - `POST /api/person-sync` - Sync individual person record
 - `GET /api/bulk-sync` - what starting a run would do and whether it's allowed now (`BulkSyncState`: the form's
-  defaults, the latest run, and `blocked` with the refusal a start would get, `NOT_CONFIGURED` included, so the
-  page shows even where starting isn't configured)
+  defaults, the latest run, `launch` while a run launched moments ago isn't listed yet (see "Launch flag" below), and
+  `blocked` with the refusal a start would get, `NOT_CONFIGURED` included, so the page shows even where starting
+  isn't configured)
 - `POST /api/bulk-sync/plan` - review a run: the same checks as a start, then what it would send (`BulkSyncPlan`:
   the choices, the `ApiChunkerEvent`, and every setting of the run, named as the manual Runner's `RunnerEnv`, each
   with its source: `form`, `landscape`, `fixed` or `unused`; the page shows the choices and the event, not the
@@ -158,21 +159,23 @@ The Lambda function serves two primary roles:
   overrideStalled?, and in a mock landscape only: source? ('real' | 'simulator'), simulator? ({ totalPopulation?,
   simulatedDelaySeconds?, errorRate?, nonCurrentTermRate? }, with the simulator), resetState? }`; `202` with what was
   started. A refused review
-  or start is a `BulkSyncError` as `{ error, code }` (400 invalid, 403 production, 409 a run underway or stalled or a
-  subscriber in `DRY_RUN`, 503 not configured)
+  or start is a `BulkSyncError` as `{ error, code }` (400 invalid, 403 production, 409 a run underway or stalled, a
+  run launched moments ago and not yet listed (`RUN_LAUNCHING`), a mock landscape's reset running (`RESET_UNDERWAY`)
+  or a subscriber in `DRY_RUN`, 503 not configured)
 - `GET /api/mock-landscape/reset` - a mock landscape's last reset of its run state and whether one can be started now
   (`MockLandscapeResetState`; `{ mockLandscape: false }` in any other landscape). `POST` starts one: the chunker
   subscriber, invoked asynchronously with a reset-only event, empties the target simulator, Run history and the
   fingerprints; `202` once it has accepted it. Refusals as Bulk sync's (`BulkSyncError`): 400 not a mock landscape,
-  409 a run underway (`RUN_UNDERWAY`), a reset still running (`RESET_UNDERWAY`) or the subscriber in `DRY_RUN`, 503 not
-  configured
+  409 a run underway (`RUN_UNDERWAY`) or launching (`RUN_LAUNCHING`), a reset still running (`RESET_UNDERWAY`) or the
+  subscriber in `DRY_RUN`, 503 not configured
 - `GET /api/status` - Get system health status and metrics
 
 **Run reporting** (this landscape's sync runs, read in-process from its tables and chunks bucket
 through fargate's `src/reporting/RunReporting.ts`; GET only, no `landscape` parameter):
 - `GET /api/runs` - `{ runs }`, the syncRunIds, oldest first
 - `GET /api/runs?include=report&limit&before` - a page of runs with their reports, newest first:
-  `{ items, before? }`. Up to `limit` runs (1-50, default 20) older than `before` (a syncRunId);
+  `{ items, before?, launch? }` (`launch` on the first page only, while a run launched moments ago isn't listed yet:
+  "Launch flag" below). Up to `limit` runs (1-50, default 20) older than `before` (a syncRunId);
   the response's `before` continues the list and is present only while older runs remain. A run
   with nothing recorded to report on is listed as `{ syncRunId, status: 'UNKNOWN' }`. Built by
   `RunList` (`src/handlers/RunList.ts`): `listRunPage({ limit, before })` (one Query of the statistics
@@ -390,6 +393,15 @@ DASHBOARD_SERVICE_PROVIDER_TASK=summary npx ts-node -r dotenv/config dashboard/s
 DASHBOARD_SHIBBOLETH_SECRET_TASK=read npx ts-node -r dotenv/config dashboard/src/ShibbolethSecret.ts
 ```
 
+- `src/services/LaunchFlag.ts` (`DASHBOARD_LAUNCH_FLAG`) - a landscape's launch flag in SSM (see "Launch flag"
+  below). `TASK`: `read` (as kept), `assess` (lowers it if `NEWEST_SYNC_RUN_ID` resolves it or it has expired),
+  `raise` (a made-up launch lasting `LIFETIME_MINUTES`; refused if one is up), `lower`. Tests:
+  `test/DashboardLaunchFlag.test.ts`.
+
+```bash
+DASHBOARD_LAUNCH_FLAG_TASK=read npx ts-node -r dotenv/config dashboard/src/services/LaunchFlag.ts
+```
+
 - `scripts/LambdaFunction.ts` (`DASHBOARD_LAMBDA_FUNCTION`) - a landscape's deployed dashboard Lambda
   (`LambdaFunction`, found by `dashboardFunctionName()` in `lib/DashboardFunctionName.ts`, which
   `lib/FunctionUrl.ts` names the function with). Read only. `TASK`: `show` (its environment, with its
@@ -426,7 +438,7 @@ characters: the Shibboleth construct names a bucket `<stack name>-context-config
   statistics table, the person history table (DynamoDB mode) and the chunks bucket
   (`lib/LandscapeResources.ts`). To start a run (Bulk sync) it may also invoke the chunker subscriber
   (`chunker-subscriber-<landscape>`, which resets the chunker's counters for a run's start) and read its and
-  the processor subscriber's configuration (their `DRY_RUN`), and read the chunker service's most tasks (its scalable target, for Parallel start); in a mock landscape only, it may also look up the source simulator's Function URL (`lambda:GetFunctionUrlConfig` on `source-simulator-<landscape>`, named in its `SOURCE_SIMULATOR_FUNCTION_NAME`), and read its last reset's record (`dynamodb:GetItem` on the atomic counter table). It writes nothing. All by deterministic name -
+  the processor subscriber's configuration (their `DRY_RUN`), and read the chunker service's most tasks (its scalable target, for Parallel start); in a mock landscape only, it may also look up the source simulator's Function URL (`lambda:GetFunctionUrlConfig` on `source-simulator-<landscape>`, named in its `SOURCE_SIMULATOR_FUNCTION_NAME`), and read its last reset's record (`dynamodb:GetItem` on the atomic counter table). The one thing it writes is its landscape's launch flag (`ssm:PutParameter`, `GetParameter`, `DeleteParameter` on `/hp-dashboard/launch-flags/<landscape>`, "Launch flag" below). All by deterministic name -
   no CloudFormation imports from the pipeline stack.
 
 **Commands** (from the fargate root; `npm run deploy` deploys the pipeline and dashboard stacks):
@@ -695,6 +707,42 @@ landscape's runs from the run reporting routes. Its classes each do one thing:
 Tests: `test/DashboardRunHistory.test.ts` runs the script in a vm (as written and minified) and drives
 `RunsApi` through the handler with the offline run history.
 
+### Launch flag
+
+A run started from Bulk sync isn't listed until its first chunker task writes its flags and metadata (the RUN marker
+in the statistics table), which can be minutes after Start: the chunker subscriber, invoked asynchronously, may first
+reset a mock landscape (up to 10 minutes) or seed a parallel start (its alarm wait up to about 6), and the chunker task
+chooses the run's syncRunId when it starts. A start from scratch also empties Run history. So until then the
+dashboard keeps a flag of its own, `LaunchFlag` (`src/services/LaunchFlag.ts`, since 2026-11-16,
+`mock-run-feedback-plan.md` issue 1); the pipeline knows nothing of it.
+- **One SSM String parameter per landscape**, `/hp-dashboard/launch-flags/<landscape>` (apart from the landscape
+  registry's path), holding a `Launch` as JSON: `launchedAt` (the start's `processedAt`, not the run's syncRunId),
+  `expiresAt`, `startedBy` and the choices. Its lifetime is 5 minutes, plus 7 for a parallel start, plus 10 for a start
+  from scratch (`LaunchFlag.lifetimeMs()`).
+- **Raised** by `BulkSync.start()` once the start's checks pass, just before it invokes the chunker subscriber, with
+  `PutParameter` `Overwrite: false`: of two starts that pass the checks together, only one put succeeds, and the other
+  is refused `RUN_LAUNCHING` without invoking anything. Lowered again if the invoke fails. A review never raises it.
+- **Assessed** (`LaunchFlag.assess(newestSyncRunId)`) by `BulkSync`'s state, start, review and reset checks, and by
+  the runs route's first page (`RunList`): lowered once the newest listed run is no earlier than `launchedAt` less
+  `CLOCK_SLACK_MS` (30 seconds: the chunker task's clock against the Lambda's), or once it has expired; otherwise
+  active. While active, a start or a mock landscape's reset is refused (`RUN_LAUNCHING`), and the pages show the launch
+  note (`RunFormat.launchNoteHtml()`, in `run-history.js`): what, by whom, how long ago, what it waits for (the reset,
+  the parallel start's tasks), and the time after which it didn't start. Overview shows it in place of "No runs yet"
+  or above the latest run, Run history above the list (`RunHistoryPage.showLaunch()`, `data-run-launch`), Bulk sync
+  as its status panel.
+- **Known trade-offs** (accepted 2026-11-16): a start that dies after the invoke (a failed reset, a dropped event, a
+  chunker task that never starts) only shows in CloudWatch; its flag simply expires. A page load that reads an expired
+  flag could, in the milliseconds before it deletes it, delete a new start's flag instead, leaving that start
+  unguarded.
+- **Also refused while a mock landscape's reset runs** (`RESET_UNDERWAY`, from its record): during a start from
+  scratch's reset the statistics table is empty, so the newest-run check alone would let a second start through.
+- **Offline** the flag is kept in memory (`MemoryLaunchFlagStore`), one per landscape played, shared by the offline
+  Bulk sync and the runs route (`ServiceProvider.getLaunchFlag()`). No offline run ever appears, so a launch shows until
+  it expires; restarting the server clears it. Tests clear it with `ServiceProvider.resetOfflineState()`.
+- A dashboard teardown leaves a flag that happens to be up; there is at most one, and it lives for minutes.
+- Tests: `test/DashboardLaunchFlag.test.ts`, the launch cases in `test/DashboardBulkSync.test.ts`, the pages' in
+  `DashboardBulkSyncPage`, `DashboardOverview` and `DashboardRunHistory`, and the grant in `DashboardStack`.
+
 ### Overview page
 
 The `overview` page (`templates/partials/overview-tab.mustache`, `public/js/overview.js`) is the
@@ -703,7 +751,8 @@ landing page. `OverviewPage` loads, each time the page is shown and on Refresh, 
 run page's note and stat tiles, figures so far for a run without a summary, and a link to its page) and the service checks (`/api/status`, in
 the `ServiceStatusTable` of `public/js/system-status.js`, which the Status page uses too). The two
 load independently, so one failing (the real `SystemStatus` service isn't implemented yet) leaves
-the other shown. Scripts load in dependency order: `page-state.js`, `run-history.js`,
+the other shown. While a run launched moments ago isn't listed yet (the runs route's `launch`), its launch note
+comes first, in place of "No runs yet" or above the latest run. Scripts load in dependency order: `page-state.js`, `run-history.js`,
 `system-status.js`, `overview.js`, `bulk-sync.js`, then `dashboard.js`, which creates the pages. Tests:
 `test/DashboardOverview.test.ts`.
 - **A mock landscape's own section** ("Mock landscape", hidden in any other landscape; since 2026-11-15,
@@ -796,9 +845,13 @@ routes above).
 - `BulkSyncPage` loads the state each time the page is shown and on Refresh. Review run locks the fields and asks
   the server for the review (`POST /api/bulk-sync/plan`), which a refusal answers under the fields (unlocked); Back
   unlocks them. So what is started is what was reviewed. Start posts the same request (`postSectionData()` in
-  `dashboard.js`, which also carries the server's error `code`); a refusal is shown under the review. After a start,
-  the status panel says when and what, and on Refresh links to the newest run once its syncRunId is no earlier than
-  the start (less `CLOCK_SLACK_MS`), since the chunker, not the page, creates it.
+  `dashboard.js`, which also carries the server's error `code`); a refusal is shown under the review.
+- **The status panel is the server's state at each load** (`BulkSyncView.statusHtml()`): while a run launched
+  moments ago isn't listed yet (`state.launch`), the launch note; else the newest run, as it is now, which
+  Refresh keeps current. It used to keep the started run as first found, so it said "Processing" after the run had
+  finished, until the page was reloaded (fixed 2026-11-16, `mock-run-feedback-plan.md` issue 3). After a start the
+  page simply reloads: the server raised the launch flag before answering, so the note shows at once, and Review run
+  is disabled with the `RUN_LAUNCHING` reason.
 - The Lambda's environment carries what the review shows: `PIPELINE_STACK_ID`, `ITEMS_PER_CHUNK`, and the config
   secret's name (`lib/FunctionUrl.ts`).
 - **Who starts it**: the handler passes the request's signed-in user (`Request.user`, the sign-in token's claims) to
