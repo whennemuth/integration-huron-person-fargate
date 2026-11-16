@@ -116,7 +116,7 @@ class OverviewPage {
         if (button) button.disabled = true;
         try {
             await this.postJson('/api/mock-landscape/reset', {});
-            say('The reset has started. It runs in the background for up to 10 minutes: Refresh to see how it is going.', false);
+            say('The reset has started in the background and takes up to 10 minutes. Refresh to check whether it has finished.', false);
             return true;
         } catch (error) {
             if (button) button.disabled = false;
@@ -152,7 +152,10 @@ class OverviewPage {
         };
     }
 
-    /** The Mock landscape section's content, from MockLandscapeResetState */
+    /**
+     * The Mock landscape section's content, from MockLandscapeResetState. A reset that can't be started because one is
+     * running says nothing more than the running one's line does: its button is just disabled.
+     */
     static resetHtml(state, now) {
         const { last, lastError, blocked } = state;
         return `
@@ -164,8 +167,8 @@ class OverviewPage {
                     subscriber does it in the background, in up to 10 minutes.
                 </p>
                 ${lastError ? `<p class="mock-reset-last">The last reset could not be read: ${Html.escape(lastError)}</p>` : OverviewPage.lastResetHtml(last, now)}
-                ${blocked ? `<p class="mock-reset-blocked" role="note">A reset can't be started now: ${Html.escape(blocked.message)}</p>` : ''}
-                <button class="btn btn-sm btn-outline-danger" type="button" data-action="reset-landscape"${blocked ? ' disabled' : ''}>
+                ${blocked && blocked.code !== 'RESET_UNDERWAY' ? `<p class="mock-reset-blocked" role="note">A reset can't be started now: ${Html.escape(blocked.message)}</p>` : ''}
+                <button class="btn btn-sm btn-outline-danger" type="button" data-action="reset-landscape"${blocked ? ` disabled title="${Html.escape(blocked.message)}"` : ''}>
                     <i class="fas fa-eraser me-1" aria-hidden="true"></i>Reset landscape
                 </button>
                 <p class="mock-reset-message" data-mock-reset-message role="status" hidden></p>
@@ -183,7 +186,9 @@ class OverviewPage {
         const started = `started ${RunFormat.ago(last.startedAt, now)} ${how}${who}`;
         const took = last.durationMs === undefined ? '' : OverviewPage.resetDuration(last.durationMs);
         if (last.status === 'running') {
-            return `<p class="mock-reset-last">A reset ${Html.escape(started)} is underway. Refresh to see when it finishes.</p>`;
+            const running = `A reset has been running for ${RunFormat.span(now - Date.parse(last.startedAt))} ` +
+                `(started ${RunFormat.clockTime(Date.parse(last.startedAt), now)} ${how}${who}).`;
+            return `<p class="mock-reset-last">${Html.escape(running)} It takes up to 10 minutes. Refresh to check whether it has finished.</p>`;
         }
         if (last.status === 'stopped') {
             return `<p class="mock-reset-last mock-reset-failed">The last reset, ${Html.escape(started)}, never finished: it most likely ran out of the chunker subscriber's 10 minutes. Its tables may be partly emptied: reset again to finish.</p>`;

@@ -705,10 +705,12 @@ the other shown. Scripts load in dependency order: `page-state.js`, `run-history
 - **A mock landscape's own section** ("Mock landscape", hidden in any other landscape; since 2026-11-15,
   `mock-landscape-options-plan.md` step 3a): loaded with the rest from `GET /api/mock-landscape/reset`. It explains in
   plain words what a reset empties, says what the last reset did (`BulkSync.resetState()`, from the record the chunker
-  subscriber keeps in the atomic counter table: underway; finished, with each table's count and time to the second,
-  `OverviewPage.resetDuration()`; failed, with why; or never finished, most likely out of time), and offers Reset
-  landscape. It asks first (`OverviewPage.RESET_CONFIRMATION`), then posts (`BulkSync.requestReset()`), and says the
-  reset runs in the background: Refresh shows it. Disabled, with the reason, when one can't be started now.
+  subscriber keeps in the atomic counter table: running, for how long and since when, up to 10 minutes; finished,
+  with each table's count and time to the second, `OverviewPage.resetDuration()`; failed, with why; or never finished,
+  most likely out of time), and offers Reset landscape. It asks first (`OverviewPage.RESET_CONFIRMATION`), then posts
+  (`BulkSync.requestReset()`), and says the reset runs in the background for up to 10 minutes: Refresh shows whether
+  it has finished (the page never polls). Disabled when one can't be started now, with the reason as a note, except
+  while a reset is running, which its own line already says (the reason is then only the button's title).
 - **Offline**, the stand-in service keeps the last reset in memory (one per landscape played,
   `ServiceProvider.getBulkSyncService()`): a past one that emptied an old hybrid run's tables, replaced by a reset
   requested there, which finds the tables empty. The sample Run history isn't emptied.

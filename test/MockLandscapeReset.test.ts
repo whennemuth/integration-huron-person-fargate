@@ -97,6 +97,25 @@ describe('the shared reset (MockLandscapeReset)', () => {
     await expect(new MockLandscapeReset(deps).run({ recorder: async () => { throw new Error('throttled'); } })).resolves.toMatchObject({ storageMode: 'dynamodb' });
   });
 
+  it("keeps its record in the atomic counter table under a key that says it's not a counter, with its purpose", async () => {
+    const dynamo = mockClient(DynamoDBDocumentClient);
+    dynamo.on(UpdateCommand).resolves({});
+    try {
+      const record = { status: 'running', via: 'overview', startedAt: '2026-11-15T12:00:00.000Z' } as any;
+      await MockLandscapeReset.recorder({ stackId: STACK_ID, region: 'us-east-2', landscape: 'mock' })(record);
+      expect(dynamo.commandCalls(UpdateCommand)[0].args[0].input).toMatchObject({
+        TableName: `${STACK_ID}-atomic-counter-mock`,
+        Key: { counter_name: 'not-a-counter:mock-landscape-reset' },
+        UpdateExpression: 'SET #reset = :reset, #purpose = :purpose, LastUpdated = :now',
+        ExpressionAttributeValues: expect.objectContaining({
+          ':reset': record, ':purpose': expect.stringMatching(/^Not a counter: the last mock landscape reset's record/)
+        })
+      });
+    } finally {
+      dynamo.restore();
+    }
+  });
+
   it('calls a reset still running after 15 minutes stopped', () => {
     const record = { status: 'running', via: 'overview', startedAt: '2026-11-15T12:00:00.000Z' } as any;
     const at = (minutes: number) => Date.parse('2026-11-15T12:00:00.000Z') + minutes * 60_000;

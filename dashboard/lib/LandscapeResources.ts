@@ -38,7 +38,7 @@ export type LandscapeResources = {
    */
   sourceSimulatorFunctionName?: string;
   /**
-   * A mock landscape only: the atomic counter table, whose `mock-landscape-reset` item records the last reset
+   * A mock landscape only: the atomic counter table, whose `not-a-counter:mock-landscape-reset` item records the last reset
    * (src/chunking/MockLandscapeReset.ts), which Overview shows
    */
   atomicCounterTableName?: string;

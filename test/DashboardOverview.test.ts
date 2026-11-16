@@ -171,8 +171,9 @@ describe.each([false, true])('overview.js and system-status.js (minified: %s)', 
     });
 
     it('says a reset is underway, never finished, failed, or has not happened', () => {
-      expect(OverviewPage.lastResetHtml({ ...succeededReset, status: 'running', durationMs: undefined }, NOW))
-        .toContain('A reset started 10 min ago from Overview by wrh is underway.');
+      const running = OverviewPage.lastResetHtml({ ...succeededReset, status: 'running', durationMs: undefined }, NOW);
+      expect(running).toMatch(/A reset has been running for 10 min \(started [^)]+ from Overview by wrh\)\. It takes up to 10 minutes\. Refresh to check whether it has finished\./);
+      expect(running).not.toContain('see when it finishes');
       expect(OverviewPage.lastResetHtml({ ...succeededReset, status: 'stopped', via: 'bulk-sync' }, NOW))
         .toContain("by Bulk sync&#39;s Start from scratch by wrh, never finished: it most likely ran out of the chunker subscriber's 10 minutes");
       expect(OverviewPage.lastResetHtml({ ...succeededReset, status: 'failed', durationMs: 3_000, error: 'AccessDenied <x>' }, NOW))
@@ -184,7 +185,15 @@ describe.each([false, true])('overview.js and system-status.js (minified: %s)', 
     it("disables Reset landscape, saying why, when one can't be started now", () => {
       const html = OverviewPage.resetHtml(state(succeededReset, { blocked: { code: 'RUN_UNDERWAY', message: 'The run of x is still underway' } }), NOW);
       expect(html).toContain("A reset can't be started now: The run of x is still underway");
-      expect(html).toMatch(/data-action="reset-landscape" disabled/);
+      expect(html).toMatch(/data-action="reset-landscape" disabled title="The run of x is still underway"/);
+    });
+
+    it('says a reset is running only once: the running line, and the button disabled', () => {
+      const running = { ...succeededReset, status: 'running', durationMs: undefined };
+      const html = OverviewPage.resetHtml(state(running, { blocked: { code: 'RESET_UNDERWAY', message: 'A reset is still running' } }), NOW);
+      expect(html).toContain('A reset has been running for 10 min');
+      expect(html).not.toContain("A reset can't be started now");
+      expect(html).toMatch(/data-action="reset-landscape" disabled title="A reset is still running"/);
     });
 
     /** The Overview partial's parts, with the Mock landscape section and what its content holds */
@@ -232,7 +241,9 @@ describe.each([false, true])('overview.js and system-status.js (minified: %s)', 
       expect(await confirmed.page.reset()).toBe(true);
       expect(confirmed.posted).toEqual(['/api/mock-landscape/reset']);
       expect(confirmed.button.disabled).toBe(true);
-      expect(confirmed.message).toMatchObject({ hidden: false, textContent: expect.stringContaining('The reset has started') });
+      expect(confirmed.message).toMatchObject({
+        hidden: false, textContent: 'The reset has started in the background and takes up to 10 minutes. Refresh to check whether it has finished.'
+      });
     });
 
     it("says why a reset wasn't started, and lets it be tried again", async () => {

@@ -3,7 +3,9 @@ import { DescribeTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { IContext } from '../../context/IContext';
 import { BulkPurger, BulkPurgerMode, BulkPurgerTables, TableTruncation } from '../dynamodb/BulkPurger';
-import { DYNAMODB_TABLE_NAME as atomicCounterTableName } from '../dynamodb/AtomicCounter';
+import {
+  DYNAMODB_PARTITION_KEY as atomicCounterKey, DYNAMODB_TABLE_NAME as atomicCounterTableName, NOT_A_COUNTER_PREFIX
+} from '../dynamodb/AtomicCounter';
 import type { StartedBy } from './StartedBy';
 import { DYNAMODB_TABLE_NAME as personCurrentStateTableName } from '../dynamodb/PersonCurrentStateTable';
 import { isMockLandscape, MOCK_LANDSCAPE_PATTERN } from '../Utils';
@@ -43,7 +45,8 @@ export type MockLandscapeResetResult = {
 export type MockLandscapeResetVia = 'overview' | 'bulk-sync';
 
 /**
- * A reset's record (MockLandscapeReset.RECORD_NAME in the landscape's atomic counter table, which no reset empties):
+ * A reset's record (the item MockLandscapeReset.RECORD_NAME, not a counter, borrowing the landscape's atomic counter
+ * table because no reset empties it; its `purpose` attribute says so):
  * written when it starts and again when it ends, so the dashboard can say what the last reset did and how long each
  * table took. One that starts and never ends (its Lambda timed out) stays `running`: statusOf() calls it stopped.
  */
@@ -86,8 +89,13 @@ export class MockLandscapeReset {
    */
   static readonly SHARED_DELTA_STORAGE_DIR = 'delta-storage';
 
-  /** The atomic counter table item that holds the last reset's record (MockLandscapeResetRecord) */
-  static readonly RECORD_NAME = 'mock-landscape-reset';
+  /**
+   * The atomic counter table item that holds the last reset's record (MockLandscapeResetRecord): not a counter, which
+   * its key says (NOT_A_COUNTER_PREFIX) and its `purpose` attribute explains
+   */
+  static readonly RECORD_NAME = `${NOT_A_COUNTER_PREFIX}mock-landscape-reset`;
+  /** Written with the record, for anyone who comes across the item in the atomic counter table */
+  static readonly RECORD_PURPOSE = "Not a counter: the last mock landscape reset's record, kept in this table because no reset empties it (src/chunking/MockLandscapeReset.ts)";
   /**
    * A reset still `running` this long after it started has stopped: no Lambda runs longer (15 minutes, its maximum),
    * so it ran out of time or failed without recording it
@@ -180,10 +188,10 @@ export class MockLandscapeReset {
     return async record => {
       await client.send(new UpdateCommand({
         TableName: atomicCounterTableName(MockLandscapeReset.contextFor(location)),
-        Key: { counter_name: MockLandscapeReset.RECORD_NAME },
-        UpdateExpression: 'SET #reset = :reset, LastUpdated = :now',
-        ExpressionAttributeNames: { '#reset': 'reset' },
-        ExpressionAttributeValues: { ':reset': record, ':now': new Date().toISOString() }
+        Key: { [atomicCounterKey]: MockLandscapeReset.RECORD_NAME },
+        UpdateExpression: 'SET #reset = :reset, #purpose = :purpose, LastUpdated = :now',
+        ExpressionAttributeNames: { '#reset': 'reset', '#purpose': 'purpose' },
+        ExpressionAttributeValues: { ':reset': record, ':purpose': MockLandscapeReset.RECORD_PURPOSE, ':now': new Date().toISOString() }
       }));
     };
   }
@@ -193,7 +201,7 @@ export class MockLandscapeReset {
     const client = DynamoDBDocumentClient.from(new DynamoDBClient({ region: location.region }));
     const { Item } = await client.send(new GetCommand({
       TableName: atomicCounterTableName(MockLandscapeReset.contextFor(location)),
-      Key: { counter_name: MockLandscapeReset.RECORD_NAME }
+      Key: { [atomicCounterKey]: MockLandscapeReset.RECORD_NAME }
     }));
     return Item?.reset as MockLandscapeResetRecord | undefined;
   }

@@ -228,12 +228,18 @@ empties the landscape's Run history too.
   batch at a time couldn't empty the about 438,000 items a hybrid full sync left in mock within the time. Every
   truncation uses it: the Runner's reset and the tables' harness `truncate` tasks too. The mock target table's
   truncation goes through it as well (it used to read every whole record into memory and delete them one
-  `DeleteItem` at a time, which the subscriber isn't granted).
+  `DeleteItem` at a time, which the subscriber isn't granted). The first reset in mock (2026-11-16, about 438,000
+  items) took 348 s of the 600 with no DynamoDB throttling: the limit was the Lambda's own share of a CPU, and it used
+  239 of its 256 MB with about 100 delete requests in flight. So mock's chunker subscriber has 1,024 MB
+  (`LAMBDA.chunkerSubscriber.memorySizeMb` in `context.mock.json`): four times the memory, and the CPU share that
+  comes with it.
 - **A reset on its own** (`MockLandscapeResetEvent` `{ mockLandscapeReset: true, startedBy?, requestedAt? }`; the
   dashboard's Overview, Reset landscape): the subscriber runs the same reset and nothing else, with the same refusals
   (`resetEventRefusal()`), skipped in `DRY_RUN` (`handleResetEvent()`). It shows what Start from scratch will take.
 - **Every reset is recorded** (`MockLandscapeResetRecord`, `MockLandscapeReset.recorder()`) in the landscape's atomic
-  counter table, which no reset empties: the item `counter_name` `mock-landscape-reset`, attribute `reset`, written
+  counter table, which no reset empties: the item `counter_name` `not-a-counter:mock-landscape-reset` (borrowing the
+  table, not a counter: `NOT_A_COUNTER_PREFIX` in `src/dynamodb/AtomicCounter.ts`, and a `purpose` attribute saying
+  so; anything that clears the counters must leave such items alone), attribute `reset`, written
   with `UpdateItem` (granted for the run counters) when it starts and when it ends: how it was started (`overview` or
   `bulk-sync`), by whom, when, each table's count and time, the S3 baseline objects, or the error. One still
   `running` 15 minutes after it started has stopped (`statusOf()`: its Lambda ran out of time). Recording never fails

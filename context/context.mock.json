@@ -94,7 +94,7 @@
   "LAMBDA": {
     "chunkerSubscriber": {
       "timeoutSeconds": 600,
-      "memorySizeMb": 256
+      "memorySizeMb": 1024
     },
     "processorSubscriber": {
       "timeoutSeconds": 60,
