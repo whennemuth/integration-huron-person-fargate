@@ -523,6 +523,43 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       expect(finished).not.toContain('stat-progress');
     });
 
+    it('shows each flag as its value, never as JSON, and wraps long ones', () => {
+      const flags = {
+        syncPopulation: 'person-full', bulkReset: false,
+        startedBy: { by: 'dashboard', principal: 'wrh' },
+        termsEndpoint: { baseUrl: 'https://sim.lambda-url.us-east-2.on.aws', fetchPath: '/terms' },
+        somethingNew: { mode: 'fast', retries: 2, nested: { on: true } },
+        listed: ['a', 'b'],
+        runFailed: true
+      };
+      const view = Object.assign(Object.create(RunDetailView.prototype), { run: { flags }, capabilities: {} });
+      const html = view.flagsHtml();
+      expect(html).not.toContain('{');
+      expect(html).toContain('<dt>Started by</dt><dd>wrh</dd>');
+      // A long value goes under its name, across the card; a short one stays beside it
+      expect(html).toContain('<dt>Terms endpoint</dt><dd class="fact-wide">https://sim.lambda-url.us-east-2.on.aws/terms</dd>');
+      expect(html).toContain('<dd class="fact-wide">mode: fast, retries: 2, nested: on: Yes</dd>');
+      expect(html).toContain('<dt>listed</dt><dd>a, b</dd>');
+      expect(html).not.toContain('runFailed');
+      expect(RunDetailView.flagValue('startedBy', { by: 'schedule' })).toBe('Schedule');
+      expect(RunDetailView.flagValue('startedBy', { by: 'nobody-knows' })).toBe(RunFormat.NONE);
+      expect(RunDetailView.flagValue('anything', null)).toBe(RunFormat.NONE);
+    });
+
+    it('counts the people removed from the source first, then those deactivated and failed, and says what they are', () => {
+      const deletion = { status: 'COMPLETED', deletedCount: 11, failedCount: 1, totalProcessed: 12, message: 'Soft-deleted 11 of 12 records' };
+      const view = Object.assign(Object.create(RunDetailView.prototype), { run: { deletion }, capabilities: {} });
+      const html = view.deletionHtml();
+      expect(html).not.toContain('Considered');
+      const terms = [...html.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]);
+      expect(terms).toEqual(['Removed from source', 'Deactivated', 'Failed']);
+      expect(html).toContain('<dt>Removed from source</dt><dd>12</dd>');
+      expect(html).toContain('deletion-explanation');
+      expect(html).toContain('Each is deactivated in Huron, or counted as failed.');
+      const skipped = Object.assign(Object.create(RunDetailView.prototype), { run: { deletion: { status: 'SKIPPED', reason: 'X' } }, capabilities: {} });
+      expect(skipped.deletionHtml()).not.toContain('deletion-explanation');
+    });
+
     it("lists an unfinished run's known facts: chunks processed, last chunk, duration so far", () => {
       const view = Object.assign(Object.create(RunDetailView.prototype), { run: new RunView(incomplete), capabilities: {} });
       const facts = Object.fromEntries(view.summaryFacts());

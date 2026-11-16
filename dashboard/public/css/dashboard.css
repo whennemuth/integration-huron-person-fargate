@@ -779,7 +779,19 @@ code, pre, kbd, samp {
 
 .fact-list dd {
     margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
     font-variant-numeric: tabular-nums;
+}
+
+/* A long value (a URL) under its term, across both columns */
+.fact-list dd.fact-wide {
+    grid-column: 1 / -1;
+    margin-top: -0.25rem;
+}
+
+.deletion-explanation {
+    margin-top: 0.75rem;
 }
 
 .fact-note,

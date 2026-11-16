@@ -684,7 +684,11 @@ landscape's runs from the run reporting routes. Its classes each do one thing:
 - `RunDetailView` is one run: the header (status, population, storage mode, duration, dry run, bulk
   reset), stat tiles, a note when the run failed, failed post-processing or has no summary yet (for
   a run with `progress`, saying its figures are summed from the chunks processed so far), and
-  four tabs, each loaded when first opened: **Overview** (summary, deletion outcome, flags),
+  four tabs, each loaded when first opened: **Overview** (summary; the deletion outcome, whose counts are Removed
+  from source, the deletion step's `totalProcessed`, then Deactivated and Failed, which add up to it; and the flags,
+  each shown as its value by `RunDetailView.flagValue()`, never as JSON: Started by as `startedByLabel()`, the terms
+  endpoint as one URL, any other object as `name: value` pairs, and a value longer than `WIDE_FLAG_LENGTH` under its
+  name across the card),
   **Chunks** (per-chunk statistics with totals), **Errors** (filtered by status code, with counts
   from the summary or else the chunk statistics) and **Changes** (by type; in S3 mode, where
   `changesSupported` is false, it says why there are none).

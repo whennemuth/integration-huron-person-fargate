@@ -1118,10 +1118,16 @@ class RunDetailView {
         return run.hasSummary ? facts : facts.filter(([, value]) => value !== RunFormat.NONE);
     }
 
+    /** Terms and values in two columns; a fact marked { wide: true } puts its value under its term, across both */
     static factsHtml(facts) {
-        return `<dl class="fact-list">${facts.map(([term, value]) => `
-            <dt>${Html.escape(term)}</dt><dd>${Html.escape(value)}</dd>
+        return `<dl class="fact-list">${facts.map(([term, value, { wide = false } = {}]) => `
+            <dt>${Html.escape(term)}</dt><dd${wide ? ' class="fact-wide"' : ''}>${Html.escape(value)}</dd>
         `).join('')}</dl>`;
+    }
+
+    /** A flag value longer than this goes under its name (a URL, an object's fields), not in the narrow column */
+    static get WIDE_FLAG_LENGTH() {
+        return 20;
     }
 
     deletionHtml() {
@@ -1132,18 +1138,54 @@ class RunDetailView {
         const reason = deletion.status === 'SKIPPED' && RunFormat.SKIP_REASONS[deletion.reason]
             ? ` <span class="fact-note">(${Html.escape(RunFormat.SKIP_REASONS[deletion.reason])})</span>`
             : '';
+        // totalProcessed: the people the deletion step found removed from the source (in the previous run's records,
+        // not in this run's source data); each is deactivated, or fails, so Deactivated + Failed adds up to it
         const counts = deletion.status === 'COMPLETED'
             ? RunDetailView.factsHtml([
+                ['Removed from source', RunFormat.number(deletion.totalProcessed)],
                 ['Deactivated', RunFormat.number(deletion.deletedCount)],
-                ['Failed', RunFormat.number(deletion.failedCount)],
-                ['Considered', RunFormat.number(deletion.totalProcessed)]
-            ])
+                ['Failed', RunFormat.number(deletion.failedCount)]
+            ]) + `<p class="fact-note deletion-explanation">${Html.escape(RunDetailView.REMOVED_FROM_SOURCE_NOTE)}</p>`
             : '';
         return `
             <p class="deletion-status">${RunFormat.deletionBadge(deletion.status)}${reason}</p>
             ${deletion.message ? `<p class="deletion-message">${Html.escape(deletion.message)}</p>` : ''}
             ${counts}
         `;
+    }
+
+    /** What the Deletion card's "Removed from source" counts */
+    static get REMOVED_FROM_SOURCE_NOTE() {
+        return "Removed from source: people in the previous run's records who aren't in this run's source. Each is deactivated in Huron, or counted as failed.";
+    }
+
+    /**
+     * A flag's value as the Flags card shows it, never as JSON: yes or no, the population's name, who started the run
+     * (RunView.startedByLabel()), the terms endpoint as one URL, and any other object as its fields' name: value pairs
+     */
+    static flagValue(name, value) {
+        if (typeof value === 'boolean') {
+            return RunFormat.yesNo(value);
+        }
+        if (value === null || value === undefined) {
+            return RunFormat.NONE;
+        }
+        if (name === 'syncPopulation') {
+            return RunFormat.population(value);
+        }
+        if (name === 'startedBy') {
+            return RunView.startedByLabel(value) || RunFormat.NONE;
+        }
+        if (name === 'termsEndpoint' && typeof value === 'object' && (value.baseUrl || value.fetchPath)) {
+            return `${value.baseUrl || ''}${value.fetchPath || ''}`;
+        }
+        if (Array.isArray(value)) {
+            return value.map(item => RunDetailView.flagValue(undefined, item)).join(', ');
+        }
+        if (typeof value === 'object') {
+            return Object.entries(value).map(([key, item]) => `${key}: ${RunDetailView.flagValue(key, item)}`).join(', ');
+        }
+        return String(value);
     }
 
     /** The run's flags (recorded for a run that has no summary), less the failure, which the note shows */
@@ -1157,18 +1199,16 @@ class RunDetailView {
             bulkReset: 'Bulk reset',
             trustPreviousStorage: 'Trust previous storage',
             personRecordProcessorAddons: 'Record processor addons',
-            termsEndpoint: 'Terms endpoint'
+            termsEndpoint: 'Terms endpoint',
+            startedBy: 'Started by'
         };
         const hidden = ['runFailed', 'runFailureMessage', 'runFailureTimestamp'];
         const facts = Object.entries(flags)
             .filter(([name]) => ! hidden.includes(name))
-            .map(([name, value]) => [
-                labels[name] || name,
-                typeof value === 'boolean' ? RunFormat.yesNo(value)
-                    : name === 'syncPopulation' ? RunFormat.population(value)
-                    : value !== null && typeof value === 'object' ? JSON.stringify(value)
-                    : String(value)
-            ]);
+            .map(([name, value]) => {
+                const shown = RunDetailView.flagValue(name, value);
+                return [labels[name] || name, shown, { wide: shown.length > RunDetailView.WIDE_FLAG_LENGTH }];
+            });
         if (facts.length === 0) {
             return '';
         }
