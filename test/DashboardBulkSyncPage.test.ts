@@ -160,6 +160,11 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       expect(chosen.slice(chosen.indexOf('id="bulk-parallelStart"'))).not.toContain('<option value="16">');
       expect(chosen).toContain('data-chosen-parallel="4"');
 
+      // Nothing entered yet: the landscape's default (15) is chosen
+      const fresh = BulkSyncView.formHtml(state({ defaults: { ...state().defaults, parallelStart: 15 }, parallelStart: { max: 20, enabled: true } }));
+      expect(fresh).toContain('<option value="15" selected>15</option>');
+      expect(fresh).toContain('data-chosen-parallel="15"');
+
       // A test or a single task: locked at 0, the value entered kept for later
       for (const values of [
         { runType: 'test', buid: 'U1', custom: true, iterationLimit: 10, parallelStart: 4 },

@@ -97,6 +97,12 @@ export class BulkSyncRequest {
    * subscriber's limit (ParallelStart.MAX in src/chunking/ParallelStart.ts) is the same.
    */
   static readonly PARALLEL_START_MAX = 20;
+  /**
+   * The Parallel start the form offers first (BulkSyncState.defaults), lowered to the most the landscape allows: a run
+   * that starts at full speed rather than ramping up from one task. A request that leaves parallelStart out still
+   * gets 0 (one message).
+   */
+  static readonly PARALLEL_START_DEFAULT = 15;
 
   /**
    * @param options.mockLandscape Whether the landscape is a mock landscape, the only kind whose runs may choose their
@@ -477,16 +483,17 @@ export class BulkSync implements BulkSyncService {
       }
       blocked = { code: error.code, message: error.message };
     }
+    const parallelMax = await this.parallelStartMax();
     return {
       landscape: settings.landscape,
       defaults: {
         runType: ScheduledRun.POPULATION === SyncPopulation.PersonFull ? 'full' : 'full-no-deactivations',
         bulkReset: ScheduledRun.BULK_RESET,
         iterationLimit: BulkSyncRequest.CHUNKS_PER_TASK_DEFAULT,
-        parallelStart: 0
+        parallelStart: Math.min(BulkSyncRequest.PARALLEL_START_DEFAULT, parallelMax)
       },
       iterationLimit: { max: BulkSyncRequest.CHUNKS_PER_TASK_MAX },
-      parallelStart: { max: await this.parallelStartMax(), enabled: true },
+      parallelStart: { max: parallelMax, enabled: true },
       latestRun,
       ...(blocked ? { blocked } : {}),
       warnings: this.warnings(),

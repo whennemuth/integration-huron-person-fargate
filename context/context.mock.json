@@ -109,8 +109,8 @@
       "enabled": true,
       "timeoutSeconds": 60,
       "memorySizeMb": 256,
-      "mockTotalPopulation": 1950,
-      "simulatedDelaySeconds": 3
+      "mockTotalPopulation": 2000,
+      "simulatedDelaySeconds": 0
     }
   },
   "HURON_PERSON_CONFIG": {

@@ -232,6 +232,17 @@ describe('BulkSync', () => {
       expect((await service().bulkSync.describe()).parallelStart).toEqual({ max: 20, enabled: true });
     });
 
+    it('offers a Parallel start of 15 first, lowered to the most the chunker service may run', async () => {
+      expect((await service({ serviceMax: 40 }).bulkSync.describe()).defaults.parallelStart).toBe(15);
+      expect((await service({ serviceMax: 15 }).bulkSync.describe()).defaults.parallelStart).toBe(15);
+      expect((await service({ serviceMax: 4 }).bulkSync.describe()).defaults.parallelStart).toBe(4);
+      expect((await service({ serviceMax: 'none' }).bulkSync.describe()).defaults.parallelStart).toBe(15);
+    });
+
+    it('still starts a request without parallelStart from one message', async () => {
+      expect(BulkSyncRequest.parse({ runType: 'full' }).parallelStart).toBe(0);
+    });
+
     it('sends parallelStart in the event, so the chunker subscriber seeds, waits and scales', async () => {
       const { bulkSync, functions } = service({ serviceMax: 15 });
       await bulkSync.start({ runType: 'full-no-deactivations', parallelStart: 3 });
@@ -323,7 +334,7 @@ describe('BulkSync', () => {
   it("describes the defaults, the newest run, and why a start would be refused now", async () => {
     expect(await service().bulkSync.describe()).toEqual({
       landscape: 'preview',
-      defaults: { runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 0 },
+      defaults: { runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 15 },
       iterationLimit: { max: 50 },
       parallelStart: { max: 20, enabled: true },
       latestRun: { kind: 'finished', syncRunId: finishedRun.syncRunId },

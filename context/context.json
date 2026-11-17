@@ -50,7 +50,6 @@
     "deltaExpirationDays": 30
   },
   "ECS": {
-    "vpcId": "vpc-08291eb088cf2e883",
     "chunkerTaskDefinition": {
       "cpu": 2048,
       "memoryLimitMiB": 4096,
@@ -94,8 +93,8 @@
   },
   "LAMBDA": {
     "chunkerSubscriber": {
-      "timeoutSeconds": 60,
-      "memorySizeMb": 256
+      "timeoutSeconds": 600,
+      "memorySizeMb": 1024
     },
     "processorSubscriber": {
       "timeoutSeconds": 60,
@@ -110,8 +109,8 @@
       "enabled": true,
       "timeoutSeconds": 60,
       "memorySizeMb": 256,
-      "mockTotalPopulation": 1950,
-      "simulatedDelaySeconds": 3
+      "mockTotalPopulation": 2000,
+      "simulatedDelaySeconds": 0
     }
   },
   "HURON_PERSON_CONFIG": {

@@ -809,12 +809,15 @@ routes above).
   - **Offline**: `npm run dashboard:dev:offline:mock` plays the mock landscape, with a stand-in simulator
     (`OfflineBulkSyncService.STAND_IN_SIMULATOR`, mock's deployed settings) at an example URL. It is always found, so a
     simulator that isn't deployed is seen only in the tests.
-- **Parallel start** (`parallelStart`, 0 by default): how many chunker tasks start the run at once, standing for the
+- **Parallel start** (`parallelStart`): how many chunker tasks start the run at once, standing for the
   Runner's `MESSAGES_TO_PREPOPULATE` and `DESIRED_COUNT` together. 0 sends the chunker subscriber one message, and
   auto-scaling adds tasks. N above 0 goes on the event, and the subscriber seeds the queue with N messages (offsets
   a task's chunks apart) and sets the chunker service's desired count to N once its scale-in alarm has settled
   (fargate `src/chunking/ParallelStart.ts`, shared with the Runner's queue seeding), so the start takes up to a few
   minutes, which the review and the status panel say.
+  - **Its default** is 15 (`BulkSyncRequest.PARALLEL_START_DEFAULT`, since 2026-11-16; it was 0), lowered to its
+    most: `describe()`'s `defaults.parallelStart`, which the form starts from, so a run starts at full speed rather
+    than ramping up from one task. A request without `parallelStart` (the API's, not the form's) still gets 0.
   - **Its most** is the chunker service's most tasks (`DesiredCount.getMax()`, its scalable target's
     `MaxCapacity`), capped at 20 (`parallelStartMax()`): `describe()` offers 0 to it, and `plan()`/`start()` refuse
     more (`INVALID_REQUEST`). The Lambda has `application-autoscaling:DescribeScalableTargets` and the chunker
