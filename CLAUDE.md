@@ -352,8 +352,9 @@ UPDATED and reactivated (via `__active`); the processor's write then clears the 
   repeat run sent nothing. Bulk-reset runs take another path and weren't affected; preview and staging had no one
   left in that state (their only trusted runs sent nothing). See integration-core's `CLAUDE.md` ("Delta Engines").
 - **Taking a new integration-core build**: update `node_modules/integration-core`'s `integrity` in `package-lock.json`
-  and run a plain `npm install`, never `npm install <its URL>` (see "Publishing the package" in integration-core's
-  `CLAUDE.md`). The task image installs it from the lockfile, so push the image to each landscape afterwards.
+  and run a plain `npm install`, which changes nothing else (see "Publishing the package" in integration-core's
+  `CLAUDE.md`; while core listed itself as a dependency, until 2026-11-17, `npm install <its URL>` broke the lockfile).
+  The task image installs it from the lockfile, so push the image to each landscape afterwards.
 
 **Harness Prefixes**:
 - DEFERRED_DELETE_HANDLER_*, STATISTICS_TABLE_*
