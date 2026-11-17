@@ -784,7 +784,8 @@ routes above).
   - **Source**: the real source API (the default, a hybrid run) or the source simulator. With the simulator, the
     event's source is its Function URL (looked up by `AwsSourceSimulatorService`), its people endpoint or
     `/person?buid=` for a test, with the four simulator settings as query parameters of `fetchPath`
-    (`simulationSettings()` in `src/chunking/fetch/SourceSimulator.ts`), and its `/terms` as the `termsEndpoint`.
+    (`simulatorFetchPath()`, which the manual Runner shares, and `simulationSettings()`, both in
+    `src/chunking/fetch/SourceSimulator.ts`), and its `/terms` as the `termsEndpoint`.
     Nothing about the simulator Lambda is changed. Its settings start at its deployed ones, read from its
     unauthenticated `/health`; refused out of range (`BulkSyncRequest.SIMULATOR_LIMITS`: at most 500,000 people, the
     chunker's safety cutoff, and 30 seconds a response). When the simulator isn't deployed, its choice is disabled

@@ -28,6 +28,8 @@ export interface RunnerEnv {
   sourceSimulatorMockTotalPopulation?: number;
   sourceSimulatorMockSimulatedDelaySeconds?: number;
   sourceSimulatorMockErrorRate?: number;
+  /** Proportion (0 to 1) of simulated students given a term that isn't current */
+  sourceSimulatorMockNonCurrentTermRate?: number;
   /** Mock landscapes only: truncate the landscape's run-state tables before the run */
   mockTargetResetState?: boolean;
   /** Comma-delimited list of personRecordProcessor Addon enum keys to activate for this run */
@@ -62,6 +64,19 @@ export type TargetConfig = {
  */
 export type NormalizedPopulationType = typeof SyncPopulation.PersonDelta | typeof SyncPopulation.PersonFull;
 
+/** A number from an environment variable, fractions included; undefined when unset, blank or not a number */
+export const optionalNumber = (raw: string | undefined): number | undefined => {
+  if (raw === undefined || raw.trim() === '') {
+    return undefined;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value)) {
+    console.warn(`Ignoring ${raw}: not a number`);
+    return undefined;
+  }
+  return value;
+}
+
 /**
  * Extract environment variables into RunnerEnv structure.
  * Common implementation for all runners.
@@ -90,6 +105,7 @@ export const extractEnvironment = (): RunnerEnv => {
     SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION: sourceSimulatorMockTotalPopulation,
     SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS: sourceSimulatorMockSimulatedDelaySeconds,
     SOURCE_SIMULATOR_MOCK_ERROR_RATE: sourceSimulatorMockErrorRate,
+    SOURCE_SIMULATOR_MOCK_NON_CURRENT_TERM_RATE: sourceSimulatorMockNonCurrentTermRate,
     MOCK_TARGET_RESET_STATE: mockTargetResetState,
     PERSON_RECORD_PROCESSOR_ADDONS: personRecordProcessorAddons
   } = process.env;
@@ -115,9 +131,11 @@ export const extractEnvironment = (): RunnerEnv => {
     chunkingOnly: `${chunkingOnly}`.toLowerCase().trim() === 'true',
     populationScope: buid ? 'single' : 'standard',
     sourceSimulator: `${sourceSimulator}`.toLowerCase().trim() === 'true',
-    sourceSimulatorMockTotalPopulation: sourceSimulatorMockTotalPopulation ? parseInt(sourceSimulatorMockTotalPopulation) : undefined,
-    sourceSimulatorMockSimulatedDelaySeconds: sourceSimulatorMockSimulatedDelaySeconds ? parseInt(sourceSimulatorMockSimulatedDelaySeconds) : undefined,
-    sourceSimulatorMockErrorRate: sourceSimulatorMockErrorRate ? parseFloat(sourceSimulatorMockErrorRate) : undefined,
+    // The simulator's settings for the run: each sent as given, 0 included; unset leaves the simulator's own
+    sourceSimulatorMockTotalPopulation: optionalNumber(sourceSimulatorMockTotalPopulation),
+    sourceSimulatorMockSimulatedDelaySeconds: optionalNumber(sourceSimulatorMockSimulatedDelaySeconds),
+    sourceSimulatorMockErrorRate: optionalNumber(sourceSimulatorMockErrorRate),
+    sourceSimulatorMockNonCurrentTermRate: optionalNumber(sourceSimulatorMockNonCurrentTermRate),
     mockTargetResetState: `${mockTargetResetState}`.toLowerCase().trim() === 'true',
     personRecordProcessorAddons
   } satisfies RunnerEnv;
@@ -145,6 +163,7 @@ export const setTestEnvironment = (): void => {
     'SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION',
     'SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS',
     'SOURCE_SIMULATOR_MOCK_ERROR_RATE',
+    'SOURCE_SIMULATOR_MOCK_NON_CURRENT_TERM_RATE',
     'MOCK_TARGET_RESET_STATE',
     'PERSON_RECORD_PROCESSOR_ADDONS'
   ].forEach(testEnvironment.getVar);

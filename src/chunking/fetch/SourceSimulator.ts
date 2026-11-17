@@ -102,7 +102,6 @@
 import { GetFunctionUrlConfigCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { APIGatewayProxyEventV2, APIGatewayProxyResultV2, Context } from 'aws-lambda';
 import { ConfigManager, DataSourceConfig, EndpointConfigForApiKey } from 'integration-huron-person';
-import { LambdaFunctionEnvironmentVariable } from '../../runner/LambdaFunctionEnvironmentVariable';
 import { AbstractAtomicCounter } from '../../dynamodb/AtomicCounter';
 
 /**
@@ -630,6 +629,69 @@ export function simulationSettings(
   };
 }
 
+/** Each simulation setting's query parameter, in the order a fetchPath carries them */
+const SIMULATION_SETTING_PARAMETERS: [keyof SimulationSettings, SIMULATION_QUERY_PARAMETERS][] = [
+  ['totalPopulation', SIMULATION_QUERY_PARAMETERS.TOTAL_POPULATION],
+  ['simulatedDelaySeconds', SIMULATION_QUERY_PARAMETERS.SIMULATED_DELAY_SECONDS],
+  ['errorRate', SIMULATION_QUERY_PARAMETERS.ERROR_RATE],
+  ['nonCurrentTermRate', SIMULATION_QUERY_PARAMETERS.NON_CURRENT_TERM_RATE],
+];
+
+/** The given settings as query parameters (SIMULATION_QUERY_PARAMETERS): an undefined one is left out, a 0 is sent */
+export function simulationQuery(settings: Partial<SimulationSettings> = {}, query = new URLSearchParams()): URLSearchParams {
+  for (const [name, parameter] of SIMULATION_SETTING_PARAMETERS) {
+    const value = settings[name];
+    if (value !== undefined) {
+      query.set(parameter, String(value));
+    }
+  }
+  return query;
+}
+
+/**
+ * A run's fetchPath on the simulator: its people endpoint (path, the Function URL's own path, normally '/'), or for
+ * one person /person?buid=, with the run's settings as query parameters (simulationQuery()). Every request of the run
+ * keeps them, so they travel with the run and nothing in the simulator Lambda's configuration changes; a setting left
+ * out is the Lambda's own. Shared by the dashboard's Bulk sync and the manual Runner (SourceSimulatorRunnerDecorator).
+ */
+export function simulatorFetchPath(params: { path?: string; buid?: string; settings?: Partial<SimulationSettings> }): string {
+  const { path, buid, settings } = params;
+  const query = simulationQuery(settings, new URLSearchParams(buid ? { buid } : {}));
+  const endpoint = buid ? PERSON_PATH : (path || '/');
+  const queryText = query.toString();
+  return queryText ? `${endpoint}?${queryText}` : endpoint;
+}
+
+/** How long a read of the simulator's /health may take */
+export const HEALTH_TIMEOUT_MS = 5000;
+
+/**
+ * The simulator's settings from its unauthenticated /health, given its Function URL: with settings, as a run with
+ * them would get them (each query parameter applied, clamped as a request's would be), else its deployed ones (the
+ * Lambda's environment). Only the settings /health reports (totalPopulation, simulatedDelaySeconds, errorRate).
+ * Undefined if it can't be read.
+ */
+export async function readSimulatorHealth(
+  functionUrl: string, settings?: Partial<SimulationSettings>
+): Promise<Partial<SimulationSettings> | undefined> {
+  const url = new URL('health', functionUrl);
+  simulationQuery(settings, url.searchParams);
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
+    if (!response.ok) {
+      console.warn(`Couldn't read the source simulator's settings (${url}): HTTP ${response.status}`);
+      return undefined;
+    }
+    const { totalPopulation, simulatedDelaySeconds, errorRate } = await response.json() as Record<string, unknown>;
+    const numbers = Object.entries({ totalPopulation, simulatedDelaySeconds, errorRate })
+      .filter(([, value]) => typeof value === 'number' && Number.isFinite(value));
+    return Object.fromEntries(numbers) as Partial<SimulationSettings>;
+  } catch (error: any) {
+    console.warn(`Couldn't read the source simulator's settings (${url}): ${error?.message ?? error}`);
+    return undefined;
+  }
+}
+
 /** Waits out what is left of the simulated delay, measured from the request's start */
 async function simulateDelay(simulatedDelaySeconds: number, requestStartTime: number): Promise<void> {
   const remainingDelay = simulatedDelaySeconds - (Date.now() - requestStartTime) / 1000;
@@ -861,18 +923,13 @@ export class SourceSimulatorFunctionURL {
     return !!(await this.getUrl());
   }
 
-  public getCurrentEnvironmentVariables = async (): Promise<{ [key: string]: string }> => {
-    const { landscape, region } = this.params;
-    const lambda = new LambdaFunctionEnvironmentVariable({
-      lambdaFunctionName: `${FUNCTION_BASE_NAME}-${landscape}`,
-      region: region
-    });
-    return await lambda.getEnvironmentVariables();
-  }
-
-  public getEnvironmentVariable = async (name: string): Promise<string | undefined> => {
-    const variables = await this.getCurrentEnvironmentVariables();
-    return variables[name];
+  /**
+   * Its settings from its /health (readSimulatorHealth()): as a run with these settings would get them, else its
+   * deployed ones. Undefined if it has no Function URL or /health can't be read.
+   */
+  public async health(settings?: Partial<SimulationSettings>): Promise<Partial<SimulationSettings> | undefined> {
+    const url = await this.getUrl();
+    return url ? readSimulatorHealth(url, settings) : undefined;
   }
 }
 

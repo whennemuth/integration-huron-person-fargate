@@ -315,7 +315,7 @@ them. If you see the target comparison line with trust set, check that
    | **fargate `.env`** | **`RUNNER_SINGLE_PERSON_BUID`** | **`U0000044`** |
    | **fargate `.env`** | **`RUNNER_POPULATION_TYPE`** | **`person-delta`** |
    | **fargate `.env`** | **`RUNNER_SOURCE_SIMULATOR`** | **`true`** |
-   | **fargate `.env`** | **`RUNNER_SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION`** | **unset (a value would be written to the simulator Lambda)** |
+   | **fargate `.env`** | **`RUNNER_SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION`** | **unset (the simulator's own; a value would go in the run's fetchPath)** |
    | **fargate `.env`** | **`RUNNER_SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS`** | **unset** |
    | **fargate `.env`** | **`RUNNER_SOURCE_SIMULATOR_MOCK_ERROR_RATE`** | **unset** |
    | **fargate `.env`** | **`RUNNER_MOCK_TARGET_RESET_STATE`** | **`false`** |
@@ -611,7 +611,7 @@ the PersonCurrentState and PersonHistory tables - see "Switching to S3 mode".
    | **fargate `.env`** | **`RUNNER_SINGLE_PERSON_BUID`** | **`U0000144`** |
    | <span style="color:gray">fargate `.env`</span> | <span style="color:gray">`RUNNER_POPULATION_TYPE`</span> | <span style="color:gray">`person-delta`</span> |
    | <span style="color:gray">fargate `.env`</span> | <span style="color:gray">`RUNNER_SOURCE_SIMULATOR`</span> | <span style="color:gray">`true`</span> |
-   | <span style="color:gray">fargate `.env`</span> | <span style="color:gray">`RUNNER_SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION`</span> | <span style="color:gray">unset (a value would be written to the simulator Lambda)</span> |
+   | <span style="color:gray">fargate `.env`</span> | <span style="color:gray">`RUNNER_SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION`</span> | <span style="color:gray">unset (the simulator's own; a value would go in the run's fetchPath)</span> |
    | <span style="color:gray">fargate `.env`</span> | <span style="color:gray">`RUNNER_SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS`</span> | <span style="color:gray">unset</span> |
    | <span style="color:gray">fargate `.env`</span> | <span style="color:gray">`RUNNER_SOURCE_SIMULATOR_MOCK_ERROR_RATE`</span> | <span style="color:gray">unset</span> |
    | <span style="color:gray">fargate `.env`</span> | <span style="color:gray">`RUNNER_MOCK_TARGET_RESET_STATE`</span> | <span style="color:gray">`false`</span> |
