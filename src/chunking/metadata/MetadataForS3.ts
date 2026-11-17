@@ -178,6 +178,7 @@ export class MetadataForS3 implements IMetadataStorage {
       personRecordProcessorAddons,
       termsEndpoint,
       startedBy,
+      processorScalingCapacity,
       dryRun = false,
       region,
       replace = false
@@ -211,6 +212,9 @@ export class MetadataForS3 implements IMetadataStorage {
     }
     if (startedBy !== undefined) {
       flags.startedBy = startedBy;
+    }
+    if (processorScalingCapacity !== undefined) {
+      flags.processorScalingCapacity = processorScalingCapacity;
     }
 
     const flagsJson = JSON.stringify(flags, null, 2);

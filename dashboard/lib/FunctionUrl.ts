@@ -39,7 +39,7 @@ export class FunctionUrlOrigin {
       landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName,
       chunkerFunctionName, processorSubscriberFunctionName, pipelineStackId, itemsPerChunk, chunkerClusterName,
       sourceSimulatorFunctionName, atomicCounterTableName,
-      chunkerServiceName
+      chunkerServiceName, processorMaxScalingCapacity
     } = landscapeResources;
 
     // The origin verification secret: 32 bytes from the cryptographically secure generator, base64url
@@ -74,6 +74,8 @@ export class FunctionUrlOrigin {
       // Shown in a run's review: the pipeline stack and the chunker task's chunk size
       PIPELINE_STACK_ID: pipelineStackId,
       ...(itemsPerChunk !== undefined && { ITEMS_PER_CHUNK: String(itemsPerChunk) }),
+      // Bulk sync's Processor tasks: the processor maximum a run gets without an override, and the warning threshold
+      PROCESSOR_MAX_SCALING_CAPACITY: String(processorMaxScalingCapacity),
       // A mock landscape only: the source simulator, which Bulk sync offers as the source
       ...(sourceSimulatorFunctionName && { SOURCE_SIMULATOR_FUNCTION_NAME: sourceSimulatorFunctionName }),
     } as any;

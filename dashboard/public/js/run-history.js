@@ -276,6 +276,7 @@ class RunView {
         this.errorsByStatus = totals ? totals.errorsByStatus : undefined;
         this.failureMessage = first(item.terminalError && item.terminalError.errorMessage, flags.runFailureMessage);
         this.startedBy = RunView.startedByLabel(first(summary && summary.startedBy, flags.startedBy));
+        this.processorTasks = RunView.processorTasksLabel(first(summary && summary.processorScalingCapacity, flags.processorScalingCapacity));
         this.failedAt = first(item.terminalError && item.terminalError.errorTimestamp, flags.runFailureTimestamp);
     }
 
@@ -298,10 +299,25 @@ class RunView {
         return { schedule: 'Schedule', runner: 'Runner' }[by];
     }
 
+    /**
+     * The processor maximum a run started with (Flags.processorScalingCapacity, copied into its summary;
+     * src/chunking/ProcessorCapacityRecord.ts): "Up to 5 processor tasks", marked "(override)" when it was the run's own
+     * rather than the landscape's; undefined for a run that didn't record one.
+     */
+    static processorTasksLabel(capacity) {
+        const { maxTasks, overridden } = capacity && typeof capacity === 'object' ? capacity : {};
+        if (typeof maxTasks !== 'number') {
+            return undefined;
+        }
+        const tasks = `Up to ${maxTasks} processor ${maxTasks === 1 ? 'task' : 'tasks'}`;
+        return overridden ? `${tasks} (override)` : tasks;
+    }
+
     get facts() {
         return [
             this.startedBy ? `Started by ${this.startedBy}` : undefined,
             this.populationLabel,
+            this.processorTasks,
             this.storageMode ? `${RunFormat.storageMode(this.storageMode)} storage` : undefined,
             this.durationMs !== undefined ? this.durationText : undefined,
             ...this.tags
@@ -1205,7 +1221,8 @@ class RunDetailView {
 
     /**
      * A flag's value as the Flags card shows it, never as JSON: yes or no, the population's name, who started the run
-     * (RunView.startedByLabel()), the terms endpoint as one URL, and any other object as its fields' name: value pairs
+     * (RunView.startedByLabel()), the processor maximum (RunView.processorTasksLabel()), the terms endpoint as one URL,
+     * and any other object as its fields' name: value pairs
      */
     static flagValue(name, value) {
         if (typeof value === 'boolean') {
@@ -1219,6 +1236,9 @@ class RunDetailView {
         }
         if (name === 'startedBy') {
             return RunView.startedByLabel(value) || RunFormat.NONE;
+        }
+        if (name === 'processorScalingCapacity') {
+            return RunView.processorTasksLabel(value) || RunFormat.NONE;
         }
         if (name === 'termsEndpoint' && typeof value === 'object' && (value.baseUrl || value.fetchPath)) {
             return `${value.baseUrl || ''}${value.fetchPath || ''}`;
@@ -1244,7 +1264,8 @@ class RunDetailView {
             trustPreviousStorage: 'Trust previous storage',
             personRecordProcessorAddons: 'Record processor addons',
             termsEndpoint: 'Terms endpoint',
-            startedBy: 'Started by'
+            startedBy: 'Started by',
+            processorScalingCapacity: 'Processor maximum'
         };
         const hidden = ['runFailed', 'runFailureMessage', 'runFailureTimestamp'];
         const facts = Object.entries(flags)

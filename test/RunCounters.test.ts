@@ -107,7 +107,8 @@ describe('the chunker subscriber Lambda', () => {
   new ChunkerSubscribingLambda(stack, 'Chunker', {
     vpc: new Vpc(stack, 'Vpc'), chunkerQueueUrl: 'https://sqs.us-east-2.amazonaws.com/111111111111/chunker', inputBucketName: 'input',
     region: 'us-east-2', landscape: 'preview', stackId: 'huron-person-fargate-processor',
-    chunkerClusterName: 'huron-person-cluster-preview', chunkerServiceName: 'Chunker', timeoutSeconds: 600, memorySizeMb: 256
+    chunkerClusterName: 'huron-person-cluster-preview', chunkerServiceName: 'Chunker', timeoutSeconds: 600, memorySizeMb: 256,
+    processorServiceName: 'Processor', processorMaxScalingCapacity: 3
   });
   const template = Template.fromStack(stack);
   const statements = () => Object.values(template.findResources('AWS::IAM::Policy'))
@@ -133,9 +134,42 @@ describe('the chunker subscriber Lambda', () => {
       expect([scaling.Action].flat().sort()).toEqual(['application-autoscaling:DescribeScalableTargets', 'application-autoscaling:DescribeScalingPolicies']);
       const alarms = statements().find((s: any) => [s.Action].flat().includes('cloudwatch:DescribeAlarms'));
       expect(alarms.Resource).toBe('arn:aws:cloudwatch:us-east-2:111111111111:alarm:*');
-      // Nothing that changes scaling or alarms themselves
+      // Nothing that changes scaling policies or alarms themselves (the processor's maximum is below)
       const actions = statements().flatMap((s: any) => [s.Action].flat());
-      expect(actions.filter((a: string) => /^(application-autoscaling|cloudwatch):(Put|Delete|Register|Set)/.test(a))).toEqual([]);
+      expect(actions.filter((a: string) => /^(application-autoscaling|cloudwatch):(Put|Delete|Register|Set)/.test(a)))
+        .toEqual(['application-autoscaling:RegisterScalableTarget']);
+    });
+  });
+
+  describe("for the processor's maximum at a run start (src/chunking/ProcessorScalingCapacity.ts)", () => {
+    it("names the processor service and the landscape's maxScalingCapacity in its environment", () => {
+      template.hasResourceProperties('AWS::Lambda::Function', {
+        FunctionName: 'chunker-subscriber-preview',
+        Environment: { Variables: { PROCESSOR_SERVICE_NAME: 'Processor', PROCESSOR_MAX_SCALING_CAPACITY: '3' } }
+      });
+    });
+
+    it("may register scalable targets only for an ECS service's desired count", () => {
+      const register = statements().find((s: any) => [s.Action].flat().includes('application-autoscaling:RegisterScalableTarget'));
+      expect(register.Action).toBe('application-autoscaling:RegisterScalableTarget');
+      expect(register.Resource).toBe('*');
+      expect(register.Condition).toEqual({
+        StringEquals: {
+          'application-autoscaling:service-namespace': 'ecs',
+          'application-autoscaling:scalable-dimension': 'ecs:service:DesiredCount'
+        }
+      });
+    });
+
+    it('may describe and update the processor service, and no service but it and the chunker', () => {
+      const services = statements().filter((s: any) => [s.Action].flat().includes('ecs:UpdateService'));
+      expect(services.map((s: any) => s.Resource)).toEqual([
+        'arn:aws:ecs:us-east-2:111111111111:service/huron-person-cluster-preview/Chunker',
+        'arn:aws:ecs:us-east-2:111111111111:service/huron-person-cluster-preview/Processor'
+      ]);
+      expect(services.map((s: any) => [s.Action].flat().sort())).toEqual([
+        ['ecs:DescribeServices', 'ecs:UpdateService'], ['ecs:DescribeServices', 'ecs:UpdateService']
+      ]);
     });
   });
 

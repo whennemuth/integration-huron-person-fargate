@@ -66,7 +66,7 @@ export async function handleApiEvent(event: ApiChunkerEvent, chunkerQueueUrl?:st
   // Extract API parameters from event
   const { 
     baseUrl, fetchPath, populationType, bulkReset, trustPreviousStorage = false, iterationLimit = 0, offset = 0,
-    chunkDirectory, personRecordProcessorAddons, termsEndpoint, startedBy,
+    chunkDirectory, personRecordProcessorAddons, termsEndpoint, startedBy, processorScalingCapacity,
     processingMetadata: { processedAt, processorVersion } = {} 
   } = event;
 
@@ -135,6 +135,10 @@ export async function handleApiEvent(event: ApiChunkerEvent, chunkerQueueUrl?:st
 
   if(startedBy) {
     message.startedBy = startedBy;
+  }
+
+  if(processorScalingCapacity) {
+    message.processorScalingCapacity = processorScalingCapacity;
   }
 
   try {

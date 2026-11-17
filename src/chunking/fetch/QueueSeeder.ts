@@ -7,6 +7,7 @@ import { extractChunkDirectory } from '../filedrop/ChunkPathUtils';
 import { AbstractAtomicCounter } from '../../dynamodb/AtomicCounter';
 import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from '../ChunkerQueue';
 import { RunStarter, StartedBy } from '../StartedBy';
+import type { ProcessorCapacityRecord } from '../ProcessorCapacityRecord';
 
 export type QueueSeederParams = {
   stackId?: string, 
@@ -26,6 +27,8 @@ export type QueueSeederParams = {
   termsEndpoint?: SourceEndpoint;
   /** Who or what started the run: the manual Runner, unless the chunker subscriber seeds a run's start for another */
   startedBy?: StartedBy;
+  /** The processor maximum the run started with, for its Flags (see ApiChunkerEvent.processorScalingCapacity) */
+  processorScalingCapacity?: ProcessorCapacityRecord;
 };
 
 /**
@@ -215,6 +218,7 @@ export class QueueSeeder {
         // The manual Runner's queue seeding (RunnerForQueueSeeding) unless the caller says who started the run (the
         // chunker subscriber, seeding a run's start for the dashboard: src/chunking/ParallelStart.ts)
         startedBy: this.params.startedBy ?? RunStarter.RUNNER,
+        ...(this.params.processorScalingCapacity ? { processorScalingCapacity: this.params.processorScalingCapacity } : {}),
         processingMetadata: {
           processedAt: new Date().toISOString(),
           processorVersion: '1.0.0'

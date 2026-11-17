@@ -128,7 +128,9 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       expect(html).toContain('<option value="10" selected>10</option>');
       expect(html).toContain('<option value="50">50</option>');
       expect(html).not.toContain('<option value="51">');
-      expect(html).toContain('the defaults are used: 10 chunks per task, and a start with one message');
+      expect(html).toContain('the defaults are used: 10 chunks per task, a start with one chunker task.');
+      expect(BulkSyncView.defaultsText({ iterationLimit: 10, parallelStart: 15, processorScalingCapacity: 3 }))
+        .toBe('10 chunks per task, 15 chunker tasks at the start, and up to 3 processor tasks');
       // Custom settings is named once, by its checkbox: its fields' group has no heading of its own
       expect(html.match(/>Custom settings</g)).toHaveLength(1);
       expect(html).toContain('<legend class="form-label">Chunker tasks</legend>');
@@ -157,13 +159,29 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       expect(chosen).not.toMatch(/id="bulk-parallelStart" disabled/);
       expect(chosen).toContain('<option value="4" selected>4</option>');
       expect(chosen).toContain('<option value="15">15</option>');
-      expect(chosen.slice(chosen.indexOf('id="bulk-parallelStart"'))).not.toContain('<option value="16">');
+      const parallelOptions = chosen.slice(chosen.indexOf('id="bulk-parallelStart"'), chosen.indexOf('data-bulk-processors'));
+      expect(parallelOptions).not.toContain('<option value="16">');
       expect(chosen).toContain('data-chosen-parallel="4"');
 
       // Nothing entered yet: the landscape's default (15) is chosen
       const fresh = BulkSyncView.formHtml(state({ defaults: { ...state().defaults, parallelStart: 15 }, parallelStart: { max: 20, enabled: true } }));
       expect(fresh).toContain('<option value="15" selected>15</option>');
       expect(fresh).toContain('data-chosen-parallel="15"');
+
+      // Processor tasks: 1 to 20, starting at the landscape's maximum, locked for a test
+      const withProcessors = state({ defaults: { ...state().defaults, processorScalingCapacity: 3 }, processorScalingCapacity: { max: 20 } });
+      const processors = BulkSyncView.formHtml(withProcessors);
+      const processorOptions = processors.slice(processors.indexOf('id="bulk-processorTasks"'));
+      expect(processorOptions).toContain('<option value="3" selected>3</option>');
+      expect(processorOptions).toContain('<option value="20">20</option>');
+      expect(processorOptions).not.toContain("The landscape's own</option>");
+      expect(processors).toContain('data-default-processors="3"');
+      expect(processors).toContain("This landscape's own is 3: above it, Huron is likely to throttle them");
+      expect(BulkSyncView.formHtml(withProcessors, { runType: 'full', custom: true, processorScalingCapacityOverride: 8 }))
+        .toContain('<option value="8" selected>8</option>');
+      expect(BulkSyncView.formHtml(withProcessors, { runType: 'test', buid: 'U1' })).toMatch(/id="bulk-processorTasks" disabled>/);
+      // Unknown to a dashboard deployed before it: the landscape's own, chosen
+      expect(BulkSyncView.formHtml(state())).toContain('<option value="" selected>The landscape\'s own</option>');
 
       // A test or a single task: locked at 0, the value entered kept for later
       for (const values of [
@@ -475,6 +493,64 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       expect(form.buttons.every(button => !button.disabled)).toBe(true);
     });
 
+    it("sends the form's Parallel start default for a full sync with Custom settings closed, and Processor tasks only when not the landscape's", () => {
+      const radio = (value: string, checked: boolean) => ({ value, checked });
+      const fields = (params: { runType?: string; custom?: boolean; processorTasks?: string; dataset?: Record<string, string> }) => ({
+        dataset: params.dataset ?? { defaultParallel: '15', defaultProcessors: '3' },
+        elements: {
+          runType: ['full', 'full-no-deactivations', 'delta', 'test'].map(type => radio(type, type === (params.runType ?? 'full'))),
+          buid: { value: 'U1' }, bulkReset: { checked: false }, custom: { checked: !! params.custom },
+          chunkMode: ['perTask', 'single'].map(mode => radio(mode, mode === 'perTask')),
+          chunksPerTask: { value: '10' }, parallelStart: { value: '6' }, processorTasks: { value: params.processorTasks ?? '3' }
+        }
+      });
+      // Custom settings closed: the form's default Parallel start, no override
+      expect(BulkSyncPage.readRequest(fields({}))).toEqual({ runType: 'full', bulkReset: false, parallelStart: 15, custom: false });
+      expect(BulkSyncPage.readRequest(fields({ processorTasks: '8' }))).not.toHaveProperty('processorScalingCapacityOverride');
+      // A test sends neither
+      expect(BulkSyncPage.readRequest(fields({ runType: 'test' }))).toEqual({ runType: 'test', buid: 'U1', bulkReset: false, custom: false });
+      expect(BulkSyncPage.readRequest(fields({ runType: 'test', custom: true, processorTasks: '8' }))).not.toHaveProperty('processorScalingCapacityOverride');
+      // Custom settings open: the dropdowns, and an override only when it isn't the landscape's
+      expect(BulkSyncPage.readRequest(fields({ custom: true, processorTasks: '8' }))).toEqual({
+        runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 6, processorScalingCapacityOverride: 8, custom: true
+      });
+      expect(BulkSyncPage.readRequest(fields({ custom: true, processorTasks: '3' }))).not.toHaveProperty('processorScalingCapacityOverride');
+      // No landscape maximum known: any choice but the landscape's own is an override
+      expect(BulkSyncPage.readRequest(fields({ custom: true, processorTasks: '3', dataset: { defaultParallel: '0' } })))
+        .toMatchObject({ processorScalingCapacityOverride: 3 });
+      expect(BulkSyncPage.readRequest(fields({ custom: true, processorTasks: '', dataset: { defaultParallel: '0' } })))
+        .not.toHaveProperty('processorScalingCapacityOverride');
+    });
+
+    it('warns in the review when the run asks for more processor tasks than the landscape\'s, and says how many it uses', () => {
+      const planWith = (override?: number) => ({
+        landscape: 'preview',
+        choices: { runType: 'full', population: 'person-full', bulkReset: false, trustPreviousStorage: true, iterationLimit: 10, parallelStart: 0, overrideStalled: false,
+          ...(override !== undefined ? { processorScalingCapacityOverride: override } : {}) },
+        event: { baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people' },
+        settings: [{ name: 'processorMaxScalingCapacity', value: 3, source: 'landscape' }]
+      });
+      const above = BulkSyncView.confirmationHtml(planWith(8));
+      expect(above).toContain('Processors may be throttled');
+      expect(above).toContain('more than this landscape&#39;s 3');
+      expect(above).toContain('It uses up to 8 processor tasks at once, for this run only.');
+      expect(above).toContain('data-action="confirm-start"');
+      for (const quiet of [planWith(3), planWith(2), planWith()]) {
+        expect(BulkSyncView.confirmationHtml(quiet)).not.toContain('Processors may be throttled');
+      }
+      expect(BulkSyncView.throttlingWarning({ choices: { processorScalingCapacityOverride: 8 }, settings: [] })).toBeUndefined();
+    });
+
+    it('holds Processor tasks at the landscape\'s for a test, and restores the choice afterward', () => {
+      const select: any = { value: '8', disabled: false };
+      const processors: any = { dataset: { chosenProcessors: '8' } };
+      const form: any = { elements: { processorTasks: select }, dataset: { defaultProcessors: '3' }, querySelector: () => processors };
+      BulkSyncPage.lockProcessorTasks(form, true);
+      expect(select).toEqual({ value: '3', disabled: true });
+      BulkSyncPage.lockProcessorTasks(form, false);
+      expect(select).toEqual({ value: '8', disabled: false });
+    });
+
     it("reads a mock landscape's options only from its section: the source, the simulator's settings, Start from scratch", () => {
       const radio = (value: string, checked: boolean) => ({ value, checked });
       const fields = (mock?: { source: string; values?: string[]; resetState?: boolean }) => ({
@@ -507,16 +583,16 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
         limits: { totalPopulation: 500000, simulatedDelaySeconds: 30 }
       });
       const test = BulkSyncView.formHtml(state({ mock: mock() }), { runType: 'test', buid: '', source: 'simulator' });
-      expect(test).toContain('<form data-bulk-sync-form novalidate class="bulk-simulator-test">');
+      expect(test).toContain('<form data-bulk-sync-form novalidate class="bulk-simulator-test"');
       expect(test).toContain('placeholder="U0000042"');
       expect(test).toContain('A made-up person from the source simulator, U0000001 to U0001950. One past the end is someone who isn&#39;t in the source, to test that case.');
       // People is marked to hide in a test; the others carry a hint for one person
       expect(test).toMatch(/class="mb-2 bulk-sim-run-only" data-sim-field="totalPopulation"/);
       expect(test).toContain('<div class="form-text bulk-sim-test-hint">The chance that the person&#39;s one response fails, to see how the run copes. 0: it succeeds.</div>');
       // A full sync with the simulator, or a test from the real source: not marked
-      expect(BulkSyncView.formHtml(state({ mock: mock() }), { runType: 'full', source: 'simulator' })).toContain('<form data-bulk-sync-form novalidate>');
+      expect(BulkSyncView.formHtml(state({ mock: mock() }), { runType: 'full', source: 'simulator' })).toMatch(/<form data-bulk-sync-form novalidate\s+data-default-parallel/);
       const real = BulkSyncView.formHtml(state({ mock: mock() }), { runType: 'test', buid: '', source: 'real' });
-      expect(real).toContain('<form data-bulk-sync-form novalidate>');
+      expect(real).toMatch(/<form data-bulk-sync-form novalidate\s+data-default-parallel/);
       expect(real).toContain('placeholder="U12345678"');
       // Without a simulator, no simulator hint at all
       expect(BulkSyncView.formHtml(state(), { runType: 'test', buid: '' })).not.toContain('bulk-buid-simulator');

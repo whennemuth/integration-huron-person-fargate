@@ -167,7 +167,7 @@ export abstract class AbstractPostProcessor {
         storageMode: PREVIOUS_STORAGE_TYPE?.toLowerCase(),
         dryRun: `${DRY_RUN}`.trim().toLowerCase() === 'true',
         deletion,
-        startedBy: await this.readStartedBy(chunkDirectory, bucketName, region)
+        ...await this.readSummaryFlags(chunkDirectory, bucketName, region)
       });
       await statisticsTable.writeRunSummary(summary);
       console.log(`✓ Run summary written for ${syncRunId} (status: ${summary.status})`);
@@ -177,16 +177,19 @@ export abstract class AbstractPostProcessor {
   }
 
   /**
-   * Who or what started the run, from its Flags (the statistics table in DynamoDB mode, _flags.json in S3 mode).
-   * Never throws: an unreadable value leaves the summary without one.
+   * What the summary copies from the run's Flags (the statistics table in DynamoDB mode, _flags.json in S3 mode): who
+   * or what started the run, and the processor maximum it started with. Never throws: unreadable Flags leave the
+   * summary without them.
    */
-  private async readStartedBy(chunkDirectory: string, bucketName?: string, region?: string): Promise<unknown> {
+  private async readSummaryFlags(chunkDirectory: string, bucketName?: string, region?: string): Promise<{
+    startedBy?: unknown; processorScalingCapacity?: unknown;
+  }> {
     try {
       const { flags } = await new MetadataFactoryForBootstrap().readFlagsForBootstrap({ bucketName, chunkDirectory, region });
-      return flags.startedBy;
+      return { startedBy: flags.startedBy, processorScalingCapacity: flags.processorScalingCapacity };
     } catch (error: any) {
-      console.warn(`⚠️  Who started the run couldn't be read for its summary: ${error.message}`);
-      return undefined;
+      console.warn(`⚠️  The run's flags couldn't be read for its summary: ${error.message}`);
+      return {};
     }
   }
 

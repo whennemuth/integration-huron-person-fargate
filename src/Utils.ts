@@ -17,6 +17,15 @@ export const getStackName = (context:IContext):string => {
  * This name is the single signal of mock mode - for CDK (deploy time) and for the ECS tasks/Runner
  * (runtime, via the LANDSCAPE environment variable).
  */
+/**
+ * A landscape's ECS cluster, in which all its services run, is `${ECS_CLUSTER_BASE_NAME}-<landscape>`
+ * (lib/EcsInfrastructure.ts names it with this: its CLUSTER_BASE_NAME)
+ */
+export const ECS_CLUSTER_BASE_NAME = 'huron-person-cluster';
+export const ecsClusterName = (landscape: string): string => `${ECS_CLUSTER_BASE_NAME}-${landscape.toLowerCase()}`;
+/** The processor service's name in that cluster (lib/services/processor/ProcessorService.ts: its SERVICE_LOGICAL_ID) */
+export const PROCESSOR_SERVICE_NAME = 'Processor';
+
 export const MOCK_LANDSCAPE_PATTERN = /^mock\d*$/;
 
 export const isMockLandscape = (landscape?: string): boolean => {

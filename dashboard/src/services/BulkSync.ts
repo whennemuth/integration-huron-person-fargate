@@ -3,6 +3,7 @@ import { Config } from 'integration-huron-person';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 import type { ApiChunkerEvent, MockLandscapeResetEvent } from '../../../src/chunking/ChunkerSubscriber';
 import { MockLandscapeReset, MockLandscapeResetRecord } from '../../../src/chunking/MockLandscapeReset';
+import { ProcessorScalingCapacity } from '../../../src/chunking/ProcessorScalingCapacity';
 import { ScheduledRun } from '../../../src/chunking/ScheduledRun';
 import { RunStarter, StartedBy } from '../../../src/chunking/StartedBy';
 import type { RunReport } from '../../../src/reporting/RunReporting';
@@ -67,7 +68,9 @@ export class BulkSyncRequest {
     readonly mockLandscape: boolean = false,
     readonly source: BulkSyncSource = 'real',
     readonly simulator: Partial<SimulatorSettings> = {},
-    readonly resetState: boolean = false
+    readonly resetState: boolean = false,
+    /** The processor service's maximum tasks for this run, in place of the landscape's maxScalingCapacity */
+    readonly processorScalingCapacityOverride?: number
   ) {}
 
   static readonly SOURCES: BulkSyncSource[] = ['real', 'simulator'];
@@ -103,6 +106,14 @@ export class BulkSyncRequest {
    * gets 0 (one message).
    */
   static readonly PARALLEL_START_DEFAULT = 15;
+  /**
+   * The range of processor tasks a run may ask for in place of the landscape's maxScalingCapacity
+   * (processorScalingCapacityOverride), whatever the landscape's: the chunker subscriber's (ProcessorScalingCapacity
+   * in src/chunking/ProcessorScalingCapacity.ts). Above the landscape's, the page warns that the target is likely to
+   * throttle the processors, and lets the run start.
+   */
+  static readonly PROCESSOR_TASKS_MIN = ProcessorScalingCapacity.MIN;
+  static readonly PROCESSOR_TASKS_MAX = ProcessorScalingCapacity.MAX;
 
   /**
    * @param options.mockLandscape Whether the landscape is a mock landscape, the only kind whose runs may choose their
@@ -114,7 +125,7 @@ export class BulkSyncRequest {
     const mockLandscape = !!options.mockLandscape;
     const {
       runType, buid, bulkReset = ScheduledRun.BULK_RESET, iterationLimit = BulkSyncRequest.CHUNKS_PER_TASK_DEFAULT, parallelStart = 0,
-      overrideStalled = false, source = 'real', simulator, resetState = false
+      overrideStalled = false, source = 'real', simulator, resetState = false, processorScalingCapacityOverride
     } = body || {};
     if (!BulkSyncRequest.RUN_TYPES.includes(runType as BulkSyncRunType)) {
       throw invalid(`runType must be one of ${BulkSyncRequest.RUN_TYPES.map(type => `'${type}'`).join(', ')}`);
@@ -149,6 +160,16 @@ export class BulkSyncRequest {
     if (parallelStart !== 0 && iterationLimit === 0) {
       throw invalid("A single task can't be started in parallel: parallelStart needs chunks per task above 0");
     }
+    const processorTasks = processorScalingCapacityOverride ?? undefined;
+    if (processorTasks !== undefined) {
+      const { PROCESSOR_TASKS_MIN: min, PROCESSOR_TASKS_MAX: max } = BulkSyncRequest;
+      if (!Number.isInteger(processorTasks) || (processorTasks as number) < min || (processorTasks as number) > max) {
+        throw invalid(`processorScalingCapacityOverride must be a whole number from ${min} to ${max}`);
+      }
+      if (runType === 'test') {
+        throw invalid('A test is one person in one chunk, for one processor task: processorScalingCapacityOverride is only for a full sync');
+      }
+    }
     if (!BulkSyncRequest.SOURCES.includes(source as BulkSyncSource)) {
       throw invalid(`source must be one of ${BulkSyncRequest.SOURCES.map(name => `'${name}'`).join(', ')}`);
     }
@@ -172,7 +193,8 @@ export class BulkSyncRequest {
     const chunksPerTask = runType === 'test' ? 0 : iterationLimit as number;
     return new BulkSyncRequest(
       runType as BulkSyncRunType, person, bulkReset as boolean, chunksPerTask, parallelStart as number,
-      overrideStalled as boolean, mockLandscape, source as BulkSyncSource, settings, resetState
+      overrideStalled as boolean, mockLandscape, source as BulkSyncSource, settings, resetState,
+      processorTasks as number | undefined
     );
   }
 
@@ -210,10 +232,11 @@ export class BulkSyncRequest {
   choices(): BulkSyncChoices {
     const {
       runType, population, buid, bulkReset, trustPreviousStorage, iterationLimit, parallelStart, overrideStalled, mockLandscape,
-      source, simulator, resetState
+      source, simulator, resetState, processorScalingCapacityOverride
     } = this;
     return {
       runType, population, ...(buid ? { buid } : {}), bulkReset, trustPreviousStorage, iterationLimit, parallelStart, overrideStalled,
+      ...(processorScalingCapacityOverride !== undefined ? { processorScalingCapacityOverride } : {}),
       // A mock landscape's own options, only there
       ...(mockLandscape ? { source, ...(source === 'simulator' ? { simulator } : {}), resetState } : {})
     };
@@ -364,6 +387,11 @@ export type BulkSyncSettings = {
   /** The chunker service a parallel start scales (through the chunker subscriber) */
   chunkerClusterName?: string;
   chunkerServiceName?: string;
+  /**
+   * The context's ECS.processorService.maxScalingCapacity, set at deploy: the processor maximum a run gets without an
+   * override, where Processor tasks starts, and above which the review warns of throttling
+   */
+  processorMaxScalingCapacity?: number;
   /** The environment variables a start needs that are missing: every start is refused as NOT_CONFIGURED */
   missing?: string[];
 };
@@ -418,6 +446,7 @@ export class BulkSync implements BulkSyncService {
       LANDSCAPE, LANDSCAPE_TONE, REGION, PIPELINE_STACK_ID, CHUNKER_FUNCTION_NAME, PROCESSOR_SUBSCRIBER_FUNCTION_NAME,
       ITEMS_PER_CHUNK, CHUNKER_CLUSTER_NAME, CHUNKER_SERVICE_NAME, SOURCE_SIMULATOR_FUNCTION_NAME
     } = env;
+    const processorMaxScalingCapacity = ProcessorScalingCapacity.deployedCapacity(env);
     const missing = Object.entries({ LANDSCAPE, REGION, CHUNKER_FUNCTION_NAME, PROCESSOR_SUBSCRIBER_FUNCTION_NAME })
       .filter(([, value]) => !value).map(([name]) => name);
     const settings: BulkSyncSettings = {
@@ -431,6 +460,7 @@ export class BulkSync implements BulkSyncService {
       itemsPerChunk: ITEMS_PER_CHUNK ? Number(ITEMS_PER_CHUNK) : undefined,
       chunkerClusterName: CHUNKER_CLUSTER_NAME,
       chunkerServiceName: CHUNKER_SERVICE_NAME,
+      ...(processorMaxScalingCapacity !== undefined ? { processorMaxScalingCapacity } : {}),
       missing
     };
     const lambda = new LambdaClient({ region: REGION });
@@ -490,10 +520,13 @@ export class BulkSync implements BulkSyncService {
         runType: ScheduledRun.POPULATION === SyncPopulation.PersonFull ? 'full' : 'full-no-deactivations',
         bulkReset: ScheduledRun.BULK_RESET,
         iterationLimit: BulkSyncRequest.CHUNKS_PER_TASK_DEFAULT,
-        parallelStart: Math.min(BulkSyncRequest.PARALLEL_START_DEFAULT, parallelMax)
+        parallelStart: Math.min(BulkSyncRequest.PARALLEL_START_DEFAULT, parallelMax),
+        // The landscape's processor maximum, where Processor tasks starts (unknown to a dashboard deployed before it)
+        ...(settings.processorMaxScalingCapacity !== undefined ? { processorScalingCapacity: settings.processorMaxScalingCapacity } : {})
       },
       iterationLimit: { max: BulkSyncRequest.CHUNKS_PER_TASK_MAX },
       parallelStart: { max: parallelMax, enabled: true },
+      processorScalingCapacity: { max: BulkSyncRequest.PROCESSOR_TASKS_MAX },
       latestRun,
       ...(blocked ? { blocked } : {}),
       warnings: this.warnings(),
@@ -726,6 +759,9 @@ export class BulkSync implements BulkSyncService {
       ...(request.parallelStart > 0 ? { parallelStart: request.parallelStart } : {}),
       // A mock landscape's start from scratch: the chunker subscriber empties its run state first
       ...(request.resetState ? { resetState: true } : {}),
+      // The chunker subscriber sets the processor service's maximum to it for this run (else the landscape's)
+      ...(request.processorScalingCapacityOverride !== undefined
+        ? { processorScalingCapacityOverride: request.processorScalingCapacityOverride } : {}),
       ...(startedBy ? { startedBy } : {}),
       processingMetadata: { processedAt: new Date(this.now).toISOString(), processorVersion: '1.0.0' }
     };
@@ -821,11 +857,16 @@ export class BulkSync implements BulkSyncService {
           ? 'The chunker subscriber empties the mock target, Run history and fingerprints before the run starts'
           : undefined)
         : fixed(false, 'Mock landscapes only'),
-      personRecordProcessorAddons: fixed(null, 'None: addons are a command-line (Runner) option')
+      personRecordProcessorAddons: fixed(null, 'None: addons are a command-line (Runner) option'),
+      processorScalingCapacityOverride: request.processorScalingCapacityOverride !== undefined
+        ? form(request.processorScalingCapacityOverride, "The chunker subscriber sets the processor service's maximum to it for this run")
+        : form(null, "Not sent: the run gets the landscape's maximum")
     };
     return [
       ...Object.entries(runner).map(([name, setting]) => ({ name, ...setting })),
       { name: 'itemsPerChunk', ...landscape(settings.itemsPerChunk, "The chunker task's ITEMS_PER_CHUNK, set at deploy") },
+      { name: 'processorMaxScalingCapacity', ...landscape(settings.processorMaxScalingCapacity,
+        "The processor service's maximum tasks without an override: the context's maxScalingCapacity, set at deploy") },
       { name: 'chunkerFunction', ...landscape(settings.chunkerFunctionName, 'Invoked asynchronously, as the schedule does') }
     ];
   }

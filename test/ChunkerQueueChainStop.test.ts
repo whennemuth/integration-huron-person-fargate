@@ -100,4 +100,18 @@ describe('ChunkerQueue.sendNextChunkingMessage run parameter forwarding', () => 
 
     expect((handleApiEvent as jest.Mock).mock.calls[0][0].startedBy).toEqual({ by: 'dashboard', principal: 'jdoe' });
   });
+
+  it('forwards the processor maximum the run started with to the next message', async () => {
+    const chunkerQueue = new ChunkerQueue({ isEcsTask: false, QueueUrl: 'https://sqs.example.com/queue', region: 'us-east-2', landscape: 'mock' });
+
+    await chunkerQueue.sendNextChunkingMessage({
+      iterationLimit: 10, offset: 0, chunkDirectory: 'chunks/person-full/2026-01-01T00:00:00.000Z',
+      taskParameters: {
+        baseUrl: 'https://cdm.example.edu', fetchPath: '/people', populationType: SyncPopulation.PersonFull,
+        bulkReset: false, trustPreviousStorage: true, processorScalingCapacity: { maxTasks: 8, overridden: true }
+      }
+    });
+
+    expect((handleApiEvent as jest.Mock).mock.calls[0][0].processorScalingCapacity).toEqual({ maxTasks: 8, overridden: true });
+  });
 });

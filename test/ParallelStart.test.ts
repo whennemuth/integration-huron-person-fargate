@@ -193,4 +193,18 @@ describe('QueueSeeder', () => {
     await seeder().seedQueue();
     expect((handleApiEvent as jest.Mock).mock.calls[1][0]).toMatchObject({ startedBy: { by: 'runner' } });
   });
+
+  it('marks the seeded messages with the processor maximum the run started with, when it has one', async () => {
+    const capacity = { maxTasks: 8, overridden: true };
+    await new QueueSeeder({
+      stackId: ENV.STACK_ID, region: ENV.REGION, landscape: ENV.LANDSCAPE, queueUrl: ENV.CHUNKER_QUEUE_URL,
+      baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: SyncPopulation.PersonDelta,
+      iterationLimit: 10, messagesToSeed: 1, processorScalingCapacity: capacity
+    }).seedQueue();
+    expect((handleApiEvent as jest.Mock).mock.calls[0][0].processorScalingCapacity).toEqual(capacity);
+    expect((handleApiEvent as jest.Mock).mock.calls[0][0]).not.toHaveProperty('processorScalingCapacityOverride');
+
+    await seeder().seedQueue();
+    expect((handleApiEvent as jest.Mock).mock.calls[1][0]).not.toHaveProperty('processorScalingCapacity');
+  });
 });

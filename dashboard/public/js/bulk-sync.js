@@ -121,6 +121,9 @@ class BulkSyncView {
             singleTask: iterationLimit === 0,
             chunksPerTask: iterationLimit === 0 ? defaults.iterationLimit : iterationLimit,
             parallelStart: pick('parallelStart'),
+            processorTasks: entered.processorScalingCapacityOverride !== undefined
+                ? entered.processorScalingCapacityOverride
+                : defaults.processorScalingCapacity,
             overrideStalled: !! entered.overrideStalled
         };
     }
@@ -136,8 +139,10 @@ class BulkSyncView {
      */
     static formHtml(state, values) {
         const {
-            latestRun = {}, blocked, warnings = [], iterationLimit: chunks = { max: 50 }, parallelStart: parallel = { max: 20, enabled: false }
+            latestRun = {}, blocked, warnings = [], iterationLimit: chunks = { max: 50 }, parallelStart: parallel = { max: 20, enabled: false },
+            processorScalingCapacity: processors = { max: 20 }
         } = state;
+        const landscapeProcessors = state.defaults.processorScalingCapacity;
         const form = BulkSyncView.formValues(state, values);
         const test = form.runType === 'test';
         const single = form.singleTask || test;
@@ -154,7 +159,8 @@ class BulkSyncView {
         };
         return `
             ${warnings.map(warning => BulkSyncView.noteHtml('info', 'Before you start', warning)).join('')}
-            <form data-bulk-sync-form novalidate${simulatorTest ? ` class="${BulkSyncView.SIMULATOR_TEST_CLASS}"` : ''}>
+            <form data-bulk-sync-form novalidate${simulatorTest ? ` class="${BulkSyncView.SIMULATOR_TEST_CLASS}"` : ''}
+                  data-default-parallel="${Html.escape(String(state.defaults.parallelStart || 0))}"${landscapeProcessors !== undefined ? ` data-default-processors="${Html.escape(String(landscapeProcessors))}"` : ''}>
                 <fieldset class="bulk-fields" data-bulk-fields>
                 <fieldset class="mb-3">
                     <legend class="form-label">Run type</legend>
@@ -192,7 +198,7 @@ class BulkSyncView {
                 })}
                 ${BulkSyncView.checkboxHtml({
                     name: 'custom', label: 'Custom settings', checked: form.custom,
-                    hint: `How the run's work is divided up and started. Unchecked, the defaults are used: ${state.defaults.iterationLimit} chunks per task, and a start with one message.`
+                    hint: `How the run's work is divided up and started. Unchecked, the defaults are used: ${BulkSyncView.defaultsText(state.defaults)}.`
                 })}
                 <fieldset class="bulk-custom mb-3" data-bulk-custom aria-label="Custom settings"${form.custom ? '' : ' hidden'}>
                     <fieldset class="mb-3" data-bulk-chunk-mode data-chosen-mode="${form.singleTask ? 'single' : 'perTask'}">
@@ -226,6 +232,18 @@ class BulkSyncView {
                             up. A test or a single task always starts with one.
                         </div>
                     </div>
+                    <div class="mt-3" data-bulk-processors data-chosen-processors="${Html.escape(String(form.processorTasks === undefined ? '' : form.processorTasks))}">
+                        <label class="form-label" for="bulk-processorTasks">Processor tasks</label>
+                        <select class="form-select bulk-number" name="processorTasks" id="bulk-processorTasks"${test ? ' disabled' : ''}>
+                            ${landscapeProcessors === undefined ? `<option value=""${form.processorTasks === undefined ? ' selected' : ''}>The landscape's own</option>` : ''}
+                            ${options(1, processors.max, test ? landscapeProcessors : form.processorTasks)}
+                        </select>
+                        <div class="form-text">
+                            The most processor tasks the run may use at once: they send people to Huron. ${landscapeProcessors !== undefined
+                                ? `This landscape's own is ${landscapeProcessors}: above it, Huron is likely to throttle them, which slows the run and shows as errors. Choosing more is for finding out whether Huron takes more now.`
+                                : "This landscape's own is used unless you choose another."} For this run only. A test uses one.
+                        </div>
+                    </div>
                 </fieldset>
                 ${state.mock ? BulkSyncView.mockHtml(state.mock, form) : ''}
                 ${stalled ? BulkSyncView.checkboxHtml({
@@ -242,6 +260,17 @@ class BulkSyncView {
                 </div>
             </form>
         `;
+    }
+
+    /** What a run gets with Custom settings unchecked, in words (BulkSyncState.defaults) */
+    static defaultsText(defaults) {
+        const parallel = defaults.parallelStart > 0
+            ? `${defaults.parallelStart} chunker tasks at the start`
+            : 'a start with one chunker task';
+        const processors = defaults.processorScalingCapacity !== undefined
+            ? `, and up to ${defaults.processorScalingCapacity} processor tasks`
+            : '';
+        return `${defaults.iterationLimit} chunks per task, ${parallel}${processors}`;
     }
 
     /**
@@ -330,6 +359,9 @@ class BulkSyncView {
             if (people && perTask > 0 && choices.parallelStart * perTask > people + perTask) {
                 lines.push(`Its ${choices.parallelStart} tasks are set to read ${RunFormat.number(choices.parallelStart * perTask)} people, more than the simulator's ${RunFormat.number(people)}: the tasks past the end find no one and stop.`);
             }
+        }
+        if (choices.processorScalingCapacityOverride !== undefined) {
+            lines.push(`It uses up to ${choices.processorScalingCapacityOverride} processor tasks at once, for this run only.`);
         }
         if (choices.overrideStalled && latestRun && latestRun.syncRunId) {
             lines.push(`The stalled run of ${RunFormat.dateTime(latestRun.syncRunId)} is left as it is.`);
@@ -430,12 +462,14 @@ class BulkSyncView {
         const eventRows = Object.entries(plan.event).map(([name, value]) => ({ name, value }));
         const chunkSize = (plan.settings || []).find(setting => setting.name === 'itemsPerChunk');
         const itemsPerChunk = chunkSize && Number(chunkSize.value) > 0 ? Number(chunkSize.value) : undefined;
+        const throttling = BulkSyncView.throttlingWarning(plan);
         return `
             <div class="bulk-confirm" role="group" aria-label="Confirm the run">
                 <p class="bulk-confirm-title">Start this run?</p>
                 <ul class="bulk-confirm-list">
                     ${BulkSyncView.summaryLines(plan.choices, plan.landscape, latestRun, itemsPerChunk, simulatorPeople).map(line => `<li>${Html.escape(line)}</li>`).join('')}
                 </ul>
+                ${throttling ? BulkSyncView.noteHtml('warning', 'Processors may be throttled', throttling) : ''}
                 ${BulkSyncView.settingsTableHtml('The event sent to the chunker subscriber', eventRows)}
                 <p class="bulk-form-error" data-bulk-start-error role="alert" hidden></p>
                 <div class="bulk-confirm-actions">
@@ -446,6 +480,21 @@ class BulkSyncView {
                 </div>
             </div>
         `;
+    }
+
+    /**
+     * The review's warning when the run asks for more processor tasks than the landscape's maximum (the plan's
+     * processorMaxScalingCapacity setting), above which Huron is expected to throttle them; undefined otherwise. Start
+     * runs it anyway: it is how to find out whether Huron's limits have changed.
+     */
+    static throttlingWarning(plan) {
+        const requested = plan.choices ? plan.choices.processorScalingCapacityOverride : undefined;
+        const setting = (plan.settings || []).find(item => item.name === 'processorMaxScalingCapacity');
+        const landscape = setting && Number(setting.value) > 0 ? Number(setting.value) : undefined;
+        if (requested === undefined || landscape === undefined || requested <= landscape) {
+            return undefined;
+        }
+        return `This run uses up to ${requested} processor tasks, more than this landscape's ${landscape}. Above ${landscape}, Huron is likely to throttle them (429 responses), which slows the run and shows as errors. Start the run to find out how Huron copes now, or go back and choose ${landscape} or fewer.`;
     }
 
     /** A request the server would refuse as invalid, said before sending it; undefined when it is fine */
@@ -537,11 +586,15 @@ class BulkSyncPage {
 
     /**
      * The request a form's fields make. A BUID is sent only for a test, and the custom settings only when Custom
-     * settings is checked (otherwise the server uses its defaults). A single task is iterationLimit 0, and a test is
-     * always a single task. custom says which, for redrawing the form.
+     * settings is checked; otherwise the server uses its defaults, but for Parallel start, whose default the form
+     * carries (data-default-parallel, BulkSyncState.defaults; the server's own is 0, a start with one message), sent for
+     * a full sync. A single task is iterationLimit 0, and a test is always a single task. Processor tasks is sent as an
+     * override only when it differs from the landscape's (data-default-processors), and never for a test. custom says
+     * which, for redrawing the form.
      */
     static readRequest(form) {
         const fields = form.elements;
+        const formDefaults = form.dataset || {};
         const checked = name => ([...fields[name]].find(radio => radio.checked) || {}).value;
         const runType = checked('runType');
         const buid = String(fields.buid.value || '').trim().toUpperCase();
@@ -559,6 +612,9 @@ class BulkSyncPage {
                 simulator[name] = value === '' ? NaN : Number(value);
             }
         }
+        const defaultParallel = Number(formDefaults.defaultParallel);
+        const processorTasks = custom && runType !== 'test' && fields.processorTasks ? String(fields.processorTasks.value) : '';
+        const override = processorTasks !== '' && processorTasks !== formDefaults.defaultProcessors ? Number(processorTasks) : undefined;
         return {
             runType,
             ...(runType === 'test' ? { buid } : {}),
@@ -566,7 +622,8 @@ class BulkSyncPage {
             ...(custom ? {
                 iterationLimit: single ? 0 : Number(fields.chunksPerTask.value),
                 parallelStart: single ? 0 : Number(fields.parallelStart.value)
-            } : {}),
+            } : (runType !== 'test' && defaultParallel > 0 ? { parallelStart: defaultParallel } : {})),
+            ...(override !== undefined ? { processorScalingCapacityOverride: override } : {}),
             ...(fields.overrideStalled ? { overrideStalled: !! fields.overrideStalled.checked } : {}),
             ...(source ? { source, ...(source === 'simulator' ? { simulator } : {}), resetState: !! fields.resetState.checked } : {}),
             custom
@@ -588,7 +645,12 @@ class BulkSyncPage {
             if (test) test.hidden = event.target.value !== 'test';
             const mode = BulkSyncPage.lockChunkMode(form, event.target.value === 'test');
             BulkSyncPage.lockParallelStart(form, mode === 'single');
+            BulkSyncPage.lockProcessorTasks(form, event.target.value === 'test');
             BulkSyncPage.markSimulatorTest(form);
+        }
+        if (event.target.name === 'processorTasks') {
+            const processors = form.querySelector('[data-bulk-processors]');
+            if (processors) processors.dataset.chosenProcessors = event.target.value;
         }
         if (event.target.name === 'chunkMode') {
             const chunks = form.querySelector('[data-bulk-chunks]');
@@ -664,6 +726,21 @@ class BulkSyncPage {
         const enabled = ! parallel || parallel.dataset.enabled !== 'false';
         select.disabled = single || ! enabled;
         select.value = single ? '0' : ((parallel && parallel.dataset.chosenParallel) || '0');
+    }
+
+    /**
+     * Hold Processor tasks at the landscape's, unchangeable, for a test (one person, one processor task); otherwise
+     * restore the value the user chose (the wrapper's data-chosen-processors)
+     */
+    static lockProcessorTasks(form, test) {
+        const select = form.elements ? form.elements.processorTasks : undefined;
+        const processors = form.querySelector('[data-bulk-processors]');
+        if ( ! select) {
+            return;
+        }
+        const landscape = form.dataset ? form.dataset.defaultProcessors : undefined;
+        select.disabled = test;
+        select.value = test ? (landscape || '') : ((processors && processors.dataset.chosenProcessors) || landscape || '');
     }
 
     /** Load what a start would do, and the status: a run launched moments ago, else the newest run. Resolves true once shown */

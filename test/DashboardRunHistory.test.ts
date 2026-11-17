@@ -476,6 +476,30 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       const unfinished = new RunView({ ...incomplete, flags: { ...(incomplete as any).flags, startedBy: { by: 'dashboard', principal: 'jdoe' } } });
       expect(unfinished.startedBy).toBe('jdoe');
     });
+  });
+
+  describe('the processor maximum a run started with', () => {
+    it('says how many processor tasks it could use, marking an override, from the summary or else the flags', () => {
+      expect(RunView.processorTasksLabel({ maxTasks: 3, overridden: false })).toBe('Up to 3 processor tasks');
+      expect(RunView.processorTasksLabel({ maxTasks: 8, overridden: true })).toBe('Up to 8 processor tasks (override)');
+      expect(RunView.processorTasksLabel({ maxTasks: 1, overridden: false })).toBe('Up to 1 processor task');
+      expect(RunView.processorTasksLabel(undefined)).toBeUndefined();
+      expect(RunView.processorTasksLabel({ overridden: true })).toBeUndefined();
+
+      const summarized = new RunView({ syncRunId: 'a', status: 'SUCCEEDED', summary: { results: {}, processorScalingCapacity: { maxTasks: 8, overridden: true } } });
+      expect(summarized.facts).toContain('Up to 8 processor tasks (override)');
+      const unfinished = new RunView({ ...incomplete, flags: { ...(incomplete as any).flags, processorScalingCapacity: { maxTasks: 3, overridden: false } } });
+      expect(unfinished.processorTasks).toBe('Up to 3 processor tasks');
+      expect(new RunView({ syncRunId: 'b', status: 'SUCCEEDED', summary: { results: {} } }).facts.join()).not.toContain('processor');
+    });
+
+    it('shows it on the Flags card as its own fact', () => {
+      const view = Object.assign(Object.create(RunDetailView.prototype), {
+        run: { flags: { processorScalingCapacity: { maxTasks: 8, overridden: true } } }, capabilities: {}
+      });
+      // Long enough to go across the card (RunDetailView.WIDE_FLAG_LENGTH)
+      expect(view.flagsHtml()).toContain('<dt>Processor maximum</dt><dd class="fact-wide">Up to 8 processor tasks (override)</dd>');
+    });
 
     it("shows it in its own column, and a dash for a run from before it was recorded", () => {
       expect(RunListTable.HEAD_HTML).toMatch(/<th scope="col">Started<\/th>\s*<th scope="col">Started by<\/th>\s*<th scope="col">Status<\/th>/);

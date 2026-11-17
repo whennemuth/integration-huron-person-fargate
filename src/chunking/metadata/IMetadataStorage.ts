@@ -1,5 +1,6 @@
 import { SourceEndpoint, SyncPopulation } from '../../../docker/chunkTypes';
 import type { StartedBy } from '../StartedBy';
+import type { ProcessorCapacityRecord } from '../ProcessorCapacityRecord';
 
 /**
  * Flags configuration for chunking pipeline.
@@ -36,6 +37,12 @@ export type Flags = {
    * Copied into the run's summary by the post-processor, for Run history's "Started by".
    */
   startedBy?: StartedBy;
+  /**
+   * The processor service's maximum tasks the run started with (src/chunking/ProcessorCapacityRecord.ts): its own
+   * override, or the landscape's maxScalingCapacity. Copied into the run's summary by the post-processor, for Run
+   * history. Absent when its start didn't set one, and for runs from before it was recorded.
+   */
+  processorScalingCapacity?: ProcessorCapacityRecord;
   [key: string]: any; // Allow additional fields for flexibility
 }
 

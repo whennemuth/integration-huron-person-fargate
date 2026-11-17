@@ -156,7 +156,7 @@ The Lambda function serves two primary roles:
 - `POST /api/bulk-sync` - start a sync run, as the EventBridge schedule does (`BulkSync`,
   `src/services/BulkSync.ts`): `{ runType: 'full' | 'full-no-deactivations' | 'test', buid? (a test's,
   and only a test's), bulkReset?, iterationLimit? (0-50, 0 a single task; default 10; always 0 for a test), parallelStart? (0 to the chunker service's most tasks, at most 20; refused for a test or a single task),
-  overrideStalled?, and in a mock landscape only: source? ('real' | 'simulator'), simulator? ({ totalPopulation?,
+  processorScalingCapacityOverride? (1-20, the processor service's maximum for this run; refused for a test), overrideStalled?, and in a mock landscape only: source? ('real' | 'simulator'), simulator? ({ totalPopulation?,
   simulatedDelaySeconds?, errorRate?, nonCurrentTermRate? }, with the simulator), resetState? }`; `202` with what was
   started. A refused review
   or start is a `BulkSyncError` as `{ error, code }` (400 invalid, 403 production, 409 a run underway or stalled, a
@@ -438,7 +438,7 @@ characters: the Shibboleth construct names a bucket `<stack name>-context-config
   statistics table, the person history table (DynamoDB mode) and the chunks bucket
   (`lib/LandscapeResources.ts`). To start a run (Bulk sync) it may also invoke the chunker subscriber
   (`chunker-subscriber-<landscape>`, which resets the chunker's counters for a run's start) and read its and
-  the processor subscriber's configuration (their `DRY_RUN`), and read the chunker service's most tasks (its scalable target, for Parallel start); in a mock landscape only, it may also look up the source simulator's Function URL (`lambda:GetFunctionUrlConfig` on `source-simulator-<landscape>`, named in its `SOURCE_SIMULATOR_FUNCTION_NAME`), and read its last reset's record (`dynamodb:GetItem` on the atomic counter table). The one thing it writes is its landscape's launch flag (`ssm:PutParameter`, `GetParameter`, `DeleteParameter` on `/hp-dashboard/launch-flags/<landscape>`, "Launch flag" below). All by deterministic name -
+  the processor subscriber's configuration (their `DRY_RUN`), and read the chunker service's most tasks (its scalable target, for Parallel start). It is told the context's processor maximum (`PROCESSOR_MAX_SCALING_CAPACITY`, for Processor tasks) and changes nothing on the service; in a mock landscape only, it may also look up the source simulator's Function URL (`lambda:GetFunctionUrlConfig` on `source-simulator-<landscape>`, named in its `SOURCE_SIMULATOR_FUNCTION_NAME`), and read its last reset's record (`dynamodb:GetItem` on the atomic counter table). The one thing it writes is its landscape's launch flag (`ssm:PutParameter`, `GetParameter`, `DeleteParameter` on `/hp-dashboard/launch-flags/<landscape>`, "Launch flag" below). All by deterministic name -
   no CloudFormation imports from the pipeline stack.
 
 **Commands** (from the fargate root; `npm run deploy` deploys the pipeline and dashboard stacks):
@@ -683,6 +683,9 @@ landscape's runs from the run reporting routes. Its classes each do one thing:
   minutes); a still-fetching run can stall but gets no estimate. A run waiting on post-processing stalls by the
   same rule ("Stalled: post-processing hasn't finished 3 days after the last chunk"). All from the browser's clock
   at each load.
+- **The processor maximum** (`RunView.processorTasksLabel()`): among a run's facts, "Up to 8 processor tasks
+  (override)" (the summary's `processorScalingCapacity`, else the flags'), and "Processor maximum" on the Flags card;
+  nothing for a run from before it was recorded. The offline catalog's incomplete run has an override of 8.
 - **Started by** (`RunView.startedByLabel()`): a column after Started, and the first of a run's facts ("Started by
   jdoe"): the signed-in user's `buPrincipal` for a start from Bulk sync ("Dashboard" without one), "Schedule" or
   "Runner", from the summary's `startedBy` or else the flags' (fargate `src/chunking/StartedBy.ts`); a dash for a run
@@ -817,7 +820,24 @@ routes above).
   minutes, which the review and the status panel say.
   - **Its default** is 15 (`BulkSyncRequest.PARALLEL_START_DEFAULT`, since 2026-11-16; it was 0), lowered to its
     most: `describe()`'s `defaults.parallelStart`, which the form starts from, so a run starts at full speed rather
-    than ramping up from one task. A request without `parallelStart` (the API's, not the form's) still gets 0.
+    than ramping up from one task. A request without `parallelStart` (the API's, not the form's) still gets 0, so the
+    form carries the default (`data-default-parallel`) and `readRequest()` sends it for a full sync even with Custom
+    settings closed (until 2026-11-17 it didn't, and a run started that way began with one task).
+- **Processor tasks** (`processorScalingCapacityOverride`, since 2026-11-17, `processor-max-tasks-plan.md`; fargate
+  "A run may have its own processor maximum"): the processor service's maximum for this run only, 1 to 20
+  (`BulkSyncRequest.PROCESSOR_TASKS_MIN`/`MAX`, the chunker subscriber's), after Parallel start under Custom settings.
+  - **It starts at the landscape's** (`defaults.processorScalingCapacity`, from the Lambda's
+    `PROCESSOR_MAX_SCALING_CAPACITY`, the context's `ECS.processorService.maxScalingCapacity`;
+    `LandscapeResources.processorMaxScalingCapacity`). A dashboard that doesn't know it offers "The landscape's own".
+  - **Sent only when it differs** from the landscape's (`data-default-processors`, `readRequest()`), never for a test
+    (refused by `parse()`; on the page locked at the landscape's while Test is chosen, the choice restored after:
+    `BulkSyncPage.lockProcessorTasks()`). The event carries it, and the chunker subscriber sets the service's live
+    maximum to it at the run's start.
+  - **The review** says "It uses up to 8 processor tasks at once, for this run only", and above the landscape's warns
+    "Processors may be throttled" (`BulkSyncView.throttlingWarning()`, from the plan's `processorMaxScalingCapacity`
+    setting) above Start run and Back: starting is allowed, to find out whether Huron takes more now. The review's
+    settings list both.
+  - The Custom settings hint lists the three defaults (`BulkSyncView.defaultsText()`).
   - **Its most** is the chunker service's most tasks (`DesiredCount.getMax()`, its scalable target's
     `MaxCapacity`), capped at 20 (`parallelStartMax()`): `describe()` offers 0 to it, and `plan()`/`start()` refuse
     more (`INVALID_REQUEST`). The Lambda has `application-autoscaling:DescribeScalableTargets` and the chunker

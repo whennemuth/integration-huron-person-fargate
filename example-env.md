@@ -89,6 +89,10 @@ RUNNER_SOURCE_SIMULATOR=false
 # RUNNER_SOURCE_SIMULATOR_MOCK_NON_CURRENT_TERM_RATE=0.25
 RUNNER_MESSAGING_ONLY=false
 RUNNER_CHUNKING_ONLY=false
+# The processor service's maximum tasks for this run (1-20), in place of the context's
+# ECS.processorService.maxScalingCapacity. The Runner sets the service's live maximum to it when the run starts; unset,
+# it sets it back to maxScalingCapacity. Above maxScalingCapacity, Huron is likely to throttle the processors.
+# RUNNER_PROCESSOR_SCALING_CAPACITY_OVERRIDE=5
 # For seeding the queue.
 RUNNER_MESSAGES_TO_PREPOPULATE=15
 RUNNER_ECS_CLUSTER_NAME=huron-person-cluster-dev

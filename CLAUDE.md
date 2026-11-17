@@ -208,6 +208,39 @@ offsets from the counter it has just reset (`QueueSeeder` resets its own).
 - First checked in staging on 2026-11-12 with 15 tasks: the alarm settled after 150 seconds, the 15 tasks were
   running 45 seconds after the desired count was set, and no offset or person was chunked twice.
 
+**A run may have its own processor maximum** (`processorScalingCapacityOverride`, since 2026-11-17,
+`processor-max-tasks-plan.md`): the processor service's "Max tasks" (its scalable target's `MaxCapacity`, which
+`ProcessorServiceBooster` raises the desired count to while chunking) decides how many processors a run uses, and so
+how hard they press Huron, which throttles them above a point.
+- **The context's `ECS.processorService.maxScalingCapacity`** stays the deployed `MaxCapacity` and never changes at run
+  time. It is what every run gets without an override, where Bulk sync's Processor tasks starts, and the point above
+  which its review warns of throttling (and lets the run start: that is how to find out whether Huron takes more now).
+- **Every run start sets the live maximum** (`src/chunking/ProcessorScalingCapacity.ts`, `apply()`): to the run's
+  override (1-20, `ProcessorScalingCapacity.MIN`/`MAX`), or else back to `maxScalingCapacity`. Nothing sets it back
+  after a run: the next run start does, and the schedule never carries an override. Between runs the service keeps
+  the last run's maximum, but with nothing queued it runs no tasks.
+  - The chunker subscriber does it for a run's first API event, right after its refusals and before a mock
+    landscape's reset, the counters and the parallel start (`setProcessorCapacityForRunStart()`), and for a dropped
+    file before its message is sent (`handleS3Event()`'s `beforeStart`). Its Lambda has `PROCESSOR_SERVICE_NAME` and
+    `PROCESSOR_MAX_SCALING_CAPACITY`, `application-autoscaling:RegisterScalableTarget` on `*` (a scalable target's
+    ARN carries an ID AWS assigns) limited by the conditions `service-namespace` = `ecs` and `scalable-dimension` =
+    `ecs:service:DesiredCount`, and `ecs:DescribeServices`/`UpdateService` on the processor service.
+  - The manual Runner does it in `ChunkingServiceRunner.start()`, before its counter reset
+    (`PROCESSOR_SCALING_CAPACITY_OVERRIDE`, else the local context's `maxScalingCapacity`).
+  - **Failures**: an override that can't be set fails the start before anything is reset or sent; restoring
+    `maxScalingCapacity` only warns, so a glitch can't stop the schedule. `DRY_RUN` logs it.
+- **The run records it** (`Flags.processorScalingCapacity`, `{ maxTasks, overridden }`,
+  `src/chunking/ProcessorCapacityRecord.ts`), by `startedBy`'s path (the first event, once the maximum is set ->
+  queue messages, seeded and chained -> Flags -> summary), and the run's page shows it ("Up to 8 processor tasks
+  (override)"). None for a run whose maximum wasn't set, or a file drop.
+- **Known limits**: a run start changes the maximum of a run already underway (as it already resets that run's
+  counters). CloudFormation reports the scalable target as drifted after an override; a deploy doesn't put it back
+  unless `maxScalingCapacity` changes in the template, the next run start does.
+- The cluster's and processor service's names are in `src/Utils.ts` (`ecsClusterName()`, `PROCESSOR_SERVICE_NAME`),
+  which `lib/` takes, since the task image compiles `src/` without `lib/`.
+- Tests: `test/ProcessorScalingCapacity.test.ts`, `test/ProcessorScalingCapacityRunStart.test.ts`,
+  `test/RunnerProcessorScalingCapacity.test.ts`, and the template's in `test/RunCounters.test.ts`.
+
 **A mock landscape's run can start from scratch** (`ApiChunkerEvent.resetState`, since 2026-11-14,
 `mock-landscape-options-plan.md`): the subscriber resets the landscape's run state before the counters and before
 anything is queued or seeded, through `src/chunking/MockLandscapeReset.ts`, which the Runner's

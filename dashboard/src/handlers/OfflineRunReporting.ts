@@ -14,6 +14,7 @@
  * per-person change list is kept, so getRunChanges() refuses, as RunReporting does.
  */
 import { RunStarter, StartedBy } from '../../../src/chunking/StartedBy';
+import type { ProcessorCapacityRecord } from '../../../src/chunking/ProcessorCapacityRecord';
 import {
   Capabilities, ChangeType, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, Page, pageOfRunIds, ReportingError, RunIdPage, RunReport
 } from '../../../src/reporting/RunReporting';
@@ -58,6 +59,8 @@ type OfflineRunSpec = {
   deletion?: DeletionOutcome;
   /** Who or what started it; none for the oldest runs, from before it was recorded */
   startedBy?: StartedBy;
+  /** The processor maximum it started with; none for runs from before it was recorded */
+  processorScalingCapacity?: ProcessorCapacityRecord;
 };
 
 /** A small deterministic hash, so generated values look varied but never change between requests */
@@ -148,6 +151,7 @@ export class OfflineRunCatalog {
           trustPreviousStorage: false,
           syncPopulation: spec.syncPopulation as any,
           ...(spec.startedBy ? { startedBy: spec.startedBy } : {}),
+          ...(spec.processorScalingCapacity ? { processorScalingCapacity: spec.processorScalingCapacity } : {}),
           ...(failed ? {
             runFailed: true,
             runFailureMessage: 'Source API returned 503 Service Unavailable after 5 attempts',
@@ -294,7 +298,8 @@ export class OfflineRunCatalog {
       totalRecords: spec.totalRecords,
       ...totals,
       deletion: spec.deletion,
-      ...(spec.startedBy ? { startedBy: spec.startedBy } : {})
+      ...(spec.startedBy ? { startedBy: spec.startedBy } : {}),
+      ...(spec.processorScalingCapacity ? { processorScalingCapacity: spec.processorScalingCapacity } : {})
     };
   }
 
@@ -363,10 +368,10 @@ export class OfflineRunCatalog {
           syncPopulation: 'person-full', totalRecords: FULL_POPULATION, added: 130, updated: 240, deactivated: 12,
           errorsByStatus: { 400: 40, 404: 25, 429: 120, 500: 75 }, durationMinutes: 47
         };
-      case 1: // Stopped part way, without being marked failed (or still running), started from Bulk sync
+      case 1: // Stopped part way, without being marked failed (or still running), started from Bulk sync with 8 processors
         return {
           outcome: 'INCOMPLETE', syncPopulation: 'person-full', totalRecords: FULL_POPULATION, deactivated: 0,
-          startedBy: RunStarter.dashboard('jdoe')
+          startedBy: RunStarter.dashboard('jdoe'), processorScalingCapacity: { maxTasks: 8, overridden: true }
         };
       case 3: // A single person, synced from the dashboard in the afternoon
       case 17:

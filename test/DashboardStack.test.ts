@@ -44,9 +44,16 @@ describe('landscapeResources', () => {
       chunkerServiceName: 'Chunker',
       pipelineStackId: 'huron-person-fargate-processor',
       itemsPerChunk: 200,
+      // No processorService in this context: EcsInfrastructure's fallback of 1
+      processorMaxScalingCapacity: 1,
       sourceSimulatorFunctionName: 'source-simulator-mock',
       atomicCounterTableName: 'huron-person-fargate-processor-atomic-counter-mock',
     });
+  });
+
+  it("passes the context's processor maximum, for Bulk sync's Processor tasks", () => {
+    const context = { ...makeLandscape('dynamodb'), ECS: { processorService: { maxScalingCapacity: 3 } } } as any;
+    expect(landscapeResources(context).processorMaxScalingCapacity).toBe(3);
   });
 
   it('names the source simulator only in a mock landscape', () => {
@@ -211,7 +218,9 @@ describe('FunctionUrlOrigin', () => {
           CHUNKER_FUNCTION_NAME: 'chunker-subscriber-mock',
           PROCESSOR_SUBSCRIBER_FUNCTION_NAME: 'processor-subscriber-mock',
           PIPELINE_STACK_ID: 'huron-person-fargate-processor',
-          ITEMS_PER_CHUNK: '200'
+          ITEMS_PER_CHUNK: '200',
+          // Bulk sync's Processor tasks: the context's processor maximum (EcsInfrastructure's fallback of 1 here)
+          PROCESSOR_MAX_SCALING_CAPACITY: '1'
         })
       }
     });

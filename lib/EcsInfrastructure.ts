@@ -14,8 +14,9 @@ import { Config } from 'integration-huron-person';
 import { DynamoDbTables } from './DynamoDB';
 import { HuronPersonSecrets } from './Secrets';
 import { NetworkParameters } from './NetworkStack';
+import { ECS_CLUSTER_BASE_NAME } from '../src/Utils';
 
-export const CLUSTER_BASE_NAME = 'huron-person-cluster';
+export const CLUSTER_BASE_NAME = ECS_CLUSTER_BASE_NAME;
 
 export interface EcsInfrastructureProps {
   repository: IRepository;

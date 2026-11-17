@@ -399,6 +399,9 @@ export async function main() {
     // Who or what started the run (the dashboard, the schedule, the Runner), for Run history
     const startedBy = chunker.getStartedBy?.();
 
+    // The processor maximum the run started with (its own override, or the landscape's), for Run history
+    const processorScalingCapacity = chunker.getProcessorScalingCapacity?.();
+
     // Write flags file BEFORE chunking starts so processor tasks can read it immediately
     await metadataBroker.writeFlags({
       bucketName: chunksBucket,
@@ -409,6 +412,7 @@ export async function main() {
       personRecordProcessorAddons,
       termsEndpoint,
       startedBy,
+      processorScalingCapacity,
       dryRun: dryRun === 'true',
       region
     });

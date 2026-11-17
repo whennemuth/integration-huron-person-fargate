@@ -15,6 +15,7 @@ import { ChunkConfigOverride } from "./ChunkConfigOverride";
 import { ProcessorServiceBooster } from './ProcessorServiceBooster';
 import { SourceSimulatorFunctionURL } from './SourceSimulator';
 import { RunStarter, StartedBy } from '../StartedBy';
+import { ProcessorCapacity, ProcessorCapacityRecord } from '../ProcessorCapacityRecord';
 
 export type TaskParameters = {
   baseUrl: string,
@@ -31,6 +32,8 @@ export type TaskParameters = {
   termsEndpoint?: SourceEndpoint;
   /** Who or what started the run (see Flags.startedBy) */
   startedBy?: StartedBy;
+  /** The processor maximum the run started with (see Flags.processorScalingCapacity) */
+  processorScalingCapacity?: ProcessorCapacityRecord;
 };
 
 /**
@@ -246,6 +249,7 @@ export class ChunkFromAPI implements IChunkFromSource {
     const personRecordProcessorAddons = messageBody.personRecordProcessorAddons;
     const termsEndpoint = messageBody.termsEndpoint;
     const startedBy = RunStarter.from(messageBody.startedBy);
+    const processorScalingCapacity = ProcessorCapacity.from(messageBody.processorScalingCapacity);
 
     this.taskParameters = { 
       baseUrl, 
@@ -260,7 +264,8 @@ export class ChunkFromAPI implements IChunkFromSource {
         : trustPreviousStorage === 'true',
       personRecordProcessorAddons,
       termsEndpoint,
-      ...(startedBy ? { startedBy } : {})
+      ...(startedBy ? { startedBy } : {}),
+      ...(processorScalingCapacity ? { processorScalingCapacity } : {})
     };
 
     if (this.taskParameters.chunkDirectory) {
@@ -428,6 +433,14 @@ export class ChunkFromAPI implements IChunkFromSource {
    */
   public getStartedBy = (): StartedBy | undefined => {
     return this.taskParameters?.startedBy;
+  }
+
+  /**
+   * Get the processor maximum the run started with, from task parameters, if the event said (see
+   * Flags.processorScalingCapacity).
+   */
+  public getProcessorScalingCapacity = (): ProcessorCapacityRecord | undefined => {
+    return this.taskParameters?.processorScalingCapacity;
   }
 
   /**

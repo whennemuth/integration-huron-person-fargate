@@ -176,6 +176,7 @@ export class OfflineBulkSyncService implements BulkSyncService {
         stackId: 'huron-person',
         secretName: `huron-person-integration-config-${landscape}`,
         itemsPerChunk: 200,
+        processorMaxScalingCapacity: 3,
         chunkerClusterName: `huron-person-cluster-${landscape}`,
         chunkerServiceName: 'Chunker',
         ...settings
@@ -186,8 +187,9 @@ export class OfflineBulkSyncService implements BulkSyncService {
         invokeAsync: async (_functionName, event) => {
           this.invoked.push(event as any);
           if ((event as any).mockLandscapeReset) {
-            // The tables are empty offline: the reset finds nothing to delete, at once
-            const at = new Date((now ?? Date.now)()).toISOString();
+            // The tables are empty offline: the reset finds nothing to delete, at once, so it starts and ends when it was
+            // requested (one clock reading: two could differ by a millisecond under load)
+            const at = (event as any).requestedAt ?? new Date((now ?? Date.now)()).toISOString();
             this.resetRecord = {
               status: 'succeeded', via: 'overview', startedAt: at, finishedAt: at, durationMs: 0, startedBy: (event as any).startedBy, storageMode: 'dynamodb',
               tables: (this.resetRecord.tables ?? []).map(table => ({ ...table, itemsDeleted: 0, durationMs: 0 }))

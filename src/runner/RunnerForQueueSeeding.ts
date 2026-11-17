@@ -165,7 +165,8 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
         queueUrl: env.queueUrl!,
         dryRun: false,
         personRecordProcessorAddons: env.personRecordProcessorAddons,
-        termsEndpoint: endpoint.termsEndpoint
+        termsEndpoint: endpoint.termsEndpoint,
+        processorScalingCapacity: endpoint.processorScalingCapacity
       });
       // Reset the atomic counters to ensure a clean slate for seeded messages and chunk ordinals
       await queueSeeder.resetAtomicCounters();

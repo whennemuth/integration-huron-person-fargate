@@ -45,9 +45,11 @@ const sqsClient = new SQSClient({ region });
  * Lambda that receives the S3 event and calls the ChunkerSubscriber with a simplified payload.
  * 
  * @param event - S3-based chunker event
+ * @param beforeStart - Called once the file is known to start a run (not a chunk file, not DRY_RUN), before its
+ *   message is sent: the chunker subscriber sets the processor's maximum back to the landscape's here
  * @returns Response object with status code and message
  */
-export async function handleS3Event(event: S3ChunkerEvent): Promise<any> {
+export async function handleS3Event(event: S3ChunkerEvent, beforeStart?: () => Promise<unknown>): Promise<any> {
   // Extract S3 bucket and key from event
   let { s3Path, bucket, key, processingMetadata: { processedAt, processorVersion } = {} } = event || {};  
 
@@ -92,6 +94,8 @@ export async function handleS3Event(event: S3ChunkerEvent): Promise<any> {
   }
 
   console.log(`Processing S3 file: s3://${bucket}/${key}`);
+
+  await beforeStart?.();
 
   // Send message to SQS queue to trigger chunker task
   // The QueueProcessingFargateService will detect the message and auto-scale to process it

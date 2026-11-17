@@ -102,6 +102,16 @@ describe('StatisticsTable', () => {
       expect(await summary({ by: 'someone' })).not.toHaveProperty('startedBy');
     });
 
+    it("copies the processor maximum the run started with from its flags, keeping only a recognized value", async () => {
+      mockRun([]);
+      const summary = (processorScalingCapacity: unknown) => statisticsTable.buildRunSummary(integrationTimestamp, {
+        postProcessingSucceeded: true, dryRun: false, processorScalingCapacity
+      });
+      expect((await summary({ maxTasks: 8, overridden: true, extra: 1 })).processorScalingCapacity).toEqual({ maxTasks: 8, overridden: true });
+      expect(await summary(undefined)).not.toHaveProperty('processorScalingCapacity');
+      expect(await summary({ maxTasks: 0 })).not.toHaveProperty('processorScalingCapacity');
+    });
+
     it('is POST_PROCESSING_FAILED when post-processing failed', async () => {
       mockRun([]);
       const summary = await statisticsTable.buildRunSummary(integrationTimestamp, {

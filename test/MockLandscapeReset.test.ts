@@ -278,7 +278,8 @@ describe("the chunker subscriber Lambda's reset grants", () => {
     new ChunkerSubscribingLambda(stack, 'Chunker', {
       vpc: new Vpc(stack, 'Vpc'), chunkerQueueUrl: 'https://sqs.us-east-2.amazonaws.com/111111111111/chunker', inputBucketName: 'input',
       region: 'us-east-2', landscape, stackId: STACK_ID, chunksBucketName: `huron-person-chunks-${landscape}`,
-      chunkerClusterName: `huron-person-cluster-${landscape}`, chunkerServiceName: 'Chunker', timeoutSeconds: 600, memorySizeMb: 256
+      chunkerClusterName: `huron-person-cluster-${landscape}`, chunkerServiceName: 'Chunker', timeoutSeconds: 600, memorySizeMb: 256,
+      processorServiceName: 'Processor', processorMaxScalingCapacity: 15
     });
     return Template.fromStack(stack);
   };

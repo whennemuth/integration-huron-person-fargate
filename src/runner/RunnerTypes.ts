@@ -1,5 +1,6 @@
 import { TestEnvironment } from "integration-core";
 import { SyncPopulation } from "../../docker/chunkTypes";
+import type { ProcessorCapacityRecord } from "../chunking/ProcessorCapacityRecord";
 
 /**
  * Environment configuration extracted from process.env for runner operations
@@ -34,6 +35,11 @@ export interface RunnerEnv {
   mockTargetResetState?: boolean;
   /** Comma-delimited list of personRecordProcessor Addon enum keys to activate for this run */
   personRecordProcessorAddons?: string;
+  /**
+   * The processor service's maximum tasks for this run (1-20), in place of the context's
+   * ECS.processorService.maxScalingCapacity (src/chunking/ProcessorScalingCapacity.ts); unset, the run gets that
+   */
+  processorScalingCapacityOverride?: number;
 }
 
 /**
@@ -48,6 +54,11 @@ export interface Endpoint {
    * also gets simulated terms (see Flags.termsEndpoint).
    */
   termsEndpoint?: Endpoint;
+  /**
+   * Source endpoints only: the processor maximum the run started with, which start() adds once it has set it, for the
+   * run's Flags (see Flags.processorScalingCapacity)
+   */
+  processorScalingCapacity?: ProcessorCapacityRecord;
 }
 
 /**
@@ -107,7 +118,8 @@ export const extractEnvironment = (): RunnerEnv => {
     SOURCE_SIMULATOR_MOCK_ERROR_RATE: sourceSimulatorMockErrorRate,
     SOURCE_SIMULATOR_MOCK_NON_CURRENT_TERM_RATE: sourceSimulatorMockNonCurrentTermRate,
     MOCK_TARGET_RESET_STATE: mockTargetResetState,
-    PERSON_RECORD_PROCESSOR_ADDONS: personRecordProcessorAddons
+    PERSON_RECORD_PROCESSOR_ADDONS: personRecordProcessorAddons,
+    PROCESSOR_SCALING_CAPACITY_OVERRIDE: processorScalingCapacityOverride
   } = process.env;
 
   return {
@@ -137,7 +149,9 @@ export const extractEnvironment = (): RunnerEnv => {
     sourceSimulatorMockErrorRate: optionalNumber(sourceSimulatorMockErrorRate),
     sourceSimulatorMockNonCurrentTermRate: optionalNumber(sourceSimulatorMockNonCurrentTermRate),
     mockTargetResetState: `${mockTargetResetState}`.toLowerCase().trim() === 'true',
-    personRecordProcessorAddons
+    personRecordProcessorAddons,
+    // Checked when the run starts (ChunkingServiceRunner.start()): a value that isn't 1 to 20 stops it there
+    processorScalingCapacityOverride: optionalNumber(processorScalingCapacityOverride)
   } satisfies RunnerEnv;
 }
 
@@ -165,7 +179,8 @@ export const setTestEnvironment = (): void => {
     'SOURCE_SIMULATOR_MOCK_ERROR_RATE',
     'SOURCE_SIMULATOR_MOCK_NON_CURRENT_TERM_RATE',
     'MOCK_TARGET_RESET_STATE',
-    'PERSON_RECORD_PROCESSOR_ADDONS'
+    'PERSON_RECORD_PROCESSOR_ADDONS',
+    'PROCESSOR_SCALING_CAPACITY_OVERRIDE'
   ].forEach(testEnvironment.getVar);
 
   [

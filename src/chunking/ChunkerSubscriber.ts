@@ -30,21 +30,29 @@
  * An API event that starts a run (the schedule's, the dashboard's Bulk sync) first resets the chunker's counters
  * (resetCountersForRunStart()), so every run that starts through this Lambda starts them from zero.
  *
+ * Every run start, an API event's or a dropped file's, also sets the processor service's live maximum tasks
+ * (setProcessorCapacityForRunStart()): to the run's processorScalingCapacityOverride, or else back to the landscape's
+ * maxScalingCapacity.
+ *
  * Environment Variables:
  * - CHUNKER_QUEUE_URL: URL of the SQS queue for chunker tasks
  * - REGION: AWS region (e.g., 'us-east-2')
  * - DRY_RUN: If set to 'true', the function will not send messages (default: 'false')
  * - STACK_ID, LANDSCAPE: name the landscape's atomic counter table, for the counter reset
  * - CHUNKS_BUCKET_NAME: a mock landscape's chunks bucket, for its run state reset (resetState); not set elsewhere
+ * - PROCESSOR_SERVICE_NAME, PROCESSOR_MAX_SCALING_CAPACITY: the processor service (in CHUNKER_CLUSTER_NAME's
+ *   cluster) and the landscape's maxScalingCapacity, for setting its live maximum at a run start
  */
 
 import { handleS3Event } from './filedrop/ChunkerS3Subscriber';
 import { handleApiEvent } from './fetch/ChunkerApiSubscriber';
 import { isRunStartEvent, resetRunCounters, RunCounterLocation } from './RunCounters';
 import { ParallelStart } from './ParallelStart';
+import { ProcessorScalingCapacity, ProcessorScalingCapacityResult } from './ProcessorScalingCapacity';
 import { MockLandscapeLocation, MockLandscapeReset, MockLandscapeResetVia } from './MockLandscapeReset';
 import { SourceEndpoint, SyncPopulation } from '../../docker/chunkTypes';
 import type { StartedBy } from './StartedBy';
+import { ProcessorCapacity, ProcessorCapacityRecord } from './ProcessorCapacityRecord';
 
 /**
  * S3-based event structure
@@ -97,6 +105,18 @@ export interface ApiChunkerEvent {
    * outside a mock landscape. Never forwarded to the seeded or chained messages.
    */
   resetState?: boolean;
+  /**
+   * The processor service's maximum tasks for this run (src/chunking/ProcessorScalingCapacity.ts), in place of the
+   * landscape's maxScalingCapacity: the subscriber sets the service's live maximum to it at the run start. Every run
+   * start without one sets the maximum back to maxScalingCapacity. Only on a run's first event; never forwarded to the
+   * seeded or chained messages.
+   */
+  processorScalingCapacityOverride?: number;
+  /**
+   * The processor maximum the run started with (src/chunking/ProcessorCapacityRecord.ts), which the subscriber adds to
+   * the run's first event once it has set it, and every seeded and chained message carries on, for the run's Flags.
+   */
+  processorScalingCapacity?: ProcessorCapacityRecord;
   processingMetadata?: {
     processedAt?: string;
     processorVersion?: string;
@@ -239,21 +259,43 @@ export async function handleResetEvent(
 }
 
 /**
- * Why a run's first event can't be started, checked before anything is reset or sent: its reset (resetRefusal()), then
- * its parallel start (ParallelStart.refusal()). Undefined when it can be.
+ * Why a run's first event can't be started, checked before anything is reset or sent: its reset (resetRefusal()), its
+ * parallel start (ParallelStart.refusal()), then its processor scaling capacity override
+ * (ProcessorScalingCapacity.refusal()). Undefined when it can be.
  */
 export function runStartRefusal(event: ApiChunkerEvent, env: NodeJS.ProcessEnv = process.env): string | undefined {
   return resetRefusal(event, env)
-    ?? (ParallelStart.requested(event) > 0 ? ParallelStart.refusal(event, env) : undefined);
+    ?? (ParallelStart.requested(event) > 0 ? ParallelStart.refusal(event, env) : undefined)
+    ?? ProcessorScalingCapacity.refusal(event, env);
+}
+
+/**
+ * At a run's start, set the processor service's live maximum tasks: to the run's processorScalingCapacityOverride
+ * (already checked by runStartRefusal()), or else back to the landscape's maxScalingCapacity
+ * (PROCESSOR_MAX_SCALING_CAPACITY). Called before anything is reset or sent, so a run whose override can't be set
+ * fails its start (ProcessorScalingCapacity.apply() throws) having changed nothing; restoring the landscape's maximum
+ * only warns. Logged, not set, in DRY_RUN.
+ *
+ * @param event The run's first event: an API event, or {} for a dropped file (which carries no override)
+ * @returns What was set (the run records it: see processor-max-tasks-plan.md, step 3)
+ */
+export async function setProcessorCapacityForRunStart(
+  event: Pick<ApiChunkerEvent, 'processorScalingCapacityOverride'> = {},
+  env: NodeJS.ProcessEnv = process.env,
+  capacity: (env: NodeJS.ProcessEnv) => ProcessorScalingCapacity = env => ProcessorScalingCapacity.fromEnvironment(env)
+): Promise<ProcessorScalingCapacityResult> {
+  return capacity(env).apply(event.processorScalingCapacityOverride);
 }
 
 /**
  * The Lambda handler function that dispatches based on event type.
  *
- * An API event is checked first (runStartRefusal(): a reset it asks for, then a parallel start), before anything is
- * reset or sent; a refusal is returned as a 400 rather than thrown. Then a mock landscape's run state is reset if the
- * event asks for it (resetState). An event asking for a parallel start (parallelStart > 0) is started with that many
- * chunker tasks, the wait inside bounded by the Lambda's remaining time (context); any other is queued as one message.
+ * An API event is checked first (runStartRefusal(): a reset it asks for, a parallel start, a processor scaling capacity
+ * override), before anything is reset or sent; a refusal is returned as a 400 rather than thrown. A run's first event
+ * then sets the processor's live maximum (setProcessorCapacityForRunStart()). Then a mock landscape's run state is
+ * reset if the event asks for it (resetState). An event asking for a parallel start (parallelStart > 0) is started with
+ * that many chunker tasks, the wait inside bounded by the Lambda's remaining time (context); any other is queued as one
+ * message. A dropped file (an S3 event) sets the processor's maximum back to the landscape's before its run is queued.
  *
  * @param event - Either an S3ChunkerEvent or ApiChunkerEvent
  * @param context - The Lambda context (its getRemainingTimeInMillis() bounds a parallel start's wait)
@@ -269,11 +311,14 @@ export async function handler(event: S3ChunkerEvent | ApiChunkerEvent | MockLand
   // Determine event type by checking for API-specific fields
   if (isApiEvent(event)) {
     console.log('Event type: API-based chunking');
-    const apiEvent = event as ApiChunkerEvent;
+    let apiEvent = event as ApiChunkerEvent;
     const refusal = runStartRefusal(apiEvent);
     if (refusal) {
       console.error(`Run start refused: ${refusal}`);
       return { statusCode: 400, body: refusal };
+    }
+    if (isRunStartEvent(apiEvent)) {
+      apiEvent = withProcessorCapacity(apiEvent, await setProcessorCapacityForRunStart(apiEvent));
     }
     await resetMockLandscapeForRunStart(apiEvent);
     if (ParallelStart.requested(apiEvent) > 0) {
@@ -283,12 +328,21 @@ export async function handler(event: S3ChunkerEvent | ApiChunkerEvent | MockLand
     return await handleApiEvent(apiEvent);
   } else if (isS3Event(event)) {
     console.log('Event type: S3-based chunking');
-    return await handleS3Event(event as S3ChunkerEvent);
+    return await handleS3Event(event as S3ChunkerEvent, () => setProcessorCapacityForRunStart());
   } else {
     const errMsg = 'Invalid event structure: Must contain either (s3Path/bucket/key) or (baseUrl/fetchPath/populationType)';
     console.error(errMsg);
     return { statusCode: 400, body: errMsg };
   }
+}
+
+/**
+ * The run's first event carrying the processor maximum its start set (ProcessorCapacity.record()), for the run's
+ * Flags; the event as it was when nothing was set
+ */
+export function withProcessorCapacity(event: ApiChunkerEvent, result: ProcessorScalingCapacityResult): ApiChunkerEvent {
+  const processorScalingCapacity = ProcessorCapacity.record(result);
+  return processorScalingCapacity ? { ...event, processorScalingCapacity } : event;
 }
 
 /**

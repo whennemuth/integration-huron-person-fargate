@@ -72,6 +72,7 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
       personRecordProcessorAddons,
       termsEndpoint: sourceEndpoint.termsEndpoint,
       startedBy: RunStarter.RUNNER,
+      ...(sourceEndpoint.processorScalingCapacity ? { processorScalingCapacity: sourceEndpoint.processorScalingCapacity } : {}),
       processingMetadata: {
         processedAt: new Date().toISOString(),
         processorVersion: '1.0.0'

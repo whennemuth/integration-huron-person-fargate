@@ -5,6 +5,9 @@ import { Endpoint, NormalizedPopulationType, RunnerEnv, TargetConfig, extractEnv
 import { IContext } from "../../context/IContext";
 import { SimulationSettings, SourceSimulatorFunctionURL } from "../chunking/fetch/SourceSimulator";
 import { resetRunCounters } from '../chunking/RunCounters';
+import { ProcessorScalingCapacity } from '../chunking/ProcessorScalingCapacity';
+import { ProcessorCapacity, ProcessorCapacityRecord } from '../chunking/ProcessorCapacityRecord';
+import { PROCESSOR_SERVICE_NAME, ecsClusterName } from '../Utils';
 
 /**
  * Abstract base class implementing the Template Method pattern for chunking service runners.
@@ -41,6 +44,15 @@ export abstract class ChunkingServiceRunner {
    */
   async start(): Promise<void> {
     const { env } = this;
+
+    // A processor maximum that can't be used stops the run before anything is checked or changed
+    if (env.processorScalingCapacityOverride !== undefined) {
+      const invalid = ProcessorScalingCapacity.valueRefusal(env.processorScalingCapacityOverride, 'PROCESSOR_SCALING_CAPACITY_OVERRIDE');
+      if (invalid) {
+        console.error(invalid);
+        return;
+      }
+    }
     
     if (!await this.validatePrerequisites()) {
       return;
@@ -56,15 +68,43 @@ export abstract class ChunkingServiceRunner {
 
     const targetConfig = await this.resolveDataTarget(config);
 
-    // Reset atomic counters before execution (unless explicitly skipped)
+    // A run's start: the processor's maximum for it, then the counters (unless continuing a run: SKIP_ATOMIC_COUNTER_RESET)
+    let runEndpoint = sourceEndpoint;
     if (!env.skipAtomicCounterReset) {
+      const processorScalingCapacity = await this.setProcessorScalingCapacity();
+      runEndpoint = processorScalingCapacity ? { ...sourceEndpoint, processorScalingCapacity } : sourceEndpoint;
       await this.resetAtomicCounters();
     } else {
-      console.log('⚠️  Atomic counter reset skipped (SKIP_ATOMIC_COUNTER_RESET=true)');
+      console.log("⚠️  Atomic counter reset skipped (SKIP_ATOMIC_COUNTER_RESET=true), and the processor's maximum left as it is");
     }
 
     const populationType = this.normalizePopulationType(env.populationType);
-    await this.execute(sourceEndpoint, targetConfig, config, populationType);
+    await this.execute(runEndpoint, targetConfig, config, populationType);
+  }
+
+  /**
+   * Set the processor service's live maximum tasks for a run starting now, as the chunker subscriber does at every run
+   * start (src/chunking/ProcessorScalingCapacity.ts): to PROCESSOR_SCALING_CAPACITY_OVERRIDE, or else back to the
+   * context's ECS.processorService.maxScalingCapacity, so a run started here never inherits another run's override.
+   * The Runner starts runs without the subscriber's run start (it calls handleApiEvent() itself), so it does this
+   * itself. An override that can't be set stops the run (apply() throws); restoring the context's only warns.
+   * @returns What was set, for the run's events and Flags; undefined when nothing was
+   */
+  protected async setProcessorScalingCapacity(): Promise<ProcessorCapacityRecord | undefined> {
+    const { region, landscape, processorScalingCapacityOverride } = this.env;
+    const context = await this.loadContext() as Partial<IContext>;
+    const deployed = context.ECS?.processorService?.maxScalingCapacity;
+    const env: NodeJS.ProcessEnv = {
+      ...(region ? { REGION: region } : {}),
+      ...(landscape ? { CHUNKER_CLUSTER_NAME: ecsClusterName(landscape) } : {}),
+      PROCESSOR_SERVICE_NAME,
+      ...(deployed !== undefined ? { PROCESSOR_MAX_SCALING_CAPACITY: String(deployed) } : {})
+    };
+    console.log(processorScalingCapacityOverride !== undefined
+      ? `\n⚙️  Setting the processor's maximum tasks to ${processorScalingCapacityOverride} for this run (PROCESSOR_SCALING_CAPACITY_OVERRIDE)\n`
+      : `\n⚙️  Setting the processor's maximum tasks back to the landscape's${deployed !== undefined ? ` ${deployed}` : ''}\n`);
+    const result = await ProcessorScalingCapacity.fromEnvironment(env).apply(processorScalingCapacityOverride);
+    return ProcessorCapacity.record(result);
   }
 
   /**

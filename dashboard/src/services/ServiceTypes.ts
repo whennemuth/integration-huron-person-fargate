@@ -123,6 +123,8 @@ export type BulkSyncRequestBody = {
   simulator?: unknown;
   /** A mock landscape only: start from scratch (empty the mock target, Run history and fingerprints first) */
   resetState?: unknown;
+  /** The processor service's maximum tasks for this run (1-20), in place of the landscape's; not for a test */
+  processorScalingCapacityOverride?: unknown;
 };
 
 /** Where a mock landscape's run reads people from: the real source API, or the source simulator */
@@ -180,7 +182,11 @@ export type RunActivityState = {
 export type BulkSyncState = {
   landscape: string;
   /** The form's starting values: the scheduled run's choices (src/chunking/ScheduledRun.ts), 10 chunks per task, and one message */
-  defaults: { runType: BulkSyncRunType; bulkReset: boolean; iterationLimit: number; parallelStart: number };
+  defaults: {
+    runType: BulkSyncRunType; bulkReset: boolean; iterationLimit: number; parallelStart: number;
+    /** The landscape's processor maximum (maxScalingCapacity), where Processor tasks starts; unknown to an older deploy */
+    processorScalingCapacity?: number;
+  };
   /** Chunks per task's range (0, a single task, aside) */
   iterationLimit: { max: number };
   /**
@@ -188,6 +194,8 @@ export type BulkSyncState = {
    * (the page keeps it read-only at 0 when it doesn't; BulkSync always offers it)
    */
   parallelStart: { max: number; enabled: boolean };
+  /** Processor tasks' range (1 to 20, whatever the landscape's maximum) */
+  processorScalingCapacity: { max: number };
   latestRun: RunActivityState;
   /** Why a start would be refused now (a BulkSyncError code and message); absent when a start is allowed */
   blocked?: { code: BulkSyncErrorCode; message: string };
@@ -245,6 +253,8 @@ export type BulkSyncChoices = {
   simulator?: Partial<SimulatorSettings>;
   /** A mock landscape only: whether the run starts from scratch */
   resetState?: boolean;
+  /** The processor service's maximum tasks for this run, when it isn't the landscape's */
+  processorScalingCapacityOverride?: number;
 };
 
 /**

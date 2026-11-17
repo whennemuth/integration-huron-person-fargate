@@ -27,6 +27,12 @@ export interface ChunkerSubscribingLambdaProps {
   chunkerClusterName: string;
   chunkerServiceName: string;
   /**
+   * The processor service (in the chunker's cluster), whose live maximum tasks every run start sets
+   * (src/chunking/ProcessorScalingCapacity.ts), and the landscape's maxScalingCapacity it goes back to without an override
+   */
+  processorServiceName: string;
+  processorMaxScalingCapacity: number;
+  /**
    * The landscape's chunks bucket. In a mock landscape only, it goes in the environment (CHUNKS_BUCKET_NAME) with the
    * grants a run that starts from scratch needs (ApiChunkerEvent.resetState, src/chunking/MockLandscapeReset.ts);
    * any other landscape's subscriber gets neither, so it can't reset anything.
@@ -110,6 +116,10 @@ export class ChunkerSubscribingLambda extends Construct {
         // The chunker service a parallel start scales (ParallelStart.fromEnvironment())
         CHUNKER_CLUSTER_NAME: props.chunkerClusterName,
         CHUNKER_SERVICE_NAME: props.chunkerServiceName,
+        // The processor service whose live maximum a run start sets, and the maximum it goes back to without an
+        // override (ProcessorScalingCapacity.fromEnvironment())
+        PROCESSOR_SERVICE_NAME: props.processorServiceName,
+        PROCESSOR_MAX_SCALING_CAPACITY: String(props.processorMaxScalingCapacity),
         DESCRIPTION1:
           `Analyzes incoming event (S3 or API) and delegates to appropriate handler (ChunkerS3Subscriber 
           or ChunkerApiSubscriber). Both handlers send SQS messages to trigger Fargate tasks that create 
@@ -164,6 +174,27 @@ export class ChunkerSubscribingLambda extends Construct {
       effect: Effect.ALLOW,
       actions: ['cloudwatch:DescribeAlarms'],
       resources: [`arn:aws:cloudwatch:${region}:${account}:alarm:*`],
+    }));
+
+    // Every run start sets the processor service's live maximum tasks (src/chunking/ProcessorScalingCapacity.ts) with
+    // RegisterScalableTarget. A scalable target's ARN carries an ID Application Auto Scaling assigns, so it can't be
+    // named here: any target, narrowed by the conditions to an ECS service's desired count. AWS's example for ECS
+    // targets also grants DescribeServices and UpdateService, here on the processor service only.
+    this.function.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['application-autoscaling:RegisterScalableTarget'],
+      resources: ['*'],
+      conditions: {
+        StringEquals: {
+          'application-autoscaling:service-namespace': 'ecs',
+          'application-autoscaling:scalable-dimension': 'ecs:service:DesiredCount'
+        }
+      }
+    }));
+    this.function.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['ecs:UpdateService', 'ecs:DescribeServices'],
+      resources: [`arn:aws:ecs:${region}:${account}:service/${props.chunkerClusterName}/${props.processorServiceName}`],
     }));
 
     if (isMockLandscape(props.landscape) && props.chunksBucketName) {

@@ -55,6 +55,8 @@ src/
 - `TRUST_PREVIOUS_STORAGE` - Set to `true` to trust delta storage
 - `MESSAGES_TO_PREPOPULATE` - Number of messages to seed (default: 0)
 - `DESIRED_COUNT` - Target ECS task count after seeding
+- `PROCESSOR_SCALING_CAPACITY_OVERRIDE` - The processor service's maximum tasks for this run (1-20); unset, the
+  context's `ECS.processorService.maxScalingCapacity`. Set when the run starts (`src/runner/CLAUDE.md`)
 - `ECS_CLUSTER_NAME` - ECS cluster name (required if setting desired count)
 - `ECS_SERVICE_NAME` - ECS service name (required if setting desired count)
 

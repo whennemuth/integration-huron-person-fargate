@@ -1,8 +1,9 @@
 import { ScalingInterval } from 'aws-cdk-lib/aws-applicationautoscaling';
 import { Construct } from 'constructs';
 import { AbstractService, AbstractServiceProps } from '../AbstractService';
+import { PROCESSOR_SERVICE_NAME } from '../../../src/Utils';
 
-export const SERVICE_LOGICAL_ID = 'Processor';
+export const SERVICE_LOGICAL_ID = PROCESSOR_SERVICE_NAME;
 
 export interface ProcessorServiceProps extends AbstractServiceProps {}
 

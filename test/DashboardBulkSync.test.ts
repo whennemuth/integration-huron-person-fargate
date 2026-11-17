@@ -95,6 +95,75 @@ describe('BulkSyncRequest', () => {
   });
 });
 
+describe('the processor maximum for a run (processorScalingCapacityOverride)', () => {
+  const settings = {
+    landscape: 'preview', region: 'us-east-2', stackId: 'huron-person', secretName: 'huron-person-config-preview',
+    chunkerFunctionName: 'chunker-subscriber-preview', processorSubscriberFunctionName: 'processor-subscriber-preview',
+    itemsPerChunk: 200, processorMaxScalingCapacity: 3
+  };
+  const bulkSync = (extra: Record<string, unknown> = {}) => {
+    const functions = { isDryRun: jest.fn(async () => false), invokeAsync: jest.fn(async () => undefined) };
+    return {
+      functions,
+      bulkSync: new BulkSync({ config: OFFLINE_SOURCE_CONFIG, settings: { ...settings, ...extra }, runs: runsEndingWith(finishedRun), functions, now: () => NOW })
+    };
+  };
+
+  it('takes a whole number from 1 to 20, for any landscape maximum, and puts it in the choices', () => {
+    for (const value of [1, 3, 8, 20]) {
+      expect(BulkSyncRequest.parse({ runType: 'full', processorScalingCapacityOverride: value }).choices())
+        .toMatchObject({ processorScalingCapacityOverride: value });
+    }
+    expect(BulkSyncRequest.parse({ runType: 'full' }).choices()).not.toHaveProperty('processorScalingCapacityOverride');
+    expect(BulkSyncRequest.parse({ runType: 'full', processorScalingCapacityOverride: null }).processorScalingCapacityOverride).toBeUndefined();
+  });
+
+  it('refuses anything else, and any for a test', () => {
+    for (const value of [0, 21, 2.5, '5', true]) {
+      expect(() => BulkSyncRequest.parse({ runType: 'full', processorScalingCapacityOverride: value }))
+        .toThrow('processorScalingCapacityOverride must be a whole number from 1 to 20');
+    }
+    expect(() => BulkSyncRequest.parse({ runType: 'test', buid: 'U1', processorScalingCapacityOverride: 5 }))
+      .toThrow(/only for a full sync/);
+  });
+
+  it("starts the form at the landscape's maximum, offering 1 to 20", async () => {
+    const state = await bulkSync().bulkSync.describe();
+    expect(state.defaults.processorScalingCapacity).toBe(3);
+    expect(state.processorScalingCapacity).toEqual({ max: 20 });
+    // A dashboard deployed before it knows no maximum: the form offers the landscape's own
+    expect((await bulkSync({ processorMaxScalingCapacity: undefined }).bulkSync.describe()).defaults).not.toHaveProperty('processorScalingCapacity');
+  });
+
+  it('sends an override on the event, and none without one, saying so in the review', async () => {
+    const { bulkSync: service, functions } = bulkSync();
+    const plan = await service.plan({ runType: 'full', processorScalingCapacityOverride: 8 });
+    expect(plan.event).toMatchObject({ processorScalingCapacityOverride: 8 });
+    const rows = Object.fromEntries(plan.settings.map(row => [row.name, row]));
+    expect(rows.processorMaxScalingCapacity).toMatchObject({ value: 3, source: 'landscape' });
+    expect(rows.processorScalingCapacityOverride).toMatchObject({ value: 8, source: 'form' });
+
+    const plain = await service.plan({ runType: 'full' });
+    expect(plain.event).not.toHaveProperty('processorScalingCapacityOverride');
+    expect(Object.fromEntries(plain.settings.map(row => [row.name, row])).processorScalingCapacityOverride)
+      .toMatchObject({ value: null, note: expect.stringContaining("the landscape's maximum") });
+
+    await service.start({ runType: 'full', processorScalingCapacityOverride: 8 });
+    expect(functions.invokeAsync).toHaveBeenCalledWith('chunker-subscriber-preview', expect.objectContaining({ processorScalingCapacityOverride: 8 }));
+  });
+
+  it("reads the landscape's maximum from the Lambda's environment", () => {
+    const saved = { ...process.env };
+    try {
+      Object.assign(process.env, { LANDSCAPE: 'preview', REGION: 'us-east-2', PROCESSOR_MAX_SCALING_CAPACITY: '5' });
+      const service = BulkSync.fromEnvironment(OFFLINE_SOURCE_CONFIG, runsEndingWith(finishedRun));
+      expect((service as any).deps.settings.processorMaxScalingCapacity).toBe(5);
+    } finally {
+      process.env = saved;
+    }
+  });
+});
+
 describe('RunActivity', () => {
   const started = '2026-11-10T10:00:00.000Z';
 
@@ -337,6 +406,7 @@ describe('BulkSync', () => {
       defaults: { runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 15 },
       iterationLimit: { max: 50 },
       parallelStart: { max: 20, enabled: true },
+      processorScalingCapacity: { max: 20 },
       latestRun: { kind: 'finished', syncRunId: finishedRun.syncRunId },
       warnings: [],
       itemsPerChunk: 200
@@ -397,7 +467,8 @@ describe('BulkSync', () => {
         'stackId', 'landscape', 'bulkReset', 'trustPreviousStorage', 'skipAtomicCounterReset', 'messagesToPrepopulate',
         'desiredCount', 'clusterName', 'serviceName', 'messagingOnly', 'chunkingOnly', 'sourceSimulator',
         'sourceSimulatorMockTotalPopulation', 'sourceSimulatorMockSimulatedDelaySeconds', 'sourceSimulatorMockErrorRate',
-        'sourceSimulatorMockNonCurrentTermRate', 'mockTargetResetState', 'personRecordProcessorAddons', 'itemsPerChunk', 'chunkerFunction'
+        'sourceSimulatorMockNonCurrentTermRate', 'mockTargetResetState', 'personRecordProcessorAddons',
+        'processorScalingCapacityOverride', 'itemsPerChunk', 'processorMaxScalingCapacity', 'chunkerFunction'
       ]);
       expect(byName.populationType).toMatchObject({ value: 'person-full', source: 'form' });
       expect(byName.trustPreviousStorage).toMatchObject({ value: true, source: 'form' });

@@ -33,6 +33,11 @@ export type LandscapeResources = {
   pipelineStackId: string;
   itemsPerChunk?: number;
   /**
+   * The processor service's deployed maximum tasks (the context's ECS.processorService.maxScalingCapacity, as
+   * EcsInfrastructure sets it): Bulk sync's Processor tasks starts there and warns above it
+   */
+  processorMaxScalingCapacity: number;
+  /**
    * A mock landscape only: the source simulator Lambda, whose Function URL Bulk sync looks up to offer it as the source
    * (absent in any other landscape, which has no simulator)
    */
@@ -62,6 +67,7 @@ export const landscapeResources = (context: LandscapeContext): LandscapeResource
     chunkerServiceName: CHUNKER_SERVICE_NAME,
     pipelineStackId: context.STACK_ID,
     itemsPerChunk: context.ITEMS_PER_CHUNK,
+    processorMaxScalingCapacity: context.ECS?.processorService?.maxScalingCapacity ?? 1,
     ...(isMockLandscape(landscape) ? {
       sourceSimulatorFunctionName: `${sourceSimulatorBaseName}-${landscape}`,
       atomicCounterTableName: atomicCounterTableName(context)

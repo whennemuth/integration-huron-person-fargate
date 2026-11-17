@@ -39,11 +39,16 @@ Design intent: avoid immediate desired-count reversal due to stale scale-in alar
 
 - `AbstractRunner.ts` (`ChunkingServiceRunner`)
   - Template Method base class:
-    1. validate prerequisites
+    1. validate prerequisites (after refusing a `PROCESSOR_SCALING_CAPACITY_OVERRIDE` outside 1-20)
     2. load configuration (ConfigManager chain)
     3. resolve data source
     4. validate endpoint
-    5. execute
+    5. at a run's start (unless `SKIP_ATOMIC_COUNTER_RESET`): set the processor's maximum
+       (`setProcessorScalingCapacity()`: the override, else the local context's `ECS.processorService.maxScalingCapacity`,
+       as the chunker subscriber does at every run start; see "A run may have its own processor maximum" in the project
+       CLAUDE.md), then reset the counters
+    6. execute, with the record of the maximum on the source `Endpoint` (`processorScalingCapacity`), which each runner
+       puts on its events (the queue seeder's too), for the run's Flags
   - Shared helpers for endpoint validation, population normalization, source-simulator prediction logging.
 
 ### Runner implementations

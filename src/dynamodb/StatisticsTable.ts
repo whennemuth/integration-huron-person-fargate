@@ -1,4 +1,5 @@
 import { RunStarter, StartedBy } from '../chunking/StartedBy';
+import { ProcessorCapacity, ProcessorCapacityRecord } from '../chunking/ProcessorCapacityRecord';
 import { TestEnvironment } from 'integration-core';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, UpdateCommand, UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
@@ -121,6 +122,8 @@ export type RunSummary = {
   deletion?: DeletionOutcome;
   /** Who or what started the run (src/chunking/StartedBy.ts), from its Flags; absent for runs from before it was recorded */
   startedBy?: StartedBy;
+  /** The processor maximum the run started with (src/chunking/ProcessorCapacityRecord.ts), from its Flags */
+  processorScalingCapacity?: ProcessorCapacityRecord;
 };
 
 export class StatisticsTable {
@@ -177,9 +180,12 @@ export class StatisticsTable {
     deletion?: DeletionOutcome;
     /** The run's Flags.startedBy, which the caller reads (from DynamoDB or S3, by storage mode) */
     startedBy?: unknown;
+    /** The run's Flags.processorScalingCapacity, read with startedBy */
+    processorScalingCapacity?: unknown;
   }): Promise<RunSummary> => {
     const { postProcessingSucceeded, storageMode, dryRun, deletion } = params;
     const startedBy = RunStarter.from(params.startedBy);
+    const processorScalingCapacity = ProcessorCapacity.from(params.processorScalingCapacity);
     const metadata = await this.readMetadata(syncRunId) ?? {};
     // The summary keeps its own completedAt; the latest chunk time is only reported for runs without one
     const { lastChunkAt: _, ...totals } = sumChunkStatistics(await this.getAllChunkStatistics(syncRunId));
@@ -204,7 +210,8 @@ export class StatisticsTable {
       totalRecords: metadata.totalRecords,
       ...totals,
       deletion,
-      ...(startedBy ? { startedBy } : {})
+      ...(startedBy ? { startedBy } : {}),
+      ...(processorScalingCapacity ? { processorScalingCapacity } : {})
     };
   }
 

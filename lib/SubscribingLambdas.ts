@@ -3,6 +3,7 @@ import { IBucket } from 'aws-cdk-lib/aws-s3';
 import { ChunkerSubscribingLambda } from './services/chunker/ChunkerSubscribingLambda';
 import { CLUSTER_BASE_NAME, EcsInfrastructure } from './EcsInfrastructure';
 import { SERVICE_LOGICAL_ID as CHUNKER_SERVICE_NAME } from './services/chunker/ChunkerService';
+import { SERVICE_LOGICAL_ID as PROCESSOR_SERVICE_NAME } from './services/processor/ProcessorService';
 import { IContext } from '../context/IContext';
 import { PostProcessorSubscribingLambda } from './services/post-processor/PostProcessorSubscribingLambda';
 import { ProcessorSubscribingLambda } from './services/processor/ProcessorSubscribingLambda';
@@ -82,6 +83,9 @@ export class SubscribingLambdas extends Construct {
       stackId: ctx.STACK_ID,
       chunkerClusterName: `${CLUSTER_BASE_NAME}-${ctx.TAGS.Landscape.toLowerCase()}`,
       chunkerServiceName: CHUNKER_SERVICE_NAME,
+      // The processor's maximum a run start sets, and the deployed one (EcsInfrastructure's) it goes back to
+      processorServiceName: PROCESSOR_SERVICE_NAME,
+      processorMaxScalingCapacity: ctx.ECS.processorService?.maxScalingCapacity ?? 1,
       // In a mock landscape only, for a run that starts from scratch (resetState): its delta-storage/ baseline
       chunksBucketName: chunksBucket.bucketName,
       timeoutSeconds: ctx.LAMBDA.chunkerSubscriber.timeoutSeconds,

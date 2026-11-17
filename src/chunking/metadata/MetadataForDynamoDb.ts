@@ -155,6 +155,7 @@ export class MetadataForDynamoDb implements IMetadataStorage {
       personRecordProcessorAddons,
       termsEndpoint,
       startedBy,
+      processorScalingCapacity,
       dryRun = false,
       replace = false
     } = params;
@@ -184,6 +185,9 @@ export class MetadataForDynamoDb implements IMetadataStorage {
     }
     if (startedBy !== undefined) {
       flags.startedBy = startedBy;
+    }
+    if (processorScalingCapacity !== undefined) {
+      flags.processorScalingCapacity = processorScalingCapacity;
     }
 
     if (dryRun) {

@@ -122,7 +122,7 @@ export class ParallelStart {
       bulkReset: event.bulkReset, trustPreviousStorage: event.trustPreviousStorage,
       iterationLimit: event.iterationLimit!, messagesToSeed: n,
       personRecordProcessorAddons: event.personRecordProcessorAddons, termsEndpoint: event.termsEndpoint,
-      startedBy: event.startedBy
+      startedBy: event.startedBy, processorScalingCapacity: event.processorScalingCapacity
     }).seedQueue();
     return new ParallelStart(ParallelStart.awsDeps({ clusterName, serviceName, region }, seed), DRY_RUN.toLowerCase() === 'true');
   }

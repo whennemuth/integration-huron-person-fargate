@@ -192,6 +192,16 @@ describe('MetadataForDynamoDb', () => {
       expect(mockStatisticsTable.writeFlags.mock.calls[0][1].startedBy).toEqual({ by: 'schedule' });
       expect(mockStatisticsTable.writeFlags.mock.calls[1][1]).not.toHaveProperty('startedBy');
     });
+
+    it('should include the processor maximum the run started with when present, and omit it otherwise', async () => {
+      const params = { chunkDirectory, bulkReset: false, trustPreviousStorage: true, syncPopulation: SyncPopulation.PersonFull };
+
+      await metadata.writeFlags({ ...params, processorScalingCapacity: { maxTasks: 3, overridden: false } });
+      await metadata.writeFlags({ ...params, replace: true });
+
+      expect(mockStatisticsTable.writeFlags.mock.calls[0][1].processorScalingCapacity).toEqual({ maxTasks: 3, overridden: false });
+      expect(mockStatisticsTable.writeFlags.mock.calls[1][1]).not.toHaveProperty('processorScalingCapacity');
+    });
   });
 
   describe('read', () => {

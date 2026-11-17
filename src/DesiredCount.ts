@@ -1,4 +1,4 @@
-import { ApplicationAutoScalingClient, DescribeScalableTargetsCommand, DescribeScalableTargetsCommandInput } from "@aws-sdk/client-application-auto-scaling";
+import { ApplicationAutoScalingClient, DescribeScalableTargetsCommand, DescribeScalableTargetsCommandInput, RegisterScalableTargetCommand } from "@aws-sdk/client-application-auto-scaling";
 import { ECSClient, Service, UpdateServiceCommand } from "@aws-sdk/client-ecs";
 import { TestEnvironment } from "integration-core";
 
@@ -97,6 +97,34 @@ export class DesiredCount {
       console.log(`No scalable target found for ${clusterName}.${serviceName}`);
       return undefined;
     }
+  }
+
+  /**
+   * Set the maximum number of tasks auto-scaling may run for the service (its scalable target's MaxCapacity), leaving
+   * its minimum and scaling policies as they are: RegisterScalableTarget on an existing target changes only what it is
+   * given. If the service is running more tasks than the new maximum, Application Auto Scaling lowers its desired count
+   * to it (tasks with scale-in protection keep running until they release it).
+   *
+   * Unlike setTo(), a failure is thrown, so the caller can decide whether it matters.
+   * @param maxTasks The new maximum, at least 1
+   */
+  public setMax = async (maxTasks: number): Promise<void> => {
+    const { params: { clusterName, serviceName, region } } = this;
+    if (!clusterName || !serviceName || !region) {
+      throw new Error(`Can't set the maximum tasks without a cluster, service and region (got ${clusterName}, ${serviceName}, ${region})`);
+    }
+    if (!Number.isInteger(maxTasks) || maxTasks < 1) {
+      throw new Error(`The maximum tasks must be a whole number of at least 1 (got ${maxTasks})`);
+    }
+    const client = new ApplicationAutoScalingClient({ region });
+    await client.send(new RegisterScalableTargetCommand({
+      ServiceNamespace: 'ecs',
+      ResourceId: `service/${clusterName}/${serviceName}`,
+      ScalableDimension: 'ecs:service:DesiredCount',
+      MaxCapacity: maxTasks
+    }));
+    this.maxTasks = maxTasks;
+    console.log(`✓ Set the maximum tasks of ${clusterName}.${serviceName} to ${maxTasks}`);
   }
 
   /**
