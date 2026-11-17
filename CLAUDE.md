@@ -342,6 +342,18 @@ successful soft-delete, `onSoftDeleteSuccess` rewrites that person's baseline ha
 `DELETED:` prefix (DynamoDB mode also sets `deletedAt`). Deletion detection skips marked entries,
 and a marked hash never matches a fresh source hash, so a person who reappears is classified
 UPDATED and reactivated (via `__active`); the processor's write then clears the marker.
+- **In DynamoDB mode this only works since 2026-11-17** (`dynamodb-delta-match-plan.md`; integration-core `31a0b49`,
+  taken in by `bb28a74`'s lockfile). Until then, a run trusting the stored hashes looked a chunk's stored records up
+  by whole records, and they came back named after the person's first mapped field (`id`), not `sourceIdentifier`, so
+  none matched. Every changed person, and every returning one, was classified as added and sent as a create, which
+  the target refused as a duplicate (409). Failed people keep their old hash, so they failed again on every later
+  trusted run, and returning people stayed deactivated. Mock runs `2026-11-17T07:13:57.528Z` and `07:42:14.206Z`
+  failed 1,500 returning people this way; with the fix, run `18:58:47.312Z` updated and reactivated all 1,500, and a
+  repeat run sent nothing. Bulk-reset runs take another path and weren't affected; preview and staging had no one
+  left in that state (their only trusted runs sent nothing). See integration-core's `CLAUDE.md` ("Delta Engines").
+- **Taking a new integration-core build**: update `node_modules/integration-core`'s `integrity` in `package-lock.json`
+  and run a plain `npm install`, never `npm install <its URL>` (see "Publishing the package" in integration-core's
+  `CLAUDE.md`). The task image installs it from the lockfile, so push the image to each landscape afterwards.
 
 **Harness Prefixes**:
 - DEFERRED_DELETE_HANDLER_*, STATISTICS_TABLE_*
