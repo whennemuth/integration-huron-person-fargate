@@ -823,6 +823,16 @@ routes above).
     than ramping up from one task. A request without `parallelStart` (the API's, not the form's) still gets 0, so the
     form carries the default (`data-default-parallel`) and `readRequest()` sends it for a full sync even with Custom
     settings closed (until 2026-11-17 it didn't, and a run started that way began with one task).
+  - **Its most** is the chunker service's most tasks (`DesiredCount.getMax()`, its scalable target's
+    `MaxCapacity`), capped at 20 (`parallelStartMax()`): `describe()` offers 0 to it, and `plan()`/`start()` refuse
+    more (`INVALID_REQUEST`). The Lambda has `application-autoscaling:DescribeScalableTargets` and the chunker
+    cluster and service names (`CHUNKER_CLUSTER_NAME`, `CHUNKER_SERVICE_NAME`, `lib/LandscapeResources.ts`) for
+    this; it changes nothing on the service itself. If the maximum can't be read, 20 is offered and the subscriber
+    refuses what the service can't run.
+  - **Refused** for a test (one person, one task) and with a single task (`iterationLimit` 0: seeded offsets are a
+    task's chunks apart). On the page it's held at 0 and locked while Test or Single task is chosen, and the value
+    chosen before is restored afterward (kept on its wrapper as `data-chosen-parallel`:
+    `BulkSyncPage.lockParallelStart()`); `readRequest()` sends 0 then whatever the select says.
 - **Processor tasks** (`processorScalingCapacityOverride`, since 2026-11-17, `processor-max-tasks-plan.md`; fargate
   "A run may have its own processor maximum"): the processor service's maximum for this run only, 1 to 20
   (`BulkSyncRequest.PROCESSOR_TASKS_MIN`/`MAX`, the chunker subscriber's), after Parallel start under Custom settings.
@@ -838,16 +848,6 @@ routes above).
     setting) above Start run and Back: starting is allowed, to find out whether Huron takes more now. The review's
     settings list both.
   - The Custom settings hint lists the three defaults (`BulkSyncView.defaultsText()`).
-  - **Its most** is the chunker service's most tasks (`DesiredCount.getMax()`, its scalable target's
-    `MaxCapacity`), capped at 20 (`parallelStartMax()`): `describe()` offers 0 to it, and `plan()`/`start()` refuse
-    more (`INVALID_REQUEST`). The Lambda has `application-autoscaling:DescribeScalableTargets` and the chunker
-    cluster and service names (`CHUNKER_CLUSTER_NAME`, `CHUNKER_SERVICE_NAME`, `lib/LandscapeResources.ts`) for
-    this; it changes nothing on the service itself. If the maximum can't be read, 20 is offered and the subscriber
-    refuses what the service can't run.
-  - **Refused** for a test (one person, one task) and with a single task (`iterationLimit` 0: seeded offsets are a
-    task's chunks apart). On the page it's held at 0 and locked while Test or Single task is chosen, and the value
-    chosen before is restored afterward (kept on its wrapper as `data-chosen-parallel`:
-    `BulkSyncPage.lockParallelStart()`); `readRequest()` sends 0 then whatever the select says.
 - **Bulk reset is one choice for both previous-state flags** (`ScheduledRun.previousStateFlags()`): checked sends
   `bulkReset: true, trustPreviousStorage: false`, unchecked `false, true`. The pipeline only acts on their
   combination, and a missing `trustPreviousStorage` reads as `false` (a reset), so both are always sent.
