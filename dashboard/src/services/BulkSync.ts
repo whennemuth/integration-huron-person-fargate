@@ -10,7 +10,7 @@ import type { RunnerEnv } from '../../../src/runner/RunnerTypes';
 import { DesiredCount } from '../../../src/DesiredCount';
 import { isMockLandscape } from '../../../src/Utils';
 import {
-  DEFAULT_TOTAL_POPULATION, MAX_SIMULATED_DELAY_SECONDS, PERSON_PATH, SIMULATION_QUERY_PARAMETERS, TERMS_PATH, personIndexFromBuid
+  DEFAULT_TOTAL_POPULATION, MAX_SIMULATED_DELAY_SECONDS, TERMS_PATH, personIndexFromBuid, readSimulatorHealth, simulatorFetchPath
 } from '../../../src/chunking/fetch/SourceSimulator';
 import { CACHE_SECRET } from '../handlers/DashboardCache';
 import { Launch, LaunchFlag } from './LaunchFlag';
@@ -293,8 +293,6 @@ export interface SourceSimulatorService {
  * dashboard), and its settings from its own unauthenticated /health. Nothing about it is changed.
  */
 export class AwsSourceSimulatorService implements SourceSimulatorService {
-  static readonly HEALTH_TIMEOUT_MS = 5000;
-
   constructor(private readonly functionName: string, private readonly client: LambdaClient) {}
 
   async lookup(): Promise<{ url?: string; reason?: string }> {
@@ -311,19 +309,7 @@ export class AwsSourceSimulatorService implements SourceSimulatorService {
   }
 
   async settings(url: string): Promise<Partial<SimulatorSettings> | undefined> {
-    try {
-      const response = await fetch(new URL('health', url), { signal: AbortSignal.timeout(AwsSourceSimulatorService.HEALTH_TIMEOUT_MS) });
-      if (!response.ok) {
-        return undefined;
-      }
-      const { totalPopulation, simulatedDelaySeconds, errorRate } = await response.json() as Record<string, unknown>;
-      const numbers = Object.entries({ totalPopulation, simulatedDelaySeconds, errorRate })
-        .filter(([, value]) => typeof value === 'number' && Number.isFinite(value));
-      return Object.fromEntries(numbers) as Partial<SimulatorSettings>;
-    } catch (error: any) {
-      console.warn(`Couldn't read the source simulator's settings (${url}health): ${error?.message ?? error}`);
-      return undefined;
-    }
+    return readSimulatorHealth(url);
   }
 }
 
@@ -757,27 +743,10 @@ export class BulkSync implements BulkSyncService {
   ): { baseUrl: string; fetchPath: string; termsEndpoint: { baseUrl: string; fetchPath: string } } {
     const url = new URL(simulatorUrl);
     const baseUrl = `${url.protocol}//${url.host}`;
-    const query = new URLSearchParams();
-    if (request.buid) {
-      query.set('buid', request.buid);
-    }
-    const parameters: [keyof SimulatorSettings, string][] = [
-      ['totalPopulation', SIMULATION_QUERY_PARAMETERS.TOTAL_POPULATION],
-      ['simulatedDelaySeconds', SIMULATION_QUERY_PARAMETERS.SIMULATED_DELAY_SECONDS],
-      ['errorRate', SIMULATION_QUERY_PARAMETERS.ERROR_RATE],
-      ['nonCurrentTermRate', SIMULATION_QUERY_PARAMETERS.NON_CURRENT_TERM_RATE]
-    ];
-    for (const [name, parameter] of parameters) {
-      const value = request.simulator[name];
-      if (value !== undefined) {
-        query.set(parameter, String(value));
-      }
-    }
-    const path = request.buid ? PERSON_PATH : (url.pathname || '/');
-    const queryText = query.toString();
     return {
       baseUrl,
-      fetchPath: queryText ? `${path}?${queryText}` : path,
+      // The same fetchPath the manual Runner's SourceSimulatorRunnerDecorator builds
+      fetchPath: simulatorFetchPath({ path: url.pathname, buid: request.buid, settings: request.simulator }),
       termsEndpoint: { baseUrl, fetchPath: TERMS_PATH }
     };
   }
@@ -839,6 +808,7 @@ export class BulkSync implements BulkSyncService {
       sourceSimulatorMockTotalPopulation: simulatorSetting('totalPopulation'),
       sourceSimulatorMockSimulatedDelaySeconds: simulatorSetting('simulatedDelaySeconds'),
       sourceSimulatorMockErrorRate: simulatorSetting('errorRate'),
+      sourceSimulatorMockNonCurrentTermRate: simulatorSetting('nonCurrentTermRate'),
       mockTargetResetState: request.mockLandscape
         ? form(request.resetState, request.resetState
           ? 'The chunker subscriber empties the mock target, Run history and fingerprints before the run starts'

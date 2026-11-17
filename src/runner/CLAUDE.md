@@ -95,7 +95,8 @@ Design intent: avoid immediate desired-count reversal due to stale scale-in alar
 
 - `LambdaFunctionEnvironmentVariable.ts`
   - Reads and updates Lambda environment variables.
-  - Important session change: supports batch updates with `setEnvironmentVariables(entries)` to avoid back-to-back update conflicts (`ResourceConflictException`) from multiple rapid `UpdateFunctionConfiguration` calls.
+  - Supports batch updates with `setEnvironmentVariables(entries)` to avoid back-to-back update conflicts (`ResourceConflictException`) from multiple rapid `UpdateFunctionConfiguration` calls.
+  - Used only by `ServiceToggler` (`DRY_RUN`). The source simulator's settings are never written to its Lambda: they travel in the run's `fetchPath`.
   - `setEnvironmentVariable` now routes through the batched API.
 
 ### Decorators
@@ -111,7 +112,8 @@ Design intent: avoid immediate desired-count reversal due to stale scale-in alar
 
 - `decorators/SourceSimulatorRunnerDecorator.ts`
   - Validates source simulator URL exists.
-  - Applies simulator Lambda env overrides in one batched update.
+  - Sends the run's simulator settings (`SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION`, `_SIMULATED_DELAY_SECONDS`, `_ERROR_RATE`, `_NON_CURRENT_TERM_RATE`; `simulatorSettings()` in `AbstractRunner`) as query parameters of the source's `fetchPath`, built by `simulatorFetchPath()` in `src/chunking/fetch/SourceSimulator.ts`, as the dashboard's Bulk sync builds it. Each is sent when set, 0 included (`optionalNumber()` in `RunnerTypes.ts`; fractions too); an unset one is the simulator's own. It never reads or changes the simulator Lambda's configuration (until 2026-11-16 it rewrote its `MOCK_*` environment, which stayed for later runs).
+  - Predicts the run's chunks (`getSourceSimulatorPredictions()`) from the simulator's `/health` asked with the run's settings, which reports the population as the run gets it; else the run's `SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION`, else the context's `LAMBDA.sourceSimulator.mockTotalPopulation`.
   - Uses simulator endpoint instead of configured upstream endpoint: `/` (people), or `/person?buid=<SINGLE_PERSON_BUID>` in single person mode, which returns the same payload `/` produces for that person (so no population-of-1 workaround is needed). Single person mode skips the predictions and the counter reset (the endpoint is stateless), fails prerequisites for a BUID the simulator does not generate (`U` + digits), and warns for one beyond its population.
   - Returns the simulator's `/terms` as the source endpoint's `termsEndpoint`, which travels via the chunker message and the run's Flags to the processor tasks (`Flags.termsEndpoint`, applied by `applyTermsEndpoint()`), so simulated runs get simulated terms. It does NOT change `config.dataSource.terms`: this runner's config never reaches the tasks (see the `preLoadedMaps` lesson in the project CLAUDE.md). Hybrid runs don't use this decorator, so they keep the real terms endpoint.
   - Resets simulator atomic counter.

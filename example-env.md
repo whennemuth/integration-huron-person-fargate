@@ -80,6 +80,13 @@ RUNNER_STACK_ID=huron-person-fargate-processor
 RUNNER_REGION=us-east-2
 # For testing purposes, either simulate the source system and/or prevent the processing phase from running. This is useful for testing the chunking phase in isolation.
 RUNNER_SOURCE_SIMULATOR=false
+# With the source simulator, the run's simulator settings: each one set (0 included) goes in the run's fetchPath as a
+# query parameter; unset ones are the simulator's own (its Lambda's environment, from the context at deploy). The
+# simulator Lambda's configuration is never changed.
+# RUNNER_SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION=1950
+# RUNNER_SOURCE_SIMULATOR_MOCK_SIMULATED_DELAY_SECONDS=0.5
+# RUNNER_SOURCE_SIMULATOR_MOCK_ERROR_RATE=0
+# RUNNER_SOURCE_SIMULATOR_MOCK_NON_CURRENT_TERM_RATE=0.25
 RUNNER_MESSAGING_ONLY=false
 RUNNER_CHUNKING_ONLY=false
 # For seeding the queue.

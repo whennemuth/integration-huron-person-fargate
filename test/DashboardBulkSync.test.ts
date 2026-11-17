@@ -386,7 +386,7 @@ describe('BulkSync', () => {
         'stackId', 'landscape', 'bulkReset', 'trustPreviousStorage', 'skipAtomicCounterReset', 'messagesToPrepopulate',
         'desiredCount', 'clusterName', 'serviceName', 'messagingOnly', 'chunkingOnly', 'sourceSimulator',
         'sourceSimulatorMockTotalPopulation', 'sourceSimulatorMockSimulatedDelaySeconds', 'sourceSimulatorMockErrorRate',
-        'mockTargetResetState', 'personRecordProcessorAddons', 'itemsPerChunk', 'chunkerFunction'
+        'sourceSimulatorMockNonCurrentTermRate', 'mockTargetResetState', 'personRecordProcessorAddons', 'itemsPerChunk', 'chunkerFunction'
       ]);
       expect(byName.populationType).toMatchObject({ value: 'person-full', source: 'form' });
       expect(byName.trustPreviousStorage).toMatchObject({ value: true, source: 'form' });
@@ -550,6 +550,7 @@ describe('BulkSync', () => {
       expect(simulated.sourceSimulator).toMatchObject({ value: true, source: 'form' });
       expect(simulated.sourceSimulatorMockTotalPopulation).toMatchObject({ value: 50, source: 'form', note: expect.stringContaining('query parameter') });
       expect(simulated.sourceSimulatorMockErrorRate).toMatchObject({ value: null, source: 'form', note: expect.stringContaining('own setting applies') });
+      expect(simulated.sourceSimulatorMockNonCurrentTermRate).toMatchObject({ value: null, source: 'form' });
       expect(simulated.mockTargetResetState).toMatchObject({ value: true, source: 'form' });
       const hybrid = await byName({ runType: 'full' });
       expect(hybrid.sourceSimulator).toMatchObject({ value: false, source: 'form', note: expect.stringContaining('hybrid') });

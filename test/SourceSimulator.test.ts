@@ -1,5 +1,6 @@
 import {
-  handler, personIndexFromBuid, resetSourceSimulatorState, simulationSettings, DEFAULT_TOTAL_POPULATION, MAX_SIMULATED_DELAY_SECONDS
+  handler, personIndexFromBuid, readSimulatorHealth, resetSourceSimulatorState, simulationQuery, simulationSettings, simulatorFetchPath,
+  DEFAULT_TOTAL_POPULATION, MAX_SIMULATED_DELAY_SECONDS
 } from '../src/chunking/fetch/SourceSimulator';
 import { APIGatewayProxyEventV2, Context } from 'aws-lambda';
 import { ConfigManager } from 'integration-huron-person';
@@ -731,5 +732,63 @@ describe('SourceSimulator Lambda Handler', () => {
       const body = parseResponseBody(response);
       expect(body.response).toHaveLength(100);
     });
+  });
+});
+
+describe("A run's simulator settings as query parameters (shared by Bulk sync and the Runner)", () => {
+  it('sends each given setting, 0 included, and leaves out an undefined one', () => {
+    expect(simulationQuery({ totalPopulation: 40, simulatedDelaySeconds: 0.5, errorRate: 0, nonCurrentTermRate: undefined }).toString())
+      .toBe('totalPopulation=40&simulatedDelaySeconds=0.5&errorRate=0');
+    expect(simulationQuery({}).toString()).toBe('');
+  });
+
+  it('builds the people fetchPath from the Function URL path, or /person?buid= for one person', () => {
+    expect(simulatorFetchPath({ path: '/' })).toBe('/');
+    expect(simulatorFetchPath({ path: '' })).toBe('/');
+    expect(simulatorFetchPath({ path: '/', settings: { totalPopulation: 1950, errorRate: 0 } })).toBe('/?totalPopulation=1950&errorRate=0');
+    expect(simulatorFetchPath({ path: '/', buid: 'U0000042' })).toBe('/person?buid=U0000042');
+    expect(simulatorFetchPath({ path: '/', buid: 'U0000042', settings: { nonCurrentTermRate: 0.25 } }))
+      .toBe('/person?buid=U0000042&nonCurrentTermRate=0.25');
+  });
+
+  it("reads the simulator's /health, asking with the run's settings", async () => {
+    const realFetch = global.fetch;
+    const fetched: string[] = [];
+    global.fetch = jest.fn(async (url: any) => {
+      fetched.push(String(url));
+      return { ok: true, json: async () => ({ status: 'healthy', totalPopulation: 40, errorRate: 0, simulatedDelaySeconds: 'slow' }) } as any;
+    }) as any;
+    try {
+      const url = 'https://sim.lambda-url.us-east-2.on.aws/';
+      // Only the numbers it reports
+      expect(await readSimulatorHealth(url, { totalPopulation: 40 })).toEqual({ totalPopulation: 40, errorRate: 0 });
+      expect(await readSimulatorHealth(url)).toEqual({ totalPopulation: 40, errorRate: 0 });
+      expect(fetched).toEqual([`${url}health?totalPopulation=40`, `${url}health`]);
+    } finally {
+      global.fetch = realFetch;
+    }
+  });
+
+  it("is undefined when /health can't be read", async () => {
+    const realFetch = global.fetch;
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      global.fetch = jest.fn(async () => ({ ok: false, status: 502 }) as any) as any;
+      expect(await readSimulatorHealth('https://sim.lambda-url.us-east-2.on.aws/')).toBeUndefined();
+      global.fetch = jest.fn(async () => { throw new Error('offline'); }) as any;
+      expect(await readSimulatorHealth('https://sim.lambda-url.us-east-2.on.aws/')).toBeUndefined();
+    } finally {
+      global.fetch = realFetch;
+      jest.restoreAllMocks();
+    }
+  });
+
+  it("answers /health with a run's settings as that run would get them, clamped", async () => {
+    const health = async (queryStringParameters: Record<string, string>) => {
+      const result: any = await handler({ rawPath: '/health', queryStringParameters, headers: {} } as any, {} as Context);
+      return JSON.parse(result.body);
+    };
+    expect(await health({ totalPopulation: '40', errorRate: '0', simulatedDelaySeconds: '600' }))
+      .toMatchObject({ totalPopulation: 40, errorRate: 0, simulatedDelaySeconds: MAX_SIMULATED_DELAY_SECONDS });
   });
 });

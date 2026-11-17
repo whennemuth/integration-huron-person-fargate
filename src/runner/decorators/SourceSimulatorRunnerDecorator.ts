@@ -1,13 +1,12 @@
 import { Config, DataSourceConfig } from "integration-huron-person";
-import { ENVIRONMENT_VARIABLES_NAMES, PERSON_PATH, TERMS_PATH, SourceSimulatorFunctionURL, getSimulatorCounter, personIndexFromBuid, FUNCTION_BASE_NAME as sourceSimulatorFunctionBaseName } from "../../chunking/fetch/SourceSimulator";
+import { TERMS_PATH, SourceSimulatorFunctionURL, getSimulatorCounter, personIndexFromBuid, simulatorFetchPath } from "../../chunking/fetch/SourceSimulator";
 import { ChunkingServiceRunner } from "../AbstractRunner";
-import { LambdaFunctionEnvironmentVariable } from "../LambdaFunctionEnvironmentVariable";
 import { Endpoint, NormalizedPopulationType, TargetConfig } from "../RunnerTypes";
 
 /**
- * Decorator that configures and uses the source simulator Lambda when enabled, providing 
+ * Decorator that configures and uses the source simulator Lambda when enabled, providing
  * mock person and terms data for testing without the 30-minute API cooldown constraint.
- * 
+ *
  * The decorator overrides both the people and terms data source endpoints to point to the
  * source simulator Lambda Function URL, which simulates responses from the real BU CDM APIs.
  * The terms endpoint is returned as the source endpoint's termsEndpoint, which travels with the
@@ -16,62 +15,35 @@ import { Endpoint, NormalizedPopulationType, TargetConfig } from "../RunnerTypes
  * In single person mode (SINGLE_PERSON_BUID) the source is the simulator's single person endpoint
  * (`/person?buid=...`) instead, which returns the same payload the people endpoint produces for
  * that person.
+ *
+ * The run's simulator settings (SOURCE_SIMULATOR_MOCK_*) go in the source's fetchPath as query
+ * parameters (simulatorFetchPath(), as the dashboard's Bulk sync builds it), which every request of
+ * the run keeps. The simulator Lambda's configuration is never changed: a setting left unset is the
+ * simulator's own, and nothing carries over to later runs.
  */
 export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
   constructor(private readonly wrappedRunner: ChunkingServiceRunner) {
     super(wrappedRunner.env);
   }
   public async validatePrerequisites(): Promise<boolean> {
-    let { 
-      region, landscape, messagesToPrepopulate, iterationLimit, 
-      sourceSimulatorMockSimulatedDelaySeconds: delay, 
-      sourceSimulatorMockTotalPopulation: total,
-      sourceSimulatorMockErrorRate: errorRate
-    } = this.wrappedRunner.env;
+    let { region, landscape, messagesToPrepopulate, iterationLimit } = this.wrappedRunner.env;
 
-    const { 
-      MOCK_TOTAL_POPULATION, MOCK_ERROR_RATE, MOCK_SIMULATED_DELAY_SECONDS 
-    } = ENVIRONMENT_VARIABLES_NAMES;
-
-    // Check if the source simulator lambda function URL exists before proceeding. 
+    // Check if the source simulator lambda function URL exists before proceeding.
     const sourceSimulatorFunctionUrl = new SourceSimulatorFunctionURL({ landscape: landscape!, region: region! });
     if( ! await sourceSimulatorFunctionUrl.exists() ) {
       console.error(`Source simulator function URL does not exist for landscape ${landscape} in region ${region}. Please ensure the source simulator is deployed and the function URL is created.`);
       return false;
     }
-    
-    // Singleton logic for getting an instance of the utility for modifying Lambda function environment variables. 
-    let lambda: LambdaFunctionEnvironmentVariable | null = null;
-    const getSourceSimulatorLambdaFunction = async () => {
-      if (!lambda) {
-        lambda = new LambdaFunctionEnvironmentVariable({ 
-          lambdaFunctionName: `${sourceSimulatorFunctionBaseName}-${landscape}`, region: region! 
-        });
-      }
-      return lambda;
-    }
 
-    // Update all simulator environment overrides in one Lambda configuration update.
-    // This avoids back-to-back update conflicts when multiple values are provided.
-    const sourceSimulatorEnvOverrides: Record<string, string> = {};
-    if(delay && delay > 0) {
-      sourceSimulatorEnvOverrides[MOCK_SIMULATED_DELAY_SECONDS] = delay.toString();
-    }
-    if(total && total > 0) {
-      sourceSimulatorEnvOverrides[MOCK_TOTAL_POPULATION] = total.toString();
-    }
-    if(errorRate && errorRate > 0) {
-      sourceSimulatorEnvOverrides[MOCK_ERROR_RATE] = errorRate.toString();
-    }
-    if(Object.keys(sourceSimulatorEnvOverrides).length > 0) {
-      const lambda = await getSourceSimulatorLambdaFunction();
-      await lambda.setEnvironmentVariables(sourceSimulatorEnvOverrides);
-    }
+    const settings = this.simulatorSettings();
+    console.log(Object.keys(settings).length > 0
+      ? `Source simulator settings for this run, sent as fetchPath query parameters (any other is the simulator's own): ${JSON.stringify(settings)}`
+      : `No SOURCE_SIMULATOR_MOCK_* settings: the run uses the source simulator's own.`);
 
     const getNbrFromStr = (val: string | undefined): number => val && !isNaN(Number(val)) ? parseInt(val) : 0;
 
     const getNbr = (nbr: number | undefined): number => nbr && !isNaN(nbr) ? nbr : 0;
-    
+
     const { buid } = this.wrappedRunner.env;
 
     // Single person mode: the simulator only knows BUIDs it generates itself (U + digits), and only
@@ -82,26 +54,26 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
         console.error(`SINGLE_PERSON_BUID=${buid} is not a BUID the source simulator generates ("U" followed by digits, e.g. U0000042).`);
         return false;
       }
-      const { totalPopulation } = await this.getSourceSimulatorPredictions(total);
+      const { totalPopulation } = await this.getSourceSimulatorPredictions();
       if (totalPopulation > 0 && index >= totalPopulation) {
         console.warn(`SINGLE_PERSON_BUID=${buid} is beyond the source simulator's population (${totalPopulation}), so it will return no person.`);
       }
     }
-    
+
     // Warn if queue seeding is being carried out that we are not overseeding as determined by
     // comparing the seedNumber math to source simulator predicted population.
     // Skip this check for single-person mode (buid is set) since it doesn't use queue seeding.
-    if (!buid && getNbrFromStr(messagesToPrepopulate) > 0 ) { 
+    if (!buid && getNbrFromStr(messagesToPrepopulate) > 0 ) {
       const seedNumber = parseInt(messagesToPrepopulate);
 
       if(seedNumber > 0) {
-        const predictions = await this.getSourceSimulatorPredictions(total);
+        const predictions = await this.getSourceSimulatorPredictions();
         const { totalPopulation, itemsPerChunk } = predictions;
         iterationLimit = getNbr(iterationLimit);
         const singleTaskPopulation = iterationLimit * itemsPerChunk;
         if(singleTaskPopulation >= 0) {
           const seedingPopulation = seedNumber * itemsPerChunk * iterationLimit;
-          
+
           if(seedingPopulation > totalPopulation) {
             const overage = seedingPopulation - totalPopulation;
             if(overage > singleTaskPopulation) {
@@ -120,11 +92,11 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
   }
 
   public async resolveDataSource(config: Config): Promise<Endpoint> {
-    const { region, landscape, sourceSimulator, stackId, sourceSimulatorMockTotalPopulation: total } = this.wrappedRunner.env;
+    const { region, landscape, sourceSimulator, stackId } = this.wrappedRunner.env;
     const { buid } = this.wrappedRunner.env;
-    let { 
-      endpointConfig: { baseUrl } = {}, 
-      fetchPath 
+    let {
+      endpointConfig: { baseUrl } = {},
+      fetchPath
     } = config.dataSource?.people as DataSourceConfig || {};
 
     if(!sourceSimulator) {
@@ -140,10 +112,9 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
     const sourceSimulatorFunctionUrl = new SourceSimulatorFunctionURL({ landscape, region });
     const functionUrlObj = new URL(await sourceSimulatorFunctionUrl.getUrl());
     baseUrl = `${functionUrlObj.protocol}//${functionUrlObj.host}`;
-    fetchPath = buid
-      ? `${PERSON_PATH}?buid=${encodeURIComponent(buid)}`
-      : functionUrlObj.pathname || '/';
-    
+    // The people endpoint, or the single person endpoint for a BUID, with the run's simulator settings
+    fetchPath = simulatorFetchPath({ path: functionUrlObj.pathname, buid, settings: this.simulatorSettings() });
+
     console.log(`Using source simulator for ${buid ? 'single person' : 'people'} endpoint: ${JSON.stringify({ baseUrl, fetchPath }, null, 2)}`);
 
     // Simulated source data gets simulated terms too (hybrid runs never get here, so they keep the
@@ -156,7 +127,7 @@ export class SourceSimulatorRunnerDecorator extends ChunkingServiceRunner {
       return { baseUrl: baseUrl!, fetchPath: fetchPath!, termsEndpoint };
     }
 
-    await this.logSourceSimulatorPredictions(total);
+    await this.logSourceSimulatorPredictions();
 
     // Reset the atomic counter for the source simulator to ensure a clean state before starting the operation. This is important to avoid any residual state from previous runs affecting the current operation.
     const atomicCounter = getSimulatorCounter({ stackId, region, landscape });

@@ -3,7 +3,7 @@ import { SyncPopulation } from "../../docker/chunkTypes";
 import { getLocalConfig } from "../Utils";
 import { Endpoint, NormalizedPopulationType, RunnerEnv, TargetConfig, extractEnvironment } from './RunnerTypes';
 import { IContext } from "../../context/IContext";
-import { SourceSimulatorFunctionURL } from "../chunking/fetch/SourceSimulator";
+import { SimulationSettings, SourceSimulatorFunctionURL } from "../chunking/fetch/SourceSimulator";
 import { resetRunCounters } from '../chunking/RunCounters';
 
 /**
@@ -97,12 +97,26 @@ export abstract class ChunkingServiceRunner {
   }
 
   /**
-   * Log the predicted chunking output based on MOCK_TOTAL_POPULATION environment variable or config 
-   * value. Used when the source simulator is enabled.
-   * @param totalOverride Optional override for total population (avoids Lambda race condition)
+   * The run's source simulator settings (SOURCE_SIMULATOR_MOCK_*), each only if set (0 included), sent as query
+   * parameters in the run's fetchPath (SourceSimulatorRunnerDecorator). An unset one is the simulator's own.
    */
-  protected async logSourceSimulatorPredictions(totalOverride?: number): Promise<void> {
-    const predictions = await this.getSourceSimulatorPredictions(totalOverride);
+  protected simulatorSettings(): Partial<SimulationSettings> {
+    const {
+      sourceSimulatorMockTotalPopulation: totalPopulation,
+      sourceSimulatorMockSimulatedDelaySeconds: simulatedDelaySeconds,
+      sourceSimulatorMockErrorRate: errorRate,
+      sourceSimulatorMockNonCurrentTermRate: nonCurrentTermRate
+    } = this.env;
+    const settings: Partial<SimulationSettings> = { totalPopulation, simulatedDelaySeconds, errorRate, nonCurrentTermRate };
+    return Object.fromEntries(Object.entries(settings).filter(([, value]) => value !== undefined));
+  }
+
+  /**
+   * Log the predicted chunking output from the simulator's population for this run (see
+   * getSourceSimulatorPredictions()). Used when the source simulator is enabled.
+   */
+  protected async logSourceSimulatorPredictions(): Promise<void> {
+    const predictions = await this.getSourceSimulatorPredictions();
     const { totalFullChunks, remainingItems, itemsPerChunk } = predictions;
     if(totalFullChunks > 0) {
       console.log(`Should generate ${totalFullChunks} full chunks of ${itemsPerChunk} items each, with ${remainingItems} remaining items in the last chunk.`);
@@ -111,11 +125,17 @@ export abstract class ChunkingServiceRunner {
       console.log(`Should generate 1 chunk with ${remainingItems} items.`);
     }
     else {
-      console.warn('MOCK_TOTAL_POPULATION is not set or is not a valid number. Cannot predict chunking output.');
+      console.warn("The source simulator's population is not known. Cannot predict chunking output.");
     }
   }
 
-  protected async getSourceSimulatorPredictions(totalOverride?: number): Promise<{ 
+  /**
+   * What the run should chunk, from the simulator's population for this run: its /health asked with the run's
+   * settings (so a SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION is applied, clamped as a request's would be), else that
+   * setting itself, else the context's LAMBDA.sourceSimulator.mockTotalPopulation (what the simulator is deployed
+   * with). Never reads or changes the simulator Lambda's configuration.
+   */
+  protected async getSourceSimulatorPredictions(): Promise<{ 
     totalPopulation: number, totalFullChunks: number, remainingItems: number, itemsPerChunk: number 
   }> {
     const { landscape, region } = this.env;
@@ -126,21 +146,12 @@ export abstract class ChunkingServiceRunner {
       ITEMS_PER_CHUNK, LAMBDA: { sourceSimulator: { mockTotalPopulation } = {}} = {} 
     } = (await this.loadContext());
 
-    // Use override if provided (avoids Lambda race condition), otherwise check Lambda environment.
-    // Check the MOCK_TOTAL_POPULATION environment variable on the lambda function first, falling 
-    // back to the config value.
-    let totalPopulation: number | undefined = totalOverride;
-    
-    if (!totalPopulation) {
-      const sourceSimulatorFunctionUrl = new SourceSimulatorFunctionURL({ landscape: landscape!, region: region! });
-      let envTotalPopulation = await sourceSimulatorFunctionUrl.getEnvironmentVariable('MOCK_TOTAL_POPULATION');
-      totalPopulation = /\d+/.test(`${envTotalPopulation}`) ? 
-        parseInt(envTotalPopulation!) : 
-        mockTotalPopulation;
-    }
+    const settings = this.simulatorSettings();
+    const health = await new SourceSimulatorFunctionURL({ landscape: landscape!, region: region! }).health(settings);
+    const totalPopulation: number | undefined = health?.totalPopulation ?? settings.totalPopulation ?? mockTotalPopulation;
 
     // Proceed only if we have actual numeric values to work with.
-    if(totalPopulation && !isNaN(totalPopulation)) {
+    if(totalPopulation !== undefined && !isNaN(totalPopulation)) {
       if(!isNaN(ITEMS_PER_CHUNK) && ITEMS_PER_CHUNK > 0) {
         const totalFullChunks = Math.floor(totalPopulation / ITEMS_PER_CHUNK);
         const remainingItems = totalPopulation % ITEMS_PER_CHUNK;
@@ -151,7 +162,7 @@ export abstract class ChunkingServiceRunner {
       }
     }
     else {
-      console.warn('MOCK_TOTAL_POPULATION is not set or is not a valid number. Cannot predict chunking output.');
+      console.warn("The source simulator's population is not known (its /health couldn't be read, and neither SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION nor the context's LAMBDA.sourceSimulator.mockTotalPopulation is set). Cannot predict chunking output.");
     }
 
     return predictions;
