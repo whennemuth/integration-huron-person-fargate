@@ -142,6 +142,7 @@ The Lambda function serves two primary roles:
 **Dashboard:**
 - `GET /dashboard` - Main dashboard interface with inline assets
 - `GET /api/me` - who the request is taken to be and what they may do here (see "Authorization"); needs only sign-in.
+- `GET /api/audit` - the landscape's audit trail, a page at a time (see "Authorization"; `audit:read`)
   Every other `/api` route needs an action of the signed-in user's roles, and answers `403` without it
 
 **API Operations:**
@@ -437,7 +438,7 @@ DASHBOARD_ROLE_ASSIGNMENTS_TASK=list npx ts-node -r dotenv/config dashboard/src/
 ### Authorization
 
 Who may do what in a landscape's dashboard, by role, per landscape (`authorization-plan.md`, being delivered in
-steps: the audit trail's recording, the Access and Audit trail pages and impersonation's routes are still to come).
+steps: the Access and Audit trail pages and impersonation's routes are still to come).
 - **The gate** (`RequestGate`, in `DashboardHandler` before routing; decision 7, deny by default): pages and the
   sign-in routes need only authentication; `GET /api/me` only sign-in; every other `/api/*` route its action
   (`RoutePermissions`); an unmapped `/api` route is `403`, and a known route's unsupported method `405` (`Allow`),
@@ -477,7 +478,20 @@ steps: the audit trail's recording, the Access and Audit trail pages and imperso
 - **Audit trail** (`src/audit/AuditStore.ts`): `DynamoDbAuditStore` over the audit table (every record in partition
   `pk` = `AUDIT`, sort key `sk` = `<ISO time>#<id>`, so a Query lists newest first; `principal-index` for one
   person's), paged with cursors (`AuditError` `INVALID_CURSOR` / `INVALID_LIMIT` / `INVALID_FILTER`); a public
-  dashboard's records name `anonymous`. `InMemoryAuditStore` for offline runs and tests. Never deleted from.
+  dashboard's records name `anonymous`. An id starts with a sequence number of the process, so records written in the
+  same millisecond by one instance keep their order. `InMemoryAuditStore` for offline runs and tests
+  (`ServiceProvider.getAuditStore()`). Never deleted from.
+- **What is recorded** (`src/audit/AuditTrail.ts`, decision 9; `AuditTrail` is bound to one request's user and
+  landscape, and never fails the request): every denial of an action, at the gate or of a Bulk sync choice (its reason
+  as the detail); and, once the route has answered, every allowed `person:lookup`, `person:preview`, `person:sync`,
+  `bulk:start` (a start, not a review), `mock:reset` and `access:admin` request (`auditsAllowed()`), `SUCCEEDED` for a
+  2xx and else `FAILED` with the status. `describeRequest()` takes the target (a BUID, a person, a test's BUID) and a
+  short detail (a start's choices, Processor tasks among them) from the route and body. `runs:read` and `audit:read`
+  aren't recorded, nor are a `405`, an unmapped route or `/api/me`. Tests: `test/DashboardAuditTrail.test.ts`,
+  `test/DashboardAuditStore.test.ts`.
+- **`GET /api/audit?cursor&limit&principal&action`** (`audit:read`): `{ items, cursor? }`, newest first, at most 100 a
+  page (default 50), optionally one person's (a `buPrincipal`, `<id>@bu.edu` or `anonymous`) or one action's; a bad
+  query is `400 { error, code }`.
 - **The first Admin** is seeded by hand after a deploy (the tables start empty, and a teardown deletes them): the
   `DASHBOARD_ROLE_ASSIGNMENTS` harness or `aws dynamodb put-item` (fargate `README.md`, "Dashboard access").
 

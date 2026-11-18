@@ -32,6 +32,7 @@ import {
 } from '../authorization/RoleAssignmentStore';
 import { PrincipalResolver } from '../authorization/Principal';
 import { RoleCatalog, StaticRoleCatalog } from '../authorization/RoleCatalog';
+import { AuditStore, DynamoDbAuditStore, InMemoryAuditStore } from '../audit/AuditStore';
 import { Config } from 'integration-huron-person';
 import { CrudOperation, TestEnvironment } from 'integration-core';
 import { getConfig } from '../../../src/Utils';
@@ -51,6 +52,8 @@ export class ServiceProvider {
   /** Who holds which roles: the landscape's access table, or offline the local user's USER_ROLES */
   private static roleAssignments?: { key: string; store: RoleAssignmentStore };
   private static readonly roleCatalog = new StaticRoleCatalog();
+  /** The audit trail: the landscape's audit table, or offline kept in memory */
+  private static auditStore?: { key: string; store: AuditStore };
   
   /**
    * Whether to use the offline services (a local run with LOCAL_OFFLINE=true; never in Lambda). They ignore the
@@ -124,6 +127,30 @@ export class ServiceProvider {
     this.offlineBulkSync = undefined;
     this.launchFlags.clear();
     this.roleAssignments = undefined;
+    this.auditStore = undefined;
+  }
+
+  /**
+   * The landscape's audit trail: its audit table (AUDIT_TABLE_NAME, in REGION). Offline, kept in memory for the life of
+   * the server. Where the table isn't named, records are kept in memory and lost, with a warning.
+   */
+  static getAuditStore(): AuditStore {
+    const offline = this.isOffline();
+    const { AUDIT_TABLE_NAME, REGION } = process.env;
+    const key = offline ? 'offline' : `table:${AUDIT_TABLE_NAME}:${REGION}`;
+    if (this.auditStore?.key !== key) {
+      let store: AuditStore;
+      if (offline) {
+        store = new InMemoryAuditStore();
+      } else if (AUDIT_TABLE_NAME) {
+        store = new DynamoDbAuditStore(AUDIT_TABLE_NAME, new DynamoDBClient(REGION ? { region: REGION } : {}));
+      } else {
+        console.warn('AUDIT_TABLE_NAME is not set: audit records are kept in memory only, and lost');
+        store = new InMemoryAuditStore();
+      }
+      this.auditStore = { key, store };
+    }
+    return this.auditStore.store;
   }
 
   /** The roles, policies and actions (authorization-plan.md, decision 5) */

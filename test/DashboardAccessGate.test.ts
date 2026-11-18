@@ -3,56 +3,17 @@
  * offline, with a signed sign-in token and the local user's roles (USER_ROLES): deny by default, each role against
  * each route, a user with no role, an anonymous request, public mode, /api/me, and Bulk sync's choices.
  */
-import { LambdaFunctionUrlEvent, LambdaFunctionUrlResult } from '../dashboard/src/handlers/DashboardTypes';
 import { Action } from '../dashboard/src/authorization/Actions';
 import { StaticRoleCatalog } from '../dashboard/src/authorization/RoleCatalog';
+import { COOKIE, event, json, loadHandler, signedInEnvironment } from './support/OfflineDashboard';
 import { TestSignIn } from './support/TestSignIn';
 
-const COOKIE = 'hp-dashboard-auth';
 const signIn = new TestSignIn();
 const catalog = new StaticRoleCatalog();
-
-/** A landscape's sign-in settings, offline, playing a mock landscape (for Start from scratch) */
-const SIGNED_IN_ENV = {
-  LOCAL_OFFLINE: 'true',
-  LANDSCAPE: 'mock',
-  APP_LOGIN_HEADER: 'SHIB-HANDLER',
-  APP_LOGOUT_HEADER: 'SHIB-IDP-LOGOUT',
-  APP_AUTHORIZATION: 'true',
-  AUTH_COOKIE_NAME: COOKIE,
-  USER_PRINCIPAL: 'jdoe',
-  ...signIn.environment
-};
-
-type Handler = (event: LambdaFunctionUrlEvent) => Promise<LambdaFunctionUrlResult>;
-
-/** The handler and ServiceProvider, loaded fresh with the environment (Authentication.ts reads it when it loads) */
-const loadHandler = (env: Record<string, string>, unset: string[] = []): { handler: Handler; ServiceProvider: any; restore: () => void } => {
-  const saved = process.env;
-  process.env = { ...saved, ...env };
-  ['AWS_LAMBDA_FUNCTION_NAME', ...unset].forEach(name => delete process.env[name]);
-  let loaded: any;
-  jest.isolateModules(() => {
-    loaded = {
-      handler: require('../dashboard/src/handlers/DashboardHandler').handler,
-      ServiceProvider: require('../dashboard/src/services/ServiceProvider').ServiceProvider
-    };
-  });
-  return { ...loaded, restore: () => { process.env = saved; } };
-};
-
-const event = (method: string, path: string, options: { body?: object; cookie?: string } = {}): LambdaFunctionUrlEvent => ({
-  rawPath: path,
-  headers: { authenticated: 'true', ...(options.cookie !== undefined && { cookie: options.cookie }) },
-  queryStringParameters: {},
-  requestContext: { http: { method, path } },
-  body: options.body ? JSON.stringify(options.body) : undefined,
-  isBase64Encoded: false
-} as unknown as LambdaFunctionUrlEvent);
+const SIGNED_IN_ENV = signedInEnvironment(signIn);
 
 const jdoe = signIn.cookie({ buPrincipal: ['jdoe'], givenName: ['Jane'], sn: ['Doe'] }, COOKIE);
 
-const json = (result: LambdaFunctionUrlResult): any => JSON.parse(`${result.body}`);
 
 // The handler's modules load (and compile) on the first request
 jest.setTimeout(60_000);

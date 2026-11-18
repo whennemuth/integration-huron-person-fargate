@@ -65,10 +65,18 @@ const behavesAsAStore = (makeStore: () => AuditStore) => {
   it('appends a record with an id and its time, leaving out what is absent', async () => {
     const store = makeStore();
     const record = await store.append(entry('jdoe', 'bulk:start', { decision: 'DENIED', outcome: undefined }), at(0));
-    expect(record.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(record.id).toMatch(/^[0-9a-z]{8}-[0-9a-f-]{36}$/);
     expect(record.at).toBe('2026-11-17T12:00:00.000Z');
     expect(record).not.toHaveProperty('outcome');
     expect((await store.list()).items).toEqual([record]);
+  });
+
+  it('keeps the order records were written in within one millisecond', async () => {
+    const store = makeStore();
+    for (const action of ['person:lookup', 'person:preview', 'person:sync', 'bulk:start', 'mock:reset'] as const) {
+      await store.append(entry('jdoe', action), at(0));
+    }
+    expect((await store.list()).items.map(r => r.action)).toEqual(['mock:reset', 'bulk:start', 'person:sync', 'person:preview', 'person:lookup']);
   });
 
   it('lists newest first', async () => {

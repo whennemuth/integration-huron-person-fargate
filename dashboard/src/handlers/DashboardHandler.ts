@@ -18,6 +18,8 @@ import { ChangeType, ReportingError } from '../../../src/reporting/RunReporting'
 import { Config } from 'integration-huron-person';
 import { ForbiddenError, RequestAccess, RequestGate } from '../authorization/RequestGate';
 import { RequestAuthorizer } from '../authorization/Authorizer';
+import { AuditTrail, auditsAllowed, describeRequest } from '../audit/AuditTrail';
+import { AuditError } from '../audit/AuditStore';
 
 // import { ConfigManager } from 'integration-huron-person';
 
@@ -41,7 +43,7 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
   try {
     // Get request object to handle auth and origin verification
     const request = new Request(new Authenticator(event), new OriginHeader(event));
-    const {path, body, queryParams } = request;
+    const { path, body } = request;
 
     // Verify origin header to ensure request came from CloudFront
     if ( ! request.originVerified) {
@@ -61,93 +63,122 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
     const { access, refusal } = await gate.check({
       method: request.method, path, publicMode: !request.signInRequired, claims: request.user
     });
+    // The audit trail (decision 9): every denial, and the allowed requests that read personal data or change something
+    const audit = new AuditTrail({
+      store: ServiceProvider.getAuditStore(), landscape: process.env.LANDSCAPE || LOCAL_LANDSCAPE, principal: access.principal
+    });
     if (refusal) {
+      if (access.decision && !access.decision.allowed) {
+        await audit.denied(access.decision, describeRequest(path, body).target);
+      }
       const response = jsonResponse(refusal.status, refusal.body);
       return { ...response, headers: { ...response.headers, ...refusal.headers } };
     }
-   
-    // Route handling
-    switch (path) {
-      case '/': case '/dashboard':
-        if ( ! request.isAuthenticated) {
-          console.log('Request is not authenticated. Returning login response.');
-          return { statusCode: 302, headers: {
-            ["content-type"]: "text/html",
-            Location: '/login-page'
-          }}
 
-        }
-        await recordProfile(access);
-        return await renderDashboard(request, queryParams.tab);
-
-      case '/login-page':
-        if(request.isAuthenticated) {
-          return { statusCode: 302, headers: {
-            ["content-type"]: "text/html",
-            Location: '/dashboard'
-          }}
-        }
-        return await renderLoginPage();
-
-      case '/login-redirect':
-        if(request.isAuthenticated) {
-          return { statusCode: 302, headers: {
-            ["content-type"]: "text/html",
-            Location: '/dashboard'
-          }}
-        }
-        return request.getLoginResponse();
-      
-      case '/api/me':
-        return await handleMe(access);
-
-      case '/api/person-lookup':
-        return await handlePersonLookup({requestBody: body, cache });
-
-      case '/api/person-sync/preview-experiment':
-        return await handlePersonSyncPreviewExperiment({requestBody: body, cache });
-
-      case '/api/person-sync/preview':
-        return await handlePersonSyncPreview({requestBody: body, cache });
-      
-      case '/api/person-sync':
-        return await handlePersonSync({requestBody: body, cache });
-      
-      case '/api/bulk-sync':
-        return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user, authorizer: access.authorizer });
-
-      case '/api/bulk-sync/plan':
-        return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user, authorizer: access.authorizer, plan: true });
-
-      case '/api/mock-landscape/reset':
-        return await handleMockLandscapeReset({ method: request.method, cache, user: request.user });
-      
-      case '/api/status':
-        return await getSystemStatus();
-
-      case '/api/runs':
-        return await handleListRuns(request.method, queryParams);
-
-      case '/api/capabilities':
-        return handleCapabilities(request.method);
-
-      case '/api/landscapes':
-        return await handleLandscapes(request.method);
-      
-      default:
-        if (path.startsWith('/api/runs/')) {
-          return await handleRunRoute({ method: request.method, path, queryParams });
-        }
-        return createResponse(404, 'text/html', '<h1>404 - Page Not Found</h1>');
+    let response: LambdaFunctionUrlResult;
+    try {
+      response = await route(request, access, audit);
+    } catch (error) {
+      console.error('Dashboard handler error:', error);
+      response = internalError(error);
     }
+    // A choice refused within the route (Bulk sync's) was recorded as a denial already
+    if (auditsAllowed(access.permission) && !audit.denialRecorded) {
+      await audit.allowed(access.permission.action, response.statusCode, describeRequest(path, body));
+    }
+    return response;
   } catch (error) {
     console.error('Dashboard handler error:', error);
-    return createResponse(500, 'application/json', JSON.stringify({ 
-      error: 'Internal Server Error',
-      message: error instanceof Error ? error.message : 'Unknown error'
-    }));
+    return internalError(error);
   }
 };
+
+const internalError = (error: unknown): LambdaFunctionUrlResult => createResponse(500, 'application/json', JSON.stringify({
+  error: 'Internal Server Error',
+  message: error instanceof Error ? error.message : 'Unknown error'
+}));
+
+/** Answer a request the gate let through */
+async function route(request: Request, access: RequestAccess, audit: AuditTrail): Promise<LambdaFunctionUrlResult> {
+  const { path, body, queryParams } = request;
+  // Route handling
+  switch (path) {
+    case '/': case '/dashboard':
+      if ( ! request.isAuthenticated) {
+        console.log('Request is not authenticated. Returning login response.');
+        return { statusCode: 302, headers: {
+          ["content-type"]: "text/html",
+          Location: '/login-page'
+        }}
+
+      }
+      await recordProfile(access);
+      return await renderDashboard(request, queryParams.tab);
+
+    case '/login-page':
+      if(request.isAuthenticated) {
+        return { statusCode: 302, headers: {
+          ["content-type"]: "text/html",
+          Location: '/dashboard'
+        }}
+      }
+      return await renderLoginPage();
+
+    case '/login-redirect':
+      if(request.isAuthenticated) {
+        return { statusCode: 302, headers: {
+          ["content-type"]: "text/html",
+          Location: '/dashboard'
+        }}
+      }
+      return request.getLoginResponse();
+    
+    case '/api/me':
+      return await handleMe(access);
+
+    case '/api/person-lookup':
+      return await handlePersonLookup({requestBody: body, cache });
+
+    case '/api/person-sync/preview-experiment':
+      return await handlePersonSyncPreviewExperiment({requestBody: body, cache });
+
+    case '/api/person-sync/preview':
+      return await handlePersonSyncPreview({requestBody: body, cache });
+    
+    case '/api/person-sync':
+      return await handlePersonSync({requestBody: body, cache });
+    
+    case '/api/bulk-sync':
+      return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user, authorizer: access.authorizer, audit });
+
+    case '/api/bulk-sync/plan':
+      return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user, authorizer: access.authorizer, audit, plan: true });
+
+    case '/api/mock-landscape/reset':
+      return await handleMockLandscapeReset({ method: request.method, cache, user: request.user });
+    
+    case '/api/status':
+      return await getSystemStatus();
+
+    case '/api/runs':
+      return await handleListRuns(request.method, queryParams);
+
+    case '/api/capabilities':
+      return handleCapabilities(request.method);
+
+    case '/api/landscapes':
+      return await handleLandscapes(request.method);
+
+    case '/api/audit':
+      return await handleAudit(queryParams);
+    
+    default:
+      if (path.startsWith('/api/runs/')) {
+        return await handleRunRoute({ method: request.method, path, queryParams });
+      }
+      return createResponse(404, 'text/html', '<h1>404 - Page Not Found</h1>');
+  }
+}
 
 /**
  * Render the dashboard page: the sidebar and top bar, with the requested page (`?tab=<id>`) shown
@@ -401,9 +432,10 @@ async function handlePersonSync(params: { requestBody: string | null, cache: Das
  * 409 a run underway or stalled or a subscriber in DRY_RUN, 503 not configured) and { error, code }.
  */
 async function handleBulkSync(params: {
-  method: string, requestBody: string | null, cache: DashboardCache, user?: any, authorizer: RequestAuthorizer, plan?: boolean
+  method: string, requestBody: string | null, cache: DashboardCache, user?: any, authorizer: RequestAuthorizer, audit: AuditTrail,
+  plan?: boolean
 }): Promise<LambdaFunctionUrlResult> {
-  const { method, requestBody, cache, user, authorizer, plan = false } = params;
+  const { method, requestBody, cache, user, authorizer, audit, plan = false } = params;
   const allowed = plan ? ['POST'] : ['GET', 'POST'];
   if (!allowed.includes(method)) {
     const response = jsonResponse(405, { error: 'Method not allowed' });
@@ -432,6 +464,7 @@ async function handleBulkSync(params: {
       return jsonResponse(error.status, { error: error.message, code: error.code });
     }
     if (error instanceof ForbiddenError) {
+      await audit.denied(error.decision);
       return jsonResponse(403, error.body);
     }
     console.error('Error in bulk sync:', error);
@@ -642,6 +675,28 @@ function runReportingErrorResponse(error: unknown, description: string): LambdaF
 function methodNotAllowed(): LambdaFunctionUrlResult {
   const response = jsonResponse(405, { error: 'Method not allowed' });
   return { ...response, headers: { ...response.headers, Allow: 'GET' } };
+}
+
+/**
+ * GET /api/audit?cursor&limit&principal&action: the landscape's audit trail, newest first, a page at a time
+ * (`{ items, cursor? }`; the cursor continues the list), optionally one person's (a buPrincipal, <id>@bu.edu or
+ * anonymous) or one action's. A bad cursor, limit or filter is 400 { error, code }.
+ */
+async function handleAudit(queryParams: { [key: string]: string }): Promise<LambdaFunctionUrlResult> {
+  const { cursor, limit, principal, action } = queryParams;
+  try {
+    return jsonResponse(200, await ServiceProvider.getAuditStore().list({
+      cursor: cursor || undefined,
+      limit: limit === undefined || limit === '' ? undefined : Number(limit),
+      buPrincipal: principal || undefined,
+      action: action || undefined
+    }));
+  } catch (error) {
+    if (error instanceof AuditError) {
+      return jsonResponse(400, { error: error.message, code: error.code });
+    }
+    throw error;
+  }
 }
 
 /**

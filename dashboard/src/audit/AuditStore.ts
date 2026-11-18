@@ -97,8 +97,20 @@ const decodeCursor = (cursor: string): Record<string, any> => {
   throw new AuditError('The cursor is not one this list gave', 'INVALID_CURSOR');
 };
 
+/**
+ * A record's id: a sequence number of this process, then a random UUID. Records are sorted by time then id, so two
+ * written in the same millisecond by one Lambda instance keep the order they were written in (a random id alone left it
+ * to chance); records of two instances in the same millisecond were concurrent anyway.
+ */
+let sequence = 0;
+const SEQUENCE_DIGITS = 8;
+const newId = (): string => {
+  sequence = (sequence + 1) % 36 ** SEQUENCE_DIGITS;
+  return `${sequence.toString(36).padStart(SEQUENCE_DIGITS, '0')}-${randomUUID()}`;
+};
+
 const newRecord = (entry: AuditEntry, at: Date): AuditRecord => {
-  const record: AuditRecord = { ...entry, id: randomUUID(), at: at.toISOString() };
+  const record: AuditRecord = { ...entry, id: newId(), at: at.toISOString() };
   // Leave out what isn't there, rather than keeping undefined attributes
   (Object.keys(record) as (keyof AuditRecord)[]).forEach(key => record[key] === undefined && delete record[key]);
   return record;
