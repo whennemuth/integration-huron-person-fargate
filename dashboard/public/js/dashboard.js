@@ -262,10 +262,11 @@ async function handlePersonLookupSubmit(e) {
             // Use PersonCard component to render results
             personCard.render(result, searchData.personId);
         } else {
-            personCard.renderError('Error looking up person');
+            // The server's reason, e.g. a 403's "None of your roles (Viewer) has a policy that grants person:lookup."
+            personCard.renderError('Error looking up person', result.message || result.error);
         }
     } catch (error) {
-        personCard.renderError('Error looking up person');
+        personCard.renderError('Error looking up person', error.message);
         console.error('Lookup error:', error);
     } finally {
         form.classList.remove('tab-loading');
