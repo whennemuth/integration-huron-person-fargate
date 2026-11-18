@@ -11,6 +11,7 @@ let bulkSyncPage;
 let whoAmI;
 let accessPage;
 let auditTrailPage;
+let impersonateControl;
 
 // Tab management - use 'load' event instead of 'DOMContentLoaded' for Lambda compatibility
 window.addEventListener('load', function() {
@@ -43,6 +44,8 @@ window.addEventListener('load', function() {
     if (document.querySelector('[data-no-role-notice], #whoAmIDialog')) {
         whoAmI.start();
     }
+    impersonateControl = new ImpersonateControl({ getJson: fetchSectionData, sendJson: sendSectionData, root: document });
+    impersonateControl.start();
     const accessRoot = document.getElementById('access');
     if (accessRoot) {
         accessPage = new AccessPage({ getJson: fetchSectionData, sendJson: sendSectionData, me: () => whoAmI.me(), root: accessRoot });

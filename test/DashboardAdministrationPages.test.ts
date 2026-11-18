@@ -11,7 +11,7 @@ import { minifyJS } from '../dashboard/scripts/BuildTemplates';
 
 const JS_DIR = join(__dirname, '../dashboard/public/js');
 const SCRIPTS = ['page-state.js', 'run-history.js', 'administration.js'];
-const CLASSES = ['PageState', 'WhoAmI', 'AccessPage', 'AuditTrailPage'];
+const CLASSES = ['PageState', 'WhoAmI', 'AccessPage', 'AuditTrailPage', 'ImpersonateControl'];
 
 /** Just enough of an element: classes, attributes, text, markup, children and listeners */
 class FakeElement {
@@ -53,7 +53,7 @@ const forbidden = (action = 'runs:read') => Object.assign(new Error(`None of you
 
 describe.each([false, true])('administration.js (minified: %s)', minified => {
   const scripts = loadScripts(minified);
-  const { PageState, WhoAmI, AccessPage, AuditTrailPage } = scripts;
+  const { PageState, WhoAmI, AccessPage, AuditTrailPage, ImpersonateControl } = scripts;
 
   describe('PageState.failed', () => {
     it('shows a 403 as redacted, naming the action the roles lack', () => {
@@ -96,6 +96,15 @@ describe.each([false, true])('administration.js (minified: %s)', minified => {
       expect(html).toContain('RunReporting');
       expect(html).toContain('runs:read');
       expect(html).toContain('unknown to this dashboard (ignored): Ghost');
+    });
+
+    it("says whose roles are in force while impersonating", () => {
+      const html = WhoAmI.dialogHtml({ ...me, viewedAs: { buPrincipal: 'amy', label: 'Amy Lee' } });
+      expect(html).toContain('You are seeing this');
+      expect(html).toContain('Amy Lee');
+      expect(html).toContain("Amy Lee's roles in this landscape");
+      expect(WhoAmI.dialogHtml({ ...me, roles: [], unknownRoles: [], viewedAs: { buPrincipal: 'amy', label: 'amy' } }))
+        .toContain('None. They see every page, but not its data.');
     });
 
     it('says when the user has no role', () => {
@@ -197,6 +206,52 @@ describe.each([false, true])('administration.js (minified: %s)', minified => {
       expect(await access.load()).toBe(false);
       expect(list.children[0].dataset.state).toBe('redacted');
       expect(list.children[0].text).toContain('access:admin');
+    });
+  });
+
+  describe('ImpersonateControl', () => {
+    const control = (sendJson: jest.Mock) => {
+      const person = new FakeElement();
+      const startButton = Object.assign(new FakeElement('button'), { disabled: true });
+      const reload = jest.fn();
+      const impersonate = new ImpersonateControl({ getJson: jest.fn(), sendJson, root: {}, reload });
+      Object.assign(impersonate, { person, startButton });
+      return { impersonate, person, startButton, reload };
+    };
+
+    it("shows the chosen person's roles, or that they have none", () => {
+      expect(ImpersonateControl.personHtml({ buPrincipal: 'amy', roles: ['Viewer'], profile: { displayName: 'Amy <Lee>' } }))
+        .toMatch(/Amy &lt;Lee&gt;[\s\S]*Viewer/);
+      expect(ImpersonateControl.personHtml({ buPrincipal: 'amy', roles: [] })).toContain('No role');
+    });
+
+    it('starts only once someone is chosen, then reloads', async () => {
+      const sendJson = jest.fn().mockResolvedValue({});
+      const { impersonate, startButton, reload } = control(sendJson);
+      await impersonate.begin();
+      expect(sendJson).not.toHaveBeenCalled();
+      impersonate.choose({ buPrincipal: 'amy' });
+      expect(startButton.disabled).toBe(false);
+      await impersonate.begin();
+      expect(sendJson).toHaveBeenCalledWith('POST', '/api/impersonation', { principal: 'amy' });
+      expect(reload).toHaveBeenCalled();
+    });
+
+    it("shows a refused start with the server's message, and stays", async () => {
+      const sendJson = jest.fn().mockRejectedValue(new Error("You can't impersonate yourself."));
+      const { impersonate, person, reload } = control(sendJson);
+      impersonate.choose({ buPrincipal: 'jdoe' });
+      await impersonate.begin();
+      expect(person.text).toContain("You can't impersonate yourself.");
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it('stops, then reloads', async () => {
+      const sendJson = jest.fn().mockResolvedValue({ impersonating: null });
+      const { impersonate, reload } = control(sendJson);
+      await impersonate.stop();
+      expect(sendJson).toHaveBeenCalledWith('DELETE', '/api/impersonation');
+      expect(reload).toHaveBeenCalled();
     });
   });
 

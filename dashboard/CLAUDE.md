@@ -145,6 +145,8 @@ The Lambda function serves two primary roles:
 - `GET /api/audit` - the landscape's audit trail, a page at a time (see "Authorization"; `audit:read`)
 - `GET /api/access/roles`, `GET /api/access/assignments`, `GET|PUT|DELETE /api/access/assignments/{person}` - who
   holds which roles (see "Authorization"; `access:admin`)
+- `POST|DELETE /api/impersonation` - start or stop seeing the dashboard through another person's roles (see
+  "Authorization"; starting needs `access:impersonate`)
   Every other `/api` route needs an action of the signed-in user's roles, and answers `403` without it
 
 **API Operations:**
@@ -439,8 +441,8 @@ DASHBOARD_ROLE_ASSIGNMENTS_TASK=list npx ts-node -r dotenv/config dashboard/src/
 
 ### Authorization
 
-Who may do what in a landscape's dashboard, by role, per landscape (`authorization-plan.md`, being delivered in
-steps: impersonation's routes and top bar are still to come).
+Who may do what in a landscape's dashboard, by role, per landscape (`authorization-plan.md`, delivered in six steps,
+2026-11-17).
 - **The gate** (`RequestGate`, in `DashboardHandler` before routing; decision 7, deny by default): pages and the
   sign-in routes need only authentication; `GET /api/me` only sign-in; every other `/api/*` route its action
   (`RoutePermissions`); an unmapped `/api` route is `403`, and a known route's unsupported method `405` (`Allow`),
@@ -515,6 +517,26 @@ steps: impersonation's routes and top bar are still to come).
   action the roles lack (`fetchSectionData()` carries the 403's `action`), and anything else as the error state.
   Overview's Mock landscape section stays hidden when its read is refused. An action the user triggers (lookup, sync,
   review, start, save) shows the server's message in the error pattern.
+- **Impersonation** (decision 14): an Admin sees the dashboard through another person's roles, for viewing only.
+  - **The top bar**: an Impersonate button, the one control hidden by role (only for a user whose own roles grant
+    `access:impersonate`), opens a dialog: a person (typed, or picked from everyone with a role), their roles, then
+    Impersonate. While impersonating, the button is **Stop impersonating <person>** (their name if they have signed in
+    here, else their `buPrincipal`), and the navigator's tint is the `impersonating` tone ("Impersonating amy: viewing
+    only", `IMPERSONATING_TONE` in `NavigationBar.ts`). The who-am-I dialog shows both people. `ImpersonateControl`
+    (`administration.js`) starts and stops it, then reloads the page.
+  - **The routes**: `POST /api/impersonation { principal }` (the user's own `access:impersonate`; not yourself) sets the
+    `hp-dashboard-impersonate` cookie (host-only, `HttpOnly`, `Secure`, `SameSite=Strict`, a session cookie);
+    starting another replaces it. `DELETE /api/impersonation` (sign-in only) clears it. Both are audited.
+  - **The gate** (`RequestGate`, through `Impersonation.resolve()`): on every request, a cookie naming someone is
+    honored only while the signed-in user's own roles grant `access:impersonate`; otherwise it is ignored, cleared
+    (`Set-Cookie`) and audited as a denial. Honored, the person's roles decide (`RequestAccess.authorizer`; the user's
+    own are `userAuthorizer`), and a request that changes something is refused `403 { code: "IMPERSONATING", message:
+    "Stop impersonating to do this." }` even when the person's roles allow it, so nothing is done in their name. A
+    run's review changes nothing, so it is allowed.
+  - **Who did it**: audit records name the user as `buPrincipal` and the person as `viewedAs`; `startedBy` and profiles
+    are always the user's. `/api/me` gives the roles in force, `viewedAs` and `mayImpersonate`.
+  - Tests: `test/DashboardImpersonation.test.ts` (the model), `test/DashboardImpersonationGate.test.ts` (through the
+    handler: valid, revoked and forged cookies, each changing route, the audit, the top bar by role).
 - **The first Admin** is seeded by hand after a deploy (the tables start empty, and a teardown deletes them): the
   `DASHBOARD_ROLE_ASSIGNMENTS` harness or `aws dynamodb put-item` (fargate `README.md`, "Dashboard access").
 

@@ -74,7 +74,8 @@ export const describeRequest = (path: string, body: string | null): { target?: s
 export class AuditTrail {
   private deniedRecorded = false;
 
-  constructor(private readonly params: { store: AuditStore; landscape: string; principal: Principal }) {}
+  /** viewedAs: while impersonating, the person whose roles decided the request (decision 14) */
+  constructor(private readonly params: { store: AuditStore; landscape: string; principal: Principal; viewedAs?: Principal }) {}
 
   /** Who made the request, as recorded: the signed-in user's buPrincipal, or anonymous */
   get buPrincipal(): string {
@@ -87,10 +88,13 @@ export class AuditTrail {
   }
 
   async record(entry: Omit<AuditEntry, 'landscape' | 'buPrincipal'>): Promise<void> {
-    const { store, landscape } = this.params;
+    const { store, landscape, viewedAs } = this.params;
     const detail = entry.detail && entry.detail.length > MAX_DETAIL_LENGTH ? `${entry.detail.slice(0, MAX_DETAIL_LENGTH - 1)}…` : entry.detail;
     try {
-      await store.append({ ...entry, ...(detail !== undefined && { detail }), landscape, buPrincipal: this.buPrincipal });
+      await store.append({
+        ...entry, ...(detail !== undefined && { detail }), landscape, buPrincipal: this.buPrincipal,
+        ...(viewedAs?.buPrincipal && { viewedAs: viewedAs.buPrincipal })
+      });
     } catch (error) {
       console.error(`Couldn't record ${entry.decision} ${entry.action} for ${this.buPrincipal} in the audit trail: ${error instanceof Error ? error.message : error}`);
     }

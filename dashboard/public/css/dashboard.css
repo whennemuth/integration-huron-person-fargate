@@ -1463,3 +1463,38 @@ button.app-user:focus-visible {
     display: flex;
     gap: 0.5rem;
 }
+
+/* Impersonating (decision 14): the top bar's tone in place of the landscape's, and the Stop button */
+.landscape-tone-impersonating {
+    --hp-tone: var(--hp-accent);
+    --hp-tone-rgb: var(--hp-accent-rgb);
+}
+
+.impersonating-stop {
+    color: var(--hp-surface);
+    background-color: var(--hp-accent);
+    border-color: var(--hp-accent);
+}
+
+.impersonating-stop:hover,
+.impersonating-stop:focus-visible {
+    color: var(--hp-surface);
+    background-color: var(--hp-accent-hover);
+    border-color: var(--hp-accent-hover);
+}
+
+.impersonate-person:not(:empty) {
+    margin-top: 1rem;
+}
+
+.impersonate-person-name {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.who-am-i-impersonating {
+    padding: 0.5rem 0.75rem;
+    background-color: var(--hp-accent-subtle);
+    border: 1px solid var(--hp-accent-border-subtle);
+    border-radius: var(--hp-radius);
+}

@@ -4,6 +4,7 @@
  *   WhoAmI          GET /api/me: the top bar's who-am-I dialog, and the notice for a user with no role
  *   AccessPage      who holds which roles: look a person up, check their roles, save; everyone with a role
  *   AuditTrailPage  the audit trail, newest first, filtered by person and action, a page at a time
+ *   ImpersonateControl  the top bar's Impersonate dialog and Stop impersonating button (decision 14)
  *
  * Every section that loads content reports a failed load through PageState.failed(), so a 403 shows as redacted. An
  * action the user triggers (Look up, Save) shows the error pattern with the server's message. Markup goes through Html
@@ -78,13 +79,19 @@ class WhoAmI {
             ['Mail', user.mail]
         ].filter(([, value]) => value);
         const roles = me.roles || [];
+        const viewedAs = me.viewedAs;
         return `
             <dl class="who-am-i-identity">
                 ${identity.map(([label, value]) => `<dt>${Html.escape(label)}</dt><dd>${Html.escape(value)}</dd>`).join('')}
             </dl>
-            <h3 class="who-am-i-heading">Your roles in this landscape</h3>
+            ${viewedAs ? `
+                <p class="who-am-i-impersonating"><i class="fas fa-user-secret me-1" aria-hidden="true"></i>You are seeing this
+                    dashboard as <strong>${Html.escape(viewedAs.label)}</strong>${viewedAs.label === viewedAs.buPrincipal ? '' : ` (${Html.escape(viewedAs.buPrincipal)})`}, for viewing only.
+                    Their roles are the ones in force below; yours return when you stop impersonating.</p>
+            ` : ''}
+            <h3 class="who-am-i-heading">${viewedAs ? `${Html.escape(viewedAs.label)}'s roles in this landscape` : 'Your roles in this landscape'}</h3>
             ${roles.length === 0
-                ? `<p class="secondary">None. You can see every page, but not its data. Ask a dashboard administrator for a role.</p>`
+                ? `<p class="secondary">None. ${viewedAs ? 'They see' : 'You can see'} every page, but not its data.${viewedAs ? '' : ' Ask a dashboard administrator for a role.'}</p>`
                 : roles.map(WhoAmI.roleHtml).join('')}
             ${(me.unknownRoles || []).length
                 ? `<p class="secondary">Also assigned, but unknown to this dashboard (ignored): ${Html.escape(me.unknownRoles.join(', '))}</p>`
@@ -418,5 +425,121 @@ class AuditTrailPage {
                 <td class="wrap">${Html.escape(record.detail || '')}</td>
             </tr>
         `;
+    }
+}
+
+/**
+ * Impersonation in the top bar (decision 14): the Impersonate dialog (choose a person, see their roles, start) for a
+ * user whose own roles allow it, and the Stop impersonating button while impersonating. Starting and stopping set or
+ * clear a cookie on the server, then the page reloads, so every section is read again through the roles now in force.
+ */
+class ImpersonateControl {
+
+    /** @param {{ getJson, sendJson, root, reload?: () => void }} options */
+    constructor(options) {
+        this.options = options;
+        this.root = options.root;
+        this.chosen = undefined;
+    }
+
+    reload() {
+        (this.options.reload || (() => window.location.reload()))();
+    }
+
+    start() {
+        const stop = this.root.querySelector('[data-action="stop-impersonating"]');
+        if (stop) {
+            stop.addEventListener('click', () => this.stop());
+        }
+        const dialog = this.root.querySelector('#impersonateDialog');
+        if ( ! dialog) {
+            return;
+        }
+        this.form = dialog.querySelector('[data-impersonate-form]');
+        this.input = dialog.querySelector('#impersonatePrincipal');
+        this.person = dialog.querySelector('[data-impersonate-person]');
+        this.startButton = dialog.querySelector('[data-action="start-impersonating"]');
+        dialog.addEventListener('show.bs.modal', () => this.listPeople(dialog.querySelector('#impersonatePeople')));
+        this.form.addEventListener('submit', event => {
+            event.preventDefault();
+            this.lookUp(this.input.value);
+        });
+        this.input.addEventListener('input', () => this.choose(undefined));
+        this.startButton.addEventListener('click', () => this.begin());
+    }
+
+    /** The pick list: everyone with a role (left empty if the assignments can't be read) */
+    async listPeople(datalist) {
+        if ( ! datalist) {
+            return;
+        }
+        try {
+            const { assignments } = await this.options.getJson('/api/access/assignments');
+            datalist.innerHTML = (assignments || []).map(assignment => {
+                const name = assignment.profile && assignment.profile.displayName;
+                const roles = (assignment.grants || []).map(grant => grant.role).join(', ');
+                return `<option value="${Html.escape(assignment.buPrincipal)}">${Html.escape([name, roles].filter(Boolean).join(': '))}</option>`;
+            }).join('');
+        } catch (error) {
+            datalist.innerHTML = '';
+        }
+    }
+
+    choose(person) {
+        this.chosen = person;
+        if (this.startButton) {
+            this.startButton.disabled = ! person;
+        }
+    }
+
+    /** Show the person and their roles before starting */
+    async lookUp(value) {
+        const principal = String(value || '').trim();
+        this.choose(undefined);
+        if ( ! principal) {
+            PageState.error(this.person, 'Enter a person', 'Their BU login (buPrincipal), or their eduPersonPrincipalName ending in @bu.edu.', { compact: true });
+            return;
+        }
+        PageState.loading(this.person, `Looking up ${principal}`, { compact: true });
+        try {
+            const person = await this.options.getJson(`/api/access/assignments/${encodeURIComponent(principal)}`);
+            this.person.innerHTML = ImpersonateControl.personHtml(person);
+            this.choose(person);
+        } catch (error) {
+            PageState.error(this.person, `${principal} could not be looked up`, error.message, { compact: true });
+        }
+    }
+
+    static personHtml(person) {
+        const profile = person.profile || {};
+        const roles = person.roles || [];
+        return `
+            <p class="impersonate-person-name"><i class="fas fa-circle-user me-1" aria-hidden="true"></i>${Html.escape(profile.displayName || person.buPrincipal)}
+                ${profile.displayName ? `<span class="secondary">${Html.escape(person.buPrincipal)}</span>` : ''}</p>
+            <p>${roles.length ? `Roles: ${roles.map(role => Html.tag(role)).join(' ')}` : '<span class="secondary">No role: they see every page, but none of its data.</span>'}</p>
+        `;
+    }
+
+    async begin() {
+        if ( ! this.chosen) {
+            return;
+        }
+        this.startButton.disabled = true;
+        try {
+            await this.options.sendJson('POST', '/api/impersonation', { principal: this.chosen.buPrincipal });
+            this.reload();
+        } catch (error) {
+            this.startButton.disabled = false;
+            PageState.error(this.person, `${this.chosen.buPrincipal} could not be impersonated`, error.message, { compact: true });
+        }
+    }
+
+    async stop() {
+        try {
+            await this.options.sendJson('DELETE', '/api/impersonation');
+        } catch (error) {
+            console.warn('Stopping impersonation failed:', error && error.message);
+        }
+        this.reload();
     }
 }

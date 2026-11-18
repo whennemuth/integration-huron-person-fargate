@@ -17,6 +17,8 @@ import { areTheSame } from '../Utils';
 import { ChangeType, ReportingError } from '../../../src/reporting/RunReporting';
 import { Config } from 'integration-huron-person';
 import { ForbiddenError, RequestAccess, RequestGate } from '../authorization/RequestGate';
+import { Impersonation } from '../authorization/Impersonation';
+import { PrincipalResolver } from '../authorization/Principal';
 import { RequestAuthorizer } from '../authorization/Authorizer';
 import { AuditTrail, auditsAllowed, describeRequest } from '../audit/AuditTrail';
 import { AuditError } from '../audit/AuditStore';
@@ -63,18 +65,26 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
     // Authorization (authorization-plan.md, decision 7): one gate before routing, deny by default
     const gate = new RequestGate(ServiceProvider.getRoleAssignmentStore(), ServiceProvider.getRoleCatalog());
     const { access, refusal } = await gate.check({
-      method: request.method, path, publicMode: !request.signInRequired, claims: request.user
+      method: request.method, path, publicMode: !request.signInRequired, claims: request.user, cookieHeader: event.headers?.cookie
     });
     // The audit trail (decision 9): every denial, and the allowed requests that read personal data or change something
     const audit = new AuditTrail({
-      store: ServiceProvider.getAuditStore(), landscape: process.env.LANDSCAPE || LOCAL_LANDSCAPE, principal: access.principal
+      store: ServiceProvider.getAuditStore(), landscape: process.env.LANDSCAPE || LOCAL_LANDSCAPE,
+      principal: access.principal, viewedAs: access.viewedAs
     });
+    // An impersonation cookie refused (its user's Admin role is gone, or it was made by hand): ignored and cleared
+    if (access.impersonationDenial) {
+      await audit.record({ action: 'access:impersonate', decision: 'DENIED', detail: access.impersonationDenial });
+    }
     if (refusal) {
-      if (access.decision && !access.decision.allowed) {
-        await audit.denied(access.decision, describeRequest(path, body).target);
+      if (access.decision) {
+        access.decision.allowed
+          // Allowed by the person's roles, refused because impersonating is viewing only
+          ? await audit.record({ action: access.decision.action, decision: 'DENIED', ...describeRequest(path, body), detail: `${refusal.body.message}` })
+          : await audit.denied(access.decision, describeRequest(path, body).target);
       }
       const response = jsonResponse(refusal.status, refusal.body);
-      return { ...response, headers: { ...response.headers, ...refusal.headers } };
+      return withCookies({ ...response, headers: { ...response.headers, ...refusal.headers } }, access);
     }
 
     let response: LambdaFunctionUrlResult;
@@ -88,12 +98,18 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
     if (auditsAllowed(access.permission) && !audit.denialRecorded) {
       await audit.allowed(access.permission.action, response.statusCode, describeRequest(path, body));
     }
-    return response;
+    return withCookies(response, access);
   } catch (error) {
     console.error('Dashboard handler error:', error);
     return internalError(error);
   }
 };
+
+/** The response, carrying the Set-Cookie the gate asked for (clearing a refused impersonation cookie), unless it sets its own */
+const withCookies = (response: LambdaFunctionUrlResult, access: RequestAccess): LambdaFunctionUrlResult =>
+  access.setCookies.length && !response.headers?.['Set-Cookie']
+    ? { ...response, headers: { ...response.headers, 'Set-Cookie': access.setCookies[0] } }
+    : response;
 
 const internalError = (error: unknown): LambdaFunctionUrlResult => createResponse(500, 'application/json', JSON.stringify({
   error: 'Internal Server Error',
@@ -115,7 +131,7 @@ async function route(request: Request, access: RequestAccess, audit: AuditTrail)
 
       }
       await recordProfile(access);
-      return await renderDashboard(request, queryParams.tab);
+      return await renderDashboard(request, queryParams.tab, access);
 
     case '/login-page':
       if(request.isAuthenticated) {
@@ -137,6 +153,9 @@ async function route(request: Request, access: RequestAccess, audit: AuditTrail)
     
     case '/api/me':
       return await handleMe(access);
+
+    case '/api/impersonation':
+      return await handleImpersonation(request, access, audit);
 
     case '/api/person-lookup':
       return await handlePersonLookup({requestBody: body, cache });
@@ -192,14 +211,19 @@ async function route(request: Request, access: RequestAccess, audit: AuditTrail)
 /**
  * Render the dashboard page: the sidebar and top bar, with the requested page (`?tab=<id>`) shown
  */
-async function renderDashboard(request: Request, activeTab?: string): Promise<LambdaFunctionUrlResult> {
+async function renderDashboard(request: Request, activeTab: string | undefined, access: RequestAccess): Promise<LambdaFunctionUrlResult> {
   try {
     const navigationBar = buildNavigationBar({
       listing: await landscapeListingOrNone(),
       landscape: process.env.LANDSCAPE || LOCAL_LANDSCAPE,
       landscapeTone: process.env.LANDSCAPE_TONE,
       signInRequired: request.signInRequired,
-      user: request.user
+      user: request.user,
+      // The Impersonate button for those who may, and while impersonating, Stop and the impersonating tone
+      impersonation: {
+        mayImpersonate: access.mayImpersonate,
+        ...(access.viewedAs && { person: await personLabel(access.viewedAs.buPrincipal!) })
+      }
     });
     const template = TemplateService.getDashboardTemplate();
     const partials = TemplateService.getPartials();
@@ -725,15 +749,66 @@ async function handleAudit(queryParams: { [key: string]: string }): Promise<Lamb
  * hold. Needs only sign-in, so a user with no role can see that they have none.
  */
 async function handleMe(access: RequestAccess): Promise<LambdaFunctionUrlResult> {
-  const { principal, authorizer, publicMode } = access;
+  const { principal, authorizer, publicMode, viewedAs, mayImpersonate } = access;
   await recordProfile(access);
   const { buPrincipal, eppn, mail, displayName } = principal;
   return jsonResponse(200, {
     signedIn: !principal.isAnonymous,
     ...(buPrincipal && { user: { buPrincipal, eppn, mail, displayName } }),
+    // The roles in force: the impersonated person's while impersonating (decision 14)
     ...await authorizer.effectivePermissions(),
+    mayImpersonate,
+    ...(viewedAs && { viewedAs: await personLabel(viewedAs.buPrincipal!) }),
     publicMode
   });
+}
+
+/** A person as the top bar and /api/me name them: their buPrincipal, and their name if they have signed in here */
+async function personLabel(buPrincipal: string): Promise<{ buPrincipal: string; label: string; displayName?: string }> {
+  let profile;
+  try {
+    profile = await ServiceProvider.getRoleAssignmentStore().getProfile(buPrincipal);
+  } catch (error) {
+    console.warn(`Couldn't read the profile of ${buPrincipal}: ${error instanceof Error ? error.message : error}`);
+  }
+  const displayName = profile?.displayName;
+  return { buPrincipal, label: displayName || buPrincipal, ...(displayName && { displayName }) };
+}
+
+/**
+ * Impersonation (decision 14), behind the gate (starting needs the user's own access:impersonate; stopping, only sign-in):
+ * - `POST /api/impersonation` `{ principal }` (a buPrincipal or <id>@bu.edu): sets the cookie naming the person, whose
+ *   roles decide every later request, for viewing only, until stopped. Starting another replaces it. Not yourself.
+ * - `DELETE /api/impersonation`: clears it.
+ * Both are audited (access:impersonate, the person as the target).
+ */
+async function handleImpersonation(request: Request, access: RequestAccess, audit: AuditTrail): Promise<LambdaFunctionUrlResult> {
+  if (request.method === 'DELETE') {
+    if (access.viewedAs) {
+      await audit.record({ action: 'access:impersonate', decision: 'ALLOWED', outcome: 'SUCCEEDED', target: access.viewedAs.buPrincipal, detail: 'stopped' });
+    }
+    const response = jsonResponse(200, { impersonating: null });
+    return { ...response, headers: { ...response.headers, 'Set-Cookie': Impersonation.clearCookieValue() } };
+  }
+  let input: unknown;
+  try {
+    input = JSON.parse(request.body || '').principal;
+  } catch {
+    return jsonResponse(400, { error: 'The request body must be JSON: { "principal": "..." }', code: 'INVALID_REQUEST' });
+  }
+  const resolution = PrincipalResolver.resolve(input);
+  if (!resolution.ok) {
+    return jsonResponse(400, { error: resolution.reason, code: 'INVALID_PRINCIPAL' });
+  }
+  const refusal = Impersonation.startRefusal(access.principal, resolution.buPrincipal);
+  if (refusal) {
+    return jsonResponse(400, { error: refusal, code: 'INVALID_PRINCIPAL' });
+  }
+  const person = await personLabel(resolution.buPrincipal);
+  const roles = await ServiceProvider.getRoleAssignmentStore().getRoles(resolution.buPrincipal);
+  await audit.record({ action: 'access:impersonate', decision: 'ALLOWED', outcome: 'SUCCEEDED', target: person.buPrincipal, detail: 'started' });
+  const response = jsonResponse(200, { impersonating: { ...person, roles } });
+  return { ...response, headers: { ...response.headers, 'Set-Cookie': Impersonation.setCookie(person.buPrincipal) } };
 }
 
 /**

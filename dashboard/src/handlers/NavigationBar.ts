@@ -22,11 +22,22 @@ export type NavigationBar = {
   landscapeNavigator?: { options: NavigatorOption[] };
   /** This landscape's name, shown in place of the navigator when there is none */
   landscapeBadge?: { label: string };
-  /** How the navigator or badge is tinted. Absent for an unmarked landscape */
-  landscapeTone?: { name: LandscapeToneName; description: string };
+  /**
+   * How the navigator or badge is tinted. Absent for an unmarked landscape. While impersonating, `impersonating` in
+   * place of the landscape's own (decision 14)
+   */
+  landscapeTone?: { name: LandscapeToneName | typeof IMPERSONATING_TONE; description: string };
   /** Absent in public mode, where there is no sign-in to end */
   signOut?: { url: string; user?: string };
+  /**
+   * Impersonation (decision 14): `start` for a user whose own roles allow it (the Impersonate button, the one control
+   * hidden by role), or while impersonating, `stop` naming the person. Absent for anyone else.
+   */
+  impersonate?: { start?: true; stop?: { buPrincipal: string; label: string } };
 };
+
+/** The top bar's tone while impersonating, in place of the landscape's */
+export const IMPERSONATING_TONE = 'impersonating';
 
 /**
  * Build the navigation bar: a landscape navigator over the registry (this landscape selected), or a
@@ -42,8 +53,10 @@ export const buildNavigationBar = (params: {
   signInRequired: boolean;
   /** The JWT's user attributes (Authenticator.user) */
   user?: any;
+  /** Whether the user may impersonate, and the person they impersonate, if they do */
+  impersonation?: { mayImpersonate: boolean; person?: { buPrincipal: string; label: string } };
 }): NavigationBar => {
-  const { listing, signInRequired, user } = params;
+  const { listing, signInRequired, user, impersonation } = params;
   const navigationBar: NavigationBar = {};
   const landscape = listing?.current ?? params.landscape;
 
@@ -67,6 +80,13 @@ export const buildNavigationBar = (params: {
 
   if (signInRequired) {
     navigationBar.signOut = { url: SIGN_OUT_PATH, user: userName(user) };
+    const person = impersonation?.person;
+    if (person) {
+      navigationBar.impersonate = { stop: { buPrincipal: person.buPrincipal, label: person.label } };
+      navigationBar.landscapeTone = { name: IMPERSONATING_TONE, description: `Impersonating ${person.label}: viewing only` };
+    } else if (impersonation?.mayImpersonate) {
+      navigationBar.impersonate = { start: true };
+    }
   }
   return navigationBar;
 }
