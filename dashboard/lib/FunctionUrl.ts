@@ -16,6 +16,7 @@ import { CACHE_SECRET } from "../src/handlers/DashboardCache";
 import { LandscapeTone } from "../src/handlers/LandscapeTone";
 import { LaunchFlag } from "../src/services/LaunchFlag";
 import { dashboardFunctionName } from "./DashboardFunctionName";
+import { AccessTables } from "./AccessTables";
 import { LandscapeResources } from "./LandscapeResources";
 import { registerLandscape } from "./LandscapeRegistration";
 
@@ -129,6 +130,12 @@ export class FunctionUrlOrigin {
 
     // List the landscape in the landscape picker's registry, and let the Lambda read the registry
     registerLandscape({ stack, context, landscape, lambda: this.lambda });
+
+    // The dashboard's own tables: role assignments and the audit trail (authorization-plan.md). In public mode too:
+    // its audit records name the principal "anonymous"
+    const accessTables = new AccessTables(stack, 'access-tables', { stackId: STACK_ID, landscape });
+    accessTables.grantTo(this.lambda);
+    Object.entries(accessTables.environment).forEach(([name, value]) => this.lambda.addEnvironment(name, value));
 
     // Read access to the landscape's integration config secret, run data and chunk files
     Secret.fromSecretNameV2(stack, 'integration-secret', integrationSecretName).grantRead(this.lambda);

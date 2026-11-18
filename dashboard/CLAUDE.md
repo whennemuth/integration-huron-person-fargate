@@ -415,6 +415,40 @@ DASHBOARD_LAUNCH_FLAG_TASK=read npx ts-node -r dotenv/config dashboard/src/servi
 DASHBOARD_LAMBDA_FUNCTION_TASK=show npx ts-node -r dotenv/config dashboard/scripts/LambdaFunction.ts
 ```
 
+- `src/authorization/RoleAssignmentStore.ts` (`DASHBOARD_ROLE_ASSIGNMENTS`) - a landscape's role assignments, in its
+  access table. `TASK`: `list`, `get`, `set` (replace `PRINCIPAL`'s roles with `ROLES`), `grant`, `revoke`. How the
+  first Admin is seeded (fargate `README.md`, "Dashboard access"). Tests: `test/DashboardRoleAssignments.test.ts`.
+- `src/audit/AuditStore.ts` (`DASHBOARD_AUDIT_TRAIL`) - a landscape's audit trail, read only. `TASK`: `list` (newest
+  first, optionally by `PRINCIPAL` or `ACTION`, `LIMIT` and `CURSOR`). Tests: `test/DashboardAuditStore.test.ts`.
+
+```bash
+DASHBOARD_ROLE_ASSIGNMENTS_TASK=list npx ts-node -r dotenv/config dashboard/src/authorization/RoleAssignmentStore.ts
+```
+
+### Authorization
+
+Who may do what in a landscape's dashboard, by role, per landscape (`authorization-plan.md`, being delivered in
+steps; until the gate in `DashboardHandler` lands, nothing below is enforced and every signed-in user can do
+everything).
+- **The model** (`src/authorization/`): actions (`Actions.ts`), policies and roles (`Policy`, `Role`,
+  `StaticRoleCatalog`: Viewer, Operator, Admin), the person (`Principal.fromClaims()`, keyed by `buPrincipal`, compared
+  lower-cased; `PrincipalResolver` takes a `buPrincipal` or `<id>@bu.edu`), `Authorizer` (deny by default; a 403's
+  message; `effectivePermissions()` for `/api/me`) and `PermitAllAuthorizer` (public mode), `RoutePermissions` (what
+  each `/api/*` route needs, whether it changes anything; an unmapped `/api` route is denied, a known route's
+  unsupported method stays a `405`), and `Impersonation` (an Admin seeing the dashboard through another person's
+  roles: the `hp-dashboard-impersonate` cookie, re-checked on every request, viewing only). Tests:
+  `DashboardAuthorizer`, `DashboardRoutePermissions`, `DashboardImpersonation`.
+- **Role assignments** (`RoleAssignmentStore.ts`): `DynamoDbRoleAssignmentStore` over the access table (partition key
+  `buPrincipal`, sort key `sk`: one item per role held, with `grantedBy`/`grantedAt`, and one `#PROFILE` item per
+  person seen, with what their sign-in token last said); `setRoles()` replaces a person's roles in one transaction,
+  keeping the original grant of a role they keep. `InMemoryRoleAssignmentStore` for offline runs and tests.
+- **Audit trail** (`src/audit/AuditStore.ts`): `DynamoDbAuditStore` over the audit table (every record in partition
+  `pk` = `AUDIT`, sort key `sk` = `<ISO time>#<id>`, so a Query lists newest first; `principal-index` for one
+  person's), paged with cursors (`AuditError` `INVALID_CURSOR` / `INVALID_LIMIT` / `INVALID_FILTER`); a public
+  dashboard's records name `anonymous`. `InMemoryAuditStore` for offline runs and tests. Never deleted from.
+- **The first Admin** is seeded by hand after a deploy (the tables start empty, and a teardown deletes them): the
+  `DASHBOARD_ROLE_ASSIGNMENTS` harness or `aws dynamodb put-item` (fargate `README.md`, "Dashboard access").
+
 ## CDK Deployment
 
 One dashboard stack per landscape, `${DASHBOARD.STACK_ID}-${landscape}` (e.g. `hp-dashboard-mock`),
@@ -433,6 +467,9 @@ characters: the Shibboleth construct names a bucket `<stack name>-context-config
 - Lambda Function URL with origin verification (SSM `/cloudfront/<STACK_ID>/<landscape>/origin-verify-secret`)
 - The landscape's registry parameter `/hp-dashboard/landscapes/<landscape>` (see below), and
   `ssm:GetParametersByPath` on that path for the Lambda
+- Its own two tables (`lib/AccessTables.ts`, see "Authorization" above), in public mode too: the access table
+  `<STACK_ID>-access-<landscape>` and the audit table `<STACK_ID>-audit-<landscape>`, both destroyed with the stack,
+  read and written by the Lambda (`ACCESS_TABLE_NAME`, `AUDIT_TABLE_NAME`). The only DynamoDB tables it writes
 - No secret of its own: the Lambda reads the landscape's integration config secret
   (`integrationSecretName()` in fargate `lib/Secrets.ts`), and has read-only grants on the
   statistics table, the person history table (DynamoDB mode) and the chunks bucket

@@ -138,8 +138,11 @@ describe('FunctionUrlOrigin', () => {
     expect(actions).toEqual(expect.arrayContaining([
       'secretsmanager:GetSecretValue', 'dynamodb:Query', 'dynamodb:GetItem', 's3:GetObject', 's3:ListBucket'
     ]));
-    // No writes: starting a run invokes the chunker subscriber, which resets the chunker's counters itself
-    expect(actions.some((a: string) => /^(dynamodb:(Put|Update|Delete|BatchWrite)|s3:(Put|Delete))/.test(a))).toBe(false);
+    // No writes to the landscape's resources: starting a run invokes the chunker subscriber, which resets the
+    // chunker's counters itself. The dashboard writes only its own tables (tested below).
+    const ownTables = (s: any) => JSON.stringify(s.Resource).includes('accesstables');
+    const landscapeActions = statements.filter((s: any) => !ownTables(s)).flatMap((s: any) => [s.Action].flat());
+    expect(landscapeActions.some((a: string) => /^(dynamodb:(Put|Update|Delete|BatchWrite|TransactWrite)|s3:(Put|Delete))/.test(a))).toBe(false);
 
     const resources = JSON.stringify(statements.map((s: any) => s.Resource));
     expect(resources).toContain('table/huron-person-fargate-processor-statistics-mock/index/*');
@@ -276,6 +279,57 @@ describe('FunctionUrlOrigin', () => {
     const resources = JSON.stringify(ssm.map((s: any) => s.Resource));
     expect(resources).toContain(':parameter/hp-dashboard/landscapes\"');
     expect(resources).toContain(':parameter/hp-dashboard/landscapes/*');
+  });
+
+  describe('its own tables: role assignments and the audit trail', () => {
+    it('makes the access and audit tables, named per landscape, destroyed with the stack', () => {
+      const template = synth('dynamodb');
+      template.hasResource('AWS::DynamoDB::Table', {
+        DeletionPolicy: 'Delete',
+        Properties: {
+          TableName: 'huron-person-dashboard-access-mock',
+          KeySchema: [{ AttributeName: 'buPrincipal', KeyType: 'HASH' }, { AttributeName: 'sk', KeyType: 'RANGE' }],
+          BillingMode: 'PAY_PER_REQUEST'
+        }
+      });
+      template.hasResource('AWS::DynamoDB::Table', {
+        DeletionPolicy: 'Delete',
+        Properties: {
+          TableName: 'huron-person-dashboard-audit-mock',
+          KeySchema: [{ AttributeName: 'pk', KeyType: 'HASH' }, { AttributeName: 'sk', KeyType: 'RANGE' }],
+          GlobalSecondaryIndexes: [Match.objectLike({
+            IndexName: 'principal-index',
+            KeySchema: [{ AttributeName: 'buPrincipal', KeyType: 'HASH' }, { AttributeName: 'sk', KeyType: 'RANGE' }],
+            Projection: { ProjectionType: 'ALL' }
+          })]
+        }
+      });
+    });
+
+    it('names them to the Lambda, in public mode too', () => {
+      for (const mode of [AuthenticationMode.PUBLIC, AuthenticationMode.AUTHENTICATED]) {
+        const overrides = mode === AuthenticationMode.AUTHENTICATED
+          ? { AUTHENTICATION_MODE: mode, APP_LOGIN_HEADER: 'login', APP_LOGOUT_HEADER: 'logout', SHIBBOLETH: {} }
+          : {};
+        const template = synth('dynamodb', overrides);
+        const [fn] = Object.values(template.findResources('AWS::Lambda::Function'));
+        const variables = fn.Properties.Environment.Variables;
+        expect(JSON.stringify(variables.ACCESS_TABLE_NAME)).toContain('accesstablesaccess');
+        expect(JSON.stringify(variables.AUDIT_TABLE_NAME)).toContain('accesstablesaudit');
+      }
+    });
+
+    it('lets the Lambda read and write them, and nothing else of theirs', () => {
+      const statements = Object.values(synth('dynamodb').findResources('AWS::IAM::Policy'))
+        .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement)
+        .filter((s: any) => JSON.stringify(s.Resource).includes('accesstables'));
+      const actions = statements.flatMap((s: any) => [s.Action].flat());
+      expect(actions).toEqual(expect.arrayContaining(['dynamodb:Query', 'dynamodb:PutItem', 'dynamodb:DeleteItem']));
+      expect(actions.some((a: string) => /^dynamodb:(DeleteTable|UpdateTable|CreateTable)/.test(a))).toBe(false);
+      const resources = JSON.stringify(statements.map((s: any) => s.Resource));
+      expect(resources).toContain('accesstablesaccess');
+      expect(resources).toContain('accesstablesaudit');
+    });
   });
 
   it('references no other stack and keeps the origin verify secret per landscape', () => {
