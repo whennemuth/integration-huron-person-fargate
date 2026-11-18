@@ -5,7 +5,9 @@
 import { ACTIONS, isAction } from '../dashboard/src/authorization/Actions';
 import { Authorizer, denialMessage, PermitAllAuthorizer, RoleAssignments } from '../dashboard/src/authorization/Authorizer';
 import { Principal, PrincipalResolver } from '../dashboard/src/authorization/Principal';
-import { StaticRoleCatalog } from '../dashboard/src/authorization/RoleCatalog';
+import { Policy } from '../dashboard/src/authorization/Policy';
+import { Role } from '../dashboard/src/authorization/Role';
+import { pruneCoveredRoles, RoleCatalog, StaticRoleCatalog } from '../dashboard/src/authorization/RoleCatalog';
 
 const catalog = new StaticRoleCatalog();
 
@@ -60,6 +62,40 @@ describe('StaticRoleCatalog', () => {
   it('recognizes actions', () => {
     expect(isAction('bulk:start')).toBe(true);
     expect(isAction('bulk:stop')).toBe(false);
+  });
+});
+
+describe('pruneCoveredRoles', () => {
+  it('keeps only Admin of all three, saying what covers the others', () => {
+    expect(pruneCoveredRoles(catalog, ['Viewer', 'Operator', 'Admin'])).toEqual({
+      kept: ['Admin'], pruned: [{ role: 'Viewer', coveredBy: 'Admin' }, { role: 'Operator', coveredBy: 'Admin' }]
+    });
+    expect(pruneCoveredRoles(catalog, ['Operator', 'Viewer'])).toEqual({ kept: ['Operator'], pruned: [{ role: 'Viewer', coveredBy: 'Operator' }] });
+  });
+
+  it('keeps a single role, no role, and repeats once', () => {
+    expect(pruneCoveredRoles(catalog, ['Viewer', 'Viewer'])).toEqual({ kept: ['Viewer'], pruned: [] });
+    expect(pruneCoveredRoles(catalog, [])).toEqual({ kept: [], pruned: [] });
+  });
+
+  /** A catalog of policies made up for the rule's cases */
+  const custom = (roles: [string, string[]][]): RoleCatalog => {
+    const made = roles.map(([name, actions]) => new Role(name, name, [new Policy(`${name}Policy`, name, actions as any)]));
+    return { getRole: name => made.find(role => role.name === name), listRoles: () => made };
+  };
+
+  it("keeps roles that don't cover each other, whatever their rank", () => {
+    const roles = custom([['Auditor', ['audit:read']], ['Operator', ['runs:read', 'bulk:start']]]);
+    expect(pruneCoveredRoles(roles, ['Operator', 'Auditor'])).toEqual({ kept: ['Auditor', 'Operator'], pruned: [] });
+  });
+
+  it('keeps the later in the catalog of two that grant the same actions', () => {
+    const roles = custom([['Reader', ['runs:read']], ['Watcher', ['runs:read']]]);
+    expect(pruneCoveredRoles(roles, ['Watcher', 'Reader'])).toEqual({ kept: ['Watcher'], pruned: [{ role: 'Reader', coveredBy: 'Watcher' }] });
+  });
+
+  it('leaves names the catalog does not know to the caller', () => {
+    expect(pruneCoveredRoles(catalog, ['Ghost', 'Viewer', 'Admin'])).toEqual({ kept: ['Admin', 'Ghost'], pruned: [{ role: 'Viewer', coveredBy: 'Admin' }] });
   });
 });
 

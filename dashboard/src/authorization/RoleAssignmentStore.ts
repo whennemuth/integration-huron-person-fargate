@@ -3,7 +3,7 @@ import { DynamoDBDocumentClient, PutCommand, QueryCommand, ScanCommand, Transact
 import { TestEnvironment } from 'integration-core';
 import { RoleAssignments } from './Authorizer';
 import { Principal, PrincipalResolver } from './Principal';
-import { StaticRoleCatalog } from './RoleCatalog';
+import { pruneCoveredRoles, StaticRoleCatalog } from './RoleCatalog';
 
 /** One role a person holds, who granted it and when */
 export type RoleGrant = { role: string; grantedBy: string; grantedAt: string };
@@ -262,7 +262,8 @@ export class DynamoDbRoleAssignmentStore implements RoleAssignmentStore {
  *   revoke  remove ROLES from PRINCIPAL's roles
  *
  * PRINCIPAL is a buPrincipal or <id>@bu.edu. ROLES must be roles the catalog knows (Viewer, Operator, Admin).
- * GRANTED_BY (default: "harness") is recorded with each role added.
+ * set and grant save the roles less any another of them covers (pruneCoveredRoles(), decision 15), and say what was
+ * dropped. GRANTED_BY (default: "harness") is recorded with each role added.
  */
 if (require.main === module) {
   const testEnvironment = TestEnvironment('DASHBOARD_ROLE_ASSIGNMENTS');
@@ -299,6 +300,13 @@ if (require.main === module) {
     return names;
   };
 
+  /** The roles less the covered ones, saying what was dropped */
+  const pruned = (names: string[]): string[] => {
+    const { kept, pruned: dropped } = pruneCoveredRoles(new StaticRoleCatalog(), names);
+    dropped.forEach(({ role, coveredBy }) => console.log(`Dropping ${role}: ${coveredBy} covers it`));
+    return kept;
+  };
+
   (async () => {
     if (!landscape || !region) {
       throw new Error('DASHBOARD_ROLE_ASSIGNMENTS_LANDSCAPE and DASHBOARD_ROLE_ASSIGNMENTS_REGION are required');
@@ -316,12 +324,12 @@ if (require.main === module) {
       }
       case 'set': {
         const who = principal();
-        show(`Set ${who}`, await store.setRoles(who, roles(), grantedBy));
+        show(`Set ${who}`, await store.setRoles(who, pruned(roles()), grantedBy));
         break;
       }
       case 'grant': {
         const who = principal();
-        show(`Granted ${who}`, await store.setRoles(who, [...await store.getRoles(who), ...roles()], grantedBy));
+        show(`Granted ${who}`, await store.setRoles(who, pruned([...await store.getRoles(who), ...roles()]), grantedBy));
         break;
       }
       case 'revoke': {

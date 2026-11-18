@@ -195,14 +195,14 @@ async function route(request: Request, access: RequestAccess, audit: AuditTrail)
 
     case '/api/access/roles':
     case '/api/access/assignments':
-      return await handleAccess(request, access);
+      return await handleAccess(request, access, audit);
     
     default:
       if (path.startsWith('/api/runs/')) {
         return await handleRunRoute({ method: request.method, path, queryParams });
       }
       if (path.startsWith('/api/access/assignments/')) {
-        return await handleAccess(request, access);
+        return await handleAccess(request, access, audit);
       }
       return createResponse(404, 'text/html', '<h1>404 - Page Not Found</h1>');
   }
@@ -713,11 +713,17 @@ function methodNotAllowed(): LambdaFunctionUrlResult {
 }
 
 /** The Access page's routes (AccessRoutes), behind the gate's access:admin; a change is recorded as granted by the user */
-async function handleAccess(request: Request, access: RequestAccess): Promise<LambdaFunctionUrlResult> {
+async function handleAccess(request: Request, access: RequestAccess, audit: AuditTrail): Promise<LambdaFunctionUrlResult> {
   const routes = new AccessRoutes({ store: ServiceProvider.getRoleAssignmentStore(), catalog: ServiceProvider.getRoleCatalog() });
   const { status, body } = await routes.answer({
     method: request.method, path: request.path, body: request.body, grantedBy: access.principal.buPrincipal ?? 'anonymous'
   });
+  // A saved change is audited with the roles saved, after pruning, and what was dropped
+  if (status === 200 && Array.isArray(body.roles) && body.added !== undefined) {
+    const pruned = (body.pruned as { role: string; coveredBy: string }[] | undefined) ?? [];
+    audit.note(`roles=${(body.roles as string[]).join(',') || 'none'}`
+      + (pruned.length ? `; dropped ${pruned.map(({ role, coveredBy }) => `${role} (covered by ${coveredBy})`).join(', ')}` : ''));
+  }
   return jsonResponse(status, body);
 }
 

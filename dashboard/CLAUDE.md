@@ -441,7 +441,7 @@ DASHBOARD_ROLE_ASSIGNMENTS_TASK=list npx ts-node -r dotenv/config dashboard/src/
 
 ### Authorization
 
-Who may do what in a landscape's dashboard, by role, per landscape (`authorization-plan.md`, delivered in six steps,
+Who may do what in a landscape's dashboard, by role, per landscape (`authorization-plan.md`, delivered in seven steps,
 2026-11-17).
 - **The gate** (`RequestGate`, in `DashboardHandler` before routing; decision 7, deny by default): pages and the
   sign-in routes need only authentication; `GET /api/me` only sign-in; every other `/api/*` route its action
@@ -489,7 +489,8 @@ Who may do what in a landscape's dashboard, by role, per landscape (`authorizati
   landscape, and never fails the request): every denial of an action, at the gate or of a Bulk sync choice (its reason
   as the detail); and, once the route has answered, every allowed `person:lookup`, `person:preview`, `person:sync`,
   `bulk:start` (a start, not a review), `mock:reset` and `access:admin` request (`auditsAllowed()`), `SUCCEEDED` for a
-  2xx and else `FAILED` with the status. `describeRequest()` takes the target (a BUID, a person, a test's BUID) and a
+  2xx and else `FAILED` with the status (`access:admin` only for changes, since 2026-11-17: its reads were two
+  records per Access page load; a role change's detail is the roles saved and what was dropped, `AuditTrail.note()`). `describeRequest()` takes the target (a BUID, a person, a test's BUID) and a
   short detail (a start's choices, Processor tasks among them) from the route and body. `runs:read` and `audit:read`
   aren't recorded, nor are a `405`, an unmapped route or `/api/me`. Tests: `test/DashboardAuditTrail.test.ts`,
   `test/DashboardAuditStore.test.ts`.
@@ -499,10 +500,17 @@ Who may do what in a landscape's dashboard, by role, per landscape (`authorizati
 - **The Access routes** (`src/handlers/AccessRoutes.ts`, `access:admin`): `GET /api/access/roles` (the catalog's roles,
   policies and actions), `GET /api/access/assignments` (everyone with a role, with profiles), `GET`, `PUT { roles }`
   and `DELETE /api/access/assignments/{person}` (a `buPrincipal` or `<id>@bu.edu`; `PUT` replaces the roles, granted
-  by the Admin who saved them). Refusals are `{ error, code }`: `400 INVALID_PRINCIPAL | INVALID_REQUEST |
+  by the Admin who saved them, less any role another of them covers, answering those as `pruned`). Refusals are `{ error, code }`: `400 INVALID_PRINCIPAL | INVALID_REQUEST |
   INVALID_ROLE`, and `409 LAST_ADMIN` for a change that would leave no Admin (decision 11; checked against the store
   as it is, so two Admins removing each other at the same moment could both pass). Tests:
   `test/DashboardAccessRoutes.test.ts`.
+- **Covered roles are pruned** (decision 15; `pruneCoveredRoles()` in `RoleCatalog.ts`): of the roles chosen for a
+  person, one is dropped when every action it grants is also granted by another chosen role (actions compared, not a
+  ranking; of two granting the same actions, the later in the catalog is kept). The `PUT` route and the
+  `DASHBOARD_ROLE_ASSIGNMENTS` harness's `set` and `grant` save the pruned set; the last-Admin safeguard judges it.
+  The Access page applies the same rule as roles are checked (`AccessPage.coverage()` / `includedIn()`): a covered role
+  shows checked, disabled and "included in Admin", and unchecking its coverer frees it. Assignments saved before are
+  pruned the next time they are saved.
 - **The Administration pages** (sidebar group Administration, shown to everyone; `public/js/administration.js`,
   `templates/partials/access-tab.mustache` and `audit-tab.mustache`): **Access** (`AccessPage`: look a person up,
   their profile and a checkbox per role, Save, asking first when an Admin removes their own Admin role; everyone with

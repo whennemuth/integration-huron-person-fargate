@@ -1,7 +1,7 @@
 import { ACTIONS } from '../authorization/Actions';
 import { PrincipalResolver } from '../authorization/Principal';
 import { RoleAssignmentStore } from '../authorization/RoleAssignmentStore';
-import { RoleCatalog } from '../authorization/RoleCatalog';
+import { pruneCoveredRoles, RoleCatalog } from '../authorization/RoleCatalog';
 
 /** A route's answer, as JSON */
 export type AccessResponse = { status: number; body: Record<string, unknown> };
@@ -18,7 +18,8 @@ const refuse = (status: number, code: string, error: string): AccessResponse => 
  * - `GET /api/access/roles`: the catalog's roles, each with its policies and their actions;
  * - `GET /api/access/assignments`: everyone with a role, with their grants and profiles;
  * - `GET /api/access/assignments/{person}`: one person's grants and profile (a buPrincipal or <id>@bu.edu);
- * - `PUT /api/access/assignments/{person}` `{ roles }`: replace their roles (assign, retract, swap at once);
+ * - `PUT /api/access/assignments/{person}` `{ roles }`: replace their roles (assign, retract, swap at once), less any
+ *   role another of them covers (decision 15), answering what was dropped as `pruned`;
  * - `DELETE /api/access/assignments/{person}`: remove them all.
  * A change that would leave no Admin is refused 409 LAST_ADMIN. Refusals are `{ error, code }`.
  */
@@ -100,11 +101,13 @@ export class AccessRoutes {
   }
 
   /**
-   * Replace a person's roles, unless that leaves no Admin (decision 11). Checked against the store as it is now: two
-   * Admins removing each other at the same moment could both pass, which an Admin seeded with the harness puts right.
+   * Replace a person's roles, less the covered ones (decision 15), unless that leaves no Admin (decision 11, judged on
+   * the roles that would be saved). Checked against the store as it is now: two Admins removing each other at the same
+   * moment could both pass, which an Admin seeded with the harness puts right.
    */
-  private async setRoles(buPrincipal: string, roles: string[], grantedBy: string): Promise<AccessResponse> {
-    const { store } = this.params;
+  private async setRoles(buPrincipal: string, chosen: string[], grantedBy: string): Promise<AccessResponse> {
+    const { store, catalog } = this.params;
+    const { kept: roles, pruned } = pruneCoveredRoles(catalog, chosen);
     const current = await store.getRoles(buPrincipal);
     if (current.includes(ADMIN_ROLE) && !roles.includes(ADMIN_ROLE)) {
       const admins = await store.holdersOf(ADMIN_ROLE);
@@ -113,6 +116,6 @@ export class AccessRoutes {
       }
     }
     const change = await store.setRoles(buPrincipal, roles, grantedBy);
-    return { status: 200, body: { buPrincipal, ...change, grants: await store.getGrants(buPrincipal) } };
+    return { status: 200, body: { buPrincipal, ...change, pruned, grants: await store.getGrants(buPrincipal) } };
   }
 }

@@ -219,11 +219,15 @@ class AccessPage {
             }
             const person = await this.options.getJson(`/api/access/assignments/${encodeURIComponent(principal)}`);
             this.shown = person;
+            this.chosen = new Set(person.roles || []);
             this.person.innerHTML = this.personHtml(person);
-            this.person.querySelector('[data-access-form]').addEventListener('submit', event => {
+            const form = this.person.querySelector('[data-access-form]');
+            form.addEventListener('submit', event => {
                 event.preventDefault();
                 this.save();
             });
+            form.addEventListener('change', event => this.choose(event.target));
+            this.applyCoverage();
         } catch (error) {
             this.shown = undefined;
             PageState.error(this.person, `${principal} could not be looked up`, error.message, { compact: true });
@@ -245,7 +249,7 @@ class AccessPage {
             </div>
             <form data-access-form>
                 <fieldset>
-                    <legend class="form-label">Roles</legend>
+                    <legend class="form-label fs-6">Roles</legend>
                     ${this.roles.map(role => AccessPage.roleCheckboxHtml(role, held.includes(role.name))).join('')}
                 </fieldset>
                 <div class="access-person-actions">
@@ -263,15 +267,88 @@ class AccessPage {
                 <input class="form-check-input" type="checkbox" id="${Html.escape(id)}" name="role" value="${Html.escape(role.name)}" ${checked ? 'checked' : ''}>
                 <label class="form-check-label" for="${Html.escape(id)}">
                     <span class="access-role-name">${Html.escape(role.name)}</span>
+                    <span class="access-role-included" data-included="${Html.escape(role.name)}"></span>
                     <span class="secondary">${Html.escape(role.description)}: ${Html.escape((role.policies || []).map(policy => policy.name).join(', '))}</span>
                 </label>
             </div>
         `;
     }
 
-    /** The roles checked in the form */
+    /**
+     * Which of the chosen roles another chosen role covers, by the server's rule (pruneCoveredRoles(), decision 15): a
+     * role whose every action another chosen role also grants; of two granting the same actions, the later is kept.
+     * @param roles the catalog's roles, in its order, with their policies' actions (GET /api/access/roles)
+     * @returns {{ kept: string[], coveredBy: Object<string, string> }} the roles to save, and each covered one's coverer
+     */
+    static coverage(roles, chosen) {
+        const covers = AccessPage.covering(roles);
+        const known = roles.map(role => role.name).filter(name => chosen.includes(name));
+        const kept = known.filter(role => ! known.some(by => covers(by, role)));
+        const coveredBy = {};
+        known.filter(role => ! kept.includes(role)).forEach(role => {
+            coveredBy[role] = kept.find(by => covers(by, role));
+        });
+        return { kept, coveredBy };
+    }
+
+    /** covers(by, role): whether role by covers role, by the rule above */
+    static covering(roles) {
+        const order = roles.map(role => role.name);
+        const actionsOf = new Map(roles.map(role => [role.name, new Set((role.policies || []).flatMap(policy => policy.actions || []))]));
+        return (by, role) => {
+            const mine = actionsOf.get(role);
+            const theirs = actionsOf.get(by);
+            if ( ! mine || ! theirs || by === role || [...mine].some(action => ! theirs.has(action))) {
+                return false;
+            }
+            return theirs.size > mine.size || order.indexOf(by) > order.indexOf(role);
+        };
+    }
+
+    /** Every catalog role a kept role covers, chosen or not, with the kept role covering it: what the form shows as included */
+    static includedIn(roles, kept) {
+        const covers = AccessPage.covering(roles);
+        const included = {};
+        roles.forEach(({ name }) => {
+            const by = kept.find(role => covers(role, name));
+            if (by) {
+                included[name] = by;
+            }
+        });
+        return included;
+    }
+
+    /** A role checked or unchecked: the roles chosen change, and so does what they cover */
+    choose(input) {
+        if ( ! input || input.name !== 'role' || input.disabled) {
+            return;
+        }
+        if (input.checked) {
+            this.chosen.add(input.value);
+        } else {
+            this.chosen.delete(input.value);
+        }
+        this.applyCoverage();
+    }
+
+    /** Show every role a chosen role covers as checked, disabled and "included in <role>"; free the rest */
+    applyCoverage() {
+        const roles = this.roles || [];
+        const coveredBy = AccessPage.includedIn(roles, AccessPage.coverage(roles, [...this.chosen]).kept);
+        this.person.querySelectorAll('input[name="role"]').forEach(input => {
+            const coverer = coveredBy[input.value];
+            input.disabled = !! coverer;
+            input.checked = !! coverer || this.chosen.has(input.value);
+            const note = this.person.querySelector(`[data-included="${input.value}"]`);
+            if (note) {
+                note.textContent = coverer ? `included in ${coverer}` : '';
+            }
+        });
+    }
+
+    /** The roles to save: those chosen, less the ones another chosen role covers */
     checkedRoles() {
-        return Array.from(this.person.querySelectorAll('input[name="role"]:checked')).map(input => input.value);
+        return AccessPage.coverage(this.roles || [], [...(this.chosen || [])]).kept;
     }
 
     /** Save the checked roles, asking first when an Admin takes away their own Admin role */
@@ -292,6 +369,8 @@ class AccessPage {
         try {
             const change = await this.options.sendJson('PUT', `/api/access/assignments/${encodeURIComponent(person.buPrincipal)}`, { roles });
             this.shown = { ...person, roles: change.roles, grants: change.grants };
+            this.chosen = new Set(change.roles || []);
+            this.applyCoverage();
             result.replaceChildren(AccessPage.savedElement(change));
             this.load();
         } catch (error) {
@@ -314,6 +393,9 @@ class AccessPage {
         }
         if ((change.removed || []).length) {
             parts.push(`removed ${change.removed.join(', ')}`);
+        }
+        if ((change.pruned || []).length) {
+            parts.push(`not kept ${change.pruned.map(({ role, coveredBy }) => `${role} (included in ${coveredBy})`).join(', ')}`);
         }
         const element = document.createElement('span');
         element.className = 'access-saved';

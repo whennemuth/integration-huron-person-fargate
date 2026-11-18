@@ -1498,3 +1498,14 @@ button.app-user:focus-visible {
     border: 1px solid var(--hp-accent-border-subtle);
     border-radius: var(--hp-radius);
 }
+
+/* A role another chosen role covers (decision 15): shown checked and disabled, "included in Admin" */
+.access-role-included:not(:empty) {
+    margin-right: 0.375rem;
+    font-size: 0.8125rem;
+    color: var(--hp-accent);
+}
+
+.access-role .form-check-input:disabled ~ .form-check-label {
+    opacity: 1;
+}

@@ -57,10 +57,25 @@ describe('the assignments', () => {
   it("replaces a person's roles, granted by the Admin who saved them", async () => {
     const result = await call('PUT', '/api/access/assignments/amy', { roles: ['Viewer', 'Operator'] });
     expect(result.statusCode).toBe(200);
-    expect(json(result)).toMatchObject({ buPrincipal: 'amy', added: ['Operator', 'Viewer'], removed: [], roles: ['Operator', 'Viewer'] });
+    expect(json(result)).toMatchObject({ buPrincipal: 'amy', added: ['Operator'], removed: [], roles: ['Operator'] });
     expect((await store().getGrants('amy'))[0].grantedBy).toBe('jdoe');
-    const swapped = json(await call('PUT', '/api/access/assignments/amy', { roles: ['Admin'] }));
-    expect(swapped).toMatchObject({ added: ['Admin'], removed: ['Operator', 'Viewer'] });
+    const swapped = json(await call('PUT', '/api/access/assignments/amy', { roles: ['Viewer'] }));
+    expect(swapped).toMatchObject({ added: ['Viewer'], removed: ['Operator'], pruned: [] });
+  });
+
+  it('saves only the roles not covered by another, saying what it dropped', async () => {
+    const result = json(await call('PUT', '/api/access/assignments/amy', { roles: ['Viewer', 'Admin', 'Operator'] }));
+    expect(result).toMatchObject({
+      roles: ['Admin'], added: ['Admin'],
+      pruned: [{ role: 'Viewer', coveredBy: 'Admin' }, { role: 'Operator', coveredBy: 'Admin' }]
+    });
+    expect(await store().getRoles('amy')).toEqual(['Admin']);
+  });
+
+  it("drops a role that's already held once a covering one is saved", async () => {
+    await store().setRoles('amy', ['Viewer', 'Operator'], 'seed');
+    expect(json(await call('PUT', '/api/access/assignments/amy', { roles: ['Viewer', 'Operator'] })))
+      .toMatchObject({ roles: ['Operator'], removed: ['Viewer'], pruned: [{ role: 'Viewer', coveredBy: 'Operator' }] });
   });
 
   it('removes them all', async () => {
@@ -97,8 +112,14 @@ describe('the last Admin', () => {
     expect(await store().holdersOf('Admin')).toEqual(['amy']);
   });
 
-  it('may keep Admin while changing their other roles', async () => {
-    expect((await call('PUT', '/api/access/assignments/jdoe', { roles: ['Admin', 'Viewer'] })).statusCode).toBe(200);
+  it('may keep Admin while choosing roles it covers, which are dropped', async () => {
+    const result = await call('PUT', '/api/access/assignments/jdoe', { roles: ['Admin', 'Viewer'] });
+    expect(result.statusCode).toBe(200);
+    expect(json(result)).toMatchObject({ roles: ['Admin'], pruned: [{ role: 'Viewer', coveredBy: 'Admin' }] });
+  });
+
+  it('judges the roles that would be saved: Viewer and Operator without Admin still leave no Admin', async () => {
+    expect((await call('PUT', '/api/access/assignments/jdoe', { roles: ['Viewer', 'Operator'] })).statusCode).toBe(409);
   });
 });
 
@@ -114,11 +135,20 @@ describe('who may', () => {
 });
 
 describe('the audit trail', () => {
-  it('records each change with the person and the roles given', async () => {
+  it('records each change with the person and the roles saved, and what was dropped', async () => {
     await call('PUT', '/api/access/assignments/amy', { roles: ['Operator'] });
+    await call('PUT', '/api/access/assignments/olly', { roles: ['Viewer', 'Operator'] });
     await call('PUT', '/api/access/assignments/jdoe', { roles: [] });
     const { items } = await loaded.ServiceProvider.getAuditStore().list();
     expect(items[0]).toMatchObject({ action: 'access:admin', decision: 'ALLOWED', outcome: 'FAILED', target: 'jdoe', detail: 'roles=none (HTTP 409)' });
-    expect(items[1]).toMatchObject({ action: 'access:admin', outcome: 'SUCCEEDED', target: 'amy', detail: 'roles=Operator', buPrincipal: 'jdoe' });
+    expect(items[1]).toMatchObject({ target: 'olly', outcome: 'SUCCEEDED', detail: 'roles=Operator; dropped Viewer (covered by Operator)' });
+    expect(items[2]).toMatchObject({ action: 'access:admin', outcome: 'SUCCEEDED', target: 'amy', detail: 'roles=Operator', buPrincipal: 'jdoe' });
+  });
+
+  it("doesn't record reading roles: the Access page's lists and lookups", async () => {
+    await call('GET', '/api/access/roles');
+    await call('GET', '/api/access/assignments');
+    await call('GET', '/api/access/assignments/amy');
+    expect((await loaded.ServiceProvider.getAuditStore().list()).items).toEqual([]);
   });
 });

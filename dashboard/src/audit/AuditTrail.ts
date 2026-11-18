@@ -6,7 +6,8 @@ import { ANONYMOUS, AuditEntry, AuditStore } from './AuditStore';
 
 /**
  * The actions whose allowed requests are audited (authorization-plan.md, decision 9): reads of personal data, changes,
- * and administration. runs:read and audit:read aren't (noise); bulk:processors goes in a start's detail.
+ * and administration's changes. runs:read and audit:read aren't (noise), nor are access:admin's reads (two per Access
+ * page load; amended 2026-11-17); bulk:processors goes in a start's detail.
  */
 export const AUDITED_WHEN_ALLOWED: readonly Action[] = [
   'person:lookup', 'person:preview', 'person:sync', 'bulk:start', 'mock:reset', 'access:admin'
@@ -15,14 +16,17 @@ export const AUDITED_WHEN_ALLOWED: readonly Action[] = [
 /** The longest detail kept: a short note, not a payload */
 export const MAX_DETAIL_LENGTH = 500;
 
+/** The actions audited only when they change something: a run's review starts nothing, and reading roles changes none */
+const AUDITED_ONLY_FOR_CHANGES: readonly Action[] = ['bulk:start', 'access:admin'];
+
 /**
- * Whether an allowed request with this permission is audited: its action is one of AUDITED_WHEN_ALLOWED, except a
- * run's review (bulk:start without a change), which starts nothing
+ * Whether an allowed request with this permission is audited: its action is one of AUDITED_WHEN_ALLOWED, except the
+ * reads of an action audited only for its changes (a run's review, the Access page's lists)
  */
 export const auditsAllowed = (permission: RoutePermission): permission is Extract<RoutePermission, { kind: 'action' }> =>
   permission.kind === 'action'
   && AUDITED_WHEN_ALLOWED.includes(permission.action)
-  && !(permission.action === 'bulk:start' && !permission.changes);
+  && !(AUDITED_ONLY_FOR_CHANGES.includes(permission.action) && !permission.changes);
 
 /** What an audited request was done to, and a short note of how, from its route and body */
 export const describeRequest = (path: string, body: string | null): { target?: string; detail?: string } => {
@@ -73,6 +77,8 @@ export const describeRequest = (path: string, body: string | null): { target?: s
  */
 export class AuditTrail {
   private deniedRecorded = false;
+  /** A detail the route gave, in place of the one taken from the request (a role change's roles as saved) */
+  private routeDetail?: string;
 
   /** viewedAs: while impersonating, the person whose roles decided the request (decision 14) */
   constructor(private readonly params: { store: AuditStore; landscape: string; principal: Principal; viewedAs?: Principal }) {}
@@ -106,8 +112,14 @@ export class AuditTrail {
     await this.record({ action: decision.action, decision: 'DENIED', ...(target && { target }), detail: decision.reason });
   }
 
+  /** What the route did, said more exactly than the request can (e.g. the roles saved, after pruning) */
+  note(detail: string): void {
+    this.routeDetail = detail;
+  }
+
   /** An allowed request, once its route has answered: SUCCEEDED for a 2xx, else FAILED */
-  async allowed(action: Action, statusCode: number, described: { target?: string; detail?: string }): Promise<void> {
+  async allowed(action: Action, statusCode: number, request: { target?: string; detail?: string }): Promise<void> {
+    const described = this.routeDetail === undefined ? request : { ...request, detail: this.routeDetail };
     await this.record({
       action, decision: 'ALLOWED', outcome: statusCode >= 200 && statusCode < 300 ? 'SUCCEEDED' : 'FAILED',
       ...(described.target && { target: described.target }),

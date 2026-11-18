@@ -185,6 +185,51 @@ describe.each([false, true])('administration.js (minified: %s)', minified => {
       expect(result.text).toContain("jdoe is the landscape's last Admin");
     });
 
+    const ROLES = [
+      { name: 'Viewer', policies: [{ actions: ['runs:read'] }] },
+      { name: 'Operator', policies: [{ actions: ['runs:read'] }, { actions: ['bulk:start'] }] },
+      { name: 'Admin', policies: [{ actions: ['runs:read', 'bulk:start'] }, { actions: ['audit:read'] }] },
+      { name: 'Auditor', policies: [{ actions: ['audit:read'] }] }
+    ];
+
+    it("works out coverage by the server's rule", () => {
+      expect(AccessPage.coverage(ROLES, ['Viewer', 'Operator', 'Admin'])).toEqual({ kept: ['Admin'], coveredBy: { Viewer: 'Admin', Operator: 'Admin' } });
+      expect(AccessPage.coverage(ROLES, ['Viewer', 'Operator'])).toEqual({ kept: ['Operator'], coveredBy: { Viewer: 'Operator' } });
+      expect(AccessPage.coverage(ROLES, ['Operator', 'Auditor'])).toEqual({ kept: ['Operator', 'Auditor'], coveredBy: {} });
+      expect(AccessPage.coverage(ROLES, [])).toEqual({ kept: [], coveredBy: {} });
+    });
+
+    it('shows a covered role checked, disabled and included, and frees it when its coverer is unchecked', () => {
+      const inputs = ['Viewer', 'Operator', 'Admin'].map(value => Object.assign(new FakeElement('input'), { name: 'role', value, checked: false, disabled: false }));
+      const notes: Record<string, FakeElement> = Object.fromEntries(inputs.map(input => [input.value, new FakeElement('span')]));
+      const person = Object.assign(new FakeElement(), {
+        querySelectorAll: () => inputs,
+        querySelector: (selector: string) => notes[selector.match(/data-included="([^"]+)"/)?.[1] ?? ''] ?? null
+      });
+      const access = Object.create(AccessPage.prototype);
+      Object.assign(access, { person, roles: ROLES, chosen: new Set(['Viewer']) });
+      access.applyCoverage();
+      expect(inputs.map(i => [i.value, i.checked, i.disabled])).toEqual([['Viewer', true, false], ['Operator', false, false], ['Admin', false, false]]);
+
+      inputs[2].checked = true;
+      access.choose(inputs[2]);
+      expect(inputs.map(i => [i.value, i.checked, i.disabled])).toEqual([['Viewer', true, true], ['Operator', true, true], ['Admin', true, false]]);
+      expect(notes.Operator.textContent).toBe('included in Admin');
+      expect(access.checkedRoles()).toEqual(['Admin']);
+
+      inputs[2].checked = false;
+      access.choose(inputs[2]);
+      // Viewer was chosen before Admin covered it, so it is chosen again; Operator never was
+      expect(inputs.map(i => [i.value, i.checked, i.disabled])).toEqual([['Viewer', true, false], ['Operator', false, false], ['Admin', false, false]]);
+      expect(notes.Operator.textContent).toBe('');
+      expect(access.checkedRoles()).toEqual(['Viewer']);
+    });
+
+    it('says which chosen roles the server did not keep', () => {
+      expect(AccessPage.savedElement({ added: ['Admin'], removed: [], pruned: [{ role: 'Viewer', coveredBy: 'Admin' }] }).textContent)
+        .toBe('Saved: added Admin; not kept Viewer (included in Admin)');
+    });
+
     it('lists a person with their name, roles and latest grant, escaped', () => {
       const html = AccessPage.rowHtml({
         buPrincipal: 'jdoe', profile: { displayName: '<b>Jane</b>' },

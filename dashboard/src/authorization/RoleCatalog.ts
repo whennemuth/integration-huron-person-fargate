@@ -9,6 +9,37 @@ export interface RoleCatalog {
   listRoles(): Role[];
 }
 
+/** What pruning a set of roles kept, and what it dropped with the kept role that covers each */
+export type PrunedRoles = { kept: string[]; pruned: { role: string; coveredBy: string }[] };
+
+/**
+ * Drop the roles another chosen role covers (authorization-plan.md, decision 15): a role is covered when every action
+ * it grants is also granted by another chosen role, so holding it adds nothing. Actions are compared, not a ranking of
+ * roles. Of two roles granting the same actions, the later in the catalog is kept. Names the catalog doesn't know are
+ * kept as they are (refusing them is the caller's business). Kept roles come back in the catalog's order.
+ */
+export const pruneCoveredRoles = (catalog: RoleCatalog, names: string[]): PrunedRoles => {
+  const order = catalog.listRoles().map(role => role.name);
+  const chosen = [...new Set(names)];
+  const known = chosen.filter(name => order.includes(name)).sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  const actionsOf = new Map(known.map(name => [name, new Set(catalog.getRole(name)!.actions())]));
+  const covers = (by: string, role: string): boolean => {
+    const mine = actionsOf.get(role)!;
+    const theirs = actionsOf.get(by)!;
+    if (by === role || [...mine].some(action => !theirs.has(action))) {
+      return false;
+    }
+    // A strictly larger set covers; an equal one only from later in the catalog, so one of the two is kept
+    return theirs.size > mine.size || order.indexOf(by) > order.indexOf(role);
+  };
+  const kept = known.filter(role => !known.some(by => covers(by, role)));
+  const pruned = known
+    .filter(role => !kept.includes(role))
+    // Covering is transitive, so some kept role covers each dropped one
+    .map(role => ({ role, coveredBy: kept.find(by => covers(by, role))! }));
+  return { kept: [...kept, ...chosen.filter(name => !order.includes(name))], pruned };
+};
+
 /**
  * The roles, policies and actions of decision 5, defined in code. A table-backed catalog could replace it behind
  * RoleCatalog without changing anything else.
