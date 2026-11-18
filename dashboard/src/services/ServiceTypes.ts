@@ -1,4 +1,5 @@
 import type { Launch } from './LaunchFlag';
+import type { RequestAuthorizer } from '../authorization/Authorizer';
 import type { StartedBy } from '../../../src/chunking/StartedBy';
 import type { MockLandscapeResetRecord } from '../../../src/chunking/MockLandscapeReset';
 import { CrudOperation } from 'integration-core';
@@ -32,9 +33,14 @@ export interface PersonSyncService {
  */
 export interface BulkSyncService {
   describe(): Promise<BulkSyncState>;
-  /** @param startedBy - who is starting it (the signed-in user), shown in the event and recorded with the run */
-  plan(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncPlan>;
-  start(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncResult>;
+  /**
+   * @param startedBy - who is starting it (the signed-in user), shown in the event and recorded with the run
+   * @param authorizer - the request's: its choices that need actions of their own (Start from scratch: mock:reset;
+   * Processor tasks above the landscape's maximum: bulk:processors) are refused with a ForbiddenError without it
+   * granting them. The route's own action (bulk:start) is the gate's. Without one, no choice is checked.
+   */
+  plan(request: BulkSyncRequestBody, startedBy?: StartedBy, authorizer?: RequestAuthorizer): Promise<BulkSyncPlan>;
+  start(request: BulkSyncRequestBody, startedBy?: StartedBy, authorizer?: RequestAuthorizer): Promise<BulkSyncResult>;
   /** A mock landscape's reset on its own (Overview): the last one, and whether one can be started now */
   resetState(): Promise<MockLandscapeResetState>;
   /** Start a mock landscape's reset on its own; throws a BulkSyncError when refused */

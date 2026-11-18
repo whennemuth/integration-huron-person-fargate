@@ -141,6 +141,8 @@ The Lambda function serves two primary roles:
 
 **Dashboard:**
 - `GET /dashboard` - Main dashboard interface with inline assets
+- `GET /api/me` - who the request is taken to be and what they may do here (see "Authorization"); needs only sign-in.
+  Every other `/api` route needs an action of the signed-in user's roles, and answers `403` without it
 
 **API Operations:**
 - `POST /api/person-lookup` - Look up individual person by BUID or HRN
@@ -320,7 +322,8 @@ repository's `.env` is never read.
 - **Flags** override a switch for one run, after `--`: `--offline`, `--online`, `--auth <none|local>`,
   `--watch`, `--no-watch`, `--storage-mode <dynamodb|s3>` (offline only), `--landscape <name>` (offline only: the
   landscape the offline services play, default `local`; `LocalLaunch.env`'s `LANDSCAPE` names a deployed landscape
-  and isn't used offline), `--allow-production`.
+  and isn't used offline), `--allow-production`, `--roles <Role,...>` (offline with the local sign-in: the local
+  user's roles, see below).
 - **Names before 2026-11-15** still work, each with a "Renamed:" warning saying what it is now
   (`LocalLaunchOptions.RENAMED`): `MOCKED`, `MOCK_STORAGE_MODE` and `AUTHENTICATION=mock` in `LocalLaunch.env`,
   `--mocks`, `--no-mocks` and `--auth mock`; and on the server `LOCALHOST_WITH_MOCKS` (`ServiceProvider.isOffline()`)
@@ -341,8 +344,14 @@ repository's `.env` is never read.
   Lambda to take them from, placeholder login/logout header names are set. The launcher passes
   `LOCAL_SIGN_IN=true` in the environment, so each watch restart puts it back in front of the handler.
   `LocalServer.ts` takes it through `startLocalServer({ requestDecorator })` (`LocalRequestDecorator`:
-  `decorate(event)` and an optional `respond(path)`), and imports nothing from `scripts/`. Tests:
-  `test/DashboardLocalSignIn.test.ts`.
+  `decorate(event)` and an optional `respond(path)`), and imports nothing from `scripts/`. The launcher sets
+  `JWT_PUBLIC_KEY` to the local sign-in's public key (in place of a deployed Lambda's), so the handler verifies the
+  local tokens as it verifies the landscape's. Tests: `test/DashboardLocalSignIn.test.ts`.
+- **The local user's roles**: offline, `USER_ROLES` (comma-delimited: `Viewer`, `Operator`, `Admin`; `none` for no
+  role), or `--roles <Role,...>`, seeds the offline role store (`LocalLaunchOptions.roles`, checked against
+  `ROLE_NAMES`, which a test keeps equal to the catalog's). Without it the local user has no role. Online the
+  landscape's access table holds the roles (seed them with `DASHBOARD_ROLE_ASSIGNMENTS`), and `USER_ROLES` is
+  ignored with a warning, as it is in public mode.
 
 `LocalLaunchOptions` (`scripts/LocalLaunchOptions.ts`) decides all of this from the file and the flags
 without side effects; `LocalLaunch.ts` reads, looks up, prints the environment (secrets masked) and starts.
@@ -428,8 +437,31 @@ DASHBOARD_ROLE_ASSIGNMENTS_TASK=list npx ts-node -r dotenv/config dashboard/src/
 ### Authorization
 
 Who may do what in a landscape's dashboard, by role, per landscape (`authorization-plan.md`, being delivered in
-steps; until the gate in `DashboardHandler` lands, nothing below is enforced and every signed-in user can do
-everything).
+steps: the audit trail's recording, the Access and Audit trail pages and impersonation's routes are still to come).
+- **The gate** (`RequestGate`, in `DashboardHandler` before routing; decision 7, deny by default): pages and the
+  sign-in routes need only authentication; `GET /api/me` only sign-in; every other `/api/*` route its action
+  (`RoutePermissions`); an unmapped `/api` route is `403`, and a known route's unsupported method `405` (`Allow`),
+  before any role is asked. A denial is `403 { error: "FORBIDDEN", action, roles, message }` ("None of your roles
+  (Viewer) has a policy that grants bulk:start."; a user with no role is told to ask an Admin). A signed-in user with
+  no role gets every page, and `403` from every `/api` route but `/api/me`. Public mode (no sign-in) allows
+  everything but impersonation (`PermitAllAuthorizer`). Tests: `test/DashboardAccessGate.test.ts` (each role against
+  each route, through the handler offline).
+- **Who is asking**: the sign-in token's claims, believed only once its signature and expiry check out
+  (`ClaimsReader`, `VerifiedClaimsReader`: shibboleth-sp's `JwtTools`, RS256) against `JWT_PUBLIC_KEY`, which synth
+  reads from the landscape's Shibboleth secret (`lib/JwtPublicKey.ts`; synth fails if the secret has none) and gives
+  the Lambda (authenticated mode only; the Lambda gets no access to the secret). Without the key no one is signed
+  in. It never takes a token from shibboleth-sp's `IMPERSONATE_*` variables. `Authenticator.user` (`Request.user`:
+  the top bar, `startedBy`) reads claims the same way. Tests: `test/DashboardClaimsReader.test.ts`.
+- **`GET /api/me`**: `{ signedIn, user?: { buPrincipal, eppn, mail, displayName }, buPrincipal, roles: [{ name,
+  description, policies: [{ name, description, actions }] }], actions, unknownRoles, publicMode }`. It and a page load
+  record the user's profile (`recordProfile()`; never fails the request).
+- **Bulk sync's choices** (`BulkSync.choiceActions()`, checked in `plan()` and `start()` with the request's
+  authorizer, after the request is parsed and before anything else): Start from scratch needs `mock:reset`, and
+  Processor tasks above the landscape's maximum (any override when the maximum isn't known) `bulk:processors`. A
+  refusal is a `ForbiddenError`, answered with the same `403`; nothing is started or reviewed.
+- **The services**: `ServiceProvider.getRoleCatalog()` and `getRoleAssignmentStore()` (the access table,
+  `ACCESS_TABLE_NAME`; offline, in memory, seeded with the local user's `USER_ROLES`; with neither, no one holds a
+  role).
 - **The model** (`src/authorization/`): actions (`Actions.ts`), policies and roles (`Policy`, `Role`,
   `StaticRoleCatalog`: Viewer, Operator, Admin), the person (`Principal.fromClaims()`, keyed by `buPrincipal`, compared
   lower-cased; `PrincipalResolver` takes a `buPrincipal` or `<id>@bu.edu`), `Authorizer` (deny by default; a 403's
@@ -572,7 +604,7 @@ dashboard stack and the Shibboleth construct see it. shibboleth-sp-at-edge (2.1.
 the edge functions, which set, clear and read the JWT cookie with them.
 - **The Lambda reads the same cookie**: `lib/FunctionUrl.ts` sets `AUTH_COOKIE_NAME` to
   `SHIBBOLETH.cookieName` (default `JwtTools.COOKIE_NAME`), and `Authenticator.user`
-  (`src/services/Authentication.ts`) reads that cookie. Never read `JwtTools.COOKIE_NAME`
+  (`src/services/Authentication.ts`, through `ClaimsReader`, which verifies it) reads that cookie. Never read `JwtTools.COOKIE_NAME`
   directly: a `sharedSignIn` landscape's browser may also hold an old host-only cookie under it.
 - **Without `sharedSignIn`** the cookie stays host-only under the default name, which must differ
   from the shared name: the browser sends the shared cookie to every landscape under the dashboard

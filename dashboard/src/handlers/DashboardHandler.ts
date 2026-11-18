@@ -16,6 +16,8 @@ import { RUN_LIST_DEFAULT_LIMIT, RUN_LIST_MAX_LIMIT, RunList } from './RunList';
 import { areTheSame } from '../Utils';
 import { ChangeType, ReportingError } from '../../../src/reporting/RunReporting';
 import { Config } from 'integration-huron-person';
+import { ForbiddenError, RequestAccess, RequestGate } from '../authorization/RequestGate';
+import { RequestAuthorizer } from '../authorization/Authorizer';
 
 // import { ConfigManager } from 'integration-huron-person';
 
@@ -53,6 +55,16 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
         error: 'Request is not authenticated. Requires valid JWT token.' 
       }));
     }
+
+    // Authorization (authorization-plan.md, decision 7): one gate before routing, deny by default
+    const gate = new RequestGate(ServiceProvider.getRoleAssignmentStore(), ServiceProvider.getRoleCatalog());
+    const { access, refusal } = await gate.check({
+      method: request.method, path, publicMode: !request.signInRequired, claims: request.user
+    });
+    if (refusal) {
+      const response = jsonResponse(refusal.status, refusal.body);
+      return { ...response, headers: { ...response.headers, ...refusal.headers } };
+    }
    
     // Route handling
     switch (path) {
@@ -65,6 +77,7 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
           }}
 
         }
+        await recordProfile(access);
         return await renderDashboard(request, queryParams.tab);
 
       case '/login-page':
@@ -85,6 +98,9 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
         }
         return request.getLoginResponse();
       
+      case '/api/me':
+        return await handleMe(access);
+
       case '/api/person-lookup':
         return await handlePersonLookup({requestBody: body, cache });
 
@@ -98,10 +114,10 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
         return await handlePersonSync({requestBody: body, cache });
       
       case '/api/bulk-sync':
-        return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user });
+        return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user, authorizer: access.authorizer });
 
       case '/api/bulk-sync/plan':
-        return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user, plan: true });
+        return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user, authorizer: access.authorizer, plan: true });
 
       case '/api/mock-landscape/reset':
         return await handleMockLandscapeReset({ method: request.method, cache, user: request.user });
@@ -385,9 +401,9 @@ async function handlePersonSync(params: { requestBody: string | null, cache: Das
  * 409 a run underway or stalled or a subscriber in DRY_RUN, 503 not configured) and { error, code }.
  */
 async function handleBulkSync(params: {
-  method: string, requestBody: string | null, cache: DashboardCache, user?: any, plan?: boolean
+  method: string, requestBody: string | null, cache: DashboardCache, user?: any, authorizer: RequestAuthorizer, plan?: boolean
 }): Promise<LambdaFunctionUrlResult> {
-  const { method, requestBody, cache, user, plan = false } = params;
+  const { method, requestBody, cache, user, authorizer, plan = false } = params;
   const allowed = plan ? ['POST'] : ['GET', 'POST'];
   if (!allowed.includes(method)) {
     const response = jsonResponse(405, { error: 'Method not allowed' });
@@ -407,12 +423,16 @@ async function handleBulkSync(params: {
     }
     // Who is starting it: the signed-in user, from the request's sign-in token
     const startedBy = BulkSync.startedBy(user);
+    // The request's choices are checked against the user's roles too (Start from scratch, Processor tasks)
     return plan
-      ? jsonResponse(200, await bulkSyncService.plan(body, startedBy))
-      : jsonResponse(202, await bulkSyncService.start(body, startedBy));
+      ? jsonResponse(200, await bulkSyncService.plan(body, startedBy, authorizer))
+      : jsonResponse(202, await bulkSyncService.start(body, startedBy, authorizer));
   } catch (error) {
     if (error instanceof BulkSyncError) {
       return jsonResponse(error.status, { error: error.message, code: error.code });
+    }
+    if (error instanceof ForbiddenError) {
+      return jsonResponse(403, error.body);
     }
     console.error('Error in bulk sync:', error);
     return jsonResponse(500, {
@@ -622,6 +642,38 @@ function runReportingErrorResponse(error: unknown, description: string): LambdaF
 function methodNotAllowed(): LambdaFunctionUrlResult {
   const response = jsonResponse(405, { error: 'Method not allowed' });
   return { ...response, headers: { ...response.headers, Allow: 'GET' } };
+}
+
+/**
+ * GET /api/me: who the dashboard takes the request to be, and what they may do in this landscape (authorization-plan.md,
+ * decision 10's who-am-I dialog): their identity, roles with each role's policies and actions, and every action they
+ * hold. Needs only sign-in, so a user with no role can see that they have none.
+ */
+async function handleMe(access: RequestAccess): Promise<LambdaFunctionUrlResult> {
+  const { principal, authorizer, publicMode } = access;
+  await recordProfile(access);
+  const { buPrincipal, eppn, mail, displayName } = principal;
+  return jsonResponse(200, {
+    signedIn: !principal.isAnonymous,
+    ...(buPrincipal && { user: { buPrincipal, eppn, mail, displayName } }),
+    ...await authorizer.effectivePermissions(),
+    publicMode
+  });
+}
+
+/**
+ * Keep what the signed-in user's token says of them (name, eppn, mail), so the Access page can show who people are.
+ * On a page load and /api/me only, not on every request. Never fails the request.
+ */
+async function recordProfile(access: RequestAccess): Promise<void> {
+  if (access.publicMode || access.principal.isAnonymous) {
+    return;
+  }
+  try {
+    await ServiceProvider.getRoleAssignmentStore().recordProfile(access.principal);
+  } catch (error) {
+    console.warn(`Couldn't record the profile of ${access.principal.buPrincipal}: ${error instanceof Error ? error.message : error}`);
+  }
 }
 
 function jsonResponse(statusCode: number, body: unknown): LambdaFunctionUrlResult {

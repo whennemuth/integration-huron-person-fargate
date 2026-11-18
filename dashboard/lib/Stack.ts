@@ -14,17 +14,19 @@ export type StackParams = {
   context: AuthenticatedContext | PublicContext,
   landscapeResources: LandscapeResources;
   stackProps?: cdk.StackProps;
+  /** Authenticated mode: the sign-in's JWT public key (PEM), which the Lambda verifies sign-in tokens with */
+  jwtPublicKey?: string;
 };
 
 export abstract class AbstractStack extends cdk.Stack {
   protected _functionUrlOrigin: FunctionUrlOrigin;
 
   constructor(stackParams: StackParams) {
-    const { scope, stackName, context, landscapeResources, stackProps } = stackParams;
+    const { scope, stackName, context, landscapeResources, stackProps, jwtPublicKey } = stackParams;
 
     super(scope, stackName, stackProps);
 
-    this._functionUrlOrigin = new FunctionUrlOrigin({ stack: this, context, landscapeResources });
+    this._functionUrlOrigin = new FunctionUrlOrigin({ stack: this, context, landscapeResources, jwtPublicKey });
   }
 
   public get functionOrigin (): HttpOrigin {

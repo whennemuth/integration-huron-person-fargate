@@ -88,10 +88,13 @@ describe('LocalSignIn in front of the dashboard handler', () => {
     LOCAL_OFFLINE: 'true'
   };
 
-  /** GET a path from a fresh handler (Authentication.ts reads the sign-in settings when it loads) */
-  const get = async (path: string, decorator?: LocalSignIn): Promise<{ status: number, body: string, user?: any }> => {
+  /**
+   * GET a path from a fresh handler (Authentication.ts reads the sign-in settings when it loads), trusting the local
+   * sign-in's key as the launcher makes it (JWT_PUBLIC_KEY), with the local user's offline roles (USER_ROLES)
+   */
+  const get = async (path: string, decorator?: LocalSignIn, roles = 'Viewer'): Promise<{ status: number, body: string, user?: any }> => {
     const saved = { ...process.env };
-    Object.assign(process.env, SIGN_IN_ENV);
+    Object.assign(process.env, SIGN_IN_ENV, { USER_PRINCIPAL: 'jdoe', USER_ROLES: roles }, decorator ? { JWT_PUBLIC_KEY: decorator.publicKey } : {});
     jest.spyOn(console, 'log').mockImplementation(() => {});
     try {
       let result: any;
@@ -131,8 +134,21 @@ describe('LocalSignIn in front of the dashboard handler', () => {
     expect(body).toContain('jdoe');
   });
 
-  it('lets a decorated request reach the API', async () => {
+  it('lets a decorated request reach the API, with the roles of USER_ROLES', async () => {
     const { status } = await get('/api/capabilities', localSignIn);
     expect(status).toBe(200);
+  });
+
+  it('refuses the API to a local user with no role, but still serves the page', async () => {
+    expect((await get('/api/capabilities', localSignIn, '')).status).toBe(403);
+    expect((await get('/dashboard', localSignIn, '')).status).toBe(200);
+  });
+
+  it("refuses a token signed with another key pair: the landscape's own key decides", async () => {
+    const other = LocalSignIn.fromEnvironment({ ...SIGN_IN_ENV, USER_PRINCIPAL: 'jdoe' });
+    const forged = { decorate: (event: any) => other.decorate(event), publicKey: localSignIn.publicKey } as unknown as LocalSignIn;
+    const { status, user } = await get('/api/capabilities', forged);
+    expect(user).toBeUndefined();
+    expect(status).toBe(403);
   });
 });

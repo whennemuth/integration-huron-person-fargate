@@ -3,6 +3,7 @@
  * navigator built from the landscape registry, and the sign-out control, both as data and as
  * rendered by the dashboard route (dashboard/src/handlers/DashboardHandler.ts).
  */
+import { TestSignIn } from './support/TestSignIn';
 import { buildNavigationBar, SIGN_OUT_PATH } from '../dashboard/src/handlers/NavigationBar';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
 import { LandscapeListing } from '../dashboard/src/services/ServiceTypes';
@@ -74,10 +75,9 @@ describe('Dashboard page navigation bar', () => {
   const APP_HEADERS = { APP_LOGIN_HEADER: 'app-login', APP_LOGOUT_HEADER: 'app-logout' };
 
   /** A JWT cookie value whose payload holds the user (the signature is never checked by the Lambda) */
-  const jwtCookie = (user: any) => {
-    const payload = Buffer.from(JSON.stringify({ 'auth-token': { user } })).toString('base64');
-    return `header.${payload}.signature`;
-  };
+  // Signed as the sign-in signs it: the Lambda verifies the token (ClaimsReader)
+  const signIn = new TestSignIn();
+  const jwtCookie = (user: any) => signIn.token(user, { cookieName: 'hp-dashboard-auth' });
 
   /**
    * Render /dashboard with a fresh copy of the handler, since Authentication.ts reads the app
@@ -157,7 +157,7 @@ describe('Dashboard page navigation bar', () => {
 
   it('renders the sign-out control and the signed-in user when sign-in is required', async () => {
     const { status, body } = await renderDashboard({
-      env: { ...APP_HEADERS, APP_AUTHORIZATION: 'true', AUTH_COOKIE_NAME: 'hp-dashboard-auth' },
+      env: { ...APP_HEADERS, APP_AUTHORIZATION: 'true', AUTH_COOKIE_NAME: 'hp-dashboard-auth', ...signIn.environment },
       headers: { authenticated: 'true', cookie: `other=1; hp-dashboard-auth=${jwtCookie({ eduPersonPrincipalName: 'jdoe@bu.edu' })}` },
       getLandscapes: jest.fn().mockResolvedValue(listing)
     });

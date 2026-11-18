@@ -319,6 +319,25 @@ describe('FunctionUrlOrigin', () => {
       }
     });
 
+    it('gives the Lambda a JWT public key only when signing in, and never access to the Shibboleth secret', () => {
+      const [publicFn] = Object.values(synth('dynamodb').findResources('AWS::Lambda::Function'));
+      expect(publicFn.Properties.Environment.Variables.JWT_PUBLIC_KEY).toBeUndefined();
+      const key = '-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----';
+      const app = new App({ context: { 'aws:cdk:bundling-stacks': [] } });
+      const stack = new Stack(app, 'auth-stack', { env: { account: '111111111111', region: 'us-east-2' } });
+      const landscape = makeLandscape('dynamodb');
+      const settings = {
+        ...landscape.DASHBOARD, AUTHENTICATION_MODE: AuthenticationMode.AUTHENTICATED,
+        APP_LOGIN_HEADER: 'login', APP_LOGOUT_HEADER: 'logout', SHIBBOLETH: {}
+      } as unknown as DashboardSettings;
+      new FunctionUrlOrigin({ stack, context: toDashboardContext(landscape, settings), landscapeResources: landscapeResources(landscape), jwtPublicKey: key });
+      const template = Template.fromStack(stack);
+      const [fn] = Object.values(template.findResources('AWS::Lambda::Function'));
+      expect(fn.Properties.Environment.Variables.JWT_PUBLIC_KEY).toBe(key);
+      const resources = JSON.stringify(Object.values(template.findResources('AWS::IAM::Policy')).map((p: any) => p.Properties.PolicyDocument));
+      expect(resources).not.toContain('shibsp');
+    });
+
     it('lets the Lambda read and write them, and nothing else of theirs', () => {
       const statements = Object.values(synth('dynamodb').findResources('AWS::IAM::Policy'))
         .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement)

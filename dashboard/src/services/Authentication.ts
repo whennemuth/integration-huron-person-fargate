@@ -1,8 +1,9 @@
-import { APP_AUTHORIZATION_HEADER_NAME, JwtTools } from 'shibboleth-sp';
+import { APP_AUTHORIZATION_HEADER_NAME } from 'shibboleth-sp';
 import { LambdaFunctionUrlEvent, LambdaFunctionUrlResult } from '../handlers/DashboardTypes';
+import { claimsReaderFromEnvironment } from '../authorization/ClaimsReader';
 
-// AUTH_COOKIE_NAME is the JWT cookie the edge functions set (shared by sharedSignIn landscapes)
-const { APP_LOGIN_HEADER, APP_LOGOUT_HEADER, APP_AUTHORIZATION='false', AUTH_COOKIE_NAME=JwtTools.COOKIE_NAME } = process.env;
+// The JWT cookie the edge functions set (AUTH_COOKIE_NAME, shared by sharedSignIn landscapes) is read by ClaimsReader
+const { APP_LOGIN_HEADER, APP_LOGOUT_HEADER, APP_AUTHORIZATION='false' } = process.env;
 
 /**
  * Handles authentication logic for incoming requests.
@@ -53,10 +54,6 @@ export class Authenticator {
     return true;
   }
 
-  public isAuthorized = (): boolean => {
-    // TODO: implement real authorization check
-    return true;
-  }
 
   /**
    * Get the login url to return for redirection to the IDP.
@@ -80,28 +77,12 @@ export class Authenticator {
   }
   
   /**
-   * The "cookie" header of the request may contain a jwt with user data inside. Extract the user data.
-   * @param cookies 
-   * @param cookieName 
-   * @returns 
+   * The signed-in user's claims, from a sign-in token whose signature checks out against JWT_PUBLIC_KEY
+   * (ClaimsReader, authorization-plan.md decision 8), in the AUTH_COOKIE_NAME cookie; undefined without one. Never
+   * decode the token without verifying it: roles depend on these claims.
    */
-  public getUserFromJwt = (cookies:string, cookieName:string):string|undefined => {
-    try {
-      const authTokenJson = atob(
-        cookies
-          .split(/;\x20?/)
-          .filter(a => a.split('=')[0] == cookieName)
-          .map(c => c.split('.')[1])[0]
-      );
-      return (JSON.parse(authTokenJson))[JwtTools.TOKEN_NAME].user
-    }
-    catch(e) {
-      return undefined;
-    }
-  }
-
   public get user(): any {
-    return this.getUserFromJwt(this._event.headers['cookie'], AUTH_COOKIE_NAME);
+    return claimsReaderFromEnvironment().claims(this._event.headers?.['cookie']);
   }
   public get event(): LambdaFunctionUrlEvent {
     return this._event;
