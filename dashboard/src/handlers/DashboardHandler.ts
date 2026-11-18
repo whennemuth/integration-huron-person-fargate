@@ -20,6 +20,8 @@ import { ForbiddenError, RequestAccess, RequestGate } from '../authorization/Req
 import { RequestAuthorizer } from '../authorization/Authorizer';
 import { AuditTrail, auditsAllowed, describeRequest } from '../audit/AuditTrail';
 import { AuditError } from '../audit/AuditStore';
+import { AccessRoutes } from './AccessRoutes';
+import { ACTIONS } from '../authorization/Actions';
 
 // import { ConfigManager } from 'integration-huron-person';
 
@@ -171,10 +173,17 @@ async function route(request: Request, access: RequestAccess, audit: AuditTrail)
 
     case '/api/audit':
       return await handleAudit(queryParams);
+
+    case '/api/access/roles':
+    case '/api/access/assignments':
+      return await handleAccess(request, access);
     
     default:
       if (path.startsWith('/api/runs/')) {
         return await handleRunRoute({ method: request.method, path, queryParams });
+      }
+      if (path.startsWith('/api/access/assignments/')) {
+        return await handleAccess(request, access);
       }
       return createResponse(404, 'text/html', '<h1>404 - Page Not Found</h1>');
   }
@@ -200,6 +209,8 @@ async function renderDashboard(request: Request, activeTab?: string): Promise<La
     const data = {
       title: 'Integration Dashboard - Boston University Person → Huron',
       ...new PageNavigation().templateData(activeTab),
+      // The Audit trail page's action filter
+      auditActions: ACTIONS,
       ...navigationBar,
       cssAssets,
       jsAssets
@@ -675,6 +686,15 @@ function runReportingErrorResponse(error: unknown, description: string): LambdaF
 function methodNotAllowed(): LambdaFunctionUrlResult {
   const response = jsonResponse(405, { error: 'Method not allowed' });
   return { ...response, headers: { ...response.headers, Allow: 'GET' } };
+}
+
+/** The Access page's routes (AccessRoutes), behind the gate's access:admin; a change is recorded as granted by the user */
+async function handleAccess(request: Request, access: RequestAccess): Promise<LambdaFunctionUrlResult> {
+  const routes = new AccessRoutes({ store: ServiceProvider.getRoleAssignmentStore(), catalog: ServiceProvider.getRoleCatalog() });
+  const { status, body } = await routes.answer({
+    method: request.method, path: request.path, body: request.body, grantedBy: access.principal.buPrincipal ?? 'anonymous'
+  });
+  return jsonResponse(status, body);
 }
 
 /**

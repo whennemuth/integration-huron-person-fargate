@@ -143,6 +143,8 @@ The Lambda function serves two primary roles:
 - `GET /dashboard` - Main dashboard interface with inline assets
 - `GET /api/me` - who the request is taken to be and what they may do here (see "Authorization"); needs only sign-in.
 - `GET /api/audit` - the landscape's audit trail, a page at a time (see "Authorization"; `audit:read`)
+- `GET /api/access/roles`, `GET /api/access/assignments`, `GET|PUT|DELETE /api/access/assignments/{person}` - who
+  holds which roles (see "Authorization"; `access:admin`)
   Every other `/api` route needs an action of the signed-in user's roles, and answers `403` without it
 
 **API Operations:**
@@ -438,7 +440,7 @@ DASHBOARD_ROLE_ASSIGNMENTS_TASK=list npx ts-node -r dotenv/config dashboard/src/
 ### Authorization
 
 Who may do what in a landscape's dashboard, by role, per landscape (`authorization-plan.md`, being delivered in
-steps: the Access and Audit trail pages and impersonation's routes are still to come).
+steps: impersonation's routes and top bar are still to come).
 - **The gate** (`RequestGate`, in `DashboardHandler` before routing; decision 7, deny by default): pages and the
   sign-in routes need only authentication; `GET /api/me` only sign-in; every other `/api/*` route its action
   (`RoutePermissions`); an unmapped `/api` route is `403`, and a known route's unsupported method `405` (`Allow`),
@@ -492,6 +494,27 @@ steps: the Access and Audit trail pages and impersonation's routes are still to 
 - **`GET /api/audit?cursor&limit&principal&action`** (`audit:read`): `{ items, cursor? }`, newest first, at most 100 a
   page (default 50), optionally one person's (a `buPrincipal`, `<id>@bu.edu` or `anonymous`) or one action's; a bad
   query is `400 { error, code }`.
+- **The Access routes** (`src/handlers/AccessRoutes.ts`, `access:admin`): `GET /api/access/roles` (the catalog's roles,
+  policies and actions), `GET /api/access/assignments` (everyone with a role, with profiles), `GET`, `PUT { roles }`
+  and `DELETE /api/access/assignments/{person}` (a `buPrincipal` or `<id>@bu.edu`; `PUT` replaces the roles, granted
+  by the Admin who saved them). Refusals are `{ error, code }`: `400 INVALID_PRINCIPAL | INVALID_REQUEST |
+  INVALID_ROLE`, and `409 LAST_ADMIN` for a change that would leave no Admin (decision 11; checked against the store
+  as it is, so two Admins removing each other at the same moment could both pass). Tests:
+  `test/DashboardAccessRoutes.test.ts`.
+- **The Administration pages** (sidebar group Administration, shown to everyone; `public/js/administration.js`,
+  `templates/partials/access-tab.mustache` and `audit-tab.mustache`): **Access** (`AccessPage`: look a person up,
+  their profile and a checkbox per role, Save, asking first when an Admin removes their own Admin role; everyone with
+  a role, a row opening that person) and **Audit trail** (`AuditTrailPage`: a `PagedTable` over `/api/audit`,
+  filtered by person and action; the action list comes from `ACTIONS`, as the template's `auditActions`). Tests:
+  `test/DashboardAdministrationPages.test.ts`.
+- **Who am I** (`WhoAmI`, decision 10): the top bar's user is a button opening a dialog with the user's identity,
+  roles, policies and actions, read from `/api/me` when it opens; a signed-in user with no role also gets a notice
+  above the pages (`data-no-role-notice`). Neither exists in public mode.
+- **A refused load is redacted** (decision 7): every section that loads content to display reports a failure through
+  `PageState.failed()` / `failedElement()` (`page-state.js`), which shows a `403` as the redacted state naming the
+  action the roles lack (`fetchSectionData()` carries the 403's `action`), and anything else as the error state.
+  Overview's Mock landscape section stays hidden when its read is refused. An action the user triggers (lookup, sync,
+  review, start, save) shows the server's message in the error pattern.
 - **The first Admin** is seeded by hand after a deploy (the tables start empty, and a teardown deletes them): the
   `DASHBOARD_ROLE_ASSIGNMENTS` harness or `aws dynamodb put-item` (fargate `README.md`, "Dashboard access").
 
@@ -839,7 +862,7 @@ the `ServiceStatusTable` of `public/js/system-status.js`, which the Status page 
 load independently, so one failing (the real `SystemStatus` service isn't implemented yet) leaves
 the other shown. While a run launched moments ago isn't listed yet (the runs route's `launch`), its launch note
 comes first, in place of "No runs yet" or above the latest run. Scripts load in dependency order: `page-state.js`, `run-history.js`,
-`system-status.js`, `overview.js`, `bulk-sync.js`, then `dashboard.js`, which creates the pages. Tests:
+`system-status.js`, `overview.js`, `bulk-sync.js`, `administration.js`, then `dashboard.js`, which creates the pages. Tests:
 `test/DashboardOverview.test.ts`.
 - **A mock landscape's own section** ("Mock landscape", hidden in any other landscape; since 2026-11-15,
   `mock-landscape-options-plan.md` step 3a): loaded with the rest from `GET /api/mock-landscape/reset`. It explains in

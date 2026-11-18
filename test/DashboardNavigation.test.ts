@@ -237,8 +237,11 @@ describe('Dashboard page sidebar', () => {
     const body = await render();
     const titles = body.match(/<h1 class="page-title">[^<]*<\/h1>/g) || [];
     expect(titles.map(title => title.replace(/<[^>]+>/g, ''))).toEqual(
-      ['Overview', 'Lookup and sync', 'Mapping experiment', 'Bulk sync', 'Run history', 'Status']
+      ['Overview', 'Lookup and sync', 'Mapping experiment', 'Bulk sync', 'Run history', 'Status', 'Access', 'Audit trail']
     );
+    // The Administration pages build on the state patterns and the run history's PagedTable
+    expect(body.indexOf('class PagedTable')).toBeLessThan(body.indexOf('class AuditTrailPage'));
+    expect(body.indexOf('class AccessPage')).toBeLessThan(body.indexOf('new AccessPage('));
     const pageStateAt = body.indexOf('class PageState');
     expect(pageStateAt).toBeGreaterThan(-1);
     expect(pageStateAt).toBeLessThan(body.indexOf('class PersonCard'));

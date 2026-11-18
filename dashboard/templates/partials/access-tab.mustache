@@ -1,0 +1,45 @@
+<!-- Access page: who holds which roles in this landscape (authorization-plan.md, decisions 3 and 11) -->
+<div class="tab-pane fade {{#accessActive}}show active{{/accessActive}}" id="access" role="tabpanel" aria-labelledby="access-tab">
+    <div class="page">
+        <header class="page-header">
+            <div>
+                <h1 class="page-title">Access</h1>
+                <p class="page-description">Who holds which roles in this landscape. A role is a set of policies, and a policy a set of actions.</p>
+            </div>
+            <div class="page-actions">
+                <span class="refresh-stamp" data-refresh-stamp="access"></span>
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-action="refresh-access">
+                    <i class="fas fa-rotate-right me-1"></i>Refresh
+                </button>
+            </div>
+        </header>
+
+        <section class="page-section" aria-labelledby="accessPersonHeading">
+            <div class="section-heading">
+                <h2 class="section-title" id="accessPersonHeading">A person's roles</h2>
+            </div>
+            <div class="surface">
+                <form class="access-lookup" data-access-lookup novalidate>
+                    <label for="accessPrincipal" class="form-label">Person</label>
+                    <div class="input-group access-lookup-input">
+                        <input id="accessPrincipal" name="principal" class="form-control" placeholder="jdoe or jdoe@bu.edu" autocomplete="off" spellcheck="false">
+                        <button class="btn btn-primary" type="submit">
+                            <i class="fas fa-magnifying-glass me-1"></i>Look up
+                        </button>
+                    </div>
+                    <div class="form-text">Their BU login (buPrincipal), or their eduPersonPrincipalName ending in @bu.edu.</div>
+                </form>
+                <!-- Filled by AccessPage (administration.js): the person's profile and a checkbox per role -->
+                <div class="access-person" data-access-person></div>
+            </div>
+        </section>
+
+        <section class="page-section" aria-labelledby="accessListHeading">
+            <div class="section-heading">
+                <h2 class="section-title" id="accessListHeading">Everyone with a role</h2>
+            </div>
+            <!-- Filled by AccessPage when the page is shown -->
+            <div class="surface surface-flush" data-access-list></div>
+        </section>
+    </div>
+</div>

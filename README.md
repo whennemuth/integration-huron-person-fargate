@@ -266,7 +266,7 @@ A landscape's dashboard decides who may do what by role (Viewer, Operator, Admin
 landscape's own access table, `<dashboard STACK_ID>-access-<landscape>` (e.g. `hp-dashboard-access-staging`).
 A signed-in user with no role sees the pages but none of their data. The Lambda verifies the sign-in token with the
 JWT public key of the landscape's Shibboleth secret, which synth reads (it fails if the secret has none).
-Until the dashboard's Access page is built, roles are managed with the harness below. The table is created with the dashboard stack, empty, and destroyed with it,
+Admins manage roles on the dashboard's Access page (Administration). The table is created with the dashboard stack, empty, and destroyed with it,
 so after a landscape's dashboard is first deployed (or redeployed after a teardown), seed the first Admin by hand.
 A person is named by their `buPrincipal` (their BU login, e.g. `jdoe`; `jdoe@bu.edu` is accepted by the harness).
 

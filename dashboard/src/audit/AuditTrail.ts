@@ -54,9 +54,15 @@ export const describeRequest = (path: string, body: string | null): { target?: s
       return { target: text(fields.buid), detail: choices.join(', ') || undefined };
     }
     default: {
-      // One person's assignments: the person
+      // One person's assignments: the person, and the roles they were given
       const person = path.match(/^\/api\/access\/assignments\/([^/]+)$/)?.[1];
-      return person ? { target: decodeURIComponent(person) } : {};
+      if (!person) {
+        return {};
+      }
+      let target = person;
+      try { target = decodeURIComponent(person); } catch { /* kept as sent */ }
+      const roles = Array.isArray(fields.roles) ? `roles=${fields.roles.join(',') || 'none'}` : undefined;
+      return { target, ...(roles && { detail: roles }) };
     }
   }
 };

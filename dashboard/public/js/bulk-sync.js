@@ -755,8 +755,8 @@ class BulkSyncPage {
             if (load !== this.loads) {
                 return false;
             }
-            PageState.error(this.formContainer, 'Bulk sync could not be read', error.message);
-            PageState.error(this.statusContainer, 'The latest run could not be read', undefined, { compact: true });
+            PageState.failed(this.formContainer, 'Bulk sync could not be read', error);
+            PageState.failed(this.statusContainer, 'The latest run could not be read', PageState.isForbidden(error) ? error : undefined, { compact: true });
             return false;
         }
         if (load !== this.loads) {

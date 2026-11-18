@@ -182,7 +182,7 @@ async function generateTemplateConstants(): Promise<void> {
 
   // Read and minify partials
   const partials: Record<string, MinificationResult> = {};
-  const partialFiles = ['overview-tab.mustache', 'individual-tab.mustache', 'mapping-tab.mustache', 'bulk-tab.mustache', 'runs-tab.mustache', 'system-tab.mustache'];
+  const partialFiles = ['overview-tab.mustache', 'individual-tab.mustache', 'mapping-tab.mustache', 'bulk-tab.mustache', 'runs-tab.mustache', 'system-tab.mustache', 'access-tab.mustache', 'audit-tab.mustache'];
   
   for (const file of partialFiles) {
     const partialPath = path.join(partialsDir, file);

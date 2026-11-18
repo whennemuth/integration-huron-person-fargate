@@ -78,9 +78,10 @@
                     {{/landscapeNavigator}}
                     {{#signOut}}
                     {{#user}}
-                    <span class="app-topbar-item app-user d-none d-sm-inline-flex">
+                    <!-- Who am I: the user's identity, roles, policies and actions here (WhoAmI, administration.js) -->
+                    <button type="button" class="btn app-topbar-item app-user d-none d-sm-inline-flex" data-bs-toggle="modal" data-bs-target="#whoAmIDialog" title="Your roles in this landscape">
                         <i class="fas fa-circle-user"></i>{{user}}
-                    </span>
+                    </button>
                     {{/user}}
                     <a href="{{url}}" class="btn btn-outline-secondary btn-sm text-nowrap" title="Sign out of every landscape's dashboard" aria-label="Sign out">
                         <i class="fas fa-arrow-right-from-bracket"></i><span class="d-none d-sm-inline ms-1">Sign out</span>
@@ -88,6 +89,14 @@
                     {{/signOut}}
                 </div>
             </header>
+
+            {{#signOut}}
+            <!-- A signed-in user with no role here (WhoAmI, administration.js) -->
+            <div class="no-role-notice" data-no-role-notice role="status" hidden>
+                <i class="fas fa-lock" aria-hidden="true"></i>
+                <span>You have no role in this landscape, so the pages show no data. Ask a dashboard administrator for one.</span>
+            </div>
+            {{/signOut}}
 
             <!-- Pages: one tab pane each, shown by the sidebar item of the same id -->
             <main class="app-content tab-content" id="dashboardTabContent">
@@ -104,9 +113,28 @@
 
                 {{>system-tab}}
 
+                {{>access-tab}}
+
+                {{>audit-tab}}
+
             </main>
         </div>
     </div>
+
+    {{#signOut}}
+    <!-- Who am I: filled from GET /api/me when opened -->
+    <div class="modal fade" id="whoAmIDialog" tabindex="-1" aria-labelledby="whoAmITitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title fs-5" id="whoAmITitle">Who you are here</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" data-who-am-i></div>
+            </div>
+        </div>
+    </div>
+    {{/signOut}}
 
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
@@ -144,6 +172,11 @@
     <!-- Bulk Sync Page -->
     <script>
         {{{jsAssets.bulkSync}}}
+    </script>
+
+    <!-- Administration: Access and Audit trail pages, and the who-am-I dialog -->
+    <script>
+        {{{jsAssets.administration}}}
     </script>
 
     <!-- Dashboard JavaScript -->
