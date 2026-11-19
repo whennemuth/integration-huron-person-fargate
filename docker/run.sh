@@ -1,23 +1,23 @@
 #!/bin/bash
 #
-# Run Huron Person Processor Docker container using Docker Compose
+# Run one phase of the Huron Person pipeline locally in its container, with Docker Compose.
 # Usage: ./run.sh [chunker|processor|post-processor] [--manual]
+#   (from the repo root: npm run chunker | processor | post-processor, or the *-debug scripts for --manual)
 #
-# AWS Credentials:
-#   Uses AWS_PROFILE environment variable (defaults to 'default')
-#   Ensure your ~/.aws/credentials file contains the profile
+# The container takes its variables only from the phase's env file in this directory (chunker.env,
+# processor.env, post-processor.env; templates in example-env-s3.md / example-env-dynamodb.md), not from
+# your shell. Set AWS_PROFILE there: compose mounts ~/.aws read-only at the image user's home
+# (/home/nodejs/.aws).
 #
-# Examples:
-#   AWS_PROFILE=infnprd INPUT_BUCKET=input-bucket INPUT_KEY=file.json CHUNKS_BUCKET=chunks-bucket ./run.sh chunker
-#   AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket CHUNK_KEY=client/chunks/chunk-0001.ndjson ./run.sh processor
-#   AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket INPUT_BUCKET=input-bucket ./run.sh post-processor
-#   AWS_PROFILE=dev ./run.sh processor --manual
+# Normal mode runs the phase's entry point and exits with its exit code. --manual starts the container
+# without running node (docker-compose.manual.yml), so you can shell in and run it yourself.
+# Only the named phase starts (--no-deps), not the phases its compose service depends on.
 #
 
 set -e
 
-# Load environment variables from .env file
-export $(grep -v '^#' .env | xargs)
+# Work from this directory, where the compose and env files are
+cd "$(dirname "$0")"
 
 # Parse arguments
 MODE=""
@@ -27,25 +27,52 @@ for arg in "$@"; do
   case $arg in
     --manual)
       MANUAL_MODE=true
-      shift
       ;;
     chunker|processor|post-processor)
       MODE="$arg"
-      shift
       ;;
     *)
-      # Unknown option
+      echo "Error: unknown argument: $arg"
+      echo "Usage: $0 [chunker|processor|post-processor] [--manual]"
+      exit 1
       ;;
   esac
 done
 
 # Default to chunker if not specified
 MODE="${MODE:-chunker}"
+ENV_FILE="${MODE}.env"
 
-if [[ "$MODE" != "chunker" && "$MODE" != "processor" && "$MODE" != "post-processor" ]]; then
-  echo "Error: Invalid mode. Use 'chunker', 'processor', or 'post-processor'"
-  echo "Usage: $0 [chunker|processor|post-processor] [--manual]"
+# docker compose (v2 plugin), or the standalone docker-compose
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE="docker-compose"
+else
+  echo "Error: neither 'docker compose' nor 'docker-compose' is available"
   exit 1
+fi
+
+# The container's variables come only from the env file: check it exists and names a storage mode and a profile.
+# The entry point reports any other missing variable itself.
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "Error: docker/${ENV_FILE} not found (templates: docker/example-env-s3.md, docker/example-env-dynamodb.md)"
+  exit 1
+fi
+
+env_value() {
+  # The last uncommented NAME=value in the env file (empty if absent)
+  grep -E "^[[:space:]]*$1=" "$ENV_FILE" | tail -n 1 | cut -d= -f2- | tr -d '\r' || true
+}
+
+STORAGE_TYPE="$(env_value PREVIOUS_STORAGE_TYPE)"
+PROFILE="$(env_value AWS_PROFILE)"
+if [[ -z "$STORAGE_TYPE" ]]; then
+  echo "Error: PREVIOUS_STORAGE_TYPE (s3 or dynamodb) is not set in docker/${ENV_FILE}"
+  exit 1
+fi
+if [[ -z "$PROFILE" ]]; then
+  echo "Warning: AWS_PROFILE is not set in docker/${ENV_FILE}; the SDK will use the default profile"
 fi
 
 echo "============================================"
@@ -55,73 +82,11 @@ if $MANUAL_MODE; then
 else
   echo "Mode: Normal"
 fi
+echo "Env file: docker/${ENV_FILE}"
+echo "Storage type: ${STORAGE_TYPE}"
+echo "AWS Profile: ${PROFILE:-default}"
 echo "============================================"
 echo ""
-
-# Navigate to docker directory
-cd "$(dirname "$0")"
-
-# Validate required environment variables (only in normal mode)
-if ! $MANUAL_MODE; then
-  if [[ "$MODE" == "chunker" ]]; then
-    # Chunker needs INPUT_BUCKET, INPUT_KEY, and CHUNKS_BUCKET
-    if [[ -z "${INPUT_BUCKET}" ]]; then
-      echo "Error: INPUT_BUCKET environment variable is required for chunker mode"
-      echo "Example: AWS_PROFILE=infnprd INPUT_BUCKET=input-bucket INPUT_KEY=data.json CHUNKS_BUCKET=chunks-bucket $0 chunker"
-      exit 1
-    fi
-    
-    if [[ -z "${INPUT_KEY}" ]]; then
-      echo "Error: INPUT_KEY environment variable is required for chunker mode"
-      echo "Example: AWS_PROFILE=infnprd INPUT_BUCKET=input-bucket INPUT_KEY=data.json CHUNKS_BUCKET=chunks-bucket $0 chunker"
-      exit 1
-    fi
-    
-    if [[ -z "${CHUNKS_BUCKET}" ]]; then
-      echo "Error: CHUNKS_BUCKET environment variable is required for chunker mode"
-      echo "Example: AWS_PROFILE=infnprd INPUT_BUCKET=input-bucket INPUT_KEY=data.json CHUNKS_BUCKET=chunks-bucket $0 chunker"
-      exit 1
-    fi
-    
-    echo "Input: s3://${INPUT_BUCKET}/${INPUT_KEY}"
-    echo "Chunks output: s3://${CHUNKS_BUCKET}/"
-  elif [[ "$MODE" == "processor" ]]; then
-    # Processor needs CHUNKS_BUCKET and CHUNK_KEY
-    if [[ -z "${CHUNKS_BUCKET}" ]]; then
-      echo "Error: CHUNKS_BUCKET environment variable is required for processor mode"
-      echo "Example: AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket CHUNK_KEY=client/chunks/chunk-0001.ndjson $0 processor"
-      exit 1
-    fi
-    
-    if [[ -z "${CHUNK_KEY}" ]]; then
-      echo "Error: CHUNK_KEY environment variable is required for processor mode"
-      echo "Example: AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket CHUNK_KEY=client/chunks/chunk-0001.ndjson $0 processor"
-      exit 1
-    fi
-    
-    echo "Processing chunk: s3://${CHUNKS_BUCKET}/${CHUNK_KEY}"
-  elif [[ "$MODE" == "post-processor" ]]; then
-    # Post-processor needs CHUNKS_BUCKET and INPUT_BUCKET
-    if [[ -z "${CHUNKS_BUCKET}" ]]; then
-      echo "Error: CHUNKS_BUCKET environment variable is required for post-processor mode"
-      echo "Example: AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket INPUT_BUCKET=input-bucket $0 post-processor"
-      exit 1
-    fi
-    
-    if [[ -z "${INPUT_BUCKET}" ]]; then
-      echo "Error: INPUT_BUCKET environment variable is required for post-processor mode"
-      echo "Example: AWS_PROFILE=infnprd CHUNKS_BUCKET=chunks-bucket INPUT_BUCKET=input-bucket $0 post-processor"
-      exit 1
-    fi
-    
-    echo "Merging chunks: s3://${CHUNKS_BUCKET}/${INPUT_BUCKET}/chunks/ -> s3://${CHUNKS_BUCKET}/${INPUT_BUCKET}/previous-input.ndjson"
-  fi
-  
-  echo "AWS Profile: ${AWS_PROFILE:-default}"
-  echo "Region: ${REGION:-us-east-2}"
-  echo "Items per chunk: ${ITEMS_PER_CHUNK:-200}"
-  echo ""
-fi
 
 # Build compose file list
 COMPOSE_FILES="-f docker-compose.yml"
@@ -132,11 +97,8 @@ fi
 # Run the container using Docker Compose
 if $MANUAL_MODE; then
   echo "Starting container in manual mode..."
-  echo "Container will stay running. Use: docker exec -it huron-${MODE} sh"
-  echo ""
-  # docker-compose ${COMPOSE_FILES} up -d ${MODE}
-  echo "docker-compose ${COMPOSE_FILES} up -d ${MODE}"
-  
+  $COMPOSE ${COMPOSE_FILES} up -d --no-deps ${MODE}
+
   echo ""
   echo "✓ Container started: huron-${MODE}"
   echo ""
@@ -146,13 +108,12 @@ if $MANUAL_MODE; then
   echo "Inside container, run manually:"
   echo "  node dist/docker/${MODE}.js"
   echo ""
-  echo "To stop:"
-  echo "  docker-compose down ${MODE}"
+  echo "To stop (from docker/):"
+  echo "  ${COMPOSE} ${COMPOSE_FILES} down"
 else
   echo "Running container..."
-  # docker-compose ${COMPOSE_FILES} up ${MODE}
-  echo "docker-compose ${COMPOSE_FILES} up ${MODE}"
-  
+  $COMPOSE ${COMPOSE_FILES} up --no-deps --exit-code-from ${MODE} ${MODE}
+
   echo ""
   echo "✓ ${MODE^} completed"
 fi

@@ -119,7 +119,8 @@ export abstract class QueueReader {
  * After the first receiveMessage() call, the queue becomes empty.
  * 
  * Usage:
- *   CHUNKS_BUCKET=my-bucket CHUNK_KEY=chunks/chunk-0001.ndjson docker-compose up processor
+ *   CHUNKS_BUCKET=my-bucket and CHUNK_KEY=chunks/chunk-0001.ndjson in docker/processor.env, then npm run processor
+ *   (the compose services take their variables only from the env file, not the shell)
  */
 export class EnvironmentBasedQueueSimulator extends QueueReader {
   private nextChunk: NextChunk | undefined;

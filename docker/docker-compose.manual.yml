@@ -11,8 +11,6 @@
 #   4. Test with params: INPUT_KEY=different-file.json node dist/docker/chunker.js
 #
 
-version: '3.8'
-
 services:
   chunker:
     # Override command to keep container alive
