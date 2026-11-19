@@ -26,8 +26,8 @@ Run Part 1 (DynamoDB) and/or Part 2 (S3). Part 0 applies to both.
 ### What must already be deployed
 
 - The mock stack (`./context/swap.sh mock`, then `cdk deploy`), with the target simulator and the
-  source simulator (`LAMBDA.sourceSimulator.enabled`). See "Mock Landscapes" and "Source
-  Simulator" in this project's `CLAUDE.md`.
+  source simulator (`LAMBDA.sourceSimulator.enabled`). See "Mock Landscapes" in this project's
+  `CLAUDE.md`, and [MOCK_LANDSCAPES.md](MOCK_LANDSCAPES.md) and [SOURCE_SIMULATOR.md](SOURCE_SIMULATOR.md).
 - integration-huron-person built with an integration-core that includes
   `DynamoDBDeltaStorage.markDeleted()` and the `DELETED:` hash helpers.
 

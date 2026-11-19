@@ -145,7 +145,7 @@ if (require.main === module) {
 - **QueueSeeder** (`src/chunking/fetch/QueueSeeder.ts`): Utility for pre-populating queue with messages
 - **ParallelStart** (`src/chunking/ParallelStart.ts`): the seed, alarm-wait and desired-count procedure that queue
   seeding shares with the chunker subscriber Lambda, which runs it for an event carrying `parallelStart` (the
-  dashboard's Bulk sync). See "A run starts with one chunker message, or N seeded at once" in the project `CLAUDE.md`.
+  dashboard's Bulk sync). See "One chunker message, or N seeded at once" in [docs/RUN_START.md](../docs/RUN_START.md#one-chunker-message-or-n-seeded-at-once-parallelstart).
 
 ### VS Code Debugging
 

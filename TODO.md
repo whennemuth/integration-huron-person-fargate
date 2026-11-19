@@ -167,7 +167,7 @@ counts.
 - The terminal-error path (`ChunkFromAPI` -> `MetadataForS3.write({ replace: true })`) overwrites
   `_metadata.json` unconditionally, dropping the run totals accumulated so far. Make it merge into
   the existing file with the same conditional write as `accumulateMetadataTotals()`.
-- Update this project's `CLAUDE.md` ("Storage Modes", StatisticsTable notes) and
+- Update this project's `CLAUDE.md` ("Storage Modes"), `docs/STORAGE_MODES.md`, `docs/STATISTICS_TABLE.md` and
   `docs/MOCK_INTEGRATION_TESTING.md` (Part 2) to match.
 
 ## Concurrency summary

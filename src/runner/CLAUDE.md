@@ -45,8 +45,8 @@ Design intent: avoid immediate desired-count reversal due to stale scale-in alar
     4. validate endpoint
     5. at a run's start (unless `SKIP_ATOMIC_COUNTER_RESET`): set the processor's maximum
        (`setProcessorScalingCapacity()`: the override, else the local context's `ECS.processorService.maxScalingCapacity`,
-       as the chunker subscriber does at every run start; see "A run may have its own processor maximum" in the project
-       CLAUDE.md), then reset the counters
+       as the chunker subscriber does at every run start; see "A run's own processor maximum" in
+       [docs/RUN_START.md](../../docs/RUN_START.md#a-runs-own-processor-maximum-processorscalingcapacityoverride)), then reset the counters
     6. execute, with the record of the maximum on the source `Endpoint` (`processorScalingCapacity`), which each runner
        puts on its events (the queue seeder's too), for the run's Flags
   - Shared helpers for endpoint validation, population normalization, source-simulator prediction logging.
@@ -62,7 +62,7 @@ Design intent: avoid immediate desired-count reversal due to stale scale-in alar
   - Sends one API chunker event to queue.
   - Resets chunker atomic counter before send when stack/region/landscape are available (through the shared
     `resetRunCounters()` in `src/chunking/RunCounters.ts`, which the chunker subscriber Lambda also calls for a
-    run's first event; see "A run starts with the chunker's counters at zero" in the project CLAUDE.md).
+    run's first event; see "The run counters" in [docs/RUN_START.md](../../docs/RUN_START.md#the-run-counters)).
 
 - `RunnerForQueueSeeding.ts`
   - High-parallel-start mode.
@@ -120,7 +120,7 @@ Design intent: avoid immediate desired-count reversal due to stale scale-in alar
   - Sends the run's simulator settings (`SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION`, `_SIMULATED_DELAY_SECONDS`, `_ERROR_RATE`, `_NON_CURRENT_TERM_RATE`; `simulatorSettings()` in `AbstractRunner`) as query parameters of the source's `fetchPath`, built by `simulatorFetchPath()` in `src/chunking/fetch/SourceSimulator.ts`, as the dashboard's Bulk sync builds it. Each is sent when set, 0 included (`optionalNumber()` in `RunnerTypes.ts`; fractions too); an unset one is the simulator's own. It never reads or changes the simulator Lambda's configuration (until 2026-11-16 it rewrote its `MOCK_*` environment, which stayed for later runs).
   - Predicts the run's chunks (`getSourceSimulatorPredictions()`) from the simulator's `/health` asked with the run's settings, which reports the population as the run gets it; else the run's `SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION`, else the context's `LAMBDA.sourceSimulator.mockTotalPopulation`.
   - Uses simulator endpoint instead of configured upstream endpoint: `/` (people), or `/person?buid=<SINGLE_PERSON_BUID>` in single person mode, which returns the same payload `/` produces for that person (so no population-of-1 workaround is needed). Single person mode skips the predictions and the counter reset (the endpoint is stateless), fails prerequisites for a BUID the simulator does not generate (`U` + digits), and warns for one beyond its population.
-  - Returns the simulator's `/terms` as the source endpoint's `termsEndpoint`, which travels via the chunker message and the run's Flags to the processor tasks (`Flags.termsEndpoint`, applied by `applyTermsEndpoint()`), so simulated runs get simulated terms. It does NOT change `config.dataSource.terms`: this runner's config never reaches the tasks (see the `preLoadedMaps` lesson in the project CLAUDE.md). Hybrid runs don't use this decorator, so they keep the real terms endpoint.
+  - Returns the simulator's `/terms` as the source endpoint's `termsEndpoint`, which travels via the chunker message and the run's Flags to the processor tasks (`Flags.termsEndpoint`, applied by `applyTermsEndpoint()`), so simulated runs get simulated terms. It does NOT change `config.dataSource.terms`: this runner's config never reaches the tasks (see "two lifecycles of `Config`" in the project CLAUDE.md, and the `preLoadedMaps` story in [docs/MOCK_LANDSCAPES.md](../../docs/MOCK_LANDSCAPES.md#history-the-configpreloadedmaps-dead-code)). Hybrid runs don't use this decorator, so they keep the real terms endpoint.
   - Resets simulator atomic counter.
   - Warns about potential overseeding relative to simulated population.
 
