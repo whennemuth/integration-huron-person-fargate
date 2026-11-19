@@ -21,9 +21,12 @@ How to build, run locally with Docker Compose, and the variables: [README.md](RE
   `npm ci --omit=dev --omit=optional`, copies `dist/`, runs as the non-root `nodejs` user, and defaults to
   `node dist/docker/chunker.js` (the task definitions set the command).
 - **Scripts** (run through npm from the repo root): `build.sh` (`npm run docker-build`, buildx), `push.sh`
-  (`npm run docker-push`: ECR login, tag, push), `publish.sh` (build then push), `run.sh` (run a phase locally through
-  `docker-compose.yml`, or `--manual` with `docker-compose.manual.yml` to shell in). `chunker.env`, `processor.env`,
-  `post-processor.env` and `example-env-s3.md` / `example-env-dynamodb.md` hold the local variables.
+  (`npm run docker-push`: ECR login, tag, push), `publish.sh` (`npm run docker-publish`: build then push), `run.sh`
+  (`npm run chunker` / `processor` / `post-processor`). **`run.sh` doesn't run a container**: its `docker-compose up`
+  lines are commented out, so it only checks its variables and prints the command; run
+  `docker-compose [-f docker-compose.yml -f docker-compose.manual.yml] up <phase>` yourself from `docker/`. The compose
+  services take their variables only from `chunker.env`, `processor.env` and `post-processor.env` (templates:
+  `example-env-s3.md` / `example-env-dynamodb.md`), not from the shell.
 
 ## Rules and pitfalls
 
@@ -46,7 +49,8 @@ How to build, run locally with Docker Compose, and the variables: [README.md](RE
   locally, `HURON_PERSON_CONFIG_PATH`. `IS_ECS_TASK` tells the code it runs in Fargate; `DRY_RUN`, `CACHE_ENABLED` and
   `CACHE_PATH` are shared switches. Never bake credentials into the image or the task definition's plain environment.
 - **Test an entry point before building**: `npx ts-node docker/chunker.ts` (or VS Code's "Debug current file") with
-  its `.env` group; then build and run the image locally (`run.sh`); then push and test in an ECS task before a full
+  its `.env` group; then build and run the image locally (`docker-compose up <phase>`); then push and test in an ECS
+  task before a full
   pipeline run.
 - Every entry point's `require.main` block lists the variables it reads; keep it in step with the task definitions
   in `lib/services/*/`.

@@ -91,15 +91,25 @@ The `cdk.json` file tells the CDK Toolkit how to execute your app.
 
 ## Architecture
 
-- **ECS Cluster**: Manages Fargate task instances
-- **Fargate Task Definition**: Configures processor container with environment variables
-- **EventBridge Scheduled Rule**: Optional trigger for recurring sync operations
-- **S3 Integration**: Reads source data from S3 for parallel chunk processing
-- **Secrets Manager**: Stores API credentials and configuration securely
+- **ECS Cluster**: three queue-driven Fargate services on ARM64 (chunker, processor, post-processor), each with its own
+  task definition and an SQS queue plus dead-letter queue
+- **Subscriber Lambdas**: the chunker subscriber (starts runs), the processor subscriber (forwards chunk files to the
+  processor queue) and the post-processor subscriber (S3 mode: queues the post-processor once every chunk is done)
+- **EventBridge Scheduler schedule**: invokes the chunker subscriber on the integration config's
+  `dataSource.people.fetchSchedule`; runs can also be started from the dashboard's Bulk sync or the Runner
+- **Source**: the BU CDM person API, or optionally a JSON file dropped in S3
+- **S3**: the chunks bucket (chunk files, delta chunks and, in S3 mode, the baseline)
+- **DynamoDB**: the statistics, atomic counter and addon log tables, plus PersonCurrentState and PersonHistory in
+  DynamoDB storage mode
+- **Secrets Manager**: the landscape's integration config secret, with the API credentials
+- **Network**: the VPC of the shared `huron-integration-network` stack
 
 ## Configuration
 
-The Fargate task is configured via the `HURON_PERSON_CONFIG` environment variable, which contains a JSON configuration object. The configuration structure matches the `integration-huron-person` package.
+The integration config comes from the context's `HURON_PERSON_CONFIG`: an inline config, or `configPath` naming an
+integration-huron-person config file (e.g. `../integration-huron-person/config/config.<landscape>.json`). CDK stores it
+in the landscape's Secrets Manager secret at deploy time, and the tasks receive it as the `HURON_PERSON_CONFIG_JSON`
+secret environment variable. The configuration structure matches the `integration-huron-person` package.
 
 ### Dry Run Mode
 
@@ -111,21 +121,20 @@ Dry run mode allows testing the synchronization logic without making changes to 
 
 #### Enabling Dry Run in Fargate
 
-Set `dryRun: true` in the `dataTarget` section of your configuration:
+Set `DRY_RUN.taskdef.processor` (and/or `chunker`, `postProcessor`) to `true` in the landscape's context and deploy:
 
 ```json
-{
-  "dataTarget": {
-    "endpointConfig": { ... },
-    "personsPath": "/api/v2/persons",
-    "organizationsPath": "/api/v2/organizations",
-    "dryRun": true
-  }
+"DRY_RUN": {
+  "lambda": { "chunker": false, "processor": false, "postProcessor": false },
+  "taskdef": { "chunker": false, "processor": true, "postProcessor": false }
 }
 ```
 
-When dry run is enabled:
-- The Fargate task sets the `DRY_RUN=true` environment variable for processor containers
+CDK sets `DRY_RUN=true` in that task definition. `DRY_RUN.lambda.*` does the same for the subscriber Lambdas (e.g. the
+processor subscriber then forwards no chunks), which the Runner's `ServiceToggler` can also switch at run time.
+(`dataTarget.dryRun` in the integration config is not read.)
+
+When a processor runs dry:
 - All write operations (POST/PATCH to Huron API) are logged but not executed
 - Delta storage updates are skipped (previous data is not persisted)
 - Read operations continue normally (source fetching, delta computation, HRN lookups)
@@ -297,9 +306,9 @@ Harness configuration is documented in [example-env.md](./example-env.md). The f
 
 - **Orchestration**: `Runner` (Manual chunking service invocation, queue seeding)
 - **Chunking Pipeline**: `ChunkFromAPI`, `ChunkFromS3`, `BigJsonFetch`, `BigJsonFile`, `PersonArrayWrapper`
-- **Post-processing Pipeline**: `DeferredDeleteHandler`, `PersonCache`, `StatisticsTable`
+- **Post-processing Pipeline**: `DeferredDeleteHandler`, `ChunkPopulationReader`, `PersonCache` (`src/person-cache/PersonCacheForS3.ts`), `StatisticsTable` (`src/dynamodb/`)
 - **Docker Entry Points**: `chunker.ts`, `processor.ts`, `post-processor.ts`
-- **Storage & Error Handling**: `S3StorageAdapter`, `ApiErrorTracking`, `EcrChecker`
+- **Storage & Error Handling**: `S3StorageAdapter`, `ApiErrorTracking`
 - **Dashboard**: `ServiceProvider` (`dashboard/src/services/ServiceProvider.ts` - the dashboard's services, called as its handler calls them: run reporting, landscape registry, person lookup and sync preview), `ShibbolethSecret` (`dashboard/src/ShibbolethSecret.ts` - reads or creates the dashboard's Shibboleth secret), `RoleAssignmentStore` (`dashboard/src/authorization/RoleAssignmentStore.ts` - a landscape's role assignments; seeds the first Admin, see "Dashboard access"), `AuditStore` (`dashboard/src/audit/AuditStore.ts` - lists a landscape's audit trail)
 
 ### Running Test Harnesses
@@ -315,13 +324,13 @@ Harness configuration is documented in [example-env.md](./example-env.md). The f
 
 ```bash
 # Example: Run the Runner harness (manual chunking orchestration)
-npx ts-node src/Runner.ts
+npx ts-node src/runner/Runner.ts
 
 # Example: Run the ChunkFromAPI harness
 npx ts-node src/chunking/fetch/ChunkFromAPI.ts
 
 # Example: Run the PersonCache harness
-npx ts-node src/PersonCache.ts
+npx ts-node src/person-cache/PersonCacheForS3.ts
 
 # Example: Run the docker chunker harness
 npx ts-node docker/chunker.ts
@@ -333,14 +342,14 @@ npx ts-node dashboard/src/services/ServiceProvider.ts
 npx ts-node dashboard/src/ShibbolethSecret.ts
 ```
 
-For detailed documentation on the Runner harness, see [src/CLAUDE.md](./src/CLAUDE.md).
+For detailed documentation on the Runner harness, see [src/runner/README.md](./src/runner/README.md) and [src/runner/CLAUDE.md](./src/runner/CLAUDE.md). Each folder's harnesses and prefixes are listed in its `CLAUDE.md`.
 
 ## Useful commands
 
 * `npm run build`   compile typescript to js
 * `npm run watch`   watch for changes and compile
 * `npm run test`    perform the jest unit tests
-* `npm run deploy`  deploy every stack (pipeline, and the landscape's dashboard if the context has a `DASHBOARD` section)
+* `npm run deploy`  deploy every stack: the shared network (unchanged if it exists), the pipeline, and, if the context has a `DASHBOARD` section, the landscape's dashboard and its edge-lambda stack
 * `npm run deploy-fargate` / `npm run deploy-dashboard`  deploy one stack (pipeline first: the dashboard reads its resources). Deploying the pipeline also deploys the shared network stack, `huron-integration-network`, which it depends on: in a new account that creates the network, otherwise nothing changes
 * `npm run teardown` / `teardown-fargate` / `teardown-dashboard`  destroy every stack / one stack (`bin/teardown.sh`; tearing down the dashboard can take a few hours while CloudFront removes its Lambda@Edge replicas, and is safe to rerun). None of them touches the shared network stack, which every landscape runs in and which is termination-protected (see "Shared Network Stack" in [CLAUDE.md](./CLAUDE.md), and [docs/SHARED_NETWORK.md](./docs/SHARED_NETWORK.md) for why and how it was set up)
 * `npx cdk diff --all`    compare deployed stacks with current state

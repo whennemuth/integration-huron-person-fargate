@@ -10,6 +10,11 @@ This directory contains utility classes for interacting with DynamoDB tables use
 - Type-safe domain-specific methods
 - Single source of truth for common operations (batch operations, pagination, GSI queries)
 
+Also here, not covered below: `OCCFlag` (first-writer-wins claim records; [docs/CONCURRENCY_CONTROL.md](../../docs/CONCURRENCY_CONTROL.md)),
+`AtomicCounter` (the run counters; the table also holds `not-a-counter:` items, `NOT_A_COUNTER_PREFIX`, which anything
+that clears counters must leave alone), `MockTargetPersonTable` (the target simulator's store), `PersonRecordProcessorLogTable`
+(the addons' log) and `BulkPurger` (empties a mock landscape's tables).
+
 ## DynamoDBTable (Generic Base Class)
 
 **File**: `DynamoDBTable.ts`
@@ -32,23 +37,23 @@ const table = new DynamoDBTable({
 });
 
 // Get single item
-const item = await table.getItem('partition-value', 'sort-value');
+const item = await table.getItem({ partitionKeyValue: 'partition-value', sortKeyValue: 'sort-value' });
 
 // Query by partition key
-const items = await table.queryByPartitionKey('partition-value', 'sort-prefix');
+const items = await table.queryByPartitionKey({ partitionKeyValue: 'partition-value', sortKeyPrefix: 'sort-prefix' });
 
 // Query GSI
-const results = await table.queryGSI(
-  'gsi-name', 
-  'gsi-partition-key', 
-  'value',
-  'gsi-sort-key',    // optional
-  'value',           // optional
-  '>='               // optional operator
-);
+const results = await table.queryGSI({
+  indexName: 'gsi-name',
+  gsiPartitionKey: 'gsi-partition-key',
+  partitionKeyValue: 'value',
+  gsiSortKey: 'gsi-sort-key',   // optional
+  sortKeyValue: 'value',        // optional
+  sortKeyOperator: '>='         // optional operator
+});
 
 // Batch write
-await table.batchWrite([item1, item2, item3], 'put');
+await table.batchWrite({ items: [item1, item2, item3], operation: 'put' });
 ```
 
 ## StatisticsTable
@@ -59,49 +64,64 @@ Tracks integration run statistics, error events, and sync run metadata.
 
 ### Table Schema
 - **PK**: `integrationTimestamp` (ISO timestamp)
-- **SK**: `eventType` (STATISTICS | STATISTICS-chunk-XXXX | ERROR | FLAGS | METADATA | TERMINAL_ERROR | CHUNK_STATUS_nnnn | PROCESSOR_BOOST_CLAIM | POST_PROCESSOR_TRIGGER_CLAIM)
-- **GSI**: `errorType-timestamp-index` (for querying errors)
+- **SK**: `eventType` (STATISTICS-chunk-XXXX | ERROR:<statusCode>:<timestamp> | FLAGS | METADATA | TERMINAL_ERROR | CHUNK_STATUS_nnnn | PROCESSOR_BOOST_CLAIM | POST_PROCESSOR_TRIGGER_CLAIM | RUN | RUN_SUMMARY)
+- **GSI1**: `errorType-timestamp-index` (for querying errors by status code)
+- **GSI2**: `run-list-index` (sparse, KEYS_ONLY; partition key `runList`, always `RUNS`, sort key `distinctRunId`): holds
+  only the RUN marker items, so it lists every run in time order (`getRunIdsPage()`, `getAllRunIds()`). A table updated
+  in place to add it needs the harness task `backfill-runs`. More: [docs/STATISTICS_TABLE.md](../../docs/STATISTICS_TABLE.md)
 
 ### Record Types
 
-**1. STATISTICS** (Aggregated)
-- SK: "STATISTICS"
-- Contains: Total counts, success/failure metrics, execution time
-- Written by: Post-processor phase
+**1. RUN_SUMMARY**
+- SK: "RUN_SUMMARY"
+- Contains: the run's status, summed results, deletion outcome, `startedBy`, `processorScalingCapacity`
+- Written by: the post-processor (`AbstractPostProcessor`'s `finally`, `writeRunSummary()`), in both storage modes
+- Read by: run reporting (`readRunSummary()`)
 
 **2. STATISTICS-chunk-XXXX** (Per-Chunk)
 - SK: "STATISTICS-chunk-0009"
 - Contains: Chunk-specific metrics
-- Written by: Processor tasks
+- Written by: Processor tasks (no aggregate `STATISTICS` item is written)
 
-**3. ERROR**
-- SK: "ERROR"
-- Contains: Error details, stack traces
-- Written by: Error handlers
+**3. ERROR:<statusCode>:<timestamp>**
+- SK: e.g. "ERROR:429:2026-03-03T20:01:12.003Z"; `errorType` "ERROR:429" (the GSI1 key)
+- Contains: timestamp, statusCode, statusText, message, incidentId, isThrottled, detailsObj (no stack trace)
+- Written by: `ApiErrorTracking`'s tracker, for target API errors during processing
 
 **4. FLAGS**
 - SK: "FLAGS"
-- Contains: bulkReset, trustPreviousStorage, ignoreRemovals
-- Written by: Chunker phase
+- Contains: bulkReset, trustPreviousStorage, syncPopulation, and optionally personRecordProcessorAddons, termsEndpoint,
+  startedBy, processorScalingCapacity (and runFailed* fields, which nothing writes)
+- Written by: Chunker tasks
 - Read by: Processor and Post-processor phases
 
 **5. METADATA**
 - SK: "METADATA"
-- Contains: startTime, endTime, totalChunks, clientId
-- Written by: Chunker and Post-processor phases
-- Read by: Dashboard, reporting tools
+- Contains: source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation,
+  deltaStoragePath, createdAt; the run totals chunkCount and totalRecords (accumulated by `addToMetadataTotals()`) and
+  partialOrEmptyChunkEncountered; postProcessorTriggered / postProcessorTriggeredAt / postProcessorTriggeredBy
+- Written by: Chunker tasks (`MetadataBroker.write`, `addToMetadataTotals`) and the processor that triggers the
+  post-processor (`updateMetadata`)
+- Read by: the processors' completion check, run reporting
 
 **6. CHUNK_STATUS_nnnn**
 - SK: "CHUNK_STATUS_0009"
-- Contains: status (PENDING|PROCESSING|COMPLETED|FAILED), startTime, endTime, error
-- Written by: Processor tasks
-- Read by: Post-processor for resumption logic
+- Contains: status (COMPLETED|FAILED), endTime, recordCount, error
+- Written by: Processor tasks (DynamoDB mode)
+- Read by: processors (`getCompletedChunkCount()`), to detect that every chunk is done and claim
+  POST_PROCESSOR_TRIGGER_CLAIM
 
 **7. TERMINAL_ERROR**
 - SK: "TERMINAL_ERROR"
-- Contains: timestamp, errorMessage, errorStack, phase, chunkDirectory
-- Written by: Any phase that hits a pipeline-halting failure (`writeTerminalError()`)
-- Read by: Processor (before triggering the post-processor) and Post-Processor (`readTerminalError()`)
+- Contains: `{ stage: 'chunking', chunkDirectory, errorMessage, errorTimestamp }`
+- Written by: the chunker, when a run fails (`markRunFailed()` → `writeTerminalError()`)
+- Read by: chunker tasks (abort), the processor (before triggering the post-processor) and the post-processor (before
+  deletions) (`readTerminalError()`)
+
+**RUN** (the run marker)
+- SK: "RUN"; attributes `runList` = `RUNS`, `distinctRunId` = the syncRunId
+- Written idempotently with FLAGS, the metadata totals and the terminal error (`registerRun()`); the only item in
+  `run-list-index`
 
 **8. PROCESSOR_BOOST_CLAIM**
 - SK: "PROCESSOR_BOOST_CLAIM"
@@ -126,8 +146,8 @@ Tracks integration run statistics, error events, and sync run metadata.
 ```typescript
 const statsTable = new StatisticsTable(context);
 
-// Get aggregated statistics
-const stats = await statsTable.getStatistics('2026-03-03T19:58:41.277Z');
+// Get the run's summary
+const summary = await statsTable.readRunSummary('2026-03-03T19:58:41.277Z');
 
 // Get chunk-specific statistics
 const chunkStats = await statsTable.getChunkStatistics('2026-03-03T19:58:41.277Z', 'chunk-0009');
@@ -136,7 +156,7 @@ const chunkStats = await statsTable.getChunkStatistics('2026-03-03T19:58:41.277Z
 await statsTable.writeFlags('2026-03-03T19:58:41.277Z', {
   bulkReset: true,
   trustPreviousStorage: false,
-  ignoreRemovals: false
+  syncPopulation: 'person-full'
 });
 
 // Read flags
@@ -144,19 +164,20 @@ const flags = await statsTable.readFlags('2026-03-03T19:58:41.277Z');
 
 // Write metadata
 await statsTable.writeMetadata('2026-03-03T19:58:41.277Z', {
-  startTime: '2026-03-03T19:58:41.277Z',
-  totalChunks: 42,
-  clientId: 'delta-storage'
+  source: '...',
+  chunkDirectory: 'chunks/person-full/2026-03-03T19:58:41.277Z',
+  itemsPerChunk: 200,
+  createdAt: '2026-03-03T19:58:41.277Z'
 });
 
 // Write chunk status
 await statsTable.writeChunkStatus('2026-03-03T19:58:41.277Z', 'chunk-0009', {
   status: 'COMPLETED',
-  startTime: '2026-03-03T19:59:00.000Z',
-  endTime: '2026-03-03T20:05:30.000Z'
+  endTime: '2026-03-03T20:05:30.000Z',
+  recordCount: 200
 });
 
-// Get completed chunk count (for resumption)
+// Get completed chunk count (has every chunk been processed?)
 const completedCount = await statsTable.getCompletedChunkCount('2026-03-03T19:58:41.277Z');
 
 // Claim the processor boost (chunker tasks) - true only for the single winner
@@ -177,7 +198,10 @@ The StatisticsTable includes a test harness for interactive operations:
 # Truncate table
 STATISTICS_TABLE_TASK=truncate npx ts-node src/dynamodb/StatisticsTable.ts
 
-# Get statistics for specific run
+# Write the RUN marker for runs that lack one (a table updated in place to add run-list-index)
+STATISTICS_TABLE_TASK=backfill-runs npx ts-node src/dynamodb/StatisticsTable.ts
+
+# Get the run summary for a specific run
 STATISTICS_TABLE_TASK=statistics \
 STATISTICS_TABLE_INTEGRATION_TIMESTAMP=2026-03-03T19:58:41.277Z \
 npx ts-node src/dynamodb/StatisticsTable.ts
@@ -200,16 +224,20 @@ Tracks current hash state for each person. Used for delta computation.
 ### Table Schema
 - **PK**: `personId` (e.g., "U12345678")
 - **SK**: None (single record per person)
-- **GSI**: `syncRunId-personId-index` (for deletion detection)
+- **GSI**: `syncRunId-personId-index` (find persons last changed in a run; used by run pruning)
 
 ### Record Format
 ```json
 {
   "personId": "U12345678",
   "hash": "a1b2c3d4...",
-  "syncRunId": "2026-03-03T19:58:41.277Z"
+  "syncRunId": "2026-03-03T19:58:41.277Z",
+  "deletedAt": "2026-03-04T02:10:00.000Z"
 }
 ```
+
+`deletedAt` is present, and the hash carries a `DELETED:` prefix, for a person soft-deleted because they left the
+source (`markDeleted()`); a returning person's next write clears both.
 
 ### Usage
 ```typescript
@@ -226,8 +254,11 @@ const updatedStates = [
 ];
 await stateTable.batchWritePersonState(updatedStates);
 
-// Post-processor: Find all persons in sync run (for deletion detection)
+// Find persons last changed in a sync run (run pruning, the harness's list task)
 const personsInRun = await stateTable.getPersonsInSyncRun('2026-03-03T19:58:41.277Z');
+
+// Post-processor (deletion detection): every person, by a full scan
+const everyone = await stateTable.getAllPersons();
 ```
 
 ## PersonHistoryTable
@@ -348,7 +379,7 @@ All three table classes provide deletion methods for removing records associated
 
 ### StatisticsTable.deleteByPartitionKey()
 
-Deletes all records (STATISTICS, FLAGS, METADATA, TERMINAL_ERROR, CHUNK_STATUS, ERROR, PROCESSOR_BOOST_CLAIM, POST_PROCESSOR_TRIGGER_CLAIM records) for a specific integration run:
+Deletes every item in the run's partition (chunk statistics, FLAGS, METADATA, TERMINAL_ERROR, CHUNK_STATUS, ERROR, the claims, the RUN marker and RUN_SUMMARY) for a specific integration run:
 
 ```typescript
 const statsTable = new StatisticsTable(context);
@@ -404,7 +435,8 @@ console.log(`Deleted: ${result.deletedCount}, Restored: ${result.restoredCount}`
 - Example: If Person A was updated in Run 3, pruning Run 3 restores Person A to their Run 2 state
 
 **Edge Cases**: 
-- If a person's previous history entry is a DELETED record, they are deleted from PersonCurrentState
+- If a person's previous history entry is a DELETED record, their record is restored with the `DELETED:`-prefixed hash
+  (still soft-deleted)
 - If a person has no history before the target run, they are deleted (created in target run)
 
 ## IntegrationRunPruner (Orchestrator)
@@ -434,14 +466,13 @@ console.log(result);
 
 The pruner executes deletions in this specific order:
 
-1. **StatisticsTable**: Remove run metadata, flags, errors (no dependencies)
-2. **PersonHistoryTable**: Remove audit trail records (needed for restoration)
+1. **StatisticsTable**: Remove the run's items: metadata, flags, errors, chunk statistics and statuses, claims, the RUN
+   marker and the run summary
+2. **PersonHistoryTable**: Remove the run's audit trail records
 3. **PersonCurrentStateTable**: Remove current state and restore from previous run
 
-This order ensures that:
-- Statistics/metadata are cleaned first
-- History data is available when restoring PersonCurrentState
-- Current state is restored to maintain data integrity
+Restoration uses each person's latest history entry *before* this run, so it doesn't need this run's own entries.
+`prune()` refuses a run if any of its persons were changed by a later run: prune the later runs first.
 
 ### Harness Execution
 
@@ -477,11 +508,12 @@ The IntegrationRunPruner requires additional DynamoDB permissions beyond normal 
 
 **Required Permissions**:
 - `dynamodb:Query` - To find records matching partition keys
-- `dynamodb:BatchWriteItem` - To delete records in batches
-- `dynamodb:DeleteItem` - To delete individual items
-- `dynamodb:PutItem` - To restore PersonCurrentState records
+- `dynamodb:BatchGetItem` - The precondition's look-up of the run's persons
+- `dynamodb:BatchWriteItem` - To delete records and restore PersonCurrentState records, in batches
+- `dynamodb:GetItem`
 
-**Note**: Normal ECS tasks (Processor, Post-processor, Chunker) do NOT have these delete permissions by design, as deletion is not part of standard pipeline operations.
+**Note**: Run pruning is a manual, administrative operation; no pipeline task runs it. (The processor and
+post-processor task roles do have `BatchWriteItem` on these tables, which can delete.)
 
 **Deployment Options**:
 
@@ -500,20 +532,20 @@ The IntegrationRunPruner requires additional DynamoDB permissions beyond normal 
      // ... config
    });
    
-   // Grant delete permissions
-   ['Statistics', 'PersonCurrentState', 'PersonHistory'].forEach(tableName => {
+   // Grant the pruner's permissions, on the tables' real names (each table class exports DYNAMODB_TABLE_NAME(context),
+   // e.g. `${STACK_ID}-person-current-state-${landscape}`, `${STACK_ID}-person-history-${landscape}`)
+   [statisticsTableName, personCurrentStateTableName, personHistoryTableName].forEach(tableName => {
      prunerLambda.addToRolePolicy(new PolicyStatement({
        effect: Effect.ALLOW,
        actions: [
          'dynamodb:Query',
+         'dynamodb:BatchGetItem',
          'dynamodb:BatchWriteItem',
-         'dynamodb:DeleteItem',
-         'dynamodb:PutItem',
          'dynamodb:GetItem'
        ],
        resources: [
-         `arn:aws:dynamodb:${region}:${account}:table/${stackId}-${tableName.toLowerCase()}-${landscape}`,
-         `arn:aws:dynamodb:${region}:${account}:table/${stackId}-${tableName.toLowerCase()}-${landscape}/index/*`
+         `arn:aws:dynamodb:${region}:${account}:table/${tableName}`,
+         `arn:aws:dynamodb:${region}:${account}:table/${tableName}/index/*`
        ]
      }));
    });
@@ -528,14 +560,16 @@ The IntegrationRunPruner requires additional DynamoDB permissions beyond normal 
 
 **File**: `../../lib/DynamoDB.ts`
 
-All three tables are created conditionally based on `context.PREVIOUS_STORAGE_TYPE` configuration:
+The statistics, atomic counter and addon log tables are always created; the PersonCurrentState and PersonHistory
+tables only in DynamoDB storage mode (`context.PREVIOUS_STORAGE_TYPE`); the mock target table only in a mock
+landscape.
 
 ```typescript
-import { DynamoDBTables } from '../lib/DynamoDB';
+import { DynamoDbTables, TableResourceIds } from '../lib/DynamoDB';
 
-const tables = new DynamoDBTables(this, 'DynamoDBTables', { context, tags });
+const tables = new DynamoDbTables({ scope: this, id: 'DynamoDb', props: { context, tags } });
 
-// Grant permissions
+// Grant permissions (the task definitions grant theirs with explicit policies instead)
 tables.grantReadWriteData(processorTask, TableResourceIds.STATISTICS_TABLE);
 tables.grantReadWriteData(processorTask, TableResourceIds.PERSON_CURRENT_STATE_TABLE);
 tables.grantReadWriteData(processorTask, TableResourceIds.PERSON_HISTORY_TABLE);
@@ -563,7 +597,7 @@ All query methods automatically handle pagination. You don't need to manually ma
 ### 4. Cost Optimization
 - UNCHANGED persons are NOT written to PersonHistory (significant write savings)
 - Use GSIs strategically to enable efficient queries
-- Avoid scanning tables; always query by key
+- Query by key; scan only for once-per-run work (deletion detection, truncation, backfilling run markers)
 
 ### 5. Type Safety
 All domain-specific methods use TypeScript interfaces for records:
@@ -574,18 +608,18 @@ All domain-specific methods use TypeScript interfaces for records:
 ## Migration Path from S3 to DynamoDB
 
 ### S3 State Files (Old Approach)
-- `previous-input.ndjson`: Full person dataset from previous run
-- `mini-delta.ndjson`: Incremental updates
-- `chunk-markers/`: Processor completion flags
-- `run-state/flags.json`: Sync run configuration
-- `run-state/metadata.json`: Sync run metadata
+- `delta-storage/previous-input.ndjson`: Full person dataset from previous run (the baseline)
+- `deltas/<population>/<syncRunId>/`: each chunk's delta (incremental updates)
+- `deltas/<population>/<syncRunId>/chunk-NNNN_processing_complete.json`: Processor completion markers
+- `chunks/<population>/<syncRunId>/_flags.json`: Sync run configuration
+- `chunks/<population>/<syncRunId>/_metadata.json`: Sync run metadata (and `_terminal_error.json` beside it)
 
 ### DynamoDB Tables (New Approach)
 - **PersonCurrentState**: Replaces `previous-input.ndjson` (keyed by personId)
-- **PersonHistory**: Replaces `mini-delta.ndjson` (append-only audit trail)
-- **StatisticsTable FLAGS records**: Replaces `run-state/flags.json`
-- **StatisticsTable METADATA records**: Replaces `run-state/metadata.json`
-- **StatisticsTable CHUNK_STATUS records**: Replaces `chunk-markers/`
+- **PersonHistory**: Replaces the chunk deltas (append-only audit trail)
+- **StatisticsTable FLAGS records**: Replaces `_flags.json`
+- **StatisticsTable METADATA records**: Replaces `_metadata.json`
+- **StatisticsTable CHUNK_STATUS records**: Replaces the completion markers
 
 ### Parallel Implementation
 Both approaches exist in parallel. The code path is selected based on:
@@ -597,7 +631,9 @@ This allows gradual migration and rollback if needed.
 
 ## Testing
 
-All utility classes include `truncate()` methods for test cleanup. Use with caution in production:
+The table classes (StatisticsTable, PersonCurrentStateTable, PersonHistoryTable, MockTargetPersonTable) include
+`truncate()` methods for test cleanup. To empty a landscape's tables use `BulkPurger`, which refuses a non-mock
+landscape unless `force: true`. Use with caution:
 
 ```typescript
 // WARNING: Destructive operation!
@@ -607,6 +643,7 @@ await historyTable.truncate();
 ```
 
 ## See Also
-- [Integration Core DeltaStrategy Documentation](../../integration-core/README.md)
+- [Integration Core DeltaStrategy Documentation](../../../integration-core/README.md)
 - [Three-Phase Pipeline Skill](../../../.claude/skills/three-phase-pipeline/SKILL.md)
-- [DynamoDB Resumption Requirements](../docs/dynamodb-resumption.md)
+- [The statistics table](../../docs/STATISTICS_TABLE.md), [storage modes](../../docs/STORAGE_MODES.md) and
+  [concurrency control](../../docs/CONCURRENCY_CONTROL.md)

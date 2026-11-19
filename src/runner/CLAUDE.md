@@ -102,7 +102,8 @@ is `extractEnvironment()` in `RunnerTypes.ts`.
 ## Invariants
 
 1. **Modes**: `MESSAGING_ONLY` and `CHUNKING_ONLY` can't both be true; `MESSAGING_ONLY` is incompatible with
-   `SOURCE_SIMULATOR`; the source simulator implies chunking-only behavior in `Runner.ts`.
+   `SOURCE_SIMULATOR`; with `SOURCE_SIMULATOR`, `Runner.ts` doesn't apply `RestoreToFullOperationRunnerDecorator`, so
+   the subscribers keep whatever `DRY_RUN` they had.
 2. **Seeding order**: seed first, then the alarm catch-up delay, then the desired count.
 3. **Counters**: the chunker counter is reset before seeding, and seeding needs the atomic counter table.
 4. **Config precedence**: environment -> local file -> JSON env string -> Secrets Manager.
