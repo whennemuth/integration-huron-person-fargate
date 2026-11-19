@@ -38,7 +38,7 @@ exporting `main()`:
 **Mode selection:** both routers switch on `PREVIOUS_STORAGE_TYPE` (`s3` or `dynamodb`), which CDK bakes into every
 task definition. It must be set, and any other value throws. `dynamodb` also requires both
 `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` and `DYNAMODB_PERSON_HISTORY_TABLE_NAME`. (`MetadataFactoryForBootstrap`, in
-`src/chunking/metadata/MetadataFactory.ts`, decides by the person tables' variables instead.)
+`src/chunking/metadata/MetadataFactory.ts`, switches on it too, but in `dynamodb` mode needs only one of the two.)
 
 **Local Development (docker-compose):**
 - Reads `CHUNKS_BUCKET` and `CHUNK_KEY` environment variables

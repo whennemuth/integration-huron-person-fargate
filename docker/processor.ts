@@ -4,20 +4,22 @@
  * This module acts as a switchboard that routes to the appropriate processor
  * implementation based on storage mode detected from environment variables.
  * 
- * ## Storage Mode Detection
- * 
- * Uses the same logic as MetadataFactoryForBootstrap:
- * - If DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME or DYNAMODB_PERSON_HISTORY_TABLE_NAME is set → DynamoDB mode
- * - Otherwise → S3 mode (default)
+ * ## Storage Mode Selection
+ *
+ * Switches on PREVIOUS_STORAGE_TYPE, which CDK bakes into every task definition:
+ * - 's3' → S3 mode
+ * - 'dynamodb' → DynamoDB mode, which also requires both DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME and
+ *   DYNAMODB_PERSON_HISTORY_TABLE_NAME
+ * - unset, or any other value → throws
  * 
  * ## Architecture
  * 
- * ### S3 Mode (processor-s3.ts)
+ * ### S3 Mode (src/processing/ProcessorForS3.ts)
  * - Writes mini-deltas to S3 for each chunk
  * - Maintains coordination via marker files
  * - Post-processor consolidates all chunk deltas into single previous-input.ndjson
  * 
- * ### DynamoDB Mode (processor-dynamodb.ts)
+ * ### DynamoDB Mode (src/processing/ProcessorForDynamoDb.ts)
  * - Writes directly to PersonCurrentState and PersonHistory tables
  * - No mini-deltas or marker files needed
  * - Post-processor only handles deletion detection
@@ -27,13 +29,12 @@
  * This single entry point is used for both modes:
  * - Docker image: Built once, contains both implementations
  * - ECS task: CMD="node dist/docker/processor.js"
- * - Environment variables determine which implementation runs
+ * - PREVIOUS_STORAGE_TYPE determines which implementation runs
  * 
  * ## Environment Variables
  * 
- * Mode Detection:
- * - DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME: If set, uses DynamoDB mode
- * - DYNAMODB_PERSON_HISTORY_TABLE_NAME: If set, uses DynamoDB mode
+ * Mode Selection:
+ * - PREVIOUS_STORAGE_TYPE: 's3' or 'dynamodb' (required)
  * 
  * Common Variables (both modes):
  * - REGION: AWS region
@@ -62,11 +63,7 @@ import { main as mainDynamoDb } from '../src/processing/ProcessorForDynamoDb';
 import { main as mainS3 } from '../src/processing/ProcessorForS3';
 
 /**
- * Route to appropriate processor based on storage mode.
- * 
- * Detection logic matches MetadataFactoryForBootstrap:
- * - Checks for DynamoDB-mode-specific table names
- * - Falls back to S3 mode if not found
+ * Route to appropriate processor based on storage mode (PREVIOUS_STORAGE_TYPE; see the header above).
  * 
  * @param personRecordProcessor - Optional pre-resolved personRecordProcessor hook, threaded
  * through to whichever implementation is routed to (DRY - callers/tests can inject one instead
@@ -88,7 +85,7 @@ async function main(queueReader: QueueReader, personRecordProcessor?: PersonReco
   const previousStorageType = PREVIOUS_STORAGE_TYPE.toLowerCase() as IContext['PREVIOUS_STORAGE_TYPE'];
   switch(previousStorageType) {
     case 's3':
-      console.log('🔀 Router: Detected S3 mode (no DynamoDB tables configured)');
+      console.log('🔀 Router: S3 mode (PREVIOUS_STORAGE_TYPE=s3)');
       console.log('   Routing to mainS3\n');
       await mainS3(queueReader, personRecordProcessor);
       break;
@@ -96,7 +93,7 @@ async function main(queueReader: QueueReader, personRecordProcessor?: PersonReco
       if (!DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME || !DYNAMODB_PERSON_HISTORY_TABLE_NAME) {
         throw new Error('DynamoDB mode requires both DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME and DYNAMODB_PERSON_HISTORY_TABLE_NAME to be set.');
       }
-      console.log('🔀 Router: Detected DynamoDB mode (DynamoDB-mode-specific tables present)');
+      console.log('🔀 Router: DynamoDB mode (PREVIOUS_STORAGE_TYPE=dynamodb)');
       console.log('   Routing to mainDynamoDb\n');
       await mainDynamoDb(queueReader, personRecordProcessor);
       break;

@@ -1,20 +1,23 @@
 # CDK Deployment Guide
 
-This guide covers deploying the Fargate-based Huron Person File Processor.
+This guide covers deploying the Fargate-based Huron Person pipeline.
 
 ## Architecture Overview
 
-**Two-Phase Parallel Processing:**
+**Three-phase parallel processing**, each phase an ECS Fargate service fed by its own SQS queue:
 
-1. **Phase 1 (Chunker)**: 
-   - S3 file drop → Lambda Subscriber → Fargate task (chunker)
-   - Reads large JSON file, creates NDJSON chunks
-   - Stores chunks in S3 `chunks/` folder
+1. **Chunker**: a run starts from the schedule, the dashboard's Bulk sync, the Runner, the `npm run start-*` scripts or a
+   dropped file; the chunker subscriber Lambda queues it, and chunker tasks stream the source into NDJSON chunk files in
+   S3 under `chunks/<population>/<syncRunId>/`.
+2. **Processor**: each new chunk file reaches the processor queue through the processor subscriber Lambda; processor
+   tasks (scaled on queue depth, from 0 to the context's `ECS.processorService.maxScalingCapacity`) each sync one
+   chunk's people to the Huron API.
+3. **Post-processor**: once every chunk is processed, consolidates the run's results (S3 mode), handles people missing
+   from the source, and writes the run summary.
 
-2. **Phase 2 (Processor)**:
-   - S3 chunk created → SQS message → Fargate tasks (processors, auto-scaled 0-10)
-   - Each task reads one chunk, syncs persons to Huron API
-   - Parallel processing: 10 tasks = ~5 min vs ~16 min serial
+Logs: `/ecs/huron-person-chunker-<landscape>`, `/ecs/huron-person-processor-<landscape>`,
+`/ecs/huron-person-post-processor-<landscape>`, and `/aws/lambda/<function>-<landscape>` for the subscriber Lambdas.
+The event flow in full: [INFRASTRUCTURE_README.md](INFRASTRUCTURE_README.md#event-flow).
 
 ## Prerequisites
 
@@ -41,7 +44,7 @@ This guide covers deploying the Fargate-based Huron Person File Processor.
 
 ## Configuration
 
-Edit [context/context.json](./context/context.json):
+Edit [context/context.json](../context/context.json):
 
 ```json
 {
@@ -339,14 +342,9 @@ npm run teardown-dashboard  # dashboard + edge-lambda stacks (see "Edge-lambda t
 
 ## Next Steps
 
-1. **Implement Huron API sync logic** in [src/PersonProcessor.ts](./src/PersonProcessor.ts)
-2. **Create SSM Parameter** for Huron API key:
-   ```bash
-   aws ssm put-parameter \
-     --name "REPLACE_WITH_SSM_PARAMETER_NAME" \
-     --value "your-api-key" \
-     --type SecureString
-   ```
-3. **Update context.json** with real Huron API endpoint
-4. **Test with small files** before production deployment
-5. **Set up CloudWatch alarms** for DLQ messages and task failures
+1. **Publish the task image** to the landscape's ECR repository: `npm run docker-publish`
+2. **Start a run**: the dashboard's Bulk sync, `npm run start-full-sync` (or another `start-*` script), or the Runner
+   (`src/runner/Runner.ts`); the person sync itself is in `src/processing/` (`ProcessorForS3.ts`,
+   `ProcessorForDynamoDb.ts`)
+3. **Test with a mock landscape or a small population** before a production run
+4. **Set up CloudWatch alarms** for DLQ messages and task failures

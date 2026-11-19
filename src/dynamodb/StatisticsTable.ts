@@ -371,10 +371,8 @@ export class StatisticsTable {
    * FLAGS record format:
    * - PK: syncRunId (ISO timestamp)
    * - SK: "FLAGS"
-   * - bulkReset: boolean
-   * - trustPreviousStorage: boolean
-   * - ignoreRemovals: boolean
-   * - Other boolean flags as needed
+   * - The Flags fields (src/chunking/metadata/IMetadataStorage.ts): bulkReset, trustPreviousStorage, syncPopulation,
+   *   and the optional runFailed..., personRecordProcessorAddons, termsEndpoint, startedBy, processorScalingCapacity
    * 
    * @param syncRunId - ISO timestamp identifying the sync run
    * @param flags - Object containing flag key-value pairs

@@ -313,12 +313,6 @@ STATISTICS_TABLE_STATISTICS_TABLE_INTEGRATION_TIMESTAMP=2026-05-13T17:23:38.978Z
 STATISTICS_TABLE_STATISTICS_TABLE_NAME_OVERRIDE=
 STATISTICS_TABLE_TRUNCATE_CHUNK_SIZE=25
 
-# ------- Harness Groups for scrap\EcrChecker.ts ------- #
-ECR_CHECKER_AWS_PROFILE=infnprd
-ECR_CHECKER_REGION=us-east-2
-ECR_CHECKER_ECR_REGISTRY_ID=<account-id>
-ECR_CHECKER_ECR_REPOSITORY_NAME=huron-person-integration
-
 # ------- Harness Groups for src\chunking\fetch\SourceSimulator.ts ------- #
 # Test harness for the Source Simulator Lambda Function URL
 # TASK options: 'local' (mock handler call) or 'remote' (deployed Lambda call)

@@ -41,7 +41,8 @@ How to build, run locally with Docker Compose, and the variables: [README.md](RE
 - **The routers branch on `PREVIOUS_STORAGE_TYPE`**, which CDK bakes into each task definition: `s3` or `dynamodb`; it
   must be set, any other value throws, and `dynamodb` also requires both `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` and
   `DYNAMODB_PERSON_HISTORY_TABLE_NAME`. (`MetadataFactoryForBootstrap` in `src/chunking/metadata/MetadataFactory.ts`,
-  which reads metadata before config is loaded, decides by the person tables' variables instead.) Storage modes in
+  which reads metadata before config is loaded, switches on it too, but in `dynamodb` mode needs only one of the two
+  person tables' variables.) Storage modes in
   full: [docs/STORAGE_MODES.md](../docs/STORAGE_MODES.md).
 - **Tables in both modes**: the statistics table (errors, metadata, claims) and the atomic counter table (chunk
   ordinals and offsets; the chunker's) exist in either mode; only the two person tables are DynamoDB mode's.

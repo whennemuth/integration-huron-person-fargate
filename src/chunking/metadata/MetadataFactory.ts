@@ -97,10 +97,10 @@ export class MetadataFactory {
  * 
  * ## Solution
  * Create instances directly using environment variables to determine storage type:
- * - If PREVIOUS_STORAGE_TYPE is set to 'dynamodb' → DynamoDB mode
- * - and...
- * - If DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME or DYNAMODB_PERSON_HISTORY_TABLE_NAME is set → DynamoDB mode
- * - Otherwise → S3 mode (MetadataForS3)
+ * - PREVIOUS_STORAGE_TYPE 's3' → S3 mode (MetadataForS3)
+ * - PREVIOUS_STORAGE_TYPE 'dynamodb', with DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME or
+ *   DYNAMODB_PERSON_HISTORY_TABLE_NAME set → DynamoDB mode (MetadataForDynamoDb); without either, throws
+ * - Anything else → throws
  * 
  * Instances are created with minimal configuration (empty Config object for S3,
  * an explicit statisticsTableName read from env vars for DynamoDB) which is
@@ -109,7 +109,7 @@ export class MetadataFactory {
  * ## Why Check for Person Tables (Not Statistics Table)?
  * The statistics table exists in BOTH S3 and DynamoDB modes (for error logging).
  * Only PersonCurrentStateTable and PersonHistoryTable are DynamoDB-mode-specific.
- * These optional tables are set as environment variables only when PREVIOUS_STORAGE_TYPE is 'dynamodb' (default).
+ * These optional tables are set as environment variables only when PREVIOUS_STORAGE_TYPE is 'dynamodb'.
  * 
  */
 export class MetadataFactoryForBootstrap {
@@ -121,8 +121,9 @@ export class MetadataFactoryForBootstrap {
    * configured for early bootstrap operations (before full config is available).
    * 
    * Logic:
-   * - If PREVIOUS_STORAGE_TYPE is 'dynamodb' and DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME or DYNAMODB_PERSON_HISTORY_TABLE_NAME is set → DynamoDB mode
-   * - Otherwise → S3 mode is the only supported alternative.
+   * - PREVIOUS_STORAGE_TYPE 'dynamodb' with DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME or DYNAMODB_PERSON_HISTORY_TABLE_NAME set → DynamoDB mode
+   * - PREVIOUS_STORAGE_TYPE 's3' → S3 mode
+   * - Anything else throws.
    * 
    * @returns IMetadataStorage instance (MetadataForS3 or MetadataForDynamoDb)
    */
