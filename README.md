@@ -262,7 +262,7 @@ the token's 7 days), each landscape prompts again. To let landscapes share one s
 
 ## Dashboard access
 
-A landscape's dashboard decides who may do what by role (Viewer, Operator, Admin), held per person in the
+A landscape's dashboard decides who may do what by role (RunViewer, PersonViewer, Viewer, PersonOperator, PipelineOperator, Operator, Admin), held per person in the
 landscape's own access table, `<dashboard STACK_ID>-access-<landscape>` (e.g. `hp-dashboard-access-staging`).
 A signed-in user with no role sees the pages but none of their data. The Lambda verifies the sign-in token with the
 JWT public key of the landscape's Shibboleth secret, which synth reads (it fails if the secret has none).

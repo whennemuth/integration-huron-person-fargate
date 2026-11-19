@@ -72,7 +72,7 @@ export const OFFLINE_LANDSCAPE = 'local';
  * The roles USER_ROLES may name (StaticRoleCatalog's, not imported: nothing of the server may load before its
  * environment is set; a test keeps them the same)
  */
-export const ROLE_NAMES = ['Viewer', 'Operator', 'Admin'] as const;
+export const ROLE_NAMES = ['RunViewer', 'PersonViewer', 'Viewer', 'PersonOperator', 'PipelineOperator', 'Operator', 'Admin'] as const;
 
 /** A landscape's name, as the stacks name them: lower case letters and digits, after a letter */
 const LANDSCAPE_NAME = /^[a-z][a-z0-9]*$/;

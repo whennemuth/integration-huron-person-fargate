@@ -56,7 +56,7 @@ describe('the gate, signed in', () => {
     ['GET', '/api/audit', 'audit:read', undefined]
   ];
 
-  describe.each(['', 'Viewer', 'Operator', 'Admin'])('holding %j', roles => {
+  describe.each(['', ...catalog.listRoles().map(role => role.name)])('holding %j', roles => {
     it.each(ROUTES)('%s %s needs %s', async (method, path, action, body) => {
       const result = await as(roles, method, path, body);
       const granted = !!roles && !!catalog.getRole(roles)!.allows(action);

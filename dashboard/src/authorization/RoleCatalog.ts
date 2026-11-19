@@ -59,8 +59,13 @@ export class StaticRoleCatalog implements RoleCatalog {
 
   constructor() {
     const p = StaticRoleCatalog.POLICIES;
+    // From least to most (2026-11-18), the order the Access page lists them in. No two grant the same actions
     this.roles = [
-      new Role('Viewer', 'Sees the runs and the status', [p.RunReporting]),
+      new Role('RunViewer', 'Sees the runs and the status', [p.RunReporting]),
+      new Role('PersonViewer', 'Looks people up and previews their sync', [p.PersonDataRead]),
+      new Role('Viewer', 'Sees the runs and the status, and looks people up', [p.RunReporting, p.PersonDataRead]),
+      new Role('PersonOperator', 'Looks people up and syncs them; sees the runs, but starts none', [p.RunReporting, p.PersonDataRead, p.PersonDataWrite]),
+      new Role('PipelineOperator', 'Starts sync runs; sees the runs and looks people up, but syncs no one', [p.RunReporting, p.PersonDataRead, p.PipelineControl]),
       new Role('Operator', 'Runs the integration: people and sync runs', [p.RunReporting, p.PersonDataRead, p.PersonDataWrite, p.PipelineControl]),
       new Role('Admin', 'Everything, including roles and the audit trail', Object.values(p))
     ];

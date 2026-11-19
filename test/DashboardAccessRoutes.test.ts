@@ -29,10 +29,14 @@ const store = () => loaded.ServiceProvider.getRoleAssignmentStore();
 describe('GET /api/access/roles', () => {
   it("lists the catalog's roles with their policies and actions", async () => {
     const { roles } = json(await call('GET', '/api/access/roles'));
-    expect(roles.map((r: any) => r.name)).toEqual(['Viewer', 'Operator', 'Admin']);
-    expect(roles[0]).toEqual({
+    expect(roles.map((r: any) => r.name)).toEqual(
+      ['RunViewer', 'PersonViewer', 'Viewer', 'PersonOperator', 'PipelineOperator', 'Operator', 'Admin']);
+    expect(roles[2]).toEqual({
       name: 'Viewer', description: expect.any(String),
-      policies: [{ name: 'RunReporting', description: expect.any(String), actions: ['runs:read'] }]
+      policies: [
+        { name: 'RunReporting', description: expect.any(String), actions: ['runs:read'] },
+        { name: 'PersonDataRead', description: expect.any(String), actions: ['person:lookup', 'person:preview'] }
+      ]
     });
   });
 });

@@ -352,8 +352,8 @@ repository's `.env` is never read.
   `decorate(event)` and an optional `respond(path)`), and imports nothing from `scripts/`. The launcher sets
   `JWT_PUBLIC_KEY` to the local sign-in's public key (in place of a deployed Lambda's), so the handler verifies the
   local tokens as it verifies the landscape's. Tests: `test/DashboardLocalSignIn.test.ts`.
-- **The local user's roles**: offline, `USER_ROLES` (comma-delimited: `Viewer`, `Operator`, `Admin`; `none` for no
-  role), or `--roles <Role,...>`, seeds the offline role store (`LocalLaunchOptions.roles`, checked against
+- **The local user's roles**: offline, `USER_ROLES` (comma-delimited role names, e.g. `Viewer` or
+  `PersonOperator,Admin`; `none` for no role), or `--roles <Role,...>`, seeds the offline role store (`LocalLaunchOptions.roles`, checked against
   `ROLE_NAMES`, which a test keeps equal to the catalog's). Without it the local user has no role. Online the
   landscape's access table holds the roles (seed them with `DASHBOARD_ROLE_ASSIGNMENTS`), and `USER_ROLES` is
   ignored with a warning, as it is in public mode.
@@ -468,7 +468,9 @@ Who may do what in a landscape's dashboard, by role, per landscape (`authorizati
   `ACCESS_TABLE_NAME`; offline, in memory, seeded with the local user's `USER_ROLES`; with neither, no one holds a
   role).
 - **The model** (`src/authorization/`): actions (`Actions.ts`), policies and roles (`Policy`, `Role`,
-  `StaticRoleCatalog`: Viewer, Operator, Admin), the person (`Principal.fromClaims()`, keyed by `buPrincipal`, compared
+  `StaticRoleCatalog`, from least to most: RunViewer (RunReporting), PersonViewer (PersonDataRead), Viewer (both),
+  PersonOperator (Viewer's and PersonDataWrite), PipelineOperator (Viewer's and PipelineControl), Operator (all four),
+  Admin (every policy); the finer roles since 2026-11-18, `authorization-plan.md` step 8), the person (`Principal.fromClaims()`, keyed by `buPrincipal`, compared
   lower-cased; `PrincipalResolver` takes a `buPrincipal` or `<id>@bu.edu`), `Authorizer` (deny by default; a 403's
   message; `effectivePermissions()` for `/api/me`) and `PermitAllAuthorizer` (public mode), `RoutePermissions` (what
   each `/api/*` route needs, whether it changes anything; an unmapped `/api` route is denied, a known route's

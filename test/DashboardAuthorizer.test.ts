@@ -28,15 +28,46 @@ const claimsOf = (buPrincipal: string, extra: object = {}) => ({
 });
 
 describe('StaticRoleCatalog', () => {
-  it('has the three roles of decision 5, in order', () => {
-    expect(catalog.listRoles().map(r => r.name)).toEqual(['Viewer', 'Operator', 'Admin']);
+  it('has the roles of decision 5, from least to most', () => {
+    expect(catalog.listRoles().map(r => r.name)).toEqual(
+      ['RunViewer', 'PersonViewer', 'Viewer', 'PersonOperator', 'PipelineOperator', 'Operator', 'Admin']);
+  });
+
+  it('builds each role from its policies (2026-11-18)', () => {
+    const policies = (name: string) => catalog.getRole(name)!.policies.map(policy => policy.name);
+    expect(policies('RunViewer')).toEqual(['RunReporting']);
+    expect(policies('PersonViewer')).toEqual(['PersonDataRead']);
+    expect(policies('Viewer')).toEqual(['RunReporting', 'PersonDataRead']);
+    expect(policies('PersonOperator')).toEqual(['RunReporting', 'PersonDataRead', 'PersonDataWrite']);
+    expect(policies('PipelineOperator')).toEqual(['RunReporting', 'PersonDataRead', 'PipelineControl']);
+    expect(policies('Operator')).toEqual(['RunReporting', 'PersonDataRead', 'PersonDataWrite', 'PipelineControl']);
+    expect(policies('Admin')).toEqual(Object.keys(StaticRoleCatalog.POLICIES));
   });
 
   it('grants each role exactly its actions', () => {
-    expect(catalog.getRole('Viewer')!.actions()).toEqual(['runs:read']);
+    expect(catalog.getRole('RunViewer')!.actions()).toEqual(['runs:read']);
+    expect(catalog.getRole('PersonViewer')!.actions()).toEqual(['person:lookup', 'person:preview']);
+    expect(catalog.getRole('Viewer')!.actions()).toEqual(['runs:read', 'person:lookup', 'person:preview']);
+    expect(catalog.getRole('PersonOperator')!.actions()).toEqual(['runs:read', 'person:lookup', 'person:preview', 'person:sync']);
+    expect(catalog.getRole('PipelineOperator')!.actions()).toEqual(['runs:read', 'person:lookup', 'person:preview', 'bulk:start', 'mock:reset']);
     expect(catalog.getRole('Operator')!.actions()).toEqual(
       ['runs:read', 'person:lookup', 'person:preview', 'person:sync', 'bulk:start', 'mock:reset']);
     expect(catalog.getRole('Admin')!.actions()).toEqual([...ACTIONS]);
+  });
+
+  it('has no two roles granting the same actions, so pruning never has to choose between equals', () => {
+    const sets = catalog.listRoles().map(role => role.actions().join(','));
+    expect(new Set(sets).size).toBe(sets.length);
+  });
+
+  it('prunes the finer roles into the one that covers them', () => {
+    expect(pruneCoveredRoles(catalog, ['PersonOperator', 'PipelineOperator']).kept).toEqual(['PersonOperator', 'PipelineOperator']);
+    expect(pruneCoveredRoles(catalog, ['PersonOperator', 'PipelineOperator', 'Operator']).kept).toEqual(['Operator']);
+    expect(pruneCoveredRoles(catalog, ['RunViewer', 'PersonViewer', 'Viewer'])).toEqual({
+      kept: ['Viewer'], pruned: [{ role: 'RunViewer', coveredBy: 'Viewer' }, { role: 'PersonViewer', coveredBy: 'Viewer' }]
+    });
+    // Neither covers the other: both are kept, though together they grant what Viewer does
+    expect(pruneCoveredRoles(catalog, ['RunViewer', 'PersonViewer']).kept).toEqual(['RunViewer', 'PersonViewer']);
   });
 
   it('keeps bulk:processors and impersonation from Operators', () => {

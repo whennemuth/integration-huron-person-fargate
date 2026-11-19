@@ -397,7 +397,7 @@ DASHBOARD_ROLE_ASSIGNMENTS_REGION=<aws-region>
 # DASHBOARD_ROLE_ASSIGNMENTS_STACK_ID=hp-dashboard
 # get, set, grant, revoke: a buPrincipal or <id>@bu.edu
 DASHBOARD_ROLE_ASSIGNMENTS_PRINCIPAL=<buPrincipal>
-# set, grant, revoke: comma-delimited, from Viewer, Operator, Admin
+# set, grant, revoke: comma-delimited, from RunViewer, PersonViewer, Viewer, PersonOperator, PipelineOperator, Operator, Admin
 DASHBOARD_ROLE_ASSIGNMENTS_ROLES=Admin
 # Recorded with each role added (default harness)
 # DASHBOARD_ROLE_ASSIGNMENTS_GRANTED_BY=<your-buPrincipal>

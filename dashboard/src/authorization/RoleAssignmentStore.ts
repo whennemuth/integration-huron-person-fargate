@@ -261,7 +261,8 @@ export class DynamoDbRoleAssignmentStore implements RoleAssignmentStore {
  *   grant   add ROLES to PRINCIPAL's roles
  *   revoke  remove ROLES from PRINCIPAL's roles
  *
- * PRINCIPAL is a buPrincipal or <id>@bu.edu. ROLES must be roles the catalog knows (Viewer, Operator, Admin).
+ * PRINCIPAL is a buPrincipal or <id>@bu.edu. ROLES must be roles the catalog knows (RunViewer, PersonViewer, Viewer,
+ * PersonOperator, PipelineOperator, Operator, Admin).
  * set and grant save the roles less any another of them covers (pruneCoveredRoles(), decision 15), and say what was
  * dropped. GRANTED_BY (default: "harness") is recorded with each role added.
  */
