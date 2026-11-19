@@ -28,15 +28,25 @@ common set of downstream keys.
 
 ## Harness catalog
 
-- **Orchestration**: Runner (`src/runner/Runner.ts`, manual chunking service invocation; see `src/runner/CLAUDE.md`)
-- **Chunking pipeline**: ChunkFromAPI, ChunkFromS3, BigJsonFetch, BigJsonFile, PersonArrayWrapper
-  (prefixes `CHUNK_FROM_API_*`, `CHUNK_FROM_S3_*`, `CHUNKER_SERVICE_*`, ...)
-- **Post-processing pipeline**: DeferredDeleteHandler (`DEFERRED_DELETE_HANDLER_*`), PersonCache, StatisticsTable
-  (`STATISTICS_TABLE_*`)
+Every module with a `require.main === module` block is a harness; its prefix is the one its `TestEnvironment(...)`
+call names. Each folder's CLAUDE.md lists its own:
+
+- **Orchestration**: the Runner (`src/runner/Runner.ts`, `RUNNER`), `MetricsCatchupDelay` (`METRICS_CATCHUP_DELAY`),
+  `ServiceToggler` (`SERVICE_TOGGLER`); see `src/runner/CLAUDE.md`.
+- **Chunking**: `ChunkFromAPI` (`CHUNK_FROM_API`), `ChunkFromS3` (`CHUNK_FROM_S3`), `BigJsonFetch` (`BIG_JSON_FETCH`),
+  `BigJsonFile` (`BIG_JSON_FILE`), `PersonArrayWrapper` (`PERSON_ARRAY_WRAPPER`), `ChunkerQueue` (`CHUNKER_QUEUE`),
+  `QueueSeeder` (`QUEUE_SEEDER`), `ProcessorServiceBooster` (`PROCESSOR_SERVICE_BOOSTER`), `SourceSimulator`
+  (`SOURCE_SIMULATOR`); see `src/chunking/CLAUDE.md`.
+- **Processing**: `ProcessorForS3` (`DOCKER_PROCESSOR`), `ProcessorForDynamoDb` (`DOCKER_PROCESSOR_DYNAMODB`).
+- **Post-processing**: `DeferredDeleteHandler` and `DeferredDeleteHandlerForS3` (`DEFERRED_DELETE`),
+  `ChunkPopulationReader` (`CHUNK_POPULATION_READER`).
+- **Tables and caches** (`src/dynamodb/`, `src/person-cache/`): `STATISTICS_TABLE`, `ATOMIC_COUNTER`, `OCC_FLAG`,
+  `PERSON_CURRENT_STATE_TABLE`, `PERSON_HISTORY_TABLE`, `MOCK_TARGET_PERSON_TABLE`, `BULK_PURGER`,
+  `INTEGRATION_RUN_PRUNER`, `PERSON_CACHE`.
 - **Docker entry points**: `docker/chunker.ts` (`DOCKER_CHUNKER`), `docker/processor.ts` (`DOCKER_PROCESSOR`),
-  `docker/post-processor.ts` (`DOCKER_POST_PROCESSOR`)
-- **Error handling**: ApiErrorTracking (`src/ApiErrorTracking.ts`)
-- **Utilities**: EcrChecker
+  `docker/post-processor.ts` (`DOCKER_POST_PROCESSOR`).
+- **Utilities** (`src/`): `DesiredCount` (`DESIRED_COUNT`), `Alarm` (`ALARM`), `ApiErrorTracking`
+  (`API_ERROR_TRACKING`).
 
 ## Running a harness
 
@@ -77,20 +87,9 @@ The template is `example-env.md` (sanitized, with placeholders).
 
 ## Docker entry points
 
-- **`docker/chunker.ts`**: container entry point for the ECS Fargate task running the chunking phase. Environment
-  loaded via `TestEnvironment('DOCKER_CHUNKER')`: S3 bucket configuration, source API credentials (via
-  `DATASOURCE_*`), chunk size parameters. Run it with npx to validate chunking before an ECS deployment.
-- **`docker/processor.ts`**: router (switchboard) for the parallel processing tasks; detects the storage mode and
-  delegates to `ProcessorForS3` (`src/processing/`: S3-based processing with mini-deltas and marker files) or
-  `ProcessorForDynamoDB` (`src/processing/`: direct table writes).
-- **`docker/post-processor.ts`**: router for result consolidation; delegates to `PostProcessorForS3` (file
-  consolidation and baseline merging) or `PostProcessorForDynamoDB` (minimal/no-op merge, state already in the
-  tables), both extending `AbstractPostProcessor` (`src/post-processing/`: `getTaskParameters`,
-  `processDeferredDeletes`, the `main` template method). Both modes require the post-processor for the
-  `DeferredDeleteHandler`.
-
-The processor and post-processor routers detect DynamoDB mode by the presence of
-`DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` or `DYNAMODB_PERSON_HISTORY_TABLE_NAME`. `docker/CLAUDE.md` has the detail.
+`docker/chunker.ts`, `docker/processor.ts` and `docker/post-processor.ts` are harnesses too: run one with npx and its
+`.env` group to validate a phase before an ECS deployment. The processor and post-processor are routers that branch on
+`PREVIOUS_STORAGE_TYPE`. What each does, the image, and the routers' rules: `docker/CLAUDE.md`.
 
 ## History: moving `TestEnvironment` to integration-core
 

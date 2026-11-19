@@ -39,8 +39,9 @@ Streams large JSON payloads from the source APIs (or an S3 file drop) into NDJSO
 Components: the chunker subscriber Lambda (`src/chunking/ChunkerSubscriber.ts`, CDK
 `lib/services/chunker/ChunkerSubscribingLambda.ts`), the chunker ECS service (`lib/services/chunker/ChunkerService.ts`,
 entry point `docker/chunker.ts`), `ChunkFromAPI`, `ChunkFromS3`, `BigJsonFetch`, `BigJsonFile`, `PersonArrayWrapper`.
-All chunking modules use `TestEnvironment` from `integration-core`; harness prefixes `CHUNK_FROM_API_*`,
-`CHUNK_FROM_S3_*`, `CHUNKER_SERVICE_*`. How chunker tasks chain and avoid races: [docs/CHUNKING_ARCHITECTURE.md](docs/CHUNKING_ARCHITECTURE.md).
+All chunking modules use `TestEnvironment` from `integration-core`; harness prefixes `CHUNK_FROM_API`,
+`CHUNK_FROM_S3`, `BIG_JSON_FETCH`, ... (the files: `src/chunking/CLAUDE.md`). How chunker tasks chain and avoid races:
+[docs/CHUNKING_ARCHITECTURE.md](docs/CHUNKING_ARCHITECTURE.md).
 
 **How a run ends** (details, consequences and the terminal-error bug story:
 [docs/CHUNKING_END_AND_FAILURE.md](docs/CHUNKING_END_AND_FAILURE.md)):
@@ -81,7 +82,9 @@ All chunking modules use `TestEnvironment` from `integration-core`; harness pref
 ### Phase 2: Processing
 
 Parallel ECS Fargate tasks apply mapping and push changes to the target. Entry point `docker/processor.ts` (a router
-to `ProcessorForS3` / `ProcessorForDynamoDb` in `src/processing/`); harness prefix `DOCKER_PROCESSOR_*`.
+to `ProcessorForS3` / `ProcessorForDynamoDb` in `src/processing/`, on `PREVIOUS_STORAGE_TYPE`); harness prefixes
+`DOCKER_PROCESSOR`, `DOCKER_PROCESSOR_DYNAMODB` (the files: `src/processing/CLAUDE.md`; the image and entry points:
+`docker/CLAUDE.md`).
 
 **Addons** (`src/processing/addon/`): integration-huron-person's `personRecordProcessor` hook, wired into the
 processors so per-person async logic (e.g. `ORG_COMPARISON_LOGGING`) can run during a live sync. Which addons run is a
@@ -95,7 +98,8 @@ Consolidates results and handles deletions. `AbstractPostProcessor` (`src/post-p
 `PostProcessorForS3` (file consolidation, baseline merging) and `PostProcessorForDynamoDB` (deletions only; state is
 already in the tables); router `docker/post-processor.ts`. **Both storage modes need the post-processor service**, for
 `DeferredDeleteHandler`. `AbstractPostProcessor.main()` writes the run's `RUN_SUMMARY` in its `finally` block. Harness
-prefixes `DEFERRED_DELETE_HANDLER_*`, `STATISTICS_TABLE_*`, `DOCKER_POST_PROCESSOR_*`.
+prefixes `DEFERRED_DELETE`, `CHUNK_POPULATION_READER`, `DOCKER_POST_PROCESSOR` (the files:
+`src/post-processing/CLAUDE.md`).
 
 **Soft-deleted persons are marked in the baseline** (`src/post-processing/DeletedHashMarker.ts`): a successful soft
 delete rewrites the person's baseline hash with a `DELETED:` prefix (DynamoDB mode also sets `deletedAt`), so deletion
@@ -116,7 +120,8 @@ tables and run metadata in the statistics table.
 
 - **Switching**: change `PREVIOUS_STORAGE_TYPE` in the context and update the stack; the config secret's storage block
   is derived from it (`resolveSecretStorage()` in `lib/Secrets.ts`), so the integration config files need no change.
-- **Keep `PREVIOUS_STORAGE_TYPE` set in every `context.*.json`**: when missing, CDK's fallbacks disagree.
+- **Keep `PREVIOUS_STORAGE_TYPE` set in every `context.*.json`**: when missing, CDK's fallbacks disagree. Use `s3` or
+  `dynamodb`: the Docker routers throw on any other value.
 - **Switching to S3 mode deletes** the PersonCurrentState and PersonHistory tables (DESTROY); switching back creates
   them empty. An old S3 baseline (`delta-storage/`) is left alone, except by a mock landscape's reset.
 

@@ -106,6 +106,23 @@ population from the first person. A run from the real source doesn't notice.
 First checked in staging on 2026-11-12 with 15 tasks: the alarm settled after 150 seconds, the 15 tasks were
 running 45 seconds after the desired count was set, and no offset or person was chunked twice.
 
+### History: the 2026-07-02 scale-in incident
+
+On 2026-07-02 the chunker service scaled from a desired count of 4 to 0 before the Runner's queue seeding took
+effect: its scale-in alarm could already be in `ALARM` from a previously empty queue, and CloudWatch evaluates alarms
+periodically, so there was a gap between seeding and the alarm catching up. (The analysis was written up as
+`INCIDENT_ANALYSIS_2026_07_02.md` at the repository root, no longer in the repository.)
+
+Since then, queue seeding calls `MetricsCatchupDelay` (`src/runner/MetricsCatchupDelay.ts`) before setting the desired
+count: it waits for the alarm's period plus a buffer, logging a countdown, and ends early once the alarm leaves
+`ALARM`; alarm discovery is `ServiceScaleInAlarm` in `src/Alarm.ts`. The intent is to stop a stale scale-in alarm from
+immediately reversing the desired count. The seeded parallel start above shares the same procedure.
+
+At the time, the synthesized alarms were: the chunker's scale-in (lower) alarm on the composite metric
+`visible + notVisible`, its scale-out (upper) alarm on visible messages only; the processor's and post-processor's
+alarms both on visible messages only. So only the chunker's scale-in is protected against in-flight-only visibility
+artifacts.
+
 ## A run's own processor maximum (`processorScalingCapacityOverride`)
 
 **A run may have its own processor maximum** (`processorScalingCapacityOverride`, since 2026-11-17,

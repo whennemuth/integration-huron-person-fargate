@@ -1,277 +1,49 @@
-# integration-huron-person-fargate/src: Utilities & Test Harnesses
+# src/: Pipeline Code, Utilities and Harnesses
 
-## Purpose
-Provides utility modules and test harnesses for validating infrastructure components, orchestrating manual operations, and testing individual service behaviors outside of the full CDK deployment.
+Everything the task image compiles besides `docker/` and `context/*.ts`: the three phases' logic, the Lambdas'
+handlers, the DynamoDB tables, and the operational tools. The pipeline as a whole is in the project
+[CLAUDE.md](../CLAUDE.md); harness conventions in [docs/HARNESSES.md](../docs/HARNESSES.md).
 
-## Directory Structure
+**`src/` must not import from `lib/` or `dashboard/`** (the image compiles `src/` alone). Names that CDK and the
+code both need live here (`src/Utils.ts`, the tables' `DYNAMODB_TABLE_NAME` exports) and `lib/` imports them.
 
-```
-src/
-  ├─ Runner.ts                    (Manual chunking orchestration harness)
-  ├─ DesiredCount.ts              (ECS service scaling utility)
-  ├─ PersonCache.ts               (Person data caching utility)
-  ├─ Queue.ts                     (SQS queue utilities)
-  ├─ TaskProtection.ts            (ECS task protection management)
-  ├─ AtomicCounter.ts             (DynamoDB-backed atomic counter)
-  ├─ Utils.ts                     (General utilities)
-  ├─ statistics/                  (Statistics table utilities)
-  ├─ storage/                     (S3 storage helpers)
-  ├─ chunking/                    (Chunking phase utilities)
-  ├─ processing/                  (Processing phase utilities)
-  └─ post-processing/             (Post-processing phase utilities)
-```
+## Map
 
-## Runner.ts - Manual Chunking Orchestration
+| Folder | What | More |
+|---|---|---|
+| `chunking/` | Phase 1: the chunker subscriber, chunking from the API and from dropped files, run metadata, run start | [chunking/CLAUDE.md](chunking/CLAUDE.md) |
+| `processing/` | Phase 2: the processors, the processor subscriber, the target simulator, addons | [processing/CLAUDE.md](processing/CLAUDE.md) |
+| `post-processing/` | Phase 3: the post-processors, deferred deletes, the post-processor subscriber | [post-processing/CLAUDE.md](post-processing/CLAUDE.md) |
+| `runner/` | The manual Runner | [runner/CLAUDE.md](runner/CLAUDE.md) |
+| `dynamodb/` | Table classes: `StatisticsTable`, `AtomicCounter`, `OCCFlag`, `PersonCurrentStateTable`, `PersonHistoryTable`, `MockTargetPersonTable`, `PersonRecordProcessorLogTable`, the generic `DynamoDBTable` (`truncateTable()`), `BulkPurger`, `IntegrationRun` (prune one run) | [dynamodb/README.md](dynamodb/README.md), [docs/CONCURRENCY_CONTROL.md](../docs/CONCURRENCY_CONTROL.md), [docs/STATISTICS_TABLE.md](../docs/STATISTICS_TABLE.md) |
+| `person-cache/` | The cache of people in the target, built through `PersonTargetReal`; `PersonCacheFactory` picks the S3 or DynamoDB variant | [person-cache/README.md](person-cache/README.md) |
+| `reporting/` | `RunReporting`, the read side of runs, used by the dashboard | [docs/STATISTICS_TABLE.md](../docs/STATISTICS_TABLE.md#reading-runs-runreporting) |
+| `storage/` | `IStorageAdapter` with S3 and file-system adapters | [docs/STORAGE_ADAPTER_USAGE.md](../docs/STORAGE_ADAPTER_USAGE.md) |
 
-**Purpose**: Test harness for manually triggering the chunking service outside of the EventBridge schedule. Allows for:
-- Testing the full chunking flow end-to-end
-- Initiating off-schedule sync runs
-- Pre-seeding the processor queue for parallel testing
-- Single-person testing for debugging
+Top-level files:
+- `Utils.ts`: `isMockLandscape()`, `ecsClusterName()`, `PROCESSOR_SERVICE_NAME`, `getStackName()`, config helpers.
+- `DesiredCount.ts` (harness `DESIRED_COUNT`): get or set an ECS service's desired count, and its maximum.
+- `Alarm.ts` (harness `ALARM`): `ServiceScaleInAlarm`, a service's scale-in alarm, its state and period.
+- `TaskProtection.ts`: ECS task scale-in protection, so scaling in can't kill a task mid-work (exit 137).
+- `Queue.ts`: queue message types, the SQS sender and reader, and an environment-based queue simulator for local runs.
+- `ApiErrorTracking.ts` (harness `API_ERROR_TRACKING`): target API error events and throttling, persisted to the
+  statistics table. `ApiErrorRetryStrategy.ts`: retries with exponential backoff and jitter.
 
-### Key Features
+## Harnesses here
 
-1. **Configuration Loading**: Supports multiple config sources with precedence
-2. **Queue Seeding**: Pre-populate SQS queue with multiple messages for parallel processing
-3. **ECS Scaling**: Automatically scale up chunker service desired count
-4. **Single Person Mode**: Test with just one person (via SINGLE_PERSON_BUID)
-5. **Dry Run Support**: Test without triggering downstream processors
+Every module with a `require.main === module` block is a harness, run with `npx ts-node <file>` and its `.env` group.
+Prefixes as the code declares them: `DESIRED_COUNT`, `ALARM`, `API_ERROR_TRACKING`; in `dynamodb/`:
+`STATISTICS_TABLE`, `ATOMIC_COUNTER`, `OCC_FLAG`, `PERSON_CURRENT_STATE_TABLE`, `PERSON_HISTORY_TABLE`,
+`MOCK_TARGET_PERSON_TABLE`, `BULK_PURGER`, `INTEGRATION_RUN_PRUNER`; in `person-cache/`: `PERSON_CACHE`
+(`PersonCacheForS3.ts`); the phases' and the Runner's in their folders' files. Several table harnesses offer a
+`truncate` task. To add one: [docs/HARNESSES.md](../docs/HARNESSES.md), and list it here.
 
-### Environment Variables
+## Pitfalls
 
-**Required**:
-- `CHUNKER_QUEUE_URL` - SQS queue URL for chunker messages
-- `REGION` - AWS region
-- `STACK_ID` - Stack identifier (e.g., `huron-person-fargate-processor`)
-- `LANDSCAPE` - Deployment landscape (dev, test, prod)
-
-**Optional**:
-- `SECRET_ARN` - Secrets Manager ARN for configuration
-- `HURON_PERSON_CONFIG_PATH` - Path to local config file
-- `POPULATION_TYPE` - `person-delta` or `person-full` (default: person-full)
-- `SINGLE_PERSON_BUID` - Test with single person (e.g., `U12345678`)
-- `DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT` - Limit number of API calls made to fetch people
-- `BULK_RESET` - Set to `true` to force full resync
-- `TRUST_PREVIOUS_STORAGE` - Set to `true` to trust delta storage
-- `MESSAGES_TO_PREPOPULATE` - Number of messages to seed (default: 0)
-- `DESIRED_COUNT` - Target ECS task count after seeding
-- `PROCESSOR_SCALING_CAPACITY_OVERRIDE` - The processor service's maximum tasks for this run (1-20); unset, the
-  context's `ECS.processorService.maxScalingCapacity`. Set when the run starts (`src/runner/CLAUDE.md`)
-- `ECS_CLUSTER_NAME` - ECS cluster name (required if setting desired count)
-- `ECS_SERVICE_NAME` - ECS service name (required if setting desired count)
-
-### Usage Patterns
-
-#### Simple Manual Trigger (One Message)
-```bash
-# Trigger a single chunking run
-export CHUNKER_QUEUE_URL="https://sqs.us-east-2.amazonaws.com/123/chunker-queue"
-export REGION="us-east-2"
-export STACK_ID="huron-person-fargate-processor"
-export LANDSCAPE="dev"
-
-npx ts-node src/Runner.ts
-```
-
-#### Queue Seeding for Parallel Testing
-```bash
-# Seed queue with 50 messages, then scale service to 10 tasks
-export MESSAGES_TO_PREPOPULATE="50"
-export DESIRED_COUNT="10"
-export ECS_CLUSTER_NAME="huron-person-cluster-dev"
-export ECS_SERVICE_NAME="Chunker"
-
-npx ts-node src/Runner.ts
-```
-
-#### Single Person Testing
-```bash
-# Test with just one person
-export SINGLE_PERSON_BUID="U12345678"
-export POPULATION_TYPE="person-delta"
-
-npx ts-node src/Runner.ts
-```
-
-#### Delta vs Full Sync
-```bash
-# Delta sync (default - only changed records)
-export POPULATION_TYPE="person-delta"
-export BULK_RESET="false"
-
-# Full sync with reset
-export POPULATION_TYPE="person-full"
-export BULK_RESET="true"
-
-npx ts-node src/Runner.ts
-```
-
-### How It Works
-
-1. **Load Configuration**: Merges environment, file system, Secrets Manager
-2. **Validate Inputs**: Checks required environment variables
-3. **Build API Request**: Constructs baseUrl and fetchPath
-4. **Queue Seeding (Optional)**:
-   - Resets atomic counter to 0
-   - Seeds queue with N messages (each with unique offset)
-   - Scales up ECS service to process messages in parallel
-5. **Single Message (Default)**:
-   - Sends one message to chunker queue
-   - Triggers normal one-in/one-out processing
-
-### TestEnvironment Integration
-
-Uses `TestEnvironment('RUNNER')` pattern for prefix-based variable loading:
-
-```typescript
-if (require.main === module) {
-  const testEnvironment = TestEnvironment('RUNNER');
-  
-  [
-    'CHUNKER_QUEUE_URL',
-    'REGION',
-    'STACK_ID',
-    'LANDSCAPE'
-  ].forEach(testEnvironment.getVar);
-  
-  // ... execution
-}
-```
-
-### Related Infrastructure
-
-- **ChunkerService** (`lib/services/chunker/ChunkerService.ts`): CDK construct that creates the ECS service
-- **ChunkerSubscriber Lambda** (`lib/services/chunker/ChunkerSubscribingLambda.ts`): Lambda that sends messages to chunker queue
-- **QueueSeeder** (`src/chunking/fetch/QueueSeeder.ts`): Utility for pre-populating queue with messages
-- **ParallelStart** (`src/chunking/ParallelStart.ts`): the seed, alarm-wait and desired-count procedure that queue
-  seeding shares with the chunker subscriber Lambda, which runs it for an event carrying `parallelStart` (the
-  dashboard's Bulk sync). See "One chunker message, or N seeded at once" in [docs/RUN_START.md](../docs/RUN_START.md#one-chunker-message-or-n-seeded-at-once-parallelstart).
-
-### VS Code Debugging
-
-Add to `.vscode/launch.json`:
-
-```json
-{
-  "type": "node",
-  "request": "launch",
-  "name": "Debug Runner",
-  "runtimeArgs": ["-r", "ts-node/register"],
-  "args": ["${workspaceFolder}/src/Runner.ts"],
-  "envFile": "${workspaceFolder}/.env",
-  "cwd": "${workspaceFolder}",
-  "internalConsoleOptions": "openOnSessionStart"
-}
-```
-
-### Dry Run Mode
-
-To test chunking without triggering downstream processing, set the ChunkerSubscriber Lambda to dry run mode:
-
-```bash
-aws lambda update-function-configuration \
-  --region us-east-2 \
-  --function-name chunker-subscriber-dev \
-  --environment "Variables={DRY_RUN=true}"
-```
-
-This prevents the chunker from sending messages to the processor queue when chunk files are uploaded to S3.
-
-## Other Utilities
-
-### DesiredCount.ts
-**Purpose**: Utility for scaling ECS services up or down
-
-```bash
-npx ts-node src/DesiredCount.ts
-```
-
-### PersonCache.ts
-**Purpose**: Cache person data for testing and debugging
-
-```bash
-npx ts-node src/PersonCache.ts
-```
-
-### TaskProtection.ts
-**Purpose**: Manage ECS task protection to prevent premature termination
-
-```bash
-npx ts-node src/TaskProtection.ts
-```
-
-### AtomicCounter.ts
-**Purpose**: DynamoDB-backed atomic counter for offset generation
-
-```bash
-npx ts-node src/dynamodb/AtomicCounter.ts
-```
-
-## Execution Methods
-
-### VS Code Launch Configuration (Recommended)
-**File**: `.vscode/launch.json` (provided by this project)
-
-Configuration: "Debug current file"
-- Automatically loads `.env`
-- Provides breakpoints and step-through debugging
-- Allows variable inspection
-
-**Usage**:
-1. Open Runner.ts (or other utility)
-2. Press F5 or Run > Start Debugging
-3. Select "Debug current file"
-
-### Command Line (npx)
-```bash
-npx ts-node src/Runner.ts
-npx ts-node src/DesiredCount.ts
-npx ts-node src/PersonCache.ts
-```
-
-## Common Patterns
-
-### Adding a New Utility Harness
-1. Create module in `src/` directory
-2. Import TestEnvironment from 'integration-core'
-3. Add `if (require.main === module)` block with TestEnvironment instantiation
-4. Add environment variables to `.env` under harness-specific section
-5. Add placeholders to `example-env.md`
-6. Update this README with usage documentation
-
-### Example Harness Pattern
-```typescript
-import { TestEnvironment } from 'integration-core';
-
-async function main() {
-  // ... implementation
-}
-
-if (require.main === module) {
-  const testEnvironment = TestEnvironment('MY_HARNESS');
-  
-  [
-    'REQUIRED_VAR_1',
-    'REQUIRED_VAR_2'
-  ].forEach(testEnvironment.getVar);
-  
-  [
-    'OPTIONAL_VAR_1',
-    'OPTIONAL_VAR_2'
-  ].forEach(testEnvironment.getVarOrEmptyString);
-  
-  main();
-}
-
-export { main };
-```
-
-## Relationship to CDK Infrastructure
-
-The utilities in this directory are **test harnesses** and **operational tools** that work with deployed infrastructure but are **not part of the CDK stack itself**. They:
-
-- **Test deployed services** (Runner.ts tests ChunkerService ECS tasks)
-- **Manage operations** (DesiredCount.ts scales ECS services)
-- **Debug issues** (PersonCache.ts inspects cached data)
-
-They complement the infrastructure defined in `lib/` but do not define infrastructure themselves.
+- **Turning a subscriber off**: a subscriber Lambda with `DRY_RUN=true` logs what it would do and sends nothing (the
+  chunker subscriber: no chunker messages; the processor subscriber: chunk files aren't processed). It stays that way
+  until set back; the Runner's decorators and `ServiceToggler` set it (`src/runner/CLAUDE.md`), or:
+  `aws lambda update-function-configuration --function-name chunker-subscriber-<landscape> --environment "Variables={DRY_RUN=true}"`
+  (this replaces the whole environment: prefer `ServiceToggler`).
+- **Table truncation is for mock landscapes**: `BulkPurger` refuses a non-mock landscape without `force: true`, and
+  anything that clears the atomic counter table must leave its `not-a-counter:` items alone.
