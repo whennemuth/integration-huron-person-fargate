@@ -1,264 +1,61 @@
-# integration-huron-person-fargate/lib: CDK Infrastructure Patterns
+# lib/: CDK Infrastructure
 
-## Purpose
-Defines AWS infrastructure-as-code using CDK. Orchestrates Lambda, ECS Fargate, S3, SQS, and other services for the three-phase pipeline.
+The pipeline stack and the shared network stack (the dashboard's constructs are in `dashboard/lib/`). `bin/App.ts`
+builds the stacks for the active landscape's context; `npm run deploy-fargate` / `teardown-fargate` (through
+`bin/deploy.sh` / `bin/teardown.sh`) deploy and destroy them. The rules that span this and other folders (the shared
+network, keeping the dashboard out of the task image, one statistics-table GSI per deploy, mock landscapes) are in the
+project [CLAUDE.md](../CLAUDE.md); deployment steps in [docs/CDK_DEPLOYMENT.md](../docs/CDK_DEPLOYMENT.md).
 
-## Key Components
+## Files
 
-### Stack.ts
-**Purpose**: Main CDK stack orchestrating all infrastructure
+- **`Stack.ts`** (`IntegrationHuronPersonLambdaStack`): the pipeline stack; builds `AppConstruct` and outputs the ECR
+  repository URI.
+- **`AppConstruct.ts`**: everything in the pipeline stack, in order: the ECR repository (`EcrRepository.ts`), the
+  DynamoDB tables (`DynamoDB.ts`), in a mock landscape the simulators (`Simulator.ts`), the integration config secret
+  (`Secrets.ts`), ECS (`EcsInfrastructure.ts`), the queues (`QueueInfrastructure.ts`), the chunks bucket, and the
+  subscriber Lambdas (`SubscribingLambdas.ts`). It refuses to synthesize a source simulator outside a mock landscape.
+- **`NetworkStack.ts`**: the shared network stack (`huron-integration-network`), `NetworkLayout` and `NetworkParameters`
+  ([docs/SHARED_NETWORK.md](../docs/SHARED_NETWORK.md)).
+- **`EcsInfrastructure.ts`**: the cluster, the task definitions (`TaskDefinitions.ts`) and the three
+  `QueueProcessingFargateService`s, in the shared network's private subnets (`NetworkParameters.vpc()`).
+- **`QueueInfrastructure.ts`**: a queue and dead-letter queue for each service (chunker, processor, post-processor).
+- **`DynamoDB.ts`** (`DynamoDbTables`): the statistics, atomic counter and addon log tables, the person current-state and
+  history tables (DynamoDB storage mode), and the mock target table (mock landscapes).
+- **`Secrets.ts`**: the integration config secret (`integrationSecretName()`, `HuronPersonSecrets`), its storage block
+  derived from `PREVIOUS_STORAGE_TYPE` (`resolveSecretStorage()`), and a mock landscape's target override
+  (`DataTargetOverride`).
+- **`Simulator.ts`**: a mock landscape's target simulator (always) and source simulator (if enabled), built in two
+  steps because the source simulator reads the config secret, which embeds the target simulator's endpoint.
+- **`SubscribingLambdas.ts`**: the Lambdas triggered by events: the chunker subscriber (a file in the input bucket, the
+  EventBridge schedule, or an event from the dashboard), the processor subscriber (chunk files) and the post-processor
+  subscriber (delta chunk files).
+- **`Tagging.ts`**: tags applied to the stack and its resources.
+- **`services/`**: per service, its Fargate service, task definition and subscriber Lambda:
+  - `chunker/`: `ChunkerService.ts` (also the EventBridge schedule, `createApiChunkingSchedule()`),
+    `ChunkerTaskDefinition.ts`, `ChunkerSubscribingLambda.ts`, `SourceSimulator.ts` (the source simulator's Function
+    URL); [services/chunker/README.md](services/chunker/README.md).
+  - `processor/`: `ProcessorService.ts`, `ProcessorTaskDefinition.ts` (bakes `STATIC_MAP_USAGE` from the config's
+    `preLoadedMaps`), `ProcessorSubscribingLambda.ts`, `TargetSimulator.ts` (the target simulator's HTTP API).
+  - `post-processor/`: `PostProcessorService.ts`, `PostProcessorTaskDefinition.ts`, `PostProcessorSubscribingLambda.ts`.
+  - `AbstractService.ts`, the services' base. How the phases merge delta storage: [services/README.md](services/README.md).
 
-**Responsibilities**:
-- Run in the shared network: the VPC and subnets come from `NetworkStack.ts`'s SSM parameters
-  (`NetworkParameters.vpc()`, in `EcsInfrastructure.ts`); a pipeline stack never creates or looks up a VPC (see
-  "Shared Network Stack" in the fargate `CLAUDE.md`)
-- Create Lambda functions (chunker orchestrator)
-- Create ECS cluster and task definitions
-- Create S3 buckets (input, chunks, processed, output)
-- Create SQS queues (phase communication)
-- Create IAM roles and permissions
-- Wire all components together
+## Rules and pitfalls
 
-**Pattern**:
-```typescript
-export class HuronStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
-    super(scope, id, props);
-    
-    // 1. Networking: the shared network stack's VPC, from its SSM parameters (never a new Vpc here)
-    const vpc = NetworkParameters.vpc(this, 'Vpc', region);
-    
-    // 2. Storage
-    const s3Bucket = new s3.Bucket(this, 'S3Bucket', { /* ... */ });
-    
-    // 3. Queuing
-    const sqsQueue = new sqs.Queue(this, 'SQSQueue', { /* ... */ });
-    
-    // 4. Compute
-    const chunkerLambda = new lambda.Function(this, 'Chunker', { /* ... */ });
-    const processorCluster = new ecs.Cluster(this, 'Cluster', { /* ... */ });
-    
-    // 5. Permissions
-    chunkerLambda.addToRolePolicy(/* S3 access */);
-    processorCluster.addToRolePolicy(/* S3/SQS access */);
-  }
-}
-```
+- **Context**: each landscape has `context/context.<landscape>.json` (`IContext` in `context/IContext.ts`); `context.json`
+  is the active one, switched with `./context/swap.sh <landscape>` (with the landscape's git-ignored `.env`). Keep
+  `PREVIOUS_STORAGE_TYPE` set in every context. No context names a VPC.
+- **Values read at deploy time stay there**: what CDK reads from the integration config (e.g. `preLoadedMaps`) is baked
+  into the task definitions; nothing the Runner sets at run time reaches it.
+- **Names are deterministic** (`${STACK_ID}-<kind>-${landscape}` and the like), so the dashboard and the Runner find
+  resources by name. Use no CloudFormation exports between stacks.
+- **`src/` must not import from `lib/`**: the task image compiles `src/` without `lib/`, so names both need (the cluster
+  and processor service names) live in `src/Utils.ts`, which `lib/` takes.
+- **Every synth synthesizes the dashboard stack too**, so it needs AWS credentials and the generated
+  `TemplateConstants.ts` (`npm run synth` / `build` make it).
 
-### ChunkerService (lib/services/chunker/ChunkerService.ts)
-**Purpose**: Lambda service that orchestrates Phase 1 (chunking)
+## Testing
 
-**Environment Prefix**: CHUNKER_SERVICE
-
-**Responsibilities**:
-- Triggered by scheduled event or manual invocation
-- Load chunking configuration
-- Instantiate appropriate chunker (API, S3, etc.)
-- Execute chunking
-- Signal processors via SQS
-
-**Test Harness**: Can be tested as module standalone with TestEnvironment
-
-## Infrastructure Patterns
-
-### Separation of Concerns
-
-```
-lib/
-  ├─ Stack.ts           (main CDK orchestrator)
-  └─ services/
-      └─ chunker/
-          └─ ChunkerService.ts  (Phase 1 orchestration)
-
-docker/                 (container images)
-  ├─ chunker.ts         (Phase 1 container entry)
-  ├─ processor.ts       (Phase 2 container entry)
-  └─ post-processor.ts          (Phase 3 container entry)
-
-src/
-  ├─ chunking/          (Phase 1 logic)
-  ├─ processing/        (Phase 2 logic)
-  └─ post-processing/   (Phase 3 logic)
-```
-
-### Context Configuration
-
-**Files**: `context/context.json`, `context/IContext.ts`
-
-**Purpose**: Environment-specific infrastructure parameters
-
-```json
-{
-  "cidr": "10.0.0.0/16",
-  "vpcSubnets": ["us-east-2a", "us-east-2b"],
-  "ecrImageUri": "123456789.dkr.ecr.us-east-2.amazonaws.com/processor:latest",
-  "s3BucketName": "huron-pipeline-dev",
-  "sqsQueueUrl": "https://sqs.us-east-2.amazonaws.com/..."
-}
-```
-
-**Usage in CDK**:
-```typescript
-const context = new Context();
-const imageUri = context.getValue('ecrImageUri');
-const bucket = new s3.Bucket(this, 'Bucket', {
-  bucketName: context.getValue('s3BucketName')
-});
-```
-
-**Tier-Specific Contexts**:
-- `context.json` – Development
-- `context.staging.json` – Staging
-- `context.prod.json` – Production
-
-## IAM Permissions Pattern
-
-### Least Privilege Principle
-
-```typescript
-// ChunkerLambda role: S3, SQS write, Secrets Manager read
-const chunkerRole = new iam.Role(this, 'ChunkerRole', {
-  assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com')
-});
-
-chunkerRole.addToPrincipalPolicy(
-  new iam.PolicyStatement({
-    actions: ['s3:GetObject', 's3:PutObject'],
-    resources: [bucket.arnForObjects('chunks/*')]
-  })
-);
-
-chunkerRole.addToPrincipalPolicy(
-  new iam.PolicyStatement({
-    actions: ['sqs:SendMessage'],
-    resources: [queue.queueArn]
-  })
-);
-
-chunkerRole.addToPrincipalPolicy(
-  new iam.PolicyStatement({
-    actions: ['secretsmanager:GetSecretValue'],
-    resources: [secretArn]
-  })
-);
-```
-
-### ProcessorTask role: Broader permissions (processing logic needs them)
-
-```typescript
-const processorRole = new iam.Role(this, 'ProcessorRole', {
-  assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com')
-});
-
-// S3: read chunks, write processed
-processorRole.addToPrincipalPolicy(
-  new iam.PolicyStatement({
-    actions: ['s3:GetObject', 's3:PutObject'],
-    resources: [bucket.arnForObjects('*')]
-  })
-);
-
-// SQS: receive messages
-processorRole.addToPrincipalPolicy(
-  new iam.PolicyStatement({
-    actions: ['sqs:ReceiveMessage', 'sqs:DeleteMessage'],
-    resources: [queue.queueArn]
-  })
-);
-
-// CloudWatch: log output
-processorRole.addToPrincipalPolicy(
-  new iam.PolicyStatement({
-    actions: ['logs:CreateLogStream', 'logs:PutLogEvents'],
-    resources: [logGroupArn]
-  })
-);
-```
-
-## Testing Infrastructure Code
-
-### Runner Harness (src/Runner.ts)
-**Validation**: Manual chunking orchestration and queue seeding
-
-```bash
-npx ts-node src/Runner.ts
-```
-
-See [src/CLAUDE.md](../src/CLAUDE.md) for detailed Runner.ts documentation.
-
-### CDK Synthesis
-**Validation**: CloudFormation template generates without errors
-
-```bash
-cdk synthesize
-# Outputs: cdk.out/HuronStack.template.json
-```
-
-### Dry-Run Deployment
-**Validation**: Show what will be created
-
-```bash
-cdk diff
-# Shows: [+] New S3 bucket
-#        [+] New SQS queue
-#        [+] etc.
-```
-
-## Deployment Workflow
-
-1. **Update context.json** with environment-specific values
-2. **Run ChunkerService harness** to validate configuration
-3. **Test Docker images** locally before deployment
-4. **Run `cdk diff`** to review changes
-5. **Run `cdk deploy`** to deploy infrastructure
-6. **Verify resources created** in AWS console
-7. **Monitor logs** in CloudWatch
-
-## Common CDK Patterns
-
-### Conditional Resources
-```typescript
-if (this.isProd) {
-  // Production-only resources
-  new rds.Database(this, 'Database', { /* ... */ });
-}
-```
-
-### Cross-Stack References
-```typescript
-// Stack A exports
-export const bucketName = bucket.bucketName;
-
-// Stack B imports
-const bucketName = cdk.Fn.importValue('HuronStack-BucketName');
-```
-
-### Parameterization
-```typescript
-const config = new Context();
-const imageUri = config.getValue('ecrImageUri');
-const taskDefinition = new ecs.FargateTaskDefinition(
-  this, 'ProcessorTask',
-  { cpu: 1024, memoryLimitMiB: 2048 }
-);
-```
-
-## Infrastructure Concerns by Phase
-
-### Phase 1 (Chunking)
-- Lambda function with S3 access
-- Input S3 bucket (data source)
-- SQS queue (signal processors)
-
-### Phase 2 (Processing)
-- ECS cluster and task definition
-- ECR image for processor
-- S3 access (read chunks, write processed)
-- SQS consumer
-
-### Phase 3 (Post-processing)
-- ECS task definition
-- ECR image for post-processor
-- S3 access (read all processed chunks)
-- Output bucket (write delta storage)
-
+`npm test` runs the CDK template tests with the rest (e.g. `test/NetworkStack.test.ts`,
+`test/EcsInfrastructureNetwork.test.ts`, `test/RunCounters.test.ts` for the subscriber's grants). Review a change with
+`cdk diff` before `npm run deploy-fargate`; the deploy writes the synthesized template to
+`cdk.out/synth.output.fargate.yaml`. Validate a run end to end with the Runner (`src/runner/CLAUDE.md`).

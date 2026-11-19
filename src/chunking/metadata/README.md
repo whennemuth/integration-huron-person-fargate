@@ -1,593 +1,193 @@
-# Metadata Management Abstraction
+# Run Metadata
 
-## Purpose
+Each run (a "sync run", identified by its syncRunId, the ISO timestamp in its chunk directory
+`chunks/<population>/<syncRunId>/`) keeps a small amount of state beside its chunk files. This folder reads and
+writes it, in either storage mode:
 
-Manages critical metadata types used in the 3-phase ECS Fargate chunking pipeline:
+- **FLAGS**: the run's settings, written before chunking so processors can read them: `bulkReset`,
+  `trustPreviousStorage`, `syncPopulation`, and per run `personRecordProcessorAddons`, `termsEndpoint`, `startedBy`,
+  `processorScalingCapacity`.
+- **METADATA**: the run's manifest (`source`, `target`, `chunkDirectory`, `itemsPerChunk`, `createdAt`, ...) and its
+  running totals: `chunkCount`, `totalRecords` and `partialOrEmptyChunkEncountered` ("end of source records
+  detected"; the name is persisted, so it stays). These totals are how completion is judged.
+- **TERMINAL_ERROR**: a marker that the run failed during chunking.
 
-1. **FLAGS**: Early configuration flags for processors (written before chunking begins)
-   - **Why Created**: Prevents race condition where processors start before chunking completes. Provides configuration context (bulkReset, trustPreviousStorage, syncPopulation) needed for processing logic.
-   - **What Waits**: Processor tasks (Phase 2) read flags from the first chunk they process to determine lookup mode, validation behavior, and removal handling.
-   - **Key Point**: Written IMMEDIATELY when chunker starts, BEFORE any chunks are created, ensuring processors always have configuration available.
+Plus two claim records (below) that make sure something happens once per run. Chunk files themselves are always in S3,
+in both modes.
 
-2. **METADATA**: Run manifest and configuration for post-run diagnostics (written after chunking completes)
-   - **Why Created**: Records run manifest (itemsPerChunk, source, target, chunkDirectory, sync configuration) for post-run diagnostics, monitoring, and audit trails.
-   - **What Waits**: EventBridge rules poll for metadata existence to detect chunking completion and trigger Phase 3 (Post-processor). Post-processor uses metadata's createdAt timestamp to calculate full sync duration.
-   - **Key Point**: Written AFTER chunking completes successfully. Processors do NOT wait for metadata—they start immediately when chunks appear (via S3 event notifications).
+| | S3 mode | DynamoDB mode |
+|---|---|---|
+| FLAGS | `<chunkDirectory>/_flags.json` | statistics table, SK `FLAGS` |
+| METADATA | `<chunkDirectory>/_metadata.json` | statistics table, SK `METADATA` |
+| TERMINAL_ERROR | `<chunkDirectory>/_terminal_error.json` | statistics table, SK `TERMINAL_ERROR` |
+| Claims | statistics table | statistics table |
 
-3. **Error Records (TERMINAL_ERROR | ERROR:{type})**: Logs catastrophic failures and individual record issues
-   - **Why Created**: Tracks both pipeline-halting failures (TERMINAL_ERROR) and individual record errors (ERROR:VALIDATION, ERROR:API_CALL, ERROR:THROTTLING, ERROR:NETWORK) for diagnostics and monitoring.
-   - **What Waits**: Post-processor checks for TERMINAL_ERROR before proceeding. If detected, post-processor skips the run. Non-terminal ERROR:{type} records are logged for diagnostics but don't block pipeline progression.
-   - **Key Point**: TERMINAL_ERROR halts the pipeline (source fetch failure, S3 write failure). ERROR:{type} logs individual failures but allows integration to continue.
+The statistics table's partition key is the syncRunId. The table itself is described in
+[docs/STATISTICS_TABLE.md](../../../docs/STATISTICS_TABLE.md).
 
-## Pipeline Flow: Metadata & Storage Interactions
+## Classes
 
-The following diagram shows how FLAGS, METADATA, and TERMINAL_ERROR markers flow through the 3-phase pipeline:
+- **`IMetadataStorage`** (`IMetadataStorage.ts`, with the `Flags`, `ChunkMetadata`, `TerminalError` and parameter
+  types): `write`, `writeFlags`, `read`, `readFlags`, `markRunFailed`, `isRunFailed`, `terminalErrorExists`,
+  `readTerminalError`, `readFlagsFromChunkKey`, `readFromChunkKey`, `claimProcessorBoost`, `releaseProcessorBoostClaim`,
+  `accumulateMetadataTotals`.
+- **`MetadataForS3`** and **`MetadataForDynamoDb`**: the two implementations. In DynamoDB mode the records go through
+  `StatisticsTable` (`writeMetadata`, `writeFlags`, `readMetadata`, `readFlags`, `writeTerminalError`,
+  `readTerminalError`, `addToMetadataTotals`); writing FLAGS, a terminal error or the totals also writes the run's RUN
+  marker (`registerRun()`), which Run history lists runs by.
+- **`MetadataFactory.create({ config, previousStorageType?, statisticsTableName?, region?, storage? })`**: picks the
+  implementation by `previousStorageType`, else `config.storage.type` (`s3`, `file`, `database` → S3; `dynamodb` →
+  DynamoDB, which needs `statisticsTableName`; anything else throws).
+- **`MetadataFactoryForBootstrap`** (`createMetadataForBootstrap()`, `readFlagsForBootstrap()`): for code that must read
+  a run's state before config is loaded (the processors, post-processors and the post-processor subscriber). It decides
+  from the environment: `PREVIOUS_STORAGE_TYPE`, and the person tables' variables
+  (`DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` / `DYNAMODB_PERSON_HISTORY_TABLE_NAME`), since the statistics table
+  exists in both modes.
+- **`MetadataBroker`**: one chunk directory's metadata for the chunker (`docker/chunker.ts`, `ChunkFromAPI`,
+  `ChunkFromS3`): `write`, `writeFlags`, `markRunFailed`, `isTerminalErrorEncountered()`, `isAlreadyFinished()` (a late
+  task aborts once the end of records has been seen), `hasAnyTaskEncounteredPartial()`, `getRunningTotalRecords()` (for
+  the `maxTotalRecords` cutoff), and the processor-boost claim.
+- **`ChunkFileManager`**: chunk-file operations, S3 in both modes: `listChunkFiles`, `computeTotalRecords` (reads each
+  file whole and counts lines), `buildAggregatedMetadata`.
+- **`StandardMetadataUtils`** (`MetadataUtils.ts`): path helpers: `deriveDeltaStoragePath` (`chunks/...` →
+  `deltas/...`), `deriveChunkDirectory`, `getMetadataKey`, `getFlagsKey`, `getTerminalErrorKey`, `extractSyncRunId`
+  (the ISO timestamp anywhere in the key, else the last path segment). `validateMetadata()` there only logs warnings.
+
+## How a run uses it
 
 ```mermaid
 sequenceDiagram
-    participant C1 as First Chunker Task<br/>(Phase 1)
-    participant CN as Subsequent Chunker<br/>Tasks (Phase 1)
-    participant S as Storage<br/>(S3 or DynamoDB)
-    participant P as Processor Tasks<br/>(Phase 2)
-    participant M as Post-Processor Task<br/>(Phase 3)
+    participant C as Chunker tasks
+    participant M as Metadata (FLAGS / METADATA / TERMINAL_ERROR)
+    participant P as Processor tasks
+    participant T as Post-processor trigger
+    participant PP as Post-processor
 
-    Note over C1,S: === NORMAL SUCCESS PATH ===
-    
-    C1->>S: 1. writeFlags()<br/>(bulkReset, trustPreviousStorage,<br/>syncPopulation)
-    Note over C1: FLAGS written BEFORE<br/>chunking starts
-    
-    C1->>S: 2. Create chunk-XXXX.ndjson files<br/>(stream person records)
-    
-    par Parallel Processing
-        CN->>S: Check terminalErrorExists()
-        S-->>CN: false (no error)
-        Note over CN: Continue with next chunk
-    and
-        P->>S: readFlags(chunkDirectory)
-        S-->>P: Returns FLAGS
-        Note over P: Use bulkReset,<br/>syncPopulation<br/>for processing
-        P->>P: Process chunk-XXXX.ndjson
+    C->>M: isTerminalErrorEncountered()? isAlreadyFinished()? (abort if so)
+    C->>M: writeFlags() (every task)
+    C->>M: accumulateMetadataTotals() as each task finishes (API runs)
+    P->>M: readFlags (per chunk)
+    alt S3 mode
+        T->>M: PostProcessorSubscriber: on each delta marker, read METADATA and TERMINAL_ERROR
+    else DynamoDB mode
+        T->>M: last processor: CHUNK_STATUS count vs chunkCount, end of records, TERMINAL_ERROR
+        T->>M: claim POST_PROCESSOR_TRIGGER_CLAIM
     end
-    
-    C1->>S: 3. write() METADATA<br/>(after chunking completes)
-    Note over S: METADATA includes:<br/>itemsPerChunk, source,<br/>target, timestamps
-
-    M->>S: readFlags(chunkDirectory)
-    S-->>M: Returns FLAGS
-    M->>S: read(chunkDirectory)
-    S-->>M: Returns METADATA
-    Note over M: Use METADATA for<br/>merge orchestration
-
-    Note over C1,M: === FAILURE PATH ===
-    
-    C1->>C1: ❌ Catastrophic Error<br/>(network timeout, S3 failure)
-    C1->>S: writeFlags() with replace=true<br/>(runFailed=true,<br/>runFailureMessage,<br/>runFailureTimestamp)
-    C1->>S: markRunFailed()<br/>Write TERMINAL_ERROR marker
-    
-    CN->>S: Check terminalErrorExists()
-    S-->>CN: true (error found)
-    Note over CN: ⛔ Exit immediately<br/>(don't process)
-    
-    Note over P: Processors DON'T check<br/>terminal error markers.<br/>Continue processing<br/>existing chunks.
+    T->>PP: trigger message (carries createdAt)
+    PP->>M: readFlags (for the summary) + terminalErrorExists() (before deletions)
 ```
 
-> **Note (API-based chunking only):** step 3 above (`write()` called once, after chunking
-> completes) reflects `ChunkFromS3.ts`'s flow, which has no parallel-task completion problem to
-> begin with (a single deterministic source file). `ChunkFromAPI.ts` (multiple parallel,
-> offset-based tasks pulling from a shared, depleting source queue) instead has **every** task
-> call `accumulateMetadataTotals()` once it finishes - see that method below - atomically adding
-> its own `chunkCount`/`totalRecords` to the same METADATA record via a DynamoDB `ADD`, rather than
-> one task performing a single terminal `write()`.
+- **FLAGS** are written by every chunker task (`docker/chunker.ts`). DynamoDB mode skips the write if FLAGS exist; S3
+  mode rewrites `_flags.json` each time with the same values.
+- **METADATA totals**: in an API run each chunker task adds its own `chunkCount` / `totalRecords` (and the end-of-records
+  flag) as it finishes (`accumulateMetadataTotals()`): DynamoDB mode with an `UpdateItem` (`SET if_not_exists` + `ADD`),
+  S3 mode with an ETag-conditional rewrite of `_metadata.json` (retried), then a best-effort copy to the statistics
+  table. A file-drop run (`ChunkFromS3`) writes METADATA once, after chunking. Counts are never inferred from the
+  requested `recordCount`.
+- **Completion** is judged from METADATA's totals: in S3 mode by `PostProcessorSubscriber`, when the processors' delta
+  markers (`chunk-NNNN_processing_complete.json`) cover `chunkCount`; in DynamoDB mode by the processor that finds every
+  chunk's status recorded, which then claims the trigger. Either way the end of records must have been detected.
+- **Processors** read the run's Flags: `ProcessorForS3` through `readFlagsFromChunkKey()`, `ProcessorForDynamoDb`
+  through `readFlagsForBootstrap()`. They don't check the terminal error while processing a chunk.
+- **The post-processor** reads Flags for the run's `RUN_SUMMARY`, and checks `terminalErrorExists()` in
+  `runDeferredDeletes()`; it doesn't read METADATA.
 
-**Key Observations:**
+## Failure handling
 
-1. **FLAGS are written FIRST** (before any chunks) to prevent processor race conditions
-2. **Subsequent chunker tasks** check for terminal errors before starting work
-3. **Processor tasks** read FLAGS but NOT terminal error markers while processing - they process whatever chunks exist. (The DynamoDB-mode "last processor" DOES check TERMINAL_ERROR before triggering the post-processor - see below.)
-4. **METADATA is written LAST** (after chunking completes successfully)
-5. **Post-processor tasks** read both FLAGS and METADATA for orchestration context
-6. **Failure markers** (TERMINAL_ERROR + FLAGS update) stop subsequent chunkers and block the post-processor's deactivations, but not chunk processing
+A run fails during chunking when a chunker task hits an unrecoverable error: an unhandled exception in
+`docker/chunker.ts`, the source's retries exhausted in `ChunkFromAPI`, or the `maxTotalRecords` safety cutoff
+(`BigJsonFetch`), which surfaces through the same path.
 
-## Failure Handling Mechanism
+- **`markRunFailed({ bucketName?, chunkDirectory, region?, errorMessage? })`** writes the TERMINAL_ERROR marker:
+  `{ stage: 'chunking', chunkDirectory, errorMessage?, errorTimestamp }`. `docker/chunker.ts`'s catch block calls it.
+- **`ChunkFromAPI`** also rewrites METADATA with `runFailed`, `runFailureMessage` and `runFailureTimestamp`
+  (`write()` with `replace: true`) before calling `markRunFailed()`. These fields are diagnostic only. Note that the
+  replacing write drops the totals accumulated so far. `ChunkFromS3` writes no failure fields.
+- `Flags` declares `runFailed` / `runFailureMessage` / `runFailureTimestamp` and `isRunFailed()` reads them, but nothing
+  writes them to FLAGS.
 
-### The Dual Marker System
+Who checks the marker:
 
-When a chunking task encounters a catastrophic failure (network timeout, S3 write failure, API exhaustion), it writes **two separate markers**:
+- **Later chunker tasks**: `isTerminalErrorEncountered()` (`terminalErrorExists()`) before starting work; they exit
+  with code 1, so no work is wasted on a failed run.
+- **Processors**: not while processing a chunk; partial chunks are still processed. Except that in DynamoDB mode the
+  processor that finds all chunks complete checks `StatisticsTable.readTerminalError()` and does not trigger the
+  post-processor for a failed run.
+- **The post-processor trigger**: in S3 mode `PostProcessorSubscriber` blocks the post-processor entirely for a failed
+  run.
+- **The post-processor**: in both modes `runDeferredDeletes()` checks `terminalErrorExists()` and skips deletion
+  handling: a failed run's population is incomplete, so "missing" people must never be deactivated.
+- An incomplete run never triggers the post-processor, for want of chunk markers.
 
-1. **FLAGS Update**: The FLAGS record is updated with failure fields:
-   - `runFailed: true`
-   - `runFailureMessage: string` (error description)
-   - `runFailureTimestamp: string` (ISO timestamp)
-   
-   This is done via `writeFlags()` with `replace: true` parameter.
+More on how chunking ends and fails: [docs/CHUNKING_END_AND_FAILURE.md](../../../docs/CHUNKING_END_AND_FAILURE.md).
 
-2. **TERMINAL_ERROR Marker**: A separate marker is written via `markRunFailed()`:
-   - S3: `_terminal_error.json` file
-   - DynamoDB: Record with SK="TERMINAL_ERROR"
+## Claim records
 
-### Why Two Markers?
+**Processor boost claim** (SK `PROCESSOR_BOOST_CLAIM`, attributes `claimedAt`, optional `claimedByChunk`: the chunker
+offset, or the input S3 key for a file drop): written by the one chunker task that wins `claimProcessorBoost()`
+(`ProcessorServiceBooster`; `OCCFlag`-guarded, first writer wins); deleted by `releaseProcessorBoostClaim()`. Claims
+older than 10 minutes are treated as abandoned and cleared. In S3 mode `MetadataForS3` writes the same record to the
+statistics table.
 
-- **TERMINAL_ERROR** is the primary signal for **subsequent chunker tasks** to abort early
-- **FLAGS update** preserves failure context for **post-run diagnostics and auditing**
-- **METADATA** may also be updated with failure fields (if written at all)
+**Post-processor trigger claim** (SK `POST_PROCESSOR_TRIGGER_CLAIM`, attributes `claimedAt`, optional
+`claimedByChunk`): written directly through `StatisticsTable.claimPostProcessorTrigger()` (not through the metadata
+classes) by the one `ProcessorForDynamoDb` task that wins the right to send the post-processor trigger. Never released:
+the post-processor is triggered at most once per run.
 
-### Who Checks These Markers?
+More on these claims: [docs/CONCURRENCY_CONTROL.md](../../../docs/CONCURRENCY_CONTROL.md).
 
-**Subsequent Chunker Tasks (Phase 1):**
-- Check `terminalErrorExists()` before starting work (chunker.ts lines 363-369)
-- Exit immediately with code 1 if terminal error found
-- This prevents wasted processing on an already-failed run
+## Error records
 
-**Processor Tasks (Phase 2):**
-- **Do NOT check** `runFailed` or terminal error markers while processing a chunk
-- Continue processing whatever chunks were created before failure
-- This is intentional: partial chunks may still be valuable for diagnostics
-- **Exception (DynamoDB mode)**: the processor that finds all chunks complete checks the
-  TERMINAL_ERROR record (`StatisticsTable.readTerminalError()`) before claiming the post-processor
-  trigger, and does NOT trigger the post-processor for a failed run
-
-**Post-Processor Tasks (Phase 3):**
-- S3 mode: `PostProcessorSubscriber` blocks the post-processor entirely if a terminal error marker exists
-- Both modes: `PostProcessorForS3`/`PostProcessorForDynamoDB.runDeferredDeletes()` check
-  `terminalErrorExists()` and skip deletion handling (deactivations) for a failed run - a
-  failed run's population is incomplete, so "missing" people must never be deactivated
-- Incomplete runs naturally don't trigger post-processor due to missing chunk markers
-
-### When Are Failure Markers Written?
-
-1. **Unhandled exception in chunker.ts**: Catch block writes terminal error (line 490)
-2. **API retry exhaustion in ChunkFromAPI.ts**: After terminal error encountered (lines 569-577)
-3. **Glitched-source safety cutoff** (`MAX_TOTAL_RECORDS`): surfaces through the same ChunkFromAPI.ts terminal-error path
-4. **S3 write failures**: Caught by chunker error handling
-
-### Implementation Detail: FLAGS as Failure Record
-
-The `Flags` type includes three optional failure fields:
-
-```typescript
-type Flags = {
-  bulkReset: boolean;
-  trustPreviousStorage: boolean;
-  syncPopulation: SyncPopulation;
-  // Failure tracking (written when markRunFailed is called)
-  runFailed?: boolean;
-  runFailureMessage?: string;
-  runFailureTimestamp?: string;
-};
-```
-
-These fields are **not used by processors** during normal operation. They exist for:
-- Chunker-to-chunker coordination (subsequent tasks check and abort)
-- Post-run diagnostics and monitoring
-- Audit trail preservation
-
-## Template Pattern Implementation
-
-The metadata module uses the template pattern with abstract base class and concrete implementations:
+Target API errors during processing are recorded in the statistics table by `ApiErrorTracking`
+(`src/ApiErrorTracking.ts`), one item per error, and do not halt the run:
 
 ```
-AbstractMetadata (abstract base)
-├── MetadataForS3 (file-based implementation)
-└── MetadataForDynamoDb (table-based implementation)
+PK: "2026-03-03T19:58:41.277Z"
+SK: "ERROR:429:2026-03-03T20:01:12.003Z"
+Attributes: { errorType: "ERROR:429", timestamp, statusCode: 429, statusText?, message, incidentId?, isThrottled: true, detailsObj? }
 ```
 
-### AbstractMetadata (19 methods)
+`errorType` is a GSI key, so errors can be listed by status code. A chunk with errors still finishes; the processor's
+exit code comes from `computeExitCode()` (`src/processing/ProcessorCommon.ts`).
 
-**5 Static Path Helpers**:
-- `deriveDeltaStoragePath(chunkDirectory): string` - Extract delta storage path from chunk directory
-- `deriveChunkDirectory(deltaStoragePath): string` - Derive chunk directory from delta storage path
-- `getMetadataKey(chunkDirectory): string` - Get S3 key or DynamoDB PK for metadata
-- `getFlagsKey(chunkDirectory): string` - Get S3 key or DynamoDB PK for flags
-- `getTerminalErrorKey(chunkDirectory): string` - Get S3 key or DynamoDB PK for terminal error
-- `extractSyncRunId(chunkDirectory): string` - Extract ISO timestamp from chunk directory for DynamoDB PK
+## Example S3 files
 
-**14 Abstract Instance Methods**:
-- `write(params: WriteMetadataParams): Promise<void>` - Write metadata record
-- `writeFlags(params: WriteFlagsParams): Promise<void>` - Write flags record (early in chunking)
-- `read(params: ReadMetadataParams): Promise<ChunkMetadata>` - Read metadata record
-- `readFlags(params: ReadFlagsParams): Promise<Flags>` - Read flags record
-- `markRunFailed(params: MarkRunFailedParams): Promise<void>` - Write terminal error marker
-- `isRunFailed(params: ReadFlagsParams): Promise<boolean>` - Check if run failed
-- `terminalErrorExists(params: ReadTerminalErrorParams): Promise<boolean>` - Check terminal error existence
-- `readTerminalError(params: ReadTerminalErrorParams): Promise<TerminalError | null>` - Read terminal error details
-- `readFlagsFromChunkKey(bucketName: string, chunkS3Key: string, region?: string): Promise<Flags>` - Read flags from chunk S3 key
-- `readFromChunkKey(bucketName: string, chunkS3Key: string, region?: string): Promise<ChunkMetadata>` - Read metadata from chunk S3 key
-- `listChunkFiles(bucketName: string, chunkDirectory: string, region?: string): Promise<string[]>` - List all chunk files in directory
-- `computeTotalRecords(bucketName: string, chunkKeys: string[], region?: string): Promise<number>` - Count total records across chunks
-- `buildAggregatedMetadata(bucketName: string, chunkDirectory: string, region?: string): Promise<{chunkCount, totalRecords, chunkKeys}>` - Build aggregated metadata from chunks (standalone diagnostic utility only as of the API-based accumulation change below - no longer called from `ChunkFromAPI.ts`'s normal completion path)
-- `validateMetadata(metadata: ChunkMetadata): boolean` - Validate metadata structure
+`chunks/person-full/2026-03-03T19:58:41.277Z/_flags.json`:
 
-**Newer addition (not part of the original 14 above)**:
-- `accumulateMetadataTotals(params: AccumulateMetadataTotalsParams): Promise<{chunkCount, totalRecords}>` - Atomically add one task's own `chunkCount`/`totalRecords` contribution to the run's METADATA record (DynamoDB `SET if_not_exists(...)` + `ADD`, single `UpdateItem` call). Used by `ChunkFromAPI.ts`: every parallel, offset-based task calls this once when it finishes, replacing the single-writer `write()` + `buildAggregatedMetadata()` rescan that only worked when one task's partial batch could be trusted as "the" true end of the population - which the source API's actual queue-depletion behavior doesn't guarantee. `ChunkFromS3.ts` is unaffected (still uses `write()`, see note on the sequence diagram above).
-
-## MetadataForS3 (File-Based Implementation)
-
-### Storage Format
-
-**Metadata File** (`_metadata.json`):
-```json
-{
-  "itemsPerChunk": 500,
-  "source": "BU CDM People API",
-  "target": "Huron Target System",
-  "chunkDirectory": "chunks/PersonFull/2024-01-15T10:30:00.000Z",
-  "deltaStoragePath": "delta-storage/PersonFull",
-  "bulkReset": false,
-  "trustPreviousStorage": true,
-  "syncPopulation": "PersonFull",
-  "createdAt": "2024-01-15T10:30:00.000Z"
-}
-```
-
-**Flags File** (`_flags.json`):
 ```json
 {
   "bulkReset": false,
   "trustPreviousStorage": true,
-  "syncPopulation": "PersonFull"
+  "syncPopulation": "person-full",
+  "startedBy": { "by": "schedule" },
+  "processorScalingCapacity": { "maxTasks": 8, "overridden": false }
 }
 ```
 
-**Terminal Error File** (`_terminal_error.json`):
-```json
-{
-  "timestamp": "2024-01-15T10:35:00.000Z",
-  "errorMessage": "Failed to fetch source data",
-  "errorStack": "Error: Network timeout\n  at ...",
-  "phase": "chunking",
-  "chunkDirectory": "chunks/PersonFull/2024-01-15T10:30:00.000Z"
-}
-```
-
-### File Locations
-
-All files stored under: `s3://{bucket}/chunks/{populationType}/{timestamp}/`
-
-Example:
-- `s3://my-bucket/chunks/PersonFull/2024-01-15T10:30:00.000Z/_metadata.json`
-- `s3://my-bucket/chunks/PersonFull/2024-01-15T10:30:00.000Z/_flags.json`
-- `s3://my-bucket/chunks/PersonFull/2024-01-15T10:30:00.000Z/_terminal_error.json`
-- `s3://my-bucket/chunks/PersonFull/2024-01-15T10:30:00.000Z/chunk-0000.ndjson`
-- `s3://my-bucket/chunks/PersonFull/2024-01-15T10:30:00.000Z/chunk-0001.ndjson`
-- ...
-
-### Implementation Details
-
-- Uses `S3Client` for file operations (GetObject, PutObject, ListObjectsV2)
-- `listChunkFiles()`: Paginates through S3 objects matching `chunk-*.ndjson` pattern
-- `computeTotalRecords()`: Streams NDJSON files and counts lines (memory-efficient)
-- `buildAggregatedMetadata()`: Discovers all chunks via S3 ListObjectsV2
-- **Static wrapper methods**: All 13 instance methods have static wrappers for backward compatibility
-
-### Backward Compatibility
-
-Original code called `MetadataManager.write()` as static methods. MetadataForS3 provides static wrappers:
-
-```typescript
-// Old code (still works):
-import { MetadataForS3 } from './metadata';
-const MetadataManager = MetadataForS3;
-await MetadataManager.write({ bucketName, chunkDirectory, ... });
-
-// New code (instance-based):
-const metadata = new MetadataForS3({ config });
-await metadata.write({ bucketName, chunkDirectory, ... });
-```
-
-## MetadataForDynamoDb (Table-Based Implementation)
-
-### Storage Format
-
-Uses **StatisticsTable** with `eventType` field to differentiate record types:
-
-**Metadata Record** (eventType = "METADATA"):
-```
-PK: "2024-01-15T10:30:00.000Z"  // syncRunId (integrationTimestamp)
-SK: "METADATA"
-Attributes: {
-  itemsPerChunk: 500,
-  source: "BU CDM People API",
-  target: "Huron Target System",
-  chunkDirectory: "chunks/PersonFull/2024-01-15T10:30:00.000Z",
-  deltaStoragePath: "delta-storage/PersonFull",
-  bulkReset: false,
-  trustPreviousStorage: true,
-  syncPopulation: "PersonFull",
-  createdAt: "2024-01-15T10:30:00.000Z"
-}
-```
-
-**Flags Record** (eventType = "FLAGS"):
-```
-PK: "2024-01-15T10:30:00.000Z"
-SK: "FLAGS"
-Attributes: {
-  bulkReset: false,
-  trustPreviousStorage: true,
-  syncPopulation: "PersonFull",
-  // Optional failure tracking (present only after markRunFailed):
-  runFailed: false,
-  runFailureMessage: undefined,
-  runFailureTimestamp: undefined
-}
-```
-
-**Terminal Error Record** (eventType = "TERMINAL_ERROR"):
-```
-PK: "2024-01-15T10:30:00.000Z"
-SK: "TERMINAL_ERROR"
-Attributes: {
-  timestamp: "2024-01-15T10:35:00.000Z",
-  errorMessage: "Failed to fetch source data",
-  errorStack: "Error: Network timeout\n  at ...",
-  phase: "chunking",
-  chunkDirectory: "chunks/PersonFull/2024-01-15T10:30:00.000Z"
-}
-```
-
-**Processor Boost Claim Record** (eventType = "PROCESSOR_BOOST_CLAIM"):
-```
-PK: "2024-01-15T10:30:00.000Z"
-SK: "PROCESSOR_BOOST_CLAIM"
-Attributes: {
-  claimedAt: "2024-01-15T10:31:00.000Z",  // OCCFlag-guarded - first writer wins
-  claimedByChunk: "1000"                  // Optional - chunker offset (or input S3 key for file-drop)
-}
-```
-Written by the one chunker task that wins `claimProcessorBoost()` (ProcessorServiceBooster); deleted by `releaseProcessorBoostClaim()`. Claims older than 10 minutes are treated as abandoned and cleared. In S3 mode, `MetadataForS3` writes this same record to the statistics table.
-
-**Post-Processor Trigger Claim Record** (eventType = "POST_PROCESSOR_TRIGGER_CLAIM"):
-```
-PK: "2024-01-15T10:30:00.000Z"
-SK: "POST_PROCESSOR_TRIGGER_CLAIM"
-Attributes: {
-  claimedAt: "2024-01-15T10:45:00.000Z",  // OCCFlag-guarded - first writer wins
-  claimedByChunk: "0042"                  // Optional - which processor task won
-}
-```
-Written directly via `StatisticsTable.claimPostProcessorTrigger()` (not through the metadata classes) by the one processor task (`ProcessorForDynamoDb`) that wins the right to send the post-processor-trigger SQS message. Never released - the post-processor must be triggered at most once per run.
-
-**Non-Terminal Error Records** (eventType = "ERROR:{category}"):
-
-Individual record failures are logged to StatisticsTable but do NOT halt the integration:
-
-```
-// Validation Error Example
-PK: "2024-01-15T10:30:00.000Z"
-SK: "ERROR:VALIDATION"
-Attributes: {
-  timestamp: "2024-01-15T10:32:15.000Z",
-  personId: "U12345678",
-  errorMessage: "Missing required field: email",
-  chunkId: "chunk-0003",
-  recordNumber: 47
-}
-
-// API Error Example
-PK: "2024-01-15T10:30:00.000Z"
-SK: "ERROR:API_CALL"
-Attributes: {
-  timestamp: "2024-01-15T10:33:20.000Z",
-  personId: "U87654321",
-  errorMessage: "Target API returned 500 Internal Server Error",
-  statusCode: 500,
-  endpoint: "/api/v2/persons/hrn123456",
-  chunkId: "chunk-0005"
-}
-
-// Throttling Error Example
-PK: "2024-01-15T10:30:00.000Z"
-SK: "ERROR:THROTTLING"
-Attributes: {
-  timestamp: "2024-01-15T10:34:10.000Z",
-  errorMessage: "Rate limit exceeded - 429 Too Many Requests",
-  statusCode: 429,
-  retryAfter: 5,
-  chunkId: "chunk-0007"
-}
-
-// Network Error Example
-PK: "2024-01-15T10:30:00.000Z"
-SK: "ERROR:NETWORK"
-Attributes: {
-  timestamp: "2024-01-15T10:35:45.000Z",
-  errorMessage: "Request timeout after 30000ms",
-  endpoint: "/api/v2/persons/hrn999999",
-  chunkId: "chunk-0010"
-}
-```
-
-**Error Behavior:**
-- Non-terminal errors are logged to both console and StatisticsTable
-- Integration continues despite individual record failures
-- Error counts accumulated in processor's errorTracker
-- Processor exits with code 1 if errors occurred (but doesn't write TERMINAL_ERROR)
-- Other chunks continue processing in parallel
-- Only catastrophic failures write TERMINAL_ERROR and halt the pipeline
-
-### Key Extraction
-
-The `syncRunId` (DynamoDB PK) is extracted from the chunk directory timestamp:
-
-```typescript
-chunkDirectory: "chunks/PersonFull/2024-01-15T10:30:00.000Z"
-                                    ^^^^^^^^^^^^^^^^^^^^^^^^
-                                    syncRunId (ISO timestamp)
-```
-
-This is handled by `AbstractMetadata.extractSyncRunId(chunkDirectory)`.
-
-### Implementation Details
-
-- Uses `StatisticsTable` utility class (wraps DynamoDB Document Client)
-- `write()`: Calls `StatisticsTable.writeEventRecord({ eventType: 'METADATA', ... })`
-- `writeFlags()`: Calls `StatisticsTable.writeEventRecord({ eventType: 'FLAGS', ... })`
-- `markRunFailed()`: Calls `StatisticsTable.writeTerminalError()` (SK="TERMINAL_ERROR")
-- `read()`: Queries StatisticsTable with PK=syncRunId, SK="METADATA"
-- `readFlags()`: Queries StatisticsTable with PK=syncRunId, SK="FLAGS"
-- `readTerminalError()` / `terminalErrorExists()`: Call `StatisticsTable.readTerminalError()` (PK=syncRunId, SK="TERMINAL_ERROR"). These previously read the METADATA record and so never detected a failed run in DynamoDB mode.
-- `claimProcessorBoost()`: Calls `StatisticsTable.claimProcessorBoost()` (PK=syncRunId, SK="PROCESSOR_BOOST_CLAIM"). `MetadataForS3` delegates to the same StatisticsTable method, so this record exists in both storage modes.
-
-### Not Applicable Methods
-
-Three methods are **not applicable** in DynamoDB mode and throw errors:
-- `listChunkFiles()` - Chunk files always remain in S3, not DynamoDB
-- `computeTotalRecords()` - Must read NDJSON files from S3 regardless of storage mode
-- `buildAggregatedMetadata()` - Requires S3 file listing
-
-These methods are S3-specific utilities for chunk discovery and are not needed when metadata is in DynamoDB (chunk files still in S3).
-
-## Factory Pattern
-
-### MetadataFactory
-
-Switches between implementations based on `config.storage.type`:
-
-```typescript
-import { MetadataFactory } from './metadata';
-
-const metadata = MetadataFactory.create(config);
-// Returns: MetadataForS3 if config.storage.type is 's3'|'file'|'database'
-// Returns: MetadataForDynamoDb if config.storage.type is 'dynamodb'
-```
-
-### Consumer Pattern
-
-Consumers (chunker.ts, processor.ts, post-processor.ts) use backward compatibility aliasing:
-
-```typescript
-import { MetadataForS3 } from '../src/chunking/metadata';
-const MetadataManager = MetadataForS3;  // Alias for minimal code change
-
-// Usage (still works as before):
-await MetadataManager.write({ bucketName, chunkDirectory, ... });
-await MetadataManager.writeFlags({ bucketName, chunkDirectory, bulkReset, ... });
-const flags = await MetadataManager.readFlags({ bucketName, chunkDirectory });
-```
-
-**Migration Path**: Replace `MetadataManager` with `MetadataFactory.create(config)` to enable dynamic switching.
-
-## Pipeline Flow
-
-### Phase 1: Chunker (docker/chunker.ts)
-
-1. **Write Flags Early** (before chunking begins):
-   ```typescript
-   await MetadataManager.writeFlags({
-     bucketName, chunkDirectory,
-     bulkReset, trustPreviousStorage, syncPopulation
-   });
-   ```
-   
-2. **Create Chunk Files** (`chunk-0000.ndjson`, `chunk-0001.ndjson`, ...)
-
-3. **Write Metadata** (after chunking completes):
-   ```typescript
-   await MetadataManager.write({
-     bucketName, chunkDirectory, itemsPerChunk,
-     source, target, bulkReset, trustPreviousStorage, syncPopulation
-   });
-   ```
-
-4. **On Failure** (catastrophic error):
-   ```typescript
-   await MetadataManager.markRunFailed({
-     bucketName, chunkDirectory,
-     runFailureMessage: error.message,
-     runFailureTimestamp: new Date().toISOString()
-   });
-   ```
-
-### Phase 2: Processor (docker/processor.ts)
-
-1. **Read Flags** (for sync configuration):
-   ```typescript
-   const flags = await MetadataManager.readFlagsFromChunkKey(
-     bucketName, chunkS3Key, region
-   );
-   // Use flags.bulkReset, flags.syncPopulation in processing logic
-   ```
-
-2. **Process Chunk** (apply data mapping, delta logic)
-
-3. **Write Results** (to S3 or DynamoDB depending on storage mode)
-
-### Phase 3: Post-Processor (docker/post-processor.ts)
-
-1. **Read Metadata** (to get run context):
-   ```typescript
-   const metadata = await MetadataManager.read({
-     bucketName, chunkDirectory
-   });
-   ```
-
-2. **Read Flags** (for bulkReset behavior):
-   ```typescript
-   const flags = await MetadataManager.readFlags({
-     bucketName, chunkDirectory
-   });
-   ```
-
-3. **Check Terminal Error** (before proceeding):
-   ```typescript
-   const hasFailed = await MetadataManager.terminalErrorExists({
-     bucketName, chunkDirectory
-   });
-   if (hasFailed) {
-     const error = await MetadataManager.readTerminalError({
-       bucketName, chunkDirectory
-     });
-     // Handle failure scenario
-   }
-   ```
-
-4. **Merge Results** (consolidate processing output)
+`_metadata.json` in the same directory holds the manifest and totals, e.g. `"chunkDirectory":
+"chunks/person-full/2026-03-03T19:58:41.277Z"`, `"chunkCount": 735`, `"totalRecords": 146812`,
+`"partialOrEmptyChunkEncountered": true`; a file-drop run also lists `chunkKeys`. S3-mode processors write their delta
+chunks under the matching `deltas/person-full/2026-03-03T19:58:41.277Z/`.
 
 ## Testing
 
-### Running Metadata Tests
-
 ```bash
-# Run all metadata tests
-npm test -- Metadata.test.ts
-
-# Run specific test
-npm test -- Metadata.test.ts -t "should write and read metadata"
+npm test -- MetadataForDynamoDb MetadataBroker MetadataForS3Totals Metadata.test
 ```
 
-### Test Coverage
+`test/Metadata.test.ts` covers `ChunkFileManager`; `test/MetadataForDynamoDb.test.ts`, `test/MetadataBroker.test.ts`
+and `test/MetadataForS3Totals.test.ts` cover writing and reading, terminal errors and the totals.
 
-- Metadata write/read operations
-- Flags write/read operations
-- Terminal error marking and detection
-- Chunk file listing and record counting
-- Aggregated metadata building
-- Error handling (missing files, invalid JSON)
+## Common issues
 
-## Common Issues
+- **"Metadata file not found - blocking post-processor until metadata is available"** (`PostProcessorSubscriber`):
+  METADATA isn't written yet; normal while chunker tasks are still finishing. Persisting, check the chunker's logs.
+- **"No flags file found (chunking may not have started yet)"** (`MetadataForS3`): a reader looked before the first
+  chunker task wrote FLAGS; check the chunk directory and the chunker's logs.
+- **Post-processor never runs**: look for a TERMINAL_ERROR record, then compare METADATA's `chunkCount` with the delta
+  markers (S3) or CHUNK_STATUS items (DynamoDB), and check `partialOrEmptyChunkEncountered`.
 
-### "Metadata file not found"
+## Possible improvements
 
-**Cause**: Processor tasks reading flags before chunker has written them.
-
-**Solution**: Chunker writes flags **immediately** (before chunking begins) to avoid this race condition.
-
-### "Cannot read property 'bulkReset' of undefined"
-
-**Cause**: Flags structure mismatch or corrupted JSON.
-
-**Solution**: Validate flags structure with `AbstractMetadata.validateFlags()` (if implemented).
-
-### "chunkDirectory required but not provided"
-
-**Cause**: Missing `chunkDirectory` parameter in read operations.
-
-**Solution**: Ensure all read operations pass `chunkDirectory` from chunk S3 key or environment variable.
-
-## Future Enhancements
-
-1. **Validation Methods**: Add `validateMetadata()` and `validateFlags()` implementations
-2. **Retry Logic**: Add exponential backoff for DynamoDB throttling
-3. **Caching**: Cache frequently-read flags in memory (processor optimization)
-4. **Compression**: Compress large metadata payloads (S3 mode)
-5. **Versioning**: Support metadata schema versioning for backward compatibility
+- Add `validateFlags()`, and make `validateMetadata()` enforce rather than warn.
+- Merge the terminal-error METADATA write into the existing totals instead of replacing them.

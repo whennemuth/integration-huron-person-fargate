@@ -1,982 +1,282 @@
 # integration-huron-person-fargate: Serverless Pipeline & Infrastructure
 
-## Project Purpose
-AWS CDK infrastructure and serverless implementation of the three-phase streaming delta synchronization pipeline. Implements chunking, processing, and post-processing phases using Lambda, ECS Fargate, S3, and SQS.
+AWS CDK infrastructure and the ECS Fargate implementation of the three-phase streaming delta sync (chunking,
+processing, post-processing) on Lambda, ECS Fargate, S3, SQS and DynamoDB, plus the landscape's management dashboard
+(`dashboard/`, with its own `CLAUDE.md`). An independently versioned npm package in its own repository, composed with
+its siblings (especially `integration-core`) through dependencies, not workspace-level source control.
 
-## Repository Relationship Model
+Folder-level CLAUDE.md files hold more detail: `lib/`, `docker/`, `src/`, `src/chunking/`, `src/processing/`,
+`src/post-processing/`, `src/runner/`, `dashboard/`. Reference docs are in [docs/](docs/).
 
-This project is an independently versioned npm package with its own source repository.
+**Workspace setup**: the shared skills are the integration-skills repository cloned as `<workspace root>/.claude`, and
+the workspace-wide instructions are its `CLAUDE.md`. How to install them and get VS Code, Copilot CLI or Claude Code
+to load them (including `--add-dir ..` with `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`): the `README.md`,
+"Shared Skills Setup" and "Workspace Instructions" (and `<workspace root>/.claude/README.md`).
 
-It composes with sibling repositories through dependency relationships (especially `integration-core`) rather than workspace-level source control.
+## Verify before you rely on an abstraction
 
-## Shared Skills Repository
+Before using an unfamiliar abstraction, find its definition and its consumers, read its tests, state what you think it
+does, and only then implement; if you can't verify it, say what you don't know and ask rather than guess (skill
+`verify-abstractions-before-implementation`; the user can say "skip verification and proceed" or "use inference for
+this"). High-risk here: control-flow directives (`__arrayFieldOperations`, `__metadata`, behavioral flags), update
+semantics (append vs replace, merge vs overwrite), JWT and credential resolution, phase transitions and queue
+messages, Docker entry-point environment loading and error propagation, CDK stack dependencies and resource
+references.
 
-Cross-repository agent skills are maintained in a separate repository (https://github.com/whennemuth/integration-skills) that is cloned as the `.claude` directory of the workspace root, so skills live at `<workspace root>/.claude/skills/`. This is a native skill location that both VS Code (GitHub Copilot) and Claude Code discover without any custom settings.
-
-- **Install**: from the workspace root, run `git clone https://github.com/whennemuth/integration-skills.git .claude`.
-- **VS Code**: include the workspace root itself (`"path": "."`) as a root folder in your `.code-workspace` file. VS Code discovers `.claude/skills/` in every workspace root folder and makes those skills available across the whole workspace.
-- **Claude Code**: start Claude Code in the workspace root. When starting in a package repository instead, add the workspace root with `--add-dir` (e.g. `claude --add-dir ..` from the repository root, or `/add-dir` in a running session).
-
-See `<workspace root>/.claude/README.md` for full setup details.
-
-Core-only and core+person+fargate workspace examples are documented in this repository's `README.md`.
-
-## Workspace Instructions
-
-Workspace-wide agent instructions live in `<workspace root>/.claude/CLAUDE.md`, versioned in the integration-skills repository alongside the shared skills. That file holds the workspace architecture overview, pointers to the shared-pattern skills and project CLAUDE.md files, change and commit preferences, and the task verification protocol (build, test, and completion reporting requirements for all code implementation tasks) that apply to all integration projects (core, huron-person, fargate, dashboard, file-drop, etc.).
-
-**Discovery**: Claude Code and GitHub Copilot CLI load it automatically when started in the workspace root. VS Code Copilot Chat loads it when the workspace root (`"path": "."`) is a root folder of the `.code-workspace` file and the `chat.useClaudeMdFile` setting is enabled. When starting Claude Code in a package repository with `--add-dir` pointing at the workspace root, also set `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1` so the workspace instructions are loaded.
-
-## Implementation Verification Protocol
-
-**CRITICAL**: When implementing code that depends on unfamiliar abstractions, control flow directives, or domain-specific patterns, you MUST verify their actual behavior before proceeding.
-
-### High-Risk Abstractions Requiring Verification
-
-- **Control flow directives**: `__arrayFieldOperations`, `__metadata`, behavioral flags
-- **Update semantics**: append vs replace, merge vs overwrite patterns
-- **Authentication patterns**: JWT token management, credential resolution
-- **Pipeline coordination**: Phase transitions, queue message handling
-- **Docker entrypoint patterns**: Environment loading, error propagation
-- **CDK infrastructure patterns**: Stack dependencies, resource references
-
-### Mandatory Verification Steps
-
-Before implementing code that uses an unfamiliar abstraction:
-
-1. **Search for definition**: Use `grep_search` to find where it's defined
-2. **Find consumers**: Search for where it's processed/interpreted
-3. **Read usage examples**: Look at tests and similar patterns
-4. **State your understanding**: Explicitly describe what you think it does
-5. **Think through interactions**: Consider edge cases and combinations
-6. **Only then implement**: Proceed with verified understanding
-
-### When You're Uncertain
-
-If you cannot fully verify an abstraction's behavior:
-
-- **State explicitly what you don't know**
-- **Ask whether to search for implementation first**
-- **Do NOT proceed on "educated guesses"**
-
-### Real Example: config.preLoadedMaps Dead Code
-
-A runner decorator (`MockTargetRunnerDecorator`, since replaced by `MockLandscapeRunnerDecorator`) mutated `config.preLoadedMaps = {orgMap:false, ...}` believing this would prevent organization/state/country lookups from calling the real Huron API in mock target mode:
-- **Assumption**: Setting this field on the Runner's `Config` object would reach the running processor task
-- **Reality**: `config.preLoadedMaps` is only ever read by CDK at deploy time (`ProcessorTaskDefinition.ts`) to bake `STATIC_MAP_USAGE` into the ECS task's environment variables - from an entirely different `Config` object loaded from disk, not the one the Runner mutated at invocation time
-- **Result**: The override compiled and ran with zero errors, logged nothing wrong, and had absolutely no effect - mock-mode runs could still trigger real organization API calls
-
-This was fixed by forcing `StaticMapUsage` at the point it's actually consumed - inside the processor, immediately after `flags.useMockTarget` is read from chunk metadata (the same channel already used to select the mock data target) - rather than trying to inject it upstream through a Config object that never reaches the running task. The lesson: a runtime override that "looks right" and produces no errors can still be a no-op if it mutates the wrong instance of a config object that exists in two different lifecycles (deploy-time vs invocation-time).
-
-(Since superseded: mock mode is now a deploy-time property of a mock landscape - see "Mock Landscapes" below - whose target simulator answers the same calls the real Huron API would, so no static-map override is needed at all; the runtime override `resolveStaticMapUsage()` was removed.)
-
-### Source Simulator
-
-The source simulator (`src/chunking/fetch/SourceSimulator.ts`) is a Lambda Function URL that provides mock API responses for full 3-phase integration testing without the real API's 30-minute cooldown constraint.
-
-**Endpoints** (path-based routing):
-- `/` (default): mock person data, using a stateful depletion model (see repo memory `source-simulator-semantics.md` for allocator semantics)
-- `/person?buid=U0000042`: one person, mirroring the real person API. Stateless (the depletion counter is untouched) and idempotent: `U0000042` is index 41, the same payload `/` produces for that person. A BUID beyond `MOCK_TOTAL_POPULATION` returns `{ response: [] }`; a missing or malformed one (not `U` + digits) returns 400. It must be selected by a `buid` query parameter, because that is what makes the chunker do a single, non-paged request (`BigJsonFetch.isNotBatchable()`). With `RUNNER_SINGLE_PERSON_BUID` set, `SourceSimulatorRunnerDecorator` points the source here.
-- `/terms`: mock current-terms data (6 static terms: 2 current, 2 past, 2 future) - required because `DataMapperOrg.isCurrentSemester()` needs terms data to filter student semesters, and running with `RUNNER_CHUNKING_ONLY=false` exercises this path.
-- **API keys**: every endpoint accepts any of the three source keys in the config secret (people, person, terms), and rejects anything else. Callers pick keys by URL and the simulator's URLs can't satisfy all of them while hybrid runs need the secret's real source URLs: the chunker never matches the simulator's `/person` to the configured person URL, so it sends the people key there, whereas a client given the simulator's URLs directly (integration-huron-person's `SyncPerson.ts`) sends the person key, and the processor always sends the terms key. See "API keys" in the `SourceSimulator.ts` header.
-- **How simulated terms reach the processor** (only for simulated-source runs): terms are fetched by the processor tasks (integration-huron-person's `getDataMapper()`/`DataMapperOrg`), from the config they load from the secret - so the Runner cannot redirect them by changing its own config object (it used to, with no effect: mock runs fetched terms from the real terms API). Instead `SourceSimulatorRunnerDecorator` returns a `termsEndpoint` with the source endpoint, which travels like `personRecordProcessorAddons`: chunker SQS message (`ApiChunkerEvent.termsEndpoint`) -> `TaskParameters` -> re-forwarded by `ChunkerQueue.sendNextChunkingMessage()` -> `docker/chunker.ts` writes it to the run's Flags (`Flags.termsEndpoint`) -> `ProcessorForS3`/`ProcessorForDynamoDb` apply it via `applyTermsEndpoint()` (ProcessorCommon.ts: replaces `dataSource.terms` baseUrl/fetchPath only; the apiKey stays). Hybrid runs (real source -> mock target) and scheduled runs never set it, so they keep the configured (real) terms endpoint. The field itself is generic, not mock-specific.
-- Optional `nonCurrentTermRate` query parameter (0.0-1.0, default 0.0), on `/` and `/person`: the proportion of simulated students assigned a non-current term, for testing semester-filtering logic. Which students get one is decided by a hash of the person's index (not `Math.random()`), so a person's payload is identical on every request and from either endpoint
-- **Simulation settings per request** (`simulationSettings()`, since 2026-11-14): `totalPopulation`, `simulatedDelaySeconds` (at most 30) and `errorRate` query parameters, on any endpoint, override the Lambda's `MOCK_TOTAL_POPULATION`, `MOCK_SIMULATED_DELAY_SECONDS` and `MOCK_ERROR_RATE`, which remain the defaults (set from the context at deploy). A value that isn't a number is ignored; one out of range is clamped. A run carries them in its `fetchPath` (e.g. `/?totalPopulation=1950`), so its settings travel with it and the Lambda's configuration isn't changed for a run: the chunker keeps `fetchPath`'s own query on every page request (`DataSource.getFetchUrl()` in integration-huron-person appends `recordCount` and `offset` to it; only `buid` stops it paging) and passes `fetchPath` on in each chained message. Both ways of starting a simulated run build the fetchPath with `simulatorFetchPath()` and change nothing in the Lambda: the dashboard's Bulk sync, which reads its form's defaults from the simulator's `/health` (`readSimulatorHealth()`; it reports the first three) (`dashboard/CLAUDE.md`, "A mock landscape's own options"), and the manual Runner (`SourceSimulatorRunnerDecorator`, since 2026-11-16), whose `SOURCE_SIMULATOR_MOCK_TOTAL_POPULATION`, `_SIMULATED_DELAY_SECONDS`, `_ERROR_RATE` and `_NON_CURRENT_TERM_RATE` are each sent when set (0 included) and otherwise left to the simulator. Until then the Runner wrote them into the Lambda's environment, where they stayed for every later run (Bulk sync's defaults included), a 0 couldn't clear an earlier value, and a run could start before the update applied. `/health` asked with a run's settings reports them as that run gets them (clamped), which is how the Runner predicts its chunks
-
-**Safety enforcement - source simulation entails target simulation**: the source simulator may only exist in a mock landscape (see "Mock Landscapes" below), whose target is always mocked. This is enforced twice: `lib/AppConstruct.ts` refuses to synthesize a stack with `LAMBDA.sourceSimulator.enabled` in a non-mock landscape (so real stacks have no simulator Lambda at all), and `Runner.ts` aborts when `RUNNER_SOURCE_SIMULATOR=true` targets a non-mock landscape. There is no supported way to run simulated source data against the real Huron target API.
-
-### User Override
-
-You can skip verification by saying:
-- "Skip verification and proceed"
-- "Use inference for this"
-
-**See Also**: `verify-abstractions-before-implementation` skill in workspace skills repository
+**Pitfall: two lifecycles of `Config`.** The Runner's `Config` object never reaches the running tasks; values CDK reads
+from config are baked into task definitions at deploy time, and the tasks load their own config from the secret. A
+runtime override set on the wrong instance compiles, runs and does nothing. A per-run value must travel the run's
+messages: `ApiChunkerEvent` -> the chunker queue message -> `TaskParameters` -> each chained message
+(`ChunkerQueue.sendNextChunkingMessage()`) -> the run's Flags (`docker/chunker.ts`) -> the processors, as
+`termsEndpoint`, `startedBy`, `processorScalingCapacity` and the addons do. The story behind this rule (the
+`config.preLoadedMaps` dead code): [docs/MOCK_LANDSCAPES.md](docs/MOCK_LANDSCAPES.md#history-the-configpreloadedmaps-dead-code).
 
 ## Architecture: Three-Phase Pipeline
 
 ### Phase 1: Chunking
-**Purpose**: Stream large JSON payloads into NDJSON chunks for parallel processing
 
-**Components**:
-- ChunkerService (Lambda-triggered via CDK)
-- ChunkFromAPI (fetch data from source APIs)
-- ChunkFromS3 (ingest from S3 file drop)
-- BigJsonFetch, BigJsonFile (streaming utilities)
-- PersonArrayWrapper (array chunking logic)
+Streams large JSON payloads from the source APIs (or an S3 file drop) into NDJSON chunk files for parallel processing.
+Components: the chunker subscriber Lambda (`src/chunking/ChunkerSubscriber.ts`, CDK
+`lib/services/chunker/ChunkerSubscribingLambda.ts`), the chunker ECS service (`lib/services/chunker/ChunkerService.ts`,
+entry point `docker/chunker.ts`), `ChunkFromAPI`, `ChunkFromS3`, `BigJsonFetch`, `BigJsonFile`, `PersonArrayWrapper`.
+All chunking modules use `TestEnvironment` from `integration-core`; harness prefixes `CHUNK_FROM_API`,
+`CHUNK_FROM_S3`, `BIG_JSON_FETCH`, ... (the files: `src/chunking/CLAUDE.md`). How chunker tasks chain and avoid races:
+[docs/CHUNKING_ARCHITECTURE.md](docs/CHUNKING_ARCHITECTURE.md).
 
-**TestEnvironment Integration**: All chunking modules use `TestEnvironment` imported from `integration-core`
+**How a run ends** (details, consequences and the terminal-error bug story:
+[docs/CHUNKING_END_AND_FAILURE.md](docs/CHUNKING_END_AND_FAILURE.md)):
+- **End of records**: only an **empty** batch marks the end, because the source can return a partial batch
+  mid-population. `ECS.chunkerTaskDefinition.stopAtFirstPartial` (default `false`) restores stopping at the first
+  partial batch. `ChunkResult.endOfRecordsDetected` and metadata `partialOrEmptyChunkEncountered` (persisted, so never
+  renamed) both mean "end of source records detected". Counts are never inferred from `recordCount`.
+- **Safety cutoff**: `ECS.chunkerTaskDefinition.maxTotalRecords` (default 500,000, `DEFAULT_MAX_TOTAL_RECORDS` in
+  `docker/chunkTypes.ts`; `<= 0` disables) stops a source that never returns an empty batch, by failing the run.
+- **Failed runs never reach deactivations**: a run with a TERMINAL_ERROR record (statistics table, or
+  `_terminal_error.json` in S3 mode) blocks the post-processor trigger and skips deletion handling in both modes. Read
+  and write it only with `StatisticsTable.writeTerminalError()`/`readTerminalError()`.
 
-**Harness Prefixes**:
-- CHUNK_FROM_API_*, CHUNK_FROM_S3_*, CHUNKER_SERVICE_*
-- See `.env` and `example-env.md` for grouped configuration
-
-**End-of-records detection (`stopAtFirstPartial`)**: The source API can return a "partial"
-batch (0 < length < `recordCount`) mid-population (a source-side bug), so by default only an
-**empty** batch marks the end. `IContext` `ECS.chunkerTaskDefinition.stopAtFirstPartial`
-(optional, default `false`) -> `ChunkerTaskDefinition` env `STOP_AT_FIRST_PARTIAL` ->
-`ChunkFromAPI.runChunking()` -> `BigJsonFetchConfig.stopAtFirstPartial` ->
-`BuCdmPeopleDataSourceBatch` (integration-huron-person). `true` restores the legacy
-stop-at-first-partial behavior. Consequences:
-- `ChunkResult.endOfRecordsDetected` (renamed from `partialChunkEncountered`) / metadata
-  `partialOrEmptyChunkEncountered` (persisted, so NOT renamed) mean "end of source records
-  detected" (empty batch, or partial only if `stopAtFirstPartial`). All consumers (chain-stop,
-  `isAlreadyFinished()`, post-processor-trigger gate, `ProcessorServiceBooster` final check) need exactly
-  that signal, so they are unchanged.
-- Counts are never inferred from `recordCount`: `totalRecords` = sum of actual response lengths,
-  `chunkCount` = chunk files actually written.
-- A task whose `iterationLimit` is met on a partial batch does NOT signal the end; the next
-  chained task then gets an empty first batch, which `BigJsonFetch` treats as a normal end
-  (warn, not error).
-- With `iterationLimit=0` (e.g. `maxScalingCapacity=1`), the default mode relies on the source
-  eventually returning an empty batch (true of the depleting real API and SourceSimulator).
-  The safety cutoff below bounds the damage if it never does.
-
-**The scheduled run is a full sync with stored hashes trusted** (`ScheduledRun`, `src/chunking/ScheduledRun.ts`, since
-2026-11-11): the EventBridge schedule's input (`ChunkerService.createApiChunkingSchedule()`, built by
-`ScheduledRun.scheduleInput()`) is `populationType: person-full`, `bulkReset: false`, `trustPreviousStorage: true`,
-with the people endpoint, `iterationLimit` = the context's `ECS.chunkerService.chunksPerTask` and `offset: 0`.
-- No source endpoint returns only the people who changed yet, so a scheduled run fetches everyone. Trusting the
-  stored hashes keeps people whose hash matches from reaching the target, which is the effect a delta run would
-  have; the full sync then deactivates people missing from the source. Before, the schedule sent `person-delta`
-  (no deactivations) with `trustPreviousStorage` from the context (`false` everywhere), so every scheduled run
-  looked every person up in the target and deactivated no one.
-- A source glitch that looks like a normal end (an empty batch mid-population) would deactivate the people after
-  it, until the next good run reactivates them (decided 2026-11-10: no deactivation ceiling). A change made in
-  the target outside the integration isn't put right for a person whose source record hasn't changed, until a
-  bulk reset (the dashboard's Bulk sync) runs.
-- The two previous-state flags only ever act together (`bulkReset || !trustPreviousStorage`), so
-  `ScheduledRun.previousStateFlags(bulkReset)` sets them as one choice, for the schedule and the dashboard alike.
-  The context's `BULK_RESET` / `TRUST_PREVIOUS_STORAGE` play no part in either; they remain only as the chunker
-  task's environment fallback, which a message carrying both flags never needs. Consolidating the flags into one
-  setting is a TODO in integration-huron-person (`src/delta-strategy/TODO.md`).
-- A landscape gets this at its next pipeline deploy (a `lib/` change).
-
-**Who started a run is recorded with it** (`startedBy`, `src/chunking/StartedBy.ts`, since 2026-11-11), for the
-dashboard's Run history: `{ by: 'dashboard', principal? }` (Bulk sync, with the signed-in user's `buPrincipal`),
-`{ by: 'schedule' }` (`ScheduledRun.scheduleInput()`) or `{ by: 'runner' }` (`RunnerForSingleMessage`,
-`RunnerForSinglePerson`, `QueueSeeder`). Structured, so a principal can't be mistaken for a keyword; `RunStarter.from()`
-reads one back, keeping only the known fields.
-- **Its path**, like `termsEndpoint`'s: `ApiChunkerEvent.startedBy` -> the chunker subscriber's queue message
-  (`handleApiEvent()`) -> `TaskParameters` (`ChunkFromAPI`, `getStartedBy()`) -> each chained chunker message
-  (`ChunkerQueue.sendNextChunkingMessage()`) -> `Flags.startedBy` (`docker/chunker.ts`; the FLAGS item, or
-  `_flags.json` in S3 mode; written once per run, by its first chunker task) -> `RunSummary.startedBy`
-  (`AbstractPostProcessor.writeRunSummary()` reads the flags in either storage mode, since a summarized run's
-  report is its summary alone).
-- Runs from before it was recorded, and the S3 file drop, have none. The principal is stored with the run in the
-  statistics table, so anyone who can read Run history sees it.
-- Tests: `test/StartedBy.test.ts` (and the path's own tests: `ChunkerQueueChainStop`, `MetadataForDynamoDb`,
-  `StatisticsTable`, `ScheduledRun`).
-
-**A run starts with the chunker's counters at zero**: the source offset its chained messages take
-(`chunker-offset-counter`) and chunk ordinals (`chunker-chunk-ordinal-counter`), both in the landscape's
-atomic counter table. `resetRunCounters()` (`src/chunking/RunCounters.ts`) resets them, called from:
-- the chunker subscriber Lambda's `handler()`, before it queues an API event that starts a run (offset 0, no
-  `chunkDirectory`: `resetCountersForRunStart()` in `src/chunking/ChunkerSubscriber.ts`). That covers the
-  EventBridge schedule's runs (which until 2026-11-10 never reset them) and the dashboard's Bulk sync. The Lambda
-  has `STACK_ID`/`LANDSCAPE` in its environment and `UpdateItem` on that one table. Skipped in `DRY_RUN`; a
-  failed reset fails the invocation.
-- the manual Runner (`AbstractRunner.resetAtomicCounters()`), which calls `handleApiEvent()` in-process rather than
-  through the Lambda.
-Never in `handleApiEvent()` itself: the Runner's queue seeding calls it for every seeded message, taking their
-offsets from the counter it has just reset (`QueueSeeder` resets its own).
-
-**A run starts with one chunker message, or N seeded at once** (`parallelStart`, since 2026-11-12):
-- **One message** (no `parallelStart`, or 0): the subscriber queues the event, and the chunker service's auto-scaling
-  adds tasks as the work builds up. The EventBridge schedule always starts this way.
-- **Seeded** (`ApiChunkerEvent.parallelStart` N, 1-20; Bulk sync's Parallel start): after the counter reset, the
-  subscriber seeds the queue with N messages (`QueueSeeder`, offsets a task's chunks apart from the counter), waits
-  for the chunker's scale-in alarm to leave `ALARM` (`MetricsCatchupDelay`, the 2026-07-02 incident fix), then sets
-  the chunker service's desired count to N (`DesiredCount`). The procedure is `src/chunking/ParallelStart.ts`, which
-  the Runner's queue seeding (`RunnerForQueueSeeding`, `MESSAGES_TO_PREPOPULATE` / `DESIRED_COUNT`) shares.
-- **Refused** with a 400 result, returned rather than thrown (a throw would be retried, if retries were on, and refused
-  again): before the counter reset, N outside 1-20, an event that doesn't start a run, `iterationLimit` 0 (seeded
-  offsets step by a task's chunks), a single-person fetch (`buid`), or missing environment (`ParallelStart.refusal()`);
-  after the reset but before anything is sent, N above the service's `MaxCapacity`. In `DRY_RUN` it only logs what it
-  would do. Chained messages never carry `parallelStart`.
-- **The subscriber Lambda** (`lib/services/chunker/ChunkerSubscribingLambda.ts`) has, for this:
-  - a 600-second timeout (context `LAMBDA.chunkerSubscriber.timeoutSeconds`, every landscape): the alarm wait alone
-    can take six minutes (a 60-second period plus a 300-second buffer). The wait is also bounded by the invocation's
-    remaining time, less a minute, so a slow alarm can't time the Lambda out before the desired count is set.
-  - no automatic retry (`retryAttempts: 0`, events older than 15 minutes dropped): Lambda retries a failed
-    asynchronous invocation twice by default, which for a run start would reset the counters and seed again into
-    a run already underway. A failed start is started again by a person.
-  - `CHUNKER_CLUSTER_NAME` / `CHUNKER_SERVICE_NAME` in its environment, and the grants: `ecs:UpdateService` and
-    `DescribeServices` on that one service, `application-autoscaling:DescribeScalableTargets` /
-    `DescribeScalingPolicies` (resource `*`; they can't be scoped), `cloudwatch:DescribeAlarms` on the region's
-    alarms.
-- First checked in staging on 2026-11-12 with 15 tasks: the alarm settled after 150 seconds, the 15 tasks were
-  running 45 seconds after the desired count was set, and no offset or person was chunked twice.
-
-**A run may have its own processor maximum** (`processorScalingCapacityOverride`, since 2026-11-17,
-`processor-max-tasks-plan.md`): the processor service's "Max tasks" (its scalable target's `MaxCapacity`, which
-`ProcessorServiceBooster` raises the desired count to while chunking) decides how many processors a run uses, and so
-how hard they press Huron, which throttles them above a point.
-- **The context's `ECS.processorService.maxScalingCapacity`** stays the deployed `MaxCapacity` and never changes at run
-  time. It is what every run gets without an override, where Bulk sync's Processor tasks starts, and the point above
-  which its review warns of throttling (and lets the run start: that is how to find out whether Huron takes more now).
-- **Every run start sets the live maximum** (`src/chunking/ProcessorScalingCapacity.ts`, `apply()`): to the run's
-  override (1-20, `ProcessorScalingCapacity.MIN`/`MAX`), or else back to `maxScalingCapacity`. Nothing sets it back
-  after a run: the next run start does, and the schedule never carries an override. Between runs the service keeps
-  the last run's maximum, but with nothing queued it runs no tasks.
-  - The chunker subscriber does it for a run's first API event, right after its refusals and before a mock
-    landscape's reset, the counters and the parallel start (`setProcessorCapacityForRunStart()`), and for a dropped
-    file before its message is sent (`handleS3Event()`'s `beforeStart`). Its Lambda has `PROCESSOR_SERVICE_NAME` and
-    `PROCESSOR_MAX_SCALING_CAPACITY`, `application-autoscaling:RegisterScalableTarget` on `*` (a scalable target's
-    ARN carries an ID AWS assigns) limited by the conditions `service-namespace` = `ecs` and `scalable-dimension` =
-    `ecs:service:DesiredCount`, and `ecs:DescribeServices`/`UpdateService` on the processor service.
-  - The manual Runner does it in `ChunkingServiceRunner.start()`, before its counter reset
-    (`PROCESSOR_SCALING_CAPACITY_OVERRIDE`, else the local context's `maxScalingCapacity`).
-  - **Failures**: an override that can't be set fails the start before anything is reset or sent; restoring
-    `maxScalingCapacity` only warns, so a glitch can't stop the schedule. `DRY_RUN` logs it.
-- **The run records it** (`Flags.processorScalingCapacity`, `{ maxTasks, overridden }`,
-  `src/chunking/ProcessorCapacityRecord.ts`), by `startedBy`'s path (the first event, once the maximum is set ->
-  queue messages, seeded and chained -> Flags -> summary), and the run's page shows it ("Up to 8 processor tasks
-  (override)"). None for a run whose maximum wasn't set, or a file drop.
-- **Known limits**: a run start changes the maximum of a run already underway (as it already resets that run's
-  counters). CloudFormation reports the scalable target as drifted after an override; a deploy doesn't put it back
-  unless `maxScalingCapacity` changes in the template, the next run start does.
-- The cluster's and processor service's names are in `src/Utils.ts` (`ecsClusterName()`, `PROCESSOR_SERVICE_NAME`),
-  which `lib/` takes, since the task image compiles `src/` without `lib/`.
-- Tests: `test/ProcessorScalingCapacity.test.ts`, `test/ProcessorScalingCapacityRunStart.test.ts`,
-  `test/RunnerProcessorScalingCapacity.test.ts`, and the template's in `test/RunCounters.test.ts`.
-
-**A mock landscape's run can start from scratch** (`ApiChunkerEvent.resetState`, since 2026-11-14,
-`mock-landscape-options-plan.md`): the subscriber resets the landscape's run state before the counters and before
-anything is queued or seeded, through `src/chunking/MockLandscapeReset.ts`, which the Runner's
-`MOCK_TARGET_RESET_STATE` shares (see "Mock Landscapes" below for what it empties). Emptying the statistics table
-empties the landscape's Run history too.
-- **Checked first, with the parallel start** (`runStartRefusal()`): a 400 result, nothing reset or sent, for a reset
-  on an event that doesn't start a run, outside a mock landscape (`MockLandscapeReset.refusal()`), or without
-  `CHUNKS_BUCKET_NAME`. Skipped in `DRY_RUN`; a failed reset fails the invocation (not retried), so the run doesn't
-  start. Chained and seeded messages never carry `resetState`.
-- **Only a mock landscape's subscriber can do it**: `ChunkerSubscribingLambda` gives it `CHUNKS_BUCKET_NAME` and the
-  grants (`dynamodb:Scan`, `BatchWriteItem`, `DescribeTable` on the mock target, statistics and both person tables;
-  `s3:ListBucket` limited to the `delta-storage/` prefix and `s3:DeleteObject` under it) only when
-  `isMockLandscape()`; another landscape's subscriber has neither.
-- **The time it takes** comes out of the invocation's 600 seconds, which a parallel start's alarm wait shares (that
-  wait is bounded by the time left). The tables are truncated at the same time (`BulkPurger`), each with a parallel
-  scan of `DynamoDBTable.TRUNCATE_SEGMENTS` segments, each keeping `TRUNCATE_BATCHES_IN_FLIGHT` delete batches of 25
-  in flight (`DynamoDBTable.truncateTable()`, since 2026-11-15; throttled deletes retried with backoff), because one
-  batch at a time couldn't empty the about 438,000 items a hybrid full sync left in mock within the time. Every
-  truncation uses it: the Runner's reset and the tables' harness `truncate` tasks too. The mock target table's
-  truncation goes through it as well (it used to read every whole record into memory and delete them one
-  `DeleteItem` at a time, which the subscriber isn't granted). The first reset in mock (2026-11-16, about 438,000
-  items) took 348 s of the 600 with no DynamoDB throttling: the limit was the Lambda's own share of a CPU, and it used
-  239 of its 256 MB with about 100 delete requests in flight. So mock's chunker subscriber has 1,024 MB
-  (`LAMBDA.chunkerSubscriber.memorySizeMb` in `context.mock.json`): four times the memory, and the CPU share that
-  comes with it.
-- **A reset on its own** (`MockLandscapeResetEvent` `{ mockLandscapeReset: true, startedBy?, requestedAt? }`; the
-  dashboard's Overview, Reset landscape): the subscriber runs the same reset and nothing else, with the same refusals
-  (`resetEventRefusal()`), skipped in `DRY_RUN` (`handleResetEvent()`). It shows what Start from scratch will take.
-- **Every reset is recorded** (`MockLandscapeResetRecord`, `MockLandscapeReset.recorder()`) in the landscape's atomic
-  counter table, which no reset empties: the item `counter_name` `not-a-counter:mock-landscape-reset` (borrowing the
-  table, not a counter: `NOT_A_COUNTER_PREFIX` in `src/dynamodb/AtomicCounter.ts`, and a `purpose` attribute saying
-  so; anything that clears the counters must leave such items alone), attribute `reset`, written
-  with `UpdateItem` (granted for the run counters) when it starts and when it ends: how it was started (`overview` or
-  `bulk-sync`), by whom, when, each table's count and time, the S3 baseline objects, or the error. One still
-  `running` 15 minutes after it started has stopped (`statusOf()`: its Lambda ran out of time). Recording never fails
-  the reset; a failed reset is recorded, then fails the invocation.
-- **In a mock landscape, a run start also resets the source simulator's depletion counter**
-  (`simulator-offset-counter`, `runCounterNames()` in `src/chunking/RunCounters.ts`), with the chunker's two, so a
-  run with the simulator reads its population from the first person. A run from the real source doesn't notice.
-
-**Glitched-source safety cutoff (`maxTotalRecords`)**: If the source never returns an empty
-batch, chunking would never end - an endless fetch loop when `iterationLimit=0`, or endless
-chunker message/task chaining when `iterationLimit>0`. `IContext`
-`ECS.chunkerTaskDefinition.maxTotalRecords` (optional, default `DEFAULT_MAX_TOTAL_RECORDS` =
-500,000 in `docker/chunkTypes.ts`; the real population is ~145,000; `<= 0` disables) ->
-env `MAX_TOTAL_RECORDS` -> `ChunkFromAPI.runChunking()` (also reads the run's accumulated
-`totalRecords` via `MetadataBroker.getRunningTotalRecords()`) -> `BigJsonFetchConfig.maxTotalRecords`
-/ `runTotalRecordsAtStart` -> `BigJsonFetch.enforceMaxTotalRecords()`, checked before the first
-fetch (fail fast) and on every batch before it is written. Exceeding it throws, surfacing through
-the existing terminal-error path (`runFailed` metadata + `markRunFailed`), so later chained tasks
-bail on `isTerminalErrorEncountered()` and the S3-mode post-processor is blocked. Precision caveat:
-`totalRecords` only includes tasks that have finished, so the cutoff can be overshot by up to
-the in-flight records of concurrently running tasks.
-
-**Failed runs never reach deactivations**: A run is "failed" when its TERMINAL_ERROR record exists
-(DynamoDB: PK=syncRunId, SK=`TERMINAL_ERROR` in the statistics table;
-S3: `_terminal_error.json`). Gates: `PostProcessorSubscriber` (S3 mode, blocks post-processor),
-`ProcessorForDynamoDb`'s last-processor check (does not trigger the post-processor), and
-`PostProcessorForS3`/`PostProcessorForDynamoDB.runDeferredDeletes()` (skip deletion handling, both modes).
-Note: until this was fixed, `MetadataForDynamoDb.readTerminalError()` read the METADATA record
-(and `StatisticsTable.readMetadata()` strips `eventType`), so `terminalErrorExists()` was always
-`false` in DynamoDB mode - chunker fast-fail on a failed run silently never happened there. Unit
-tests mocked `readMetadata` to return `eventType: 'TERMINAL_ERROR'`, hiding it. It now uses
-dedicated `StatisticsTable.writeTerminalError()`/`readTerminalError()`.
+**How a run starts** (paths, grants, refusals, timings and the reasoning: [docs/RUN_START.md](docs/RUN_START.md)):
+- **The schedule** (`ScheduledRun`, `src/chunking/ScheduledRun.ts`) sends a full sync (`person-full`) with stored
+  hashes trusted (`bulkReset: false`, `trustPreviousStorage: true`): it fetches everyone, sends only people whose hash
+  changed, and deactivates people missing from the source. The two previous-state flags only act together; set them
+  with `ScheduledRun.previousStateFlags(bulkReset)`. The context's `BULK_RESET` / `TRUST_PREVIOUS_STORAGE` are only
+  the chunker task's environment fallback.
+- **Who started it** (`startedBy`, `src/chunking/StartedBy.ts`): `{ by: 'dashboard', principal? }`, `{ by: 'schedule' }`
+  or `{ by: 'runner' }`, carried along the run's messages into Flags and the run summary.
+- **The run counters** (`resetRunCounters()`, `src/chunking/RunCounters.ts`: the chunker's offset and chunk-ordinal
+  counters, plus the source simulator's in a mock landscape) are reset by the chunker subscriber's `handler()` for an
+  event that starts a run, and by the manual Runner. **Never in `handleApiEvent()`**: the Runner's queue seeding calls
+  it for every seeded message.
+- **Parallel start** (`ApiChunkerEvent.parallelStart` 1-20, `src/chunking/ParallelStart.ts`, shared with the Runner's
+  queue seeding): seeds N messages, waits for the chunker's scale-in alarm to leave `ALARM`, then sets the desired
+  count. Refusals are **returned** as 400 results, not thrown. The subscriber Lambda has a 600-second timeout and
+  **no automatic retry** (a retried start would reset counters and seed again into a run underway).
+- **A run's own processor maximum** (`processorScalingCapacityOverride` 1-20, `src/chunking/ProcessorScalingCapacity.ts`):
+  every run start sets the processor service's live `MaxCapacity` to the override or back to the context's
+  `ECS.processorService.maxScalingCapacity`, which never changes at run time. An override that can't be set fails the
+  start; failing to restore only warns. Recorded as `Flags.processorScalingCapacity`. Cluster and processor service
+  names live in `src/Utils.ts` (the task image compiles `src/` without `lib/`).
+- **Start from scratch** (mock landscapes only, `ApiChunkerEvent.resetState`, or a reset-only
+  `MockLandscapeResetEvent`): see "Mock Landscapes" below.
 
 ### Phase 2: Processing
-**Purpose**: Apply data mapping and validation transformations in parallel ECS Fargate tasks
-
-**Components**:
-- Docker entrypoint: `docker/processor.ts`
-- Task orchestration via CDK
-- Batch processing of chunks
-
-**Harness Prefix**: DOCKER_PROCESSOR_*
-
-### Phase 3: Post-processing  
-**Purpose**: Consolidate processing results and write final delta storage
-
-**Components**:
-- DeferredDeleteHandler (soft delete coordination)
-- StatisticsTable (merge metrics)
-- Implementation classes: `src/post-processing/AbstractPostProcessor.ts` (base class), `src/post-processing/PostProcessorForS3.ts`, `src/post-processing/PostProcessorForDynamoDB.ts`
-- Docker entrypoint: `docker/post-processor.ts` (router)
-
-**Architecture**: Template Method pattern with abstract base class
-- `AbstractPostProcessor` (src/post-processing/): Base class with shared logic (getTaskParameters, processDeferredDeletes, main template method)
-- `PostProcessorForS3` (src/post-processing/): S3-specific implementation (file consolidation, baseline merging)
-- `PostProcessorForDynamoDB` (src/post-processing/): DynamoDB-specific implementation (minimal/no-op merge, state already in tables)
-- `post-processor.ts` (docker/): Router that detects storage mode and delegates to appropriate implementation
-
-**Critical Design Note**: BOTH storage modes require the post-processor service
-- S3 mode: File consolidation + deletion handling
-- DynamoDB mode: Deletion handling only (no file consolidation needed)
-
-**Soft-deleted persons are marked in the baseline** (`src/post-processing/DeletedHashMarker.ts`): both
-baselines (PersonCurrentStateTable, `previous-input.ndjson`) retain every person ever seen, so a
-person absent from the source would otherwise be selected for deletion on every full sync. After a
-successful soft-delete, `onSoftDeleteSuccess` rewrites that person's baseline hash with a
-`DELETED:` prefix (DynamoDB mode also sets `deletedAt`). Deletion detection skips marked entries,
-and a marked hash never matches a fresh source hash, so a person who reappears is classified
-UPDATED and reactivated (via `__active`); the processor's write then clears the marker.
-- **In DynamoDB mode this only works since 2026-11-17** (`dynamodb-delta-match-plan.md`; integration-core `31a0b49`,
-  taken in by `bb28a74`'s lockfile). Until then, a run trusting the stored hashes looked a chunk's stored records up
-  by whole records, and they came back named after the person's first mapped field (`id`), not `sourceIdentifier`, so
-  none matched. Every changed person, and every returning one, was classified as added and sent as a create, which
-  the target refused as a duplicate (409). Failed people keep their old hash, so they failed again on every later
-  trusted run, and returning people stayed deactivated. Mock runs `2026-11-17T07:13:57.528Z` and `07:42:14.206Z`
-  failed 1,500 returning people this way; with the fix, run `18:58:47.312Z` updated and reactivated all 1,500, and a
-  repeat run sent nothing. Bulk-reset runs take another path and weren't affected; preview and staging had no one
-  left in that state (their only trusted runs sent nothing). See integration-core's `CLAUDE.md` ("Delta Engines").
-- **Taking a new integration-core build**: update `node_modules/integration-core`'s `integrity` in `package-lock.json`
-  and run a plain `npm install`, which changes nothing else (see "Publishing the package" in integration-core's
-  `CLAUDE.md`; while core listed itself as a dependency, until 2026-11-17, `npm install <its URL>` broke the lockfile).
-  The task image installs it from the lockfile, so push the image to each landscape afterwards.
-
-**Harness Prefixes**:
-- DEFERRED_DELETE_HANDLER_*, STATISTICS_TABLE_*
-- DOCKER_POST_PROCESSOR_*
-
-## Storage Modes: DynamoDB vs S3
-
-The pipeline supports two storage modes for delta state and metadata, selected at deploy time by
-`context.PREVIOUS_STORAGE_TYPE` (CDK bakes it into every task definition as the `PREVIOUS_STORAGE_TYPE`
-env var, which the Docker routers branch on; the runtime factories below then switch on the resulting
-`config.storage.type`):
-- `'s3'` | `'file'` | `'database'` → **S3 Mode** (traditional file-based storage)
-- `'dynamodb'` → **DynamoDB Mode** (database-backed state tracking)
-
-**IMPORTANT**: S3 chunk NDJSON files (`chunk-0000.ndjson`, `chunk-0001.ndjson`, etc.) remain in S3 regardless of storage mode. Only state/metadata files migrate to DynamoDB.
-
-### S3 Mode (Default)
-
-**What's stored in S3**:
-1. **Chunk files**: `s3://bucket/chunks/{population}/{timestamp}/chunk-XXXX.ndjson`
-2. **Metadata file**: `s3://bucket/chunks/{population}/{timestamp}/_metadata.json`
-3. **Flags file**: `s3://bucket/chunks/{population}/{timestamp}/_flags.json`
-4. **Terminal error marker**: `s3://bucket/chunks/{population}/{timestamp}/_terminal_error.json`
-5. **Delta storage**: `s3://bucket/delta-storage/{population}/previous-input.ndjson`
-6. **Hash storage**: `s3://bucket/delta-storage/{population}/hashes.ndjson`
-
-**Characteristics**:
-- Simple file-based architecture
-- Easy to inspect with AWS Console or CLI
-- Lower cost for infrequent access patterns
-- Sequential file I/O (streaming, line-by-line reading)
-
-### DynamoDB Mode (Parallel Implementation)
-
-**What's stored in DynamoDB**:
-1. **PersonCurrentStateTable** - Current person sync state
-   - PK: `personId` (BUID)
-   - Attributes: `hash`, `sourceIdentifier`, `lastSyncTime`, `syncRunId`
-   - GSI: `syncRunId-personId` (for querying all persons in a sync run)
-   
-2. **PersonHistoryTable** - Historical change audit trail
-   - PK: `personId`, SK: `syncRunId` (composite key for versioning)
-   - Attributes: `changeType` (CREATED | UPDATED | DELETED), `hash`, `timestamp`
-   - GSI1: `syncRunId-changeType` (query all changes in a run by type)
-   - GSI2: `changeType-syncRunId` (query changes across runs by type)
-
-3. **StatisticsTable** - Metadata, flags, and error events
-   - PK: `integrationTimestamp` (syncRunId), SK: `eventType`
-   - Event types: `METADATA`, `FLAGS`, `TERMINAL_ERROR`, `STATISTICS-chunk-*`, `ERROR:*`,
-     `CHUNK_STATUS_*`, `PROCESSOR_BOOST_CLAIM`, `POST_PROCESSOR_TRIGGER_CLAIM`, `RUN`, `RUN_SUMMARY`
-     (no aggregate `STATISTICS` item is ever written: processors always pass a chunkId)
-   - `PROCESSOR_BOOST_CLAIM` / `POST_PROCESSOR_TRIGGER_CLAIM` are `OCCFlag`-guarded claim records ensuring exactly
-     one chunker task runs the processor scaling check, and exactly one processor task triggers the post-processor
-     (see `docs/CONCURRENCY_CONTROL.md`); the boost claim is written in S3 storage mode too
-   - Replaces `_metadata.json` and `_flags.json` files from S3 mode
-   - `RUN` marker item (one per run, attributes `runList` = `RUNS` and `distinctRunId` = PK) is the only item in
-     the sparse, KEYS_ONLY `run-list-index` (partition key `runList`, sort key `distinctRunId`), which holds every
-     run in one partition in time order: `getRunIdsPage()` reads the newest `limit` runs (or those older than
-     `before`) with one Query (`ScanIndexForward: false`, `Limit: limit + 1`), and `getAllRunIds()` lists them
-     all. It replaced the scan-only `distinct-run-index` (partition key `distinctRunId`), removed 2026-11-10.
-     When a table can't serve `run-list-index` (`isMissingIndexError()`: it doesn't exist, or it is still
-     backfilling, which it was in preview for some minutes after CloudFormation reported the stack update
-     complete), `RunReporting` fails with `ReportingError` `RUN_LIST_UNAVAILABLE` (a 503 from the dashboard)
-     saying what to do. The marker is written idempotently by `writeFlags()`, `addToMetadataTotals()` (every
-     chunker task, both storage modes) and `writeTerminalError()`; runs whose markers lack `runList` (written
-     before it existed, or before the markers did) need the harness task `backfill-runs` (one scan of the table),
-     run after the stack update that adds the index and before the dashboard that reads it is deployed.
-   - **Change the statistics table's GSIs one per deploy**: CloudFormation refuses an update that adds or removes
-     more than one. As of 2026-11-12, preview and mock have `run-list-index`, and so does staging, whose pipeline
-     stack was recreated that day: a table created with the index needs no `backfill-runs`. Migration's has it too,
-     since its pipeline stack was recreated the same way on 2026-11-19. A July stack couldn't be updated in place: it
-     had a Merger service, and its ECS log groups have since moved to new logical IDs under the same names, so
-     CloudFormation would try to create them before deleting the old ones and fail with "already exists". Recreating
-     one: `teardown-fargate`, then `deploy-fargate` (which creates the empty ECR repository, with the services at 0
-     tasks), then `docker-push`, then `deploy-dashboard`.
-   - `STATISTICS-chunk-*` items carry the chunk's `IntegrationResult` counts (success/failure/skipped,
-     added/updated/removed) as well as its error counts. Added/updated/removed are the successful pushes
-     counted by operation (`pushedChangeCounts()` in `src/processing/ProcessorCommon.ts`), so they sum to
-     the successes; `IntegrationResult`'s own are the delta's sizes before the push, which also count the
-     failed pushes. Items written before 2026-11-09 hold the delta's counts, so a run with failures shows
-     too many added/updated. Their `totalRecords` (and `chunkSize`) is `IntegrationResult.totalProcessed`, the
-     people in the chunk's delta (those whose record changed), not the people in the chunk: people skipped as
-     unchanged are never counted. So it can't measure a run's progress; the dashboard counts chunks instead
-     (`chunksReported` ÷ METADATA `chunkCount`, `dashboard/CLAUDE.md` "Percent done").
-   - `RUN_SUMMARY` (one per run) is written by `AbstractPostProcessor.main()`'s `finally` block, in both
-     storage modes: METADATA plus the summed chunk statistics plus the deletion outcome
-     (`DeletionOutcome`, returned by `runDeferredDeletes()`: COMPLETED with counts, SKIPPED with a
-     reason, or FAILED). Status: `SUCCEEDED`, `FAILED` (deletes skipped because the run carries a
-     terminal error) or `POST_PROCESSING_FAILED`. Writing it never fails post-processing. Runs that
-     never reach the post-processor have no summary; `src/reporting/RunReporting.ts` reports them as
-     FAILED/INCOMPLETE from METADATA, FLAGS and the terminal error (S3 files in S3 mode, located via
-     METADATA's `chunkDirectory`), with their `progress`: the STATISTICS-chunk items written so far, summed by
-     `sumChunkStatistics()`, the same function `buildRunSummary()` sums them with (so the figures shown while a
-     run is underway and its summary can't disagree), plus the latest chunk's end time.
-   - `src/reporting/RunReporting.ts` is the read side (no transport): `listRuns`, `listRunPage`, `getRunReport`,
-     `getRunChunkStatistics`, paged `getRunErrors` and `getRunChanges` (person-history changes,
-     DynamoDB mode only; S3 mode keeps no per-person change record per run). Page cursors are
-     base64url `LastEvaluatedKey`s, rejected unless their key attributes match the requested run
-     (and change type).
-
-**What remains in S3** (even in DynamoDB mode):
-- Chunk NDJSON files (parallel processing dependency)
-- Person cache file (10K-100K BUIDs, better in S3 than DynamoDB item batches)
-
-**Characteristics**:
-- Atomic updates with conditional expressions
-- Point-in-time recovery and backups
-- Query-based access patterns (GSI flexibility)
-- Better for high-frequency state lookups
-- Supports resumption after failures (via PersonCurrentStateTable)
-
-### Migration Path (Parallel Implementation)
-
-**DynamoDB mode does NOT remove S3 features**. Both modes coexist:
-
-**Template Pattern Abstractions**:
-1. **HashStorage** (integration-huron-person/src/delta-storage/)
-   - `AbstractHashStorage` base class
-   - `HashStorageResetForS3` (S3 implementation)
-   - `HashStorageResetForDynamoDb` (DynamoDB implementation)
-   - `HashStorageResetFactory` switches on `config.storage.type`
-
-2. **PersonCache** (src/person-cache/)
-   - `AbstractPersonCache` base class
-   - `PersonCacheForS3` (direct S3 implementation)
-   - `PersonCacheForDynamoDb` (facade delegating to S3 - optimal for bulk data)
-   - `PersonCacheFactory` switches on `config.storage.type`
-   
-   **Person target** (Strategy Pattern):
-   - `AbstractPersonTarget` interface: Abstracts the target system the cache is built from
-   - `PersonTargetReal`: Fetches from the target API (config.dataTarget) via ListPeople - the real
-     Huron API, or in a mock landscape the target simulator (see "Mock Landscapes" below)
-   - Design: Dependency injection enables testing without environment coupling
-
-3. **Metadata** (src/chunking/metadata/)
-   - `AbstractMetadata` with 19 methods (5 static, 14 abstract)
-   - `MetadataForS3` (file-based implementation)
-   - `MetadataForDynamoDb` (StatisticsTable with `eventType` field)
-   - `MetadataFactory` switches on `config.storage.type`
-
-### Mock Landscapes
-
-**The signal**: any landscape whose name matches `^mock\d*$` (`mock`, `mock1`, `mock2`, ...) is a
-*mock landscape* - a stack dedicated to mocked runs. `isMockLandscape()` (src/Utils.ts) is the single
-test for it, used only by CDK (with the lower-cased `TAGS.Landscape`), the Runner and `BulkPurger`.
-There is no per-run "mock" flag, and **the pipeline's runtime code (chunker, processor, post-processor) has
-no mock awareness at all**: mock-ness is a deploy-time property of the stack.
-
-**Why a landscape, not isolation tables**: nearly every resource name already carries the
-landscape (`${STACK_ID}-<kind>-${landscape}` tables, queues, cluster, Lambdas, config secret, chunks
-bucket, the stack itself), so a dedicated mock stack isolates everything by construction - including
-the S3 delta storage and the chunker's baseline scan, which the old per-run isolation tables never
-covered. A mock stack uses the **standard** tables; they simply never hold real data.
-
-**The target simulator** (`src/processing/TargetSimulator.ts`, CDK:
-`lib/services/processor/TargetSimulator.ts`): a Lambda behind an API Gateway HTTP API that impersonates
-the subset of the Huron person API the pipeline uses - token request, `POST`/`PATCH`/`GET /api/v2/persons[/{hrn}]`
-with filters/paging - storing persons in the mock target table. CDK injects its endpoint (and a generated
-external token, from a separate `.../target-simulator/token/<landscape>` secret, via a CloudFormation
-dynamic reference) into the mock stack's integration config secret as
-`dataTarget.endpointConfig.baseUrl`/`externalToken`. So the ECS tasks run the ordinary
-`HuronPersonDataTarget`/`ReadPerson`/`ListPeople` code against it, unaware it is a fake.
-- Contract quirks it must honor (see the file header and `test/TargetSimulator.test.ts`, which drives
-  the real client classes against it): "not found" is `200 {data: []}`; `pagination[offset]` is a
-  page index and a page past the end is `200 {data: []}`; `filter[...includeInactive...]` is a flag;
-  hrns (`hrn:hrs:persons:<sourceIdentifier>`) are derived, so `PATCH /{hrn}` needs no index.
-- DELETE (`PATCH {active:false}`) is a soft delete (`deactivated`/`deactivatedAt` + `data.active=false`);
-  records are never removed, matching Huron's soft-delete-only behavior.
-- The simulator reads its token from its own secret, never the config secret, keeping the CloudFormation
-  dependency one-way (config secret -> simulator).
-- **Why an HTTP API, not a Lambda Function URL**: the Huron client deliberately sends UNENCODED `[ ]`
-  in query strings (`pagination[offset]=0`, `filter[0!sourceIdentifier!and]=...` - see
-  integration-huron-person `UrlSerializer.ts`; the real Huron API rejects the encoded form). A Function
-  URL rejects such requests with `400 {"message":null}` before ever invoking the function (the first
-  mock run failed this way). The local contract test cannot catch front-door strictness like this
-  (Node's HTTP server accepts anything), so after any change to the simulator's front door, probe the
-  deployed endpoint: `curl -g "<endpoint>/api/v2/persons?pagination[offset]=0"` must return the
-  simulator's own `401 {"errors":[...]}`, not an AWS-generated 400.
-- `MockPersonDataTarget`, `DataTargetFlags.useMockTarget` and Upsert's mock branch have been removed
-  from integration-huron-person; the target simulator is the only mock target.
-
-**What differs in a mock stack**:
-- Exactly one extra table: `${STACK_ID}-mock-target-person-${landscape}` (MockTargetPersonTable),
-  backing the target simulator. Non-mock stacks have no `-mock-` tables at all.
-- The target simulator (always) and source simulator (if enabled - synthesis fails if enabled
-  in a non-mock landscape). Neither exists in any other landscape.
-- Its integration config (`integration-huron-person/config/config.mock.json`) sets
-  `dataTarget.endpointConfig.baseUrl` to an unroutable placeholder, which CDK replaces with the
-  simulator's URL in the deployed secret (so a local harness pointed at the file still fails loudly
-  instead of reaching a real target), and `preLoadedMaps` like preview (`orgMap` false; state/country
-  maps come from CSV files, not Huron).
-
-**Runner**: when `LANDSCAPE` is a mock landscape, `Runner.ts` wraps the runner in
-`MockLandscapeRunnerDecorator`, which verifies the mock stack is deployed (mock target table exists),
-optionally resets its run state (`RUNNER_MOCK_TARGET_RESET_STATE=true` truncates the mock target and
-statistics tables via `BulkPurger`, then clears the delta baseline of the stack's storage mode: the person
-current-state and history tables in DynamoDB mode, or the `delta-storage/` files of the chunks bucket in
-S3 mode; the mode is detected from whether the person current-state table exists; `src/chunking/MockLandscapeReset.ts`,
-shared with the chunker subscriber's `resetState`), and warns about
-"hybrid" runs (real source API -> mock target) - which remain supported (`RUNNER_SOURCE_SIMULATOR=false`
-against a mock landscape), but consume from the real, depleting source API like any other landscape.
-`BulkPurger` refuses to purge a non-mock landscape unless `force: true`.
-
-**Deploying one**: `context/context.mock.json` (+ git-ignored `context/mock.env`) -> `./context/swap.sh mock`,
-then `cdk deploy`. Add `context.mock1.json` etc. for more mock stacks.
-
-**Switching Between Modes**: set `PREVIOUS_STORAGE_TYPE` (`"s3"` or `"dynamodb"`) in the active
-`context/context.json` and update the stack. That one value is the switch: the integration config
-files (`integration-huron-person/config/config.*.json`) need no change, because the config secret's
-storage block is derived from it (`resolveSecretStorage()` in `lib/Secrets.ts`):
-- **Type**: `context.PREVIOUS_STORAGE_TYPE`, else the integration config's `storage.type`, else `'s3'`
-  (`DEFAULT_STORAGE_TYPE`, the last resort). So the secret always agrees with the mode the tasks run in.
-- **Settings**: the integration config's `storage.config` is kept only if it belongs to the resolved
-  type (e.g. an S3 `keyPrefix`); settings for another type are dropped, not mixed in. Settings the
-  stack determines come from the context: the landscape's chunks bucket (`bucketName`, S3 mode) or
-  the person current-state/history table names and region (DynamoDB mode).
-- Environment variables (`.env`, loaded by `bin/App.ts`) don't set storage in the secret.
-
-Keep `PREVIOUS_STORAGE_TYPE` set in every `context.*.json`: when it is missing, CDK's fallbacks
-disagree (`lib/DynamoDB.ts` creates the DynamoDB tables, `TaskDefinitions` takes the type from the
-locally loaded integration config). Switching a stack to S3 mode deletes its PersonCurrentState and
-PersonHistory tables (removal policy DESTROY); switching back creates them empty. Switching does not
-touch an S3 baseline (`delta-storage/` in the chunks bucket) left by an earlier S3-mode period; in a mock
-landscape the runner's reset deletes it.
-
-**IAM Permissions** (automatically configured in task definitions):
-- S3 mode: S3 bucket read/write only
-- DynamoDB mode: S3 bucket + DynamoDB table read/write (conditionally granted)
-
-**CDK Infrastructure** (`lib/DynamoDB.ts`):
-- Tables created when `context.PREVIOUS_STORAGE_TYPE === 'dynamodb'` or when `context.PREVIOUS_STORAGE_TYPE` is undefined (defaults to 'dynamodb')
-- Task definitions check `dynamoDbTables.personCurrentStateTable` before granting permissions
-- Zero infrastructure impact when using S3 mode
-
-### When to Use Each Mode
-
-**Use S3 Mode when**:
-- Simple deployment with minimal infrastructure
-- Infrequent sync operations (daily/weekly)
-- File-based introspection preferred (AWS Console browsing)
-- Lower cost priority for small-scale operations
-
-**Use DynamoDB Mode when**:
-- Frequent sync operations requiring fast state lookups
-- Audit trail and history tracking critical
-- Resumption and retry logic needed (pipeline interruptions)
-- Query-based analytics desired (change type filtering, time-series analysis)
-- Point-in-time recovery and backups required
-
-## TestEnvironment Pattern Implementation
-
-### Migration Strategy
-**Challenge**: Initially had local `src/Utils.ts` with TestEnvironment definitions.
-
-**Solution**: Migrated all 14 harness modules to import TestEnvironment directly from `integration-core` package.
-
-**Files Migrated** (14 total):
-- Docker entries: chunker.ts, processor.ts, post-processor.ts
-- Chunking: BigJsonFile.ts, BigJsonFetch.ts, ChunkFromAPI.ts, ChunkFromS3.ts, PersonArrayWrapper.ts
-- Post-processing: DeferredDeleteHandler.ts, StatisticsTable.ts, PersonCache.ts
-- Error handling: ApiErrorTracking.ts
-- Orchestration: Runner.ts (extracted from lib/services/chunker/ChunkerService.ts)
-- Utilities: scrap/EcrChecker.ts
-
-### Import Pattern
-```typescript
-// Before migration:
-import { TestEnvironment } from '../Utils';
-
-// After migration:
-import { TestEnvironment } from 'integration-core';
-
-// If combined with other imports:
-import { Timer, TestEnvironment } from 'integration-core';
-```
-
-### Harness Initialization Pattern
-```typescript
-import { TestEnvironment } from 'integration-core';
-
-// ... implementation
-
-if (require.main === module) {
-  const env = new TestEnvironment('HARNESS_PREFIX');
-  const variable = env.getVar('DOWNSTREAM_KEY');
-  // ... run logic
-  main();
-}
-```
-
-**No wrapper layer** in fargate (unlike huron-person) because harnesses are simpler and don't share a common set of downstream keys across all 14 modules.
-
-## Environment Configuration
-
-**File**: `.env` (git-ignored, local development only)
-
-**Structure** (parallel to huron-person):
-```
-# Shared variables (no prefix)
-DATASOURCE_BASE_URL=...
-DATATARGET_BASE_URL=...
-
-# Harness groups by pipeline phase
-# ---------- Use these for src/Runner.ts ---------- #
-RUNNER_CHUNKER_QUEUE_URL=...
-
-# ---------- Use these for src/chunking/fetch/ChunkFromAPI.ts ---------- #
-CHUNK_FROM_API_BASE_URL=...
-
-# ... etc for all 14 harnesses
-```
-
-**Template**: See `example-env.md` (~270 lines, sanitized with placeholders)
-
-## Docker Entry Points
-
-### chunker.ts
-**Purpose**: Container entry point for ECS Fargate task running chunking phase
-
-**Environment Variables**: Loaded via TestEnvironment('DOCKER_CHUNKER')
-- S3 bucket configuration
-- Source API credentials (via DATASOURCE_*)
-- Chunk size parameters
-
-**Harness Execution**: Run with npx to validate chunking before ECS deployment
-
-### processor.ts
-**Purpose**: Router entry point for parallel processing tasks
-
-**Architecture**: Switchboard pattern - detects storage mode and delegates to appropriate processor
-- ProcessorForS3 (src/processing/): S3-based processing with mini-deltas and marker files
-- ProcessorForDynamoDB (src/processing/): DynamoDB-based processing with direct table writes
-- processor.ts (docker/): Router that detects storage mode and delegates
-
-**Mode Detection**: Checks for DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME or DYNAMODB_PERSON_HISTORY_TABLE_NAME
-
-**Harness Prefix**: DOCKER_PROCESSOR
-
-### post-processor.ts
-**Purpose**: Router entry point for result consolidation
-
-**Architecture**: Template Method pattern with mode-specific implementations
-- AbstractPostProcessor (src/post-processing/): Base class with shared logic (getTaskParameters, processDeferredDeletes, main)
-- PostProcessorForS3 (src/post-processing/): S3-specific file consolidation and baseline merging
-- PostProcessorForDynamoDB (src/post-processing/): Minimal/no-op merge (state already in DynamoDB tables)
-- post-processor.ts (docker/): Router that detects storage mode and delegates
-
-**Critical**: Both modes require post-processor service for DeferredDeleteHandler
-
-**Mode Detection**: Checks for DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME or DYNAMODB_PERSON_HISTORY_TABLE_NAME
-
-**Harness Prefix**: DOCKER_POST_PROCESSOR
-
-## Test Harnesses (14+ total)
-
-**Categories**:
-- **Orchestration** (1): Runner (Manual chunking service invocation)
-- **Chunking Pipeline** (5): ChunkFromAPI, ChunkFromS3, BigJsonFetch, BigJsonFile, PersonArrayWrapper
-- **Post-processing Pipeline** (3): DeferredDeleteHandler, PersonCache, StatisticsTable
-- **Docker Entry Points** (3): chunker.ts, processor.ts, post-processor.ts
-- **Error Handling** (1): ApiErrorTracking
-- **Utilities** (1): EcrChecker
-
-### Execution
-
-**VS Code Launch Configuration (Recommended)**:
-```
-1. Open harness file (e.g., src/chunking/fetch/ChunkFromAPI.ts)
-2. Press F5 or Run > Start Debugging
-3. Select "Debug current file"
-```
-
-**Command Line (npx)**:
-```bash
-npx ts-node src/chunking/fetch/ChunkFromAPI.ts
-npx ts-node docker/chunker.ts
-npx ts-node src/Runner.ts
-```
-
-## CDK Infrastructure Patterns
-
-### Context Configuration
-**Files**: `context/context.json`, `context/IContext.ts`
-
-Defines infrastructure parameters (image URIs, task sizes, buckets, etc.) per landscape. Not the network: no
-context names a VPC (see "Shared Network Stack").
-
-### Stack Management
-**Pattern**: `lib/Stack.ts` orchestrates Lambda, ECS, S3, SQS resources
+
+Parallel ECS Fargate tasks apply mapping and push changes to the target. Entry point `docker/processor.ts` (a router
+to `ProcessorForS3` / `ProcessorForDynamoDb` in `src/processing/`, on `PREVIOUS_STORAGE_TYPE`); harness prefixes
+`DOCKER_PROCESSOR`, `DOCKER_PROCESSOR_DYNAMODB` (the files: `src/processing/CLAUDE.md`; the image and entry points:
+`docker/CLAUDE.md`).
+
+**Addons** (`src/processing/addon/`): integration-huron-person's `personRecordProcessor` hook, wired into the
+processors so per-person async logic (e.g. `ORG_COMPARISON_LOGGING`) can run during a live sync. Which addons run is a
+per-run Flags field (`personRecordProcessorAddons`, from the Runner's `PERSON_RECORD_PROCESSOR_ADDONS`), never a task
+definition variable. Design, the Flags path, the shared log table and how to add one:
+[src/processing/addon/README.md](src/processing/addon/README.md).
+
+### Phase 3: Post-processing
+
+Consolidates results and handles deletions. `AbstractPostProcessor` (`src/post-processing/`, template method) with
+`PostProcessorForS3` (file consolidation, baseline merging) and `PostProcessorForDynamoDB` (deletions only; state is
+already in the tables); router `docker/post-processor.ts`. **Both storage modes need the post-processor service**, for
+`DeferredDeleteHandler`. `AbstractPostProcessor.main()` writes the run's `RUN_SUMMARY` in its `finally` block. Harness
+prefixes `DEFERRED_DELETE`, `CHUNK_POPULATION_READER`, `DOCKER_POST_PROCESSOR` (the files:
+`src/post-processing/CLAUDE.md`).
+
+**Soft-deleted persons are marked in the baseline** (`src/post-processing/DeletedHashMarker.ts`): a successful soft
+delete rewrites the person's baseline hash with a `DELETED:` prefix (DynamoDB mode also sets `deletedAt`), so deletion
+detection skips them and a returning person is classified UPDATED and reactivated. How it works, and the DynamoDB
+matching bug fixed 2026-11-17: [docs/STORAGE_MODES.md](docs/STORAGE_MODES.md#soft-deleted-persons-in-the-baseline).
+
+**Taking a new integration-core build**: update `node_modules/integration-core`'s `integrity` in `package-lock.json`
+and run a plain `npm install`, which changes nothing else (see "Publishing the package" in integration-core's
+`CLAUDE.md`). The task image installs it from the lockfile, so push the image to each landscape afterwards.
+
+## Storage Modes
+
+`context.PREVIOUS_STORAGE_TYPE` selects the mode at deploy time (`'dynamodb'` → DynamoDB mode; `'s3'`, `'file'`,
+`'database'` → S3 mode); CDK bakes it into every task definition, and the factories (`HashStorageResetFactory`,
+`PersonCacheFactory`, `MetadataFactory`) switch on the resulting `config.storage.type`. Chunk NDJSON files and the
+person cache stay in S3 in both modes; DynamoDB mode keeps delta state in the PersonCurrentState and PersonHistory
+tables and run metadata in the statistics table.
+
+- **Switching**: change `PREVIOUS_STORAGE_TYPE` in the context and update the stack; the config secret's storage block
+  is derived from it (`resolveSecretStorage()` in `lib/Secrets.ts`), so the integration config files need no change.
+- **Keep `PREVIOUS_STORAGE_TYPE` set in every `context.*.json`**: when missing, CDK's fallbacks disagree. Use `s3` or
+  `dynamodb`: the Docker routers throw on any other value.
+- **Switching to S3 mode deletes** the PersonCurrentState and PersonHistory tables (DESTROY); switching back creates
+  them empty. An old S3 baseline (`delta-storage/`) is left alone, except by a mock landscape's reset.
+
+Table schemas, S3 layout, the abstractions, switching detail and when to choose which mode:
+[docs/STORAGE_MODES.md](docs/STORAGE_MODES.md).
+
+**The statistics table** (`src/dynamodb/StatisticsTable.ts`, PK syncRunId, SK `eventType`) holds each run's METADATA,
+FLAGS, TERMINAL_ERROR, per-chunk statistics, claim records ([docs/CONCURRENCY_CONTROL.md](docs/CONCURRENCY_CONTROL.md)),
+RUN marker and RUN_SUMMARY; `src/reporting/RunReporting.ts` is its read side for the dashboard. Rules:
+- **Change the statistics table's GSIs one per deploy**: CloudFormation refuses an update that adds or removes more
+  than one.
+- Runs are listed through the sparse `run-list-index` (the RUN marker). A table updated in place to add it needs the
+  harness task `backfill-runs` before the dashboard that reads it is deployed; a table created with it doesn't.
+- A chunk's `totalRecords` counts only the people whose record changed, so it can't measure a run's progress.
+
+Event types, the run list, which landscapes have the index, chunk-statistics semantics, the summary and `RunReporting`:
+[docs/STATISTICS_TABLE.md](docs/STATISTICS_TABLE.md).
+
+## Mock Landscapes
+
+A landscape named `^mock\d*$` (`isMockLandscape()`, `src/Utils.ts`) is a stack dedicated to mocked runs: its target is
+always the **target simulator** (`src/processing/TargetSimulator.ts`, a Lambda behind an API Gateway HTTP API storing
+persons in the mock target table), injected into its config secret by CDK, and its source may be the **source
+simulator** (`src/chunking/fetch/SourceSimulator.ts`, a Lambda Function URL). Mock-ness is a deploy-time property of
+the stack: there is no per-run mock flag, and the pipeline's runtime code has no mock awareness. Why a landscape, what
+differs in a mock stack, the reset in full: [docs/MOCK_LANDSCAPES.md](docs/MOCK_LANDSCAPES.md); the end-to-end
+runbook: [docs/MOCK_INTEGRATION_TESTING.md](docs/MOCK_INTEGRATION_TESTING.md).
+
+Rules:
+- **Source simulation entails target simulation.** `lib/AppConstruct.ts` refuses to synthesize a stack with
+  `LAMBDA.sourceSimulator.enabled` in a non-mock landscape, and `Runner.ts` aborts when `RUNNER_SOURCE_SIMULATOR=true`
+  targets one. There is no supported way to run simulated source data against the real Huron target.
+- **Hybrid runs** (real source -> mock target) are supported but consume the real, depleting source API.
+- **Resets only in a mock landscape**: `BulkPurger` refuses to purge a non-mock landscape unless `force: true`; only a
+  mock landscape's chunker subscriber gets the reset's grants. The reset (`src/chunking/MockLandscapeReset.ts`, shared
+  by the Runner's `RUNNER_MOCK_TARGET_RESET_STATE`, Bulk sync's Start from scratch and the dashboard's Reset landscape)
+  empties the mock target and statistics tables (so Run history) and the delta baseline of the stack's storage mode.
+- **The reset record borrows the atomic counter table** (`counter_name` `not-a-counter:mock-landscape-reset`,
+  `NOT_A_COUNTER_PREFIX` in `src/dynamodb/AtomicCounter.ts`): anything that clears the counters must leave such items
+  alone.
+- **After any change to the target simulator's front door**, probe the deployed endpoint:
+  `curl -g "<endpoint>/api/v2/persons?pagination[offset]=0"` must return the simulator's own `401 {"errors":[...]}`,
+  not an AWS-generated 400. Why (unencoded `[ ]` in Huron query strings, and why not a Function URL), and the contract
+  quirks it must honor: [docs/TARGET_SIMULATOR.md](docs/TARGET_SIMULATOR.md).
+- **The source simulator** serves `/` (stateful, depleting), `/person?buid=` (stateless), `/terms` and `/health`;
+  per-run settings travel as query parameters of the run's `fetchPath` (`simulatorFetchPath()`), never by changing the
+  Lambda's environment. Simulated terms reach the processors through `Flags.termsEndpoint`. Endpoints, API keys and
+  settings: [docs/SOURCE_SIMULATOR.md](docs/SOURCE_SIMULATOR.md).
+
+**Deploying one**: `context/context.mock.json` (+ git-ignored `context/mock.env`) -> `./context/swap.sh mock`, then
+`cdk deploy`. Add `context.mock1.json` etc. for more.
+
+## CDK Infrastructure
+
+- **Context**: `context/context*.json` and `context/IContext.ts` define each landscape's infrastructure parameters
+  (image URIs, task sizes, buckets, ...). No context names a VPC.
+- **Stacks**: `bin/App.ts` builds the pipeline stack (`lib/Stack.ts`, orchestrating Lambda, ECS, S3, SQS), the
+  landscape's dashboard stack, and the shared network stack the pipeline depends on.
+- **Deploy and tear down** (from the repo root): `npm run deploy` (every stack) / `deploy-fargate` / `deploy-dashboard`,
+  all through `bin/deploy.sh`, which synthesizes once and writes each deployed stack's template to
+  `cdk.out/synth.output.<fargate|dashboard>.yaml` from the cloud assembly (`cdk synth --app cdk.out -e`); `npm run teardown` / `teardown-fargate` / `teardown-dashboard`
+  through `bin/teardown.sh`. More: [docs/CDK_DEPLOYMENT.md](docs/CDK_DEPLOYMENT.md).
 
 ### Shared Network Stack
-Every landscape's pipeline runs in one network, owned by a stack of its own, `huron-integration-network`
-(`lib/NetworkStack.ts`), one per account and region. The region's quotas of 5 VPCs and 5 internet gateways (both
-full in us-east-2) are why the landscapes share one network rather than each having its own.
-- **What it owns**: the VPC (10.0.0.0/16), public and private `/24` subnets in the region's `a` and `b` zones, the
-  internet gateway, a route table per subnet, the elastic IP and one NAT gateway (in the first public subnet).
-  The layout is in code (`NetworkLayout`), not in any context, since every landscape's CDK app synthesizes the
-  same network stack and a deploy from any of them must leave it as it is. Termination protection is on, and
-  every resource is retained (`RETAIN`), so removing the network takes deliberate steps.
-- **No landscape owns it**: `bin/App.ts` makes it the pipeline stack's dependency. `cdk deploy` of a pipeline
-  stack deploys it first (creating it in a brand-new account, a no-op otherwise); `cdk destroy` of a pipeline
-  stack never selects it (`cdk destroy` adds a stack's dependents, `cdk deploy`/`diff` its dependencies). So
-  `npm run deploy-fargate` and `teardown-fargate` need nothing extra.
-- **How a pipeline gets it**: the network stack publishes its IDs as SSM parameters
-  (`/huron-integration-network/vpc-id`, `.../public-subnet-ids/<az>`, `.../private-subnet-ids/<az>`;
-  `NetworkParameters`), and `EcsInfrastructure` builds its VPC with `NetworkParameters.vpc()`
-  (`Vpc.fromVpcAttributes` over parameters CloudFormation resolves at each deploy). The ECS services run in the
-  private subnets, their security groups in the VPC. Nothing is created or looked up at synth: no
-  `cdk.context.json` cache of subnets, and no CloudFormation exports, whose imports would stop the network stack
-  from ever changing a subnet. The subscriber Lambdas aren't in the VPC.
-- **Never let a landscape create or look up a VPC.** Until 2026-11-12 `EcsInfrastructure` did: with `ECS.vpcId`
-  in a context it looked one up (`Vpc.fromLookup`, whose cache kept subnet IDs after the subnets were gone);
-  without it, it created one, retaining only the VPC. Staging's context had no `vpcId`, so staging's July stack
-  created the VPC preview, mock and migration looked up, and tearing staging down deleted the subnets, gateways
-  and NAT gateway they all ran in. The network was rebuilt by hand, then imported into the network stack
-  (`cdk import`), so its IDs didn't change.
-- **Importing a network** (as done once in this account): the network stack has no custom resource
-  (`restrictDefaultSecurityGroup: false`) and no CDK metadata resource (`analyticsReporting: false`), since an
-  import creates nothing besides what it imports. Import with a resource-mapping file
-  (`cdk import huron-integration-network --resource-mapping <file>`); the parameters are skipped by the import
-  and created by an ordinary deploy after it. A gateway attachment's identifier is `AttachmentType: IGW` (not
-  `igw`) plus the VPC ID, and a route's is its route table ID plus `0.0.0.0/0`. The layout has a route table per
-  public subnet; resources imported with other tags show as drift until their tags are set to the stack's.
-- **Every landscape is on the parameters**: migration was the last, its July pipeline stack (on the subnets deleted
-  on 2026-11-12) recreated on 2026-11-19, with its first dashboard stack.
-- Tests: `test/NetworkStack.test.ts` (the layout, retained resources, protection, parameters, tags, the
-  dependency), `test/EcsInfrastructureNetwork.test.ts` (the pipeline's services from the parameters).
 
-**Harness Testing**: Use Runner harness (`src/Runner.ts`) to validate chunking orchestration before deployment
+Every landscape's pipeline runs in the network of one stack, `huron-integration-network` (`lib/NetworkStack.ts`, one
+per account and region; layout in code, `NetworkLayout`): VPC, public and private subnets in zones `a` and `b`, the
+internet gateway, route tables, one NAT gateway. It is termination-protected and every resource is retained. It is the
+pipeline stack's dependency: `cdk deploy` of a pipeline deploys it first; `cdk destroy` of a pipeline never selects it.
+Pipelines read its IDs from SSM parameters (`/huron-integration-network/...`, `NetworkParameters`) resolved at each
+deploy; the ECS services run in the private subnets.
+
+- **Never let a landscape create or look up a VPC** (no `Vpc.fromLookup`, no VPC in `EcsInfrastructure`, no
+  CloudFormation exports of the network). A landscape that created its own VPC once took every other landscape's
+  network down with its teardown.
+- Check what depends on the network before any teardown.
+- Tests: `test/NetworkStack.test.ts`, `test/EcsInfrastructureNetwork.test.ts`.
+
+Why it exists (the 2026-11-12 incident), and how a network was imported into it (`cdk import` details):
+[docs/SHARED_NETWORK.md](docs/SHARED_NETWORK.md).
 
 ### Landscape Dashboard Stack
-The dashboard (`dashboard/`, see `dashboard/CLAUDE.md`) is a second stack in this CDK app:
-`bin/App.ts` calls `createDashboardStack()` when the context has a `DASHBOARD` section, creating
-`${DASHBOARD.STACK_ID}-${landscape}` (`hp-dashboard-<landscape>`, at
-`<landscape>.person.huron.cssnprd.warhen.work`; the default landscape's stack also redirects
-`person.huron.cssnprd.warhen.work` to it). It shares no CloudFormation exports with the pipeline
-stack: it reads the landscape's config secret, tables and chunks bucket by the same deterministic
-names (`integrationSecretName()`, `dashboard/lib/LandscapeResources.ts`). `npm run deploy` deploys
-every stack (`--all`); `deploy-fargate` / `deploy-dashboard` deploy one. All run `bin/deploy.sh`,
-which synthesizes once and dumps each deployed stack's template to
-`cdk.out/synth.output.<fargate|dashboard>.yaml` from the cloud assembly (`cdk synth --app cdk.out -e`),
-and after a deploy that includes the dashboard, deletes the Lambda@Edge versions earlier deploys left
-behind (see "Old Lambda@Edge versions" in `dashboard/CLAUDE.md`).
-`teardown` / `teardown-fargate` / `teardown-dashboard` mirror them through `bin/teardown.sh`, which
-destroys the dashboard in three steps so its edge-lambda stack goes in one run (see "Teardown" in
-`dashboard/CLAUDE.md`). Every synth still synthesizes both, so it needs AWS
-credentials (the Shibboleth construct reads its secret, the certificate and Route 53 at synth, and
-the default landscape's redirect checks its certificate and record the same way) and
-`build`/`synth` first generate the dashboard's `TemplateConstants.ts`. The dashboard reports on
-the landscape's runs in-process (`/api/runs*`, `/api/capabilities`, over `src/reporting/RunReporting.ts`)
-and lists every registered landscape (`/api/landscapes`) from SSM parameters under
-`/hp-dashboard/landscapes`, one owned by each dashboard stack (see `dashboard/CLAUDE.md`).
 
-**Keep the dashboard out of the task image.** The fargate tasks take no part in the dashboard,
-but share this repo's `package.json`, lockfile and `context/IContext.ts`. So:
+The dashboard (`dashboard/`, see `dashboard/CLAUDE.md`) is a second stack in this CDK app: `bin/App.ts` calls
+`createDashboardStack()` when the context has a `DASHBOARD` section, creating `${DASHBOARD.STACK_ID}-${landscape}`
+(`hp-dashboard-<landscape>`, at `<landscape>.person.huron.cssnprd.warhen.work`; the default landscape's stack also
+redirects `person.huron.cssnprd.warhen.work` to it). It shares no CloudFormation exports with the pipeline stack: it
+reads the landscape's config secret, tables and chunks bucket by the same deterministic names
+(`integrationSecretName()`, `dashboard/lib/LandscapeResources.ts`). It reports on runs in-process over
+`src/reporting/RunReporting.ts`, and lists landscapes from SSM parameters under `/hp-dashboard/landscapes`.
+
+- After a deploy that includes the dashboard, `bin/deploy.sh` deletes the Lambda@Edge versions earlier deploys left
+  behind; `bin/teardown.sh` destroys the dashboard in three steps so its edge-lambda stack goes in one run (both in
+  [dashboard/docs/DEPLOYMENT.md](dashboard/docs/DEPLOYMENT.md)).
+- Every synth synthesizes both stacks, so it needs AWS credentials (the Shibboleth construct and the default
+  landscape's redirect read secrets, the certificate and Route 53 at synth), and `build`/`synth` first generate the
+  dashboard's `TemplateConstants.ts`.
+
+**Keep the dashboard out of the task image.** The fargate tasks take no part in the dashboard, but share this repo's
+`package.json`, lockfile and `context/IContext.ts`. So:
 - Dashboard/CDK-synth-only packages are `optionalDependencies` (`shibboleth-sp-at-edge`, from the
-  `simple-npm-package-bucket` registry URL, `express`, `mustache`, and the synth-time
-  `@aws-sdk/client-acm` / `@aws-sdk/client-route-53`); `docker/Dockerfile` runs
-  `npm ci --omit=optional`, which never fetches them. Add new dashboard-only packages with
-  `npm install --save-optional`.
+  `simple-npm-package-bucket` registry URL, `express`, `mustache`, and the synth-time `@aws-sdk/client-acm` /
+  `@aws-sdk/client-route-53`); `docker/Dockerfile` runs `npm ci --omit=optional`, which never fetches them. Add new
+  dashboard-only packages with `npm install --save-optional`.
 - The Dockerfile compiles with `npx tsc`, not `npm run build` (which builds the dashboard templates).
-- `context/IContext.ts` types `DASHBOARD` loosely and imports nothing from `dashboard/`; the
-  precise `DashboardSettings` is applied in `dashboard/lib/DashboardStacks.ts`. Code under
-  `src/`, `docker/` and `context/` must never import from `dashboard/` or `shibboleth-sp-at-edge`.
-- **When to run `npm run docker-build`**: the image is built only from `package.json`,
-  `package-lock.json`, `tsconfig.json`, `src/`, `context/*.ts` and `docker/` (it never copies
-  `dashboard/`). Check what a change touches with `git diff --name-only`:
+- `context/IContext.ts` types `DASHBOARD` loosely and imports nothing from `dashboard/`; the precise `DashboardSettings`
+  is applied in `dashboard/lib/DashboardStacks.ts`. Code under `src/`, `docker/` and `context/` must never import from
+  `dashboard/` or `shibboleth-sp-at-edge`.
+- **When to run `npm run docker-build`**: the image is built only from `package.json`, `package-lock.json`,
+  `tsconfig.json`, `src/`, `context/*.ts` and `docker/` (never `dashboard/`). Check what a change touches with
+  `git diff --name-only`:
   - `tsconfig.json`, `src/`, `context/*.ts` or `docker/` (including a dashboard change that edits
-    `context/IContext.ts`): run `docker-build`, not only `tsc`/`jest`, since the image's
-    `npx tsc` compiles them.
-  - Only `package.json` / `package-lock.json` (e.g. adding a dashboard-only optional package):
-    skip `docker-build` and run the image's install in a scratch folder instead (about 30
-    seconds, against about 6 minutes). Never run it in the repo: `npm ci` deletes `node_modules`.
+    `context/IContext.ts`): run `docker-build`, not only `tsc`/`jest`, since the image's `npx tsc` compiles them.
+  - Only `package.json` / `package-lock.json` (e.g. adding a dashboard-only optional package): skip `docker-build` and
+    run the image's install in a scratch folder instead (about 30 seconds, against about 6 minutes). Never run it in the
+    repo: `npm ci` deletes `node_modules`.
     ```bash
     mkdir /tmp/npm-ci-check && cp package.json package-lock.json /tmp/npm-ci-check/ && cd /tmp/npm-ci-check
     npm ci --omit=optional --ignore-scripts --no-audit --no-fund
     ```
-    It must succeed (that proves the lockfile matches `package.json`), and `node_modules` must
-    not contain the optional packages. Compare versions the pipeline uses (e.g.
-    `node_modules/@aws-sdk/core/package.json`) with the repo's to confirm nothing shared moved.
-    Don't use `--dry-run` for this: it lists the whole tree, optional packages included, so it
-    can't show what `--omit=optional` leaves out.
+    It must succeed (that proves the lockfile matches `package.json`), and `node_modules` must not contain the optional
+    packages. Compare versions the pipeline uses (e.g. `node_modules/@aws-sdk/core/package.json`) with the repo's to
+    confirm nothing shared moved. Don't use `--dry-run`: it lists the whole tree, optional packages included.
   - Only `dashboard/`, `lib/`, `bin/`, `test/` or docs: can't affect the image, so skip both.
 
-## personRecordProcessor Addon Framework
+## Harnesses and Environment
 
-**Location**: `src/processing/addon/` (concrete implementations live under `impl/`)
+Harnesses follow the workspace pattern (skills `testenvironment-pattern`, `harness-initialization-patterns`,
+`environment-variable-organization`): `TestEnvironment` imported from `integration-core` (no local wrapper), an
+`if (require.main === module)` block naming its variables, a prefixed group in the git-ignored `.env`, and placeholders
+in `example-env.md`. Run one with VS Code's "Debug current file" or `npx ts-node <file>` (e.g. `src/runner/Runner.ts`,
+documented in `src/runner/CLAUDE.md`). Catalog, `.env` layout, Docker entry points and the history of the pattern here:
+[docs/HARNESSES.md](docs/HARNESSES.md). Tests: [docs/TESTING.md](docs/TESTING.md).
 
-Wires `integration-huron-person`'s `personRecordProcessor` hook (see that repo's
-`CLAUDE.md`/`src/data-mapper/CLAUDE.md`) into the processor tasks, letting addon per-person
-async logic (e.g. outlier logging/analysis) run during a live sync without touching
-`HuronPersonIntegration` itself. See `src/processing/addon/README.md` for the framework's
-design (dependency injection, multi-addon composition) and how to add a new
-implementation.
+**Adding a harness**: create the module under `src/` or `docker/`, import `TestEnvironment` from `integration-core`,
+add the `require.main` block, add its variables to `.env` under its own group and placeholders to `example-env.md`,
+and list it in the README's test harnesses.
 
-**Files**: `AbstractAddonPersonProcessor.ts` (base class + `Addon` enum),
-`AddonParser.ts` (parses the comma-delimited config string - see below),
-`PersonRecordProcessorComposite.ts` (combines multiple active addons),
-`PersonRecordProcessorFactory.ts` (registry/switchboard), `impl/OrgComparisonLogging.ts`
-(first concrete addon: for students - mapped `title === 'Student'`, set in
-`integration-huron-person`'s `src/data-mapper/DataMapperTitle.ts` from the *same*
-`orgAssignments.personType` that drove the `organization`/`secondaryUnit` assignment, a more
-accurate signal than an independent raw `studentInfo` check - whose primary/secondary org HRNs
-differ, logs `{ personid, primaryOrg, secondaryOrg }`).
+**Integrating with CDK**: a harness tests one component; CDK Lambda/ECS configuration should feed the same variables
+(Secrets Manager or the task definition), resolved through the ConfigManager chain (skill
+`configmanager-chain-pattern`).
 
-**Specifying addons - key name or numeric value, either works**: `Addon` is a
-plain (numeric) TS enum with no explicit initializers, so config always identifies an
-addon by its enum **key name** (e.g. `'ORG_COMPARISON_LOGGING'`) - the underlying number
-is an implementation detail. `AddonParser.ts`'s `parseAddons()` additionally
-accepts the raw numeric value as a string (e.g. `'0'`) as an equivalent alternative, since some
-callers may find a stable numeric value more convenient to configure than a name. A token is
-tried as a number first (matched via the enum's reverse mapping) only if it looks like an
-integer; otherwise it's looked up by key name. Mixing both forms for the same addon in
-one comma-delimited list (e.g. `'ORG_COMPARISON_LOGGING,0'`) de-duplicates to a single instance
-rather than double-counting it. See `test/AddonParser.test.ts` for the full set of
-parsing permutations this covers.
-
-**Shared log table**: `src/dynamodb/PersonRecordProcessorLogTable.ts` + CDK table in
-`lib/DynamoDB.ts` (`personRecordProcessorLogTable`, single table, no mock-mode variant unlike
-most other tables here). Schema: PK=`addon` (groups entries by which addon wrote
-them), SK=`sortKey` (`${isoTimestamp}#${personid}`, chronologically browsable and collision-free
-per person), plus a generic `data` JSON attribute whose shape is defined entirely by the writing
-addon. This design lets any number of future addons share one table with zero
-CDK/schema changes - only `AbstractAddonPersonProcessor`, `Addon`, and
-`PersonRecordProcessorFactory` need updating to add one. The log table name IS still baked into
-the task definition as `PERSON_RECORD_PROCESSOR_LOG_TABLE_NAME` (it's an infrastructure resource
-name, not a per-run behavioral toggle, so CDK-time baking is appropriate here - unlike *which*
-addon runs, see below).
-
-**Selecting which addon(s) run - Flags, not task-definition env vars**: Which
-addon is active is deliberately **not** an `IContext`/task-definition environment
-variable (that would require a full stack redeploy to change). Instead it follows the same
-runtime-configuration precedent as `flags.bulkReset`: a `personRecordProcessorAddons`
-field (comma-delimited `Addon` keys) flows through
-`src/chunking/metadata/IMetadataStorage.ts`'s `Flags` type, which is written to S3/DynamoDB
-*before* chunking starts and read back by each processor task - so it can be changed per-run
-without redeploying anything. The full pipeline:
-1. **Manual invocation** (`src/runner/Runner.ts`, "FOR MANUAL INVOCATION ONLY"): reads the
-   `PERSON_RECORD_PROCESSOR_ADDONS` env var via `RunnerTypes.ts`'s `extractEnvironment()`
-   into `RunnerEnv.personRecordProcessorAddons`.
-2. Each runner (`RunnerForSingleMessage.ts`, `RunnerForSinglePerson.ts`, and
-   `RunnerForQueueSeeding.ts` via `QueueSeeder.ts`) copies that value into the `ApiChunkerEvent`
-   it sends (`ChunkerSubscriber.ts`'s `ApiChunkerEvent.personRecordProcessorAddons`).
-3. **Scheduled production invocation** (`lib/services/chunker/ChunkerService.ts`'s
-   `createApiChunkingSchedule()`): the EventBridge schedule's static `ScheduleTargetInput` also
-   includes a `personRecordProcessorAddons` field (currently left `undefined` as a
-   placeholder pending a decision on how to source a real value for scheduled runs - see the
-   `// TODO LATER` comment there) - the consuming side described below already handles it
-   whenever a value is present.
-4. `ChunkerApiSubscriber.ts`'s `handleApiEvent()` extracts it from the incoming event and forwards
-   it into the `TaskParameters` SQS message it sends to the chunker queue.
-5. `ChunkFromAPI.ts` parses it off the queue message into `TaskParameters.personRecordProcessorAddons`
-   and exposes it via `getPersonRecordProcessorAddons()`; `ChunkerQueue.ts`'s
-   `sendNextChunkingMessage()` re-forwards it into subsequent messages for parallel chunking.
-6. `docker/chunker.ts` reads that getter and includes it when calling `metadataManager.writeFlags(...)`
-   - so it's persisted to the run's Flags record before any processor task starts.
-7. `ProcessorForS3.ts`/`ProcessorForDynamoDb.ts` read it back via
-   `flags.personRecordProcessorAddons` (from the same `readFlagsFromChunkKey()` call
-   already used for `flags.bulkReset` etc.) and pass it to `personRecordProcessorFactory()`.
-
-**Wiring/DI**: `docker/processor.ts` (the S3-vs-DynamoDB router) accepts an optional
-`personRecordProcessor: PersonRecordProcessor` parameter and threads it through to whichever of
-`ProcessorForS3.ts`/`ProcessorForDynamoDb.ts`'s `main()` it routes to - both of which now also
-accept that same optional parameter. If provided (e.g. by a test, or a future caller that already
-knows which processor to use), it's used as-is; otherwise each `main()` falls back to resolving
-it from its own chunk's Flags via `personRecordProcessorFactory()`. This exists so the
-factory-invocation logic isn't duplicated across processor variants (DRY), while still allowing
-Flags-based resolution to work correctly - the router itself can't resolve from Flags because
-those are chunk-specific and not known until deep inside each `main()`.
-
-**Adding a new addon**:
-1. Add a value to the `Addon` enum in `AbstractAddonPersonProcessor.ts`.
-2. Create a new file under `impl/` extending `AbstractPersonRecordProcessor`, setting
-   `addon` and implementing `processRecord`; call
-   `this.logEntry(this.addon, personid, data)` to persist findings.
-3. Register it in the `switch` in `PersonRecordProcessorFactory.ts`.
-4. Set `PERSON_RECORD_PROCESSOR_ADDONS` (env var read by `Runner.ts`, or the
-   `personRecordProcessorAddons` Flags field directly) to the enum *key* to activate it -
-   comma-delimit multiple keys to run several addons at once (combined automatically via
-   `PersonRecordProcessorComposite`).
-
-## Patterns to Follow
-
-### Adding a New Harness
-1. Create module in appropriate src/ subdirectory or docker/
-2. Import TestEnvironment from 'integration-core'
-3. Add `if (require.main === module)` block with TestEnvironment instantiation
-4. Add environment variables to `.env` under harness-specific section
-5. Add placeholders to `example-env.md`
-6. Update README test harnesses list
-
-### Integrating with CDK
-1. Harness should test individual component functionality
-2. CDK Lambda/ECS configurations should reference the same environment variables (via Secrets Manager or ECS TaskDef)
-3. Use ConfigManager chain pattern for flexibility across local/staging/production
-
-### Docker Image Deployment
-1. Test entrypoint harness locally with `.env`
-2. Verify in docker/Dockerfile build
-3. Deploy to ECR and reference in CDK
-4. Test in ECS task before full pipeline run
+**Docker image**: test the entry-point harness locally with `.env`, build with `docker/Dockerfile`, push to ECR
+(`npm run docker-push`), and test in an ECS task before a full pipeline run.
 
 ## Dependencies
-- `integration-core`: TestEnvironment, base classes, utilities
-- AWS services: Lambda, ECS Fargate, S3, SQS, Secrets Manager
-- CDK libraries: cdk, aws-ec2, aws-lambda, aws-ecs, aws-s3, aws-sqs
-- Node ecosystem: ts-node, Docker, TypeScript
 
-## Common Issues & Debugging
+`integration-core` (TestEnvironment, base classes, utilities) and `integration-huron-person`; AWS Lambda, ECS Fargate,
+S3, SQS, DynamoDB, Secrets Manager; CDK; ts-node, Docker, TypeScript.
 
-### Environment Variable Not Found
-1. Check `.env` has the prefixed variable in correct harness group
-2. Verify `TestEnvironment('PREFIX')` matches the `.env` group prefix
-3. Use getVar() without the prefix (TestEnvironment adds it)
+## Common Issues
 
-### Docker Build Failures
-1. Check docker/Dockerfile references correct src files
-2. Ensure .env variables align with docker/entrypoint.ts expectations
-3. Test harness locally before building Docker image
-
-### ECS Task Failures
-1. Verify IAM role has S3, SQS, Secrets Manager permissions
-2. Check context.json has correct resource ARNs
-3. Validate ConfigManager chain loads credentials correctly (TaskDef → Secrets Manager → environment)
-
+- **Environment variable not found**: check `.env` has the prefixed variable in the right harness group, that
+  `TestEnvironment('PREFIX')` matches the group's prefix, and that `getVar()` is called without the prefix.
+- **Docker build failures**: check `docker/Dockerfile` references the right source files and that `.env` matches the
+  entry point's expectations; run the harness locally before building.
+- **ECS task failures**: check the task role's S3, SQS, Secrets Manager (and DynamoDB) permissions, the context's
+  resource ARNs, and that the ConfigManager chain loads credentials (task definition → Secrets Manager → environment).

@@ -1,6 +1,6 @@
 # Person Cache Module
 
-Person cache stores sourceIdentifiers (BUIDs) of all persons currently in the target system. Used during `bulkReset=true` mode to determine CREATE vs PATCH operations without querying target API for each person.
+Person cache stores sourceIdentifiers (BUIDs) of all persons currently in the target system. Used when `bulkReset=true` or `trustPreviousStorage=false` to determine CREATE vs PATCH operations without querying target API for each person.
 
 ## Architecture
 
@@ -39,7 +39,14 @@ Huron API - see src/processing/TargetSimulator.ts), so PersonTargetReal works un
 // PersonCacheFactory.create(config)
 const personTarget = new PersonTargetReal(); // ← the target API from config.dataTarget
 
-return new PersonCacheForS3({ config, personTarget });
+switch (config.storage.type) {
+  case 's3': case 'file': case 'database':
+    return new PersonCacheForS3({ config, personTarget });
+  case 'dynamodb':
+    return new PersonCacheForDynamoDb({ config, personTarget }); // a facade over S3
+  default:
+    throw new Error(...);
+}
 ```
 
 ### Why S3 for Cache Storage?
@@ -182,7 +189,8 @@ if (await cache.acquireCacheLock({ bucketName, key, region })) {
 
 ## Cache Lifecycle
 
-1. **Chunker Phase**: Ensures cache exists at start if `bulkReset=true`
+1. **Chunker Phase**: Ensures cache exists at start if `bulkReset=true` or `trustPreviousStorage=false`
+   (`<chunkDirectory>/_personCache.txt`)
    - **Concurrent coordination**: 15+ tasks may start simultaneously
    - **One task creates**: Uses `ensureCache()` with marker file locks
    - **Other tasks skip**: Wait for cache to be ready or see it already exists
@@ -241,12 +249,21 @@ U12345680
 ## Error Handling
 
 ### Cache Not Found (Processor)
-```
-⚠️  Cache file not found at s3://bucket/key
-💡 Waiting for cache creation (checking for lock)...
-```
 
-**Behavior**: Waits with exponential backoff if lock active, throws error after 2 minutes
+`PersonCacheLookup` checks whether the cache exists, then:
+
+- **A lock is active** (creation in progress):
+  ```
+  ⏳ Cache creation in progress - waiting <n>ms (attempt i/20)
+  ```
+  Waits with exponential backoff (capped at 10 seconds a wait), and after 20 attempts throws
+  `Timeout waiting for cache creation…`.
+- **No lock**:
+  ```
+  ⚠️  Cache not found and no lock active - waiting for cache creation to start
+  ⚠️  Cache still not available after N attempts - proceeding without cache
+  ```
+  Waits once (2 seconds), then continues with an empty set, so everyone is treated as CREATE.
 
 ### Cache Empty
 ```
@@ -270,12 +287,10 @@ U12345680
 **Behavior**: Lock file ignored, treated as if no lock exists (self-healing)
 
 ### Cache Creation Error
-```
-❌ Error creating cache: API request failed
-✓ Released cache lock after error
-```
 
-**Behavior**: Lock released in finally block, other tasks can retry
+An error fetching from the target API propagates out of `ensureCache()`; a failed S3 write logs
+`❌ Failed to write population cache to S3: …`. Either way the lock is released in a `finally` block
+(`✓ Released cache lock: s3://…`), so other tasks can retry.
 
 ## Test Harness
 
@@ -284,7 +299,7 @@ U12345680
 **Environment Variables**:
 ```bash
 PERSON_CACHE_PERSON_CACHE_BUCKET_NAME=my-bucket
-PERSON_CACHE_PERSON_CACHE_KEY=chunks/person-full/2026-08-13/cache.txt
+PERSON_CACHE_PERSON_CACHE_KEY=chunks/person-full/2026-08-13T10:30:00.000Z/_personCache.txt
 PERSON_CACHE_REGION=us-east-2
 PERSON_CACHE_OUTPUT_FILE_PATH=./cache-output.txt  # Optional for local file
 ```
@@ -293,6 +308,10 @@ PERSON_CACHE_OUTPUT_FILE_PATH=./cache-output.txt  # Optional for local file
 ```bash
 npx ts-node src/person-cache/PersonCacheForS3.ts
 ```
+
+**Known issue**: the harness constructs `new PersonCacheForS3()` without a `personTarget` or config, so building the
+cache fails with `PersonTarget is not initialized` until the harness passes them (e.g. `{ personTarget: new
+PersonTargetReal() }` after loading config). Keep the key ending in `_personCache.txt`: the lock key is derived from it.
 
 ## API Reference
 
@@ -342,9 +361,9 @@ npx ts-node src/person-cache/PersonCacheForS3.ts
 ## Related Files
 
 - `docker/chunker.ts` - Calls `ensureCache()` during Phase 1 (simplified to 1 line)
-- `docker/processor.ts` - Reads cache during Phase 2 with exponential backoff
+- `src/processing/ProcessorForS3.ts` / `ProcessorForDynamoDb.ts` - read the cache during Phase 2 through `PersonCacheLookup`
 - `PersonCacheLookup.ts` - Processor-side lazy loading with wait logic
-- `AbstractHashStorage.ts` - Similar template pattern for hash storage
+- `AbstractHashStorage.ts` (integration-huron-person, `src/delta-storage/`) - Similar template pattern for hash storage
 - `lib/DynamoDB.ts` - CDK table definitions (no cache table needed)
 
 ## Design Evolution

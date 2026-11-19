@@ -87,7 +87,7 @@ name a stack or use `--all`, or use the npm scripts:
 (`lib/NetworkStack.ts`), one stack per account and region, which the pipeline stack depends on. Deploying a pipeline
 deploys it first (creating it in a new account); no teardown script touches it, and it is termination-protected.
 The pipeline reads the network's IDs from its SSM parameters at deploy time. See "Shared Network Stack" in
-[CLAUDE.md](../CLAUDE.md).
+[CLAUDE.md](../CLAUDE.md) for the rules, and [SHARED_NETWORK.md](SHARED_NETWORK.md) for why it exists and how it was imported.
 
 **Order:** the dashboard stack takes nothing from the pipeline stack's outputs - it finds the
 pipeline's config secret, tables and chunks bucket by name - so the stacks deploy in any order.
