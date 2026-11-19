@@ -146,6 +146,7 @@ The dashboard's Bulk sync, or the Runner, is the usual way to start an off-sched
 aws lambda invoke \
   --function-name chunker-subscriber-<landscape> \
   --region us-east-2 \
+  --cli-binary-format raw-in-base64-out \
   --payload '{
     "baseUrl": "https://prod-budev-fm.snaplogic.io",
     "fetchPath": "/api/1/rest/feed/run/task/BUTest/Admin-Integration-Services/GenericGets/huronIRBgetPersonByPopulation",
@@ -166,6 +167,7 @@ aws lambda invoke \
 aws lambda invoke \
   --function-name chunker-subscriber-<landscape> \
   --region us-east-2 \
+  --cli-binary-format raw-in-base64-out \
   --payload '{
     "baseUrl": "from_config",
     "fetchPath": "from_config",
@@ -180,9 +182,12 @@ aws lambda invoke \
   response.json
 ```
 
-`npm run start-full-reset` / `start-delta-sync` (`bin/start-off-schedule-sync.sh`) invoke the Lambda the same way, but
-the script still names the function `chunker-subscriber` (without the landscape) and sends no `trustPreviousStorage`,
-so it needs fixing before use.
+`npm run start-full-sync` / `start-full-reset` / `start-delta-sync` / `start-delta-reset`
+(`bin/start-off-schedule-sync.sh`) invoke the Lambda the same way: the function is `chunker-subscriber-<landscape>`,
+with the landscape and region read from `context/context.json` (override with `--landscape` / `--region`), and
+`trustPreviousStorage` is always sent as the opposite of `bulkReset`. Add `--dry-run` (after `--`, e.g.
+`npm run start-full-sync -- --dry-run`) to print the invocation without running it. AWS CLI v2 reads `--payload` as base64
+unless given `--cli-binary-format raw-in-base64-out`, as in the examples above.
 
 #### Example 3: Full sync trusting stored hashes (what the schedule runs)
 
@@ -190,6 +195,7 @@ so it needs fixing before use.
 aws lambda invoke \
   --function-name chunker-subscriber-<landscape> \
   --region us-east-2 \
+  --cli-binary-format raw-in-base64-out \
   --payload '{
     "baseUrl": "from_config",
     "fetchPath": "from_config",
