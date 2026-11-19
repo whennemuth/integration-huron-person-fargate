@@ -100,6 +100,18 @@ export const sumChunkStatistics = (chunks: StatisticsItem[]): ChunkTotals => {
   };
 };
 
+/** The METADATA record's one-time descriptive fields, which whichever write arrives first sets */
+export type MetadataDescriptiveFields = {
+  source: string;
+  target?: string;
+  chunkDirectory: string;
+  itemsPerChunk: number;
+  bulkReset: boolean;
+  trustPreviousStorage: boolean;
+  syncPopulation: string;
+  deltaStoragePath: string;
+};
+
 /** Per-run totals written once by the post-processor (SK = RUN_SUMMARY). */
 export type RunSummary = {
   syncRunId: string;
@@ -507,66 +519,20 @@ export class StatisticsTable {
    * @returns the new, post-add chunkCount/totalRecords - not necessarily the run's true final
    * total (other tasks may still be contributing), just this call's up-to-date view.
    */
-  public async addToMetadataTotals(syncRunId: string, params: {
-    source: string;
-    target?: string;
-    chunkDirectory: string;
-    itemsPerChunk: number;
-    bulkReset: boolean;
-    trustPreviousStorage: boolean;
-    syncPopulation: string;
-    deltaStoragePath: string;
+  public async addToMetadataTotals(syncRunId: string, params: MetadataDescriptiveFields & {
     chunkCountDelta: number;
     totalRecordsDelta: number;
     /** SET only when true - a full/non-partial task's call omits this, never explicitly clearing it back to false. */
     partialOrEmptyChunkEncountered?: boolean;
   }): Promise<{ chunkCount: number; totalRecords: number }> {
-    const {
-      source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage,
-      syncPopulation, deltaStoragePath, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
-    } = params;
+    const { chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered } = params;
     const { tableName, region } = this;
 
-    const setClauses = [
-      '#source = if_not_exists(#source, :source)',
-      '#chunkDirectory = if_not_exists(#chunkDirectory, :chunkDirectory)',
-      '#itemsPerChunk = if_not_exists(#itemsPerChunk, :itemsPerChunk)',
-      '#bulkReset = if_not_exists(#bulkReset, :bulkReset)',
-      '#trustPreviousStorage = if_not_exists(#trustPreviousStorage, :trustPreviousStorage)',
-      '#syncPopulation = if_not_exists(#syncPopulation, :syncPopulation)',
-      '#deltaStoragePath = if_not_exists(#deltaStoragePath, :deltaStoragePath)',
-      '#createdAt = if_not_exists(#createdAt, :createdAt)'
-    ];
-    const names: Record<string, string> = {
-      '#source': 'source',
-      '#chunkDirectory': 'chunkDirectory',
-      '#itemsPerChunk': 'itemsPerChunk',
-      '#bulkReset': 'bulkReset',
-      '#trustPreviousStorage': 'trustPreviousStorage',
-      '#syncPopulation': 'syncPopulation',
-      '#deltaStoragePath': 'deltaStoragePath',
-      '#createdAt': 'createdAt',
-      '#chunkCount': 'chunkCount',
-      '#totalRecords': 'totalRecords'
-    };
-    const values: Record<string, any> = {
-      ':source': source,
-      ':chunkDirectory': chunkDirectory,
-      ':itemsPerChunk': itemsPerChunk,
-      ':bulkReset': bulkReset,
-      ':trustPreviousStorage': trustPreviousStorage,
-      ':syncPopulation': syncPopulation,
-      ':deltaStoragePath': deltaStoragePath,
-      ':createdAt': new Date().toISOString(),
-      ':chunkCountDelta': chunkCountDelta,
-      ':totalRecordsDelta': totalRecordsDelta
-    };
-
-    if (target !== undefined) {
-      setClauses.push('#target = if_not_exists(#target, :target)');
-      names['#target'] = 'target';
-      values[':target'] = target;
-    }
+    const { setClauses, names, values } = StatisticsTable.metadataDescriptiveFields(params);
+    names['#chunkCount'] = 'chunkCount';
+    names['#totalRecords'] = 'totalRecords';
+    values[':chunkCountDelta'] = chunkCountDelta;
+    values[':totalRecordsDelta'] = totalRecordsDelta;
 
     if (partialOrEmptyChunkEncountered) {
       setClauses.push('#partialOrEmptyChunkEncountered = :true');
@@ -590,6 +556,69 @@ export class StatisticsTable {
       chunkCount: result.Attributes?.chunkCount ?? 0,
       totalRecords: result.Attributes?.totalRecords ?? 0
     };
+  }
+
+  /**
+   * Merge the run's failure (runFailed, runFailureMessage, runFailureTimestamp) into its METADATA record with an
+   * UpdateItem, keeping everything already there - the totals addToMetadataTotals() accumulated in particular. The
+   * descriptive fields are set with if_not_exists(), as addToMetadataTotals() sets them, in case this is the run's
+   * first METADATA write.
+   */
+  public async mergeRunFailure(syncRunId: string, params: MetadataDescriptiveFields & {
+    runFailureMessage: string;
+    runFailureTimestamp: string;
+  }): Promise<void> {
+    const { runFailureMessage, runFailureTimestamp } = params;
+    const { tableName, region } = this;
+
+    const { setClauses, names, values } = StatisticsTable.metadataDescriptiveFields(params);
+    setClauses.push(
+      '#runFailed = :runFailed',
+      '#runFailureMessage = :runFailureMessage',
+      '#runFailureTimestamp = :runFailureTimestamp'
+    );
+    names['#runFailed'] = 'runFailed';
+    names['#runFailureMessage'] = 'runFailureMessage';
+    names['#runFailureTimestamp'] = 'runFailureTimestamp';
+    values[':runFailed'] = true;
+    values[':runFailureMessage'] = runFailureMessage;
+    values[':runFailureTimestamp'] = runFailureTimestamp;
+
+    const client = DynamoDBDocumentClient.from(new DynamoDBClient({ region }));
+    await client.send(new UpdateCommand({
+      TableName: tableName,
+      Key: { [DYNAMODB_PARTITION_KEY]: syncRunId, [DYNAMODB_SORT_KEY]: 'METADATA' },
+      UpdateExpression: `SET ${setClauses.join(', ')}`,
+      ExpressionAttributeNames: names,
+      ExpressionAttributeValues: values
+    } satisfies UpdateCommandInput));
+    await this.registerRun(syncRunId);
+  }
+
+  /**
+   * The METADATA record's one-time descriptive fields as if_not_exists() SET clauses, so whichever write arrives first
+   * populates them and every later one leaves them alone.
+   */
+  private static metadataDescriptiveFields(params: MetadataDescriptiveFields): {
+    setClauses: string[]; names: Record<string, string>; values: Record<string, any>;
+  } {
+    const {
+      source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation, deltaStoragePath
+    } = params;
+    const fields: Record<string, any> = {
+      source, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation, deltaStoragePath,
+      createdAt: new Date().toISOString(),
+      ...(target !== undefined ? { target } : {})
+    };
+    const setClauses: string[] = [];
+    const names: Record<string, string> = {};
+    const values: Record<string, any> = {};
+    for (const [field, value] of Object.entries(fields)) {
+      setClauses.push(`#${field} = if_not_exists(#${field}, :${field})`);
+      names[`#${field}`] = field;
+      values[`:${field}`] = value;
+    }
+    return { setClauses, names, values };
   }
 
   /**

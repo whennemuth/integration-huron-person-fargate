@@ -7,7 +7,7 @@ import { getLocalConfig } from "../../Utils";
 import { S3StorageAdapter } from "../../storage/S3StorageAdapter";
 import { getRetryStrategy } from '../../ApiErrorRetryStrategy';
 import { ChunkerQueue } from '../ChunkerQueue';
-import { MetadataBroker, WriteMetadataParams } from "../metadata";
+import { MetadataBroker } from "../metadata";
 import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig, ChunkOrdinalAllocator } from "./BigJsonFetch";
@@ -628,11 +628,8 @@ export class ChunkFromAPI implements IChunkFromSource {
         const runFailureTimestamp = new Date().toISOString();
         const runFailureMessage = result.terminalErrorMessage || 'Unknown terminal chunking error';
 
-        // Persist failure metadata for run diagnostics and explicit terminal-state visibility.
-        await metadataBroker.write({
-          storage: chunksStorage,
-          bucketName: chunksBucket,
-          chunkDirectory,
+        // Merge the failure into the run's metadata for diagnostics, keeping the totals accumulated so far.
+        await metadataBroker.recordRunFailure({
           itemsPerChunk,
           source: sourceUrl,
           target: targetUrl,
@@ -640,12 +637,9 @@ export class ChunkFromAPI implements IChunkFromSource {
           bulkReset,
           trustPreviousStorage,
           syncPopulation: this.taskParameters.populationType as SyncPopulation,
-          runFailed: true,
           runFailureMessage,
-          runFailureTimestamp,
-          replace: true,
-          region
-        } satisfies WriteMetadataParams);
+          runFailureTimestamp
+        });
 
         // Keep flags aligned with metadata so post-processor gating has the same terminal signal.
         await metadataBroker.markRunFailed({

@@ -27,6 +27,7 @@ describe('MetadataForDynamoDb', () => {
       readMetadata: jest.fn(),
       writeTerminalError: jest.fn().mockResolvedValue(undefined),
       readTerminalError: jest.fn(),
+      mergeRunFailure: jest.fn().mockResolvedValue(undefined),
     } as any;
 
     // Mock the StatisticsTable.fromTableName() static factory
@@ -403,6 +404,34 @@ describe('MetadataForDynamoDb', () => {
       const result = await metadata.readTerminalError({ chunkDirectory });
 
       expect(result).toBeUndefined();
+    });
+  });
+
+  describe('recordRunFailure', () => {
+    const params = {
+      chunkDirectory,
+      itemsPerChunk: 500,
+      source: 'BU CDM',
+      bulkReset: false,
+      trustPreviousStorage: true,
+      syncPopulation: SyncPopulation.PersonFull,
+      runFailureMessage: 'Test failure',
+      runFailureTimestamp: '2026-05-26T15:30:00.000Z',
+    };
+
+    it('merges the failure into METADATA instead of replacing the record', async () => {
+      await metadata.recordRunFailure(params);
+
+      expect(mockStatisticsTable.writeMetadata).not.toHaveBeenCalled();
+      expect(mockStatisticsTable.mergeRunFailure).toHaveBeenCalledWith(syncRunId, expect.objectContaining({
+        chunkDirectory, source: 'BU CDM', itemsPerChunk: 500, deltaStoragePath: expect.any(String),
+        runFailureMessage: 'Test failure', runFailureTimestamp: '2026-05-26T15:30:00.000Z'
+      }));
+    });
+
+    it('writes nothing in a dry run', async () => {
+      await metadata.recordRunFailure({ ...params, dryRun: true });
+      expect(mockStatisticsTable.mergeRunFailure).not.toHaveBeenCalled();
     });
   });
 

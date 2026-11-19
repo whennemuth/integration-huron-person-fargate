@@ -30,11 +30,11 @@ The statistics table's partition key is the syncRunId. The table itself is descr
 - **`IMetadataStorage`** (`IMetadataStorage.ts`, with the `Flags`, `ChunkMetadata`, `TerminalError` and parameter
   types): `write`, `writeFlags`, `read`, `readFlags`, `markRunFailed`, `isRunFailed`, `terminalErrorExists`,
   `readTerminalError`, `readFlagsFromChunkKey`, `readFromChunkKey`, `claimProcessorBoost`, `releaseProcessorBoostClaim`,
-  `accumulateMetadataTotals`.
+  `accumulateMetadataTotals`, `recordRunFailure`.
 - **`MetadataForS3`** and **`MetadataForDynamoDb`**: the two implementations. In DynamoDB mode the records go through
   `StatisticsTable` (`writeMetadata`, `writeFlags`, `readMetadata`, `readFlags`, `writeTerminalError`,
-  `readTerminalError`, `addToMetadataTotals`); writing FLAGS, a terminal error or the totals also writes the run's RUN
-  marker (`registerRun()`), which Run history lists runs by.
+  `readTerminalError`, `addToMetadataTotals`, `mergeRunFailure`); writing FLAGS, a terminal error, the totals or the
+  run's failure also writes the run's RUN marker (`registerRun()`), which Run history lists runs by.
 - **`MetadataFactory.create({ config, previousStorageType?, statisticsTableName?, region?, storage? })`**: picks the
   implementation by `previousStorageType`, else `config.storage.type` (`s3`, `file`, `database` → S3; `dynamodb` →
   DynamoDB, which needs `statisticsTableName`; anything else throws).
@@ -100,9 +100,10 @@ A run fails during chunking when a chunker task hits an unrecoverable error: an 
 
 - **`markRunFailed({ bucketName?, chunkDirectory, region?, errorMessage? })`** writes the TERMINAL_ERROR marker:
   `{ stage: 'chunking', chunkDirectory, errorMessage?, errorTimestamp }`. `docker/chunker.ts`'s catch block calls it.
-- **`ChunkFromAPI`** also rewrites METADATA with `runFailed`, `runFailureMessage` and `runFailureTimestamp`
-  (`write()` with `replace: true`) before calling `markRunFailed()`. These fields are diagnostic only. Note that the
-  replacing write drops the totals accumulated so far. `ChunkFromS3` writes no failure fields.
+- **`ChunkFromAPI`** also merges `runFailed`, `runFailureMessage` and `runFailureTimestamp` into METADATA
+  (`recordRunFailure()`) before calling `markRunFailed()`, keeping the totals accumulated so far: S3 mode with the same
+  ETag-conditional rewrite of `_metadata.json` as `accumulateMetadataTotals()`, DynamoDB mode with an `UpdateItem`
+  (`StatisticsTable.mergeRunFailure()`). These fields are diagnostic only. `ChunkFromS3` writes no failure fields.
 - `Flags` declares `runFailed` / `runFailureMessage` / `runFailureTimestamp` and `isRunFailed()` reads them, but nothing
   writes them to FLAGS.
 
@@ -190,4 +191,3 @@ and `test/MetadataForS3Totals.test.ts` cover writing and reading, terminal error
 ## Possible improvements
 
 - Add `validateFlags()`, and make `validateMetadata()` enforce rather than warn.
-- Merge the terminal-error METADATA write into the existing totals instead of replacing them.
