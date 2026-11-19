@@ -77,8 +77,8 @@ sequenceDiagram
     PP->>M: readFlags (for the summary) + terminalErrorExists() (before deletions)
 ```
 
-- **FLAGS** are written by every chunker task (`docker/chunker.ts`). DynamoDB mode skips the write if FLAGS exist; S3
-  mode rewrites `_flags.json` each time with the same values.
+- **FLAGS** are written by every chunker task (`docker/chunker.ts`). Both modes skip the write if FLAGS exist (S3 mode
+  checks for `_flags.json`), so the first task's flags stand; `replace: true` overwrites them.
 - **METADATA totals**: in an API run each chunker task adds its own `chunkCount` / `totalRecords` (and the end-of-records
   flag) as it finishes (`accumulateMetadataTotals()`): DynamoDB mode with an `UpdateItem` (`SET if_not_exists` + `ADD`),
   S3 mode with an ETag-conditional rewrite of `_metadata.json` (retried), then a best-effort copy to the statistics

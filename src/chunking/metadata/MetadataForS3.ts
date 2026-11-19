@@ -164,6 +164,8 @@ export class MetadataForS3 implements IMetadataStorage {
    * Write flags file to S3 before chunking starts.
    * This file contains only bulkReset and syncPopulation flags needed by processors.
    * Written early so processor tasks can read flags even before chunking completes.
+   * Every chunker task of a run calls this; unless replace is true, the first task's flags stand and later calls
+   * skip the write, as MetadataForDynamoDb.writeFlags() does with the FLAGS record.
    */
   public async writeFlags(params: WriteFlagsParams): Promise<void> {
     const {
@@ -224,6 +226,17 @@ export class MetadataForS3 implements IMetadataStorage {
       console.log(`[DRY RUN] Would write flags to: ${flagsLog}`);
       console.log(`[DRY RUN] Content: ${flagsJson}`);
     } else {
+      // Don't overwrite the flags an earlier task of the run wrote, unless asked to
+      if ( ! replace) {
+        const exists = this.storage
+          ? await this.storage.objectExists(flagsKey)
+          : await objectExistsInS3(bucketName, flagsKey, region);
+        if (exists) {
+          console.warn(`Flags file already exists at ${flagsLog}. Skipping write.`);
+          return;
+        }
+      }
+
       // Use provided storage adapter or create S3Client
       if (this.storage) {
         await this.storage.writeFile(flagsKey, flagsJson, 'application/json');
