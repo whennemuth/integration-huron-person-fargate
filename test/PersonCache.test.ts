@@ -155,6 +155,18 @@ describe('PersonCacheForS3', () => {
       expect(result).toHaveLength(0);
     });
 
+    it('should load config when none was given', async () => {
+      mockPersonTarget.getFullPopulationFromTarget.mockResolvedValue([]);
+      const loadedConfig = { loaded: true } as unknown as Config;
+      const { ConfigManager } = jest.requireMock('integration-huron-person');
+      ConfigManager.getInstance().getConfigAsync.mockResolvedValueOnce(loadedConfig);
+
+      const cache = new PersonCacheForS3({ personTarget: mockPersonTarget });
+      await cache.getFullPopulationFromTargetAPI();
+
+      expect(mockPersonTarget.getFullPopulationFromTarget).toHaveBeenCalledWith(loadedConfig);
+    });
+
     it('should propagate API errors', async () => {
       mockPersonTarget.getFullPopulationFromTarget.mockRejectedValue(new Error('API connection failed'));
 

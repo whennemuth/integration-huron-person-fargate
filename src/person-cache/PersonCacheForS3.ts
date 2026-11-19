@@ -2,7 +2,7 @@ import { S3 } from '@aws-sdk/client-s3';
 import { TestEnvironment } from 'integration-core';
 import { BasicCache, Config, ConfigManager, getLocalConfig, HuronPerson } from "integration-huron-person";
 import { AbstractPersonCache } from './AbstractPersonCache';
-import { AbstractPersonTarget } from './PersonTargetReal';
+import { AbstractPersonTarget, PersonTargetReal } from './PersonTargetReal';
 
 /**
  * S3-based person cache implementation.
@@ -256,7 +256,8 @@ export class PersonCacheForS3 extends AbstractPersonCache {
    * Calls ListPeople against config.dataTarget - the actual Huron API, or in a mock landscape the
    * target simulator that impersonates it.
    * 
-   * This is the source of truth for the cache.
+   * This is the source of truth for the cache. Uses the config given to the constructor, or loads it
+   * (HURON_PERSON_CONFIG_JSON, SECRET_ARN, environment overrides, HURON_PERSON_CONFIG_PATH).
    * 
    * @public Exposed primarily for testing, but can be called directly if needed.
    */
@@ -265,7 +266,7 @@ export class PersonCacheForS3 extends AbstractPersonCache {
     if (!personTarget) {
       throw new Error('PersonTarget is not initialized');
     }
-    return personTarget.getFullPopulationFromTarget(this.config);
+    return personTarget.getFullPopulationFromTarget(await this.getConfig());
   }
 
   /**
@@ -426,7 +427,9 @@ if (require.main === module) {
       'OUTPUT_FILE_PATH'
     ].forEach(testEnvironment.getVar);
 
-    const personCache = new PersonCacheForS3();
+    // The target API from config.dataTarget (the real Huron API, or a mock landscape's target simulator), as
+    // PersonCacheFactory uses; the config loads from the variables above on first use.
+    const personCache = new PersonCacheForS3({ personTarget: new PersonTargetReal() });
     const { PERSON_CACHE_BUCKET_NAME, PERSON_CACHE_KEY, REGION, OUTPUT_FILE_PATH } = process.env;
 
     if(OUTPUT_FILE_PATH) {
