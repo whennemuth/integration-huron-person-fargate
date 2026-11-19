@@ -37,21 +37,18 @@ export interface SourceSimulatorProps {
  * - Minimal field set: Returns only fields DataMapper uses
  * - Response structure matches real API: `[{ response_code: 200, response: [persons] }]`
  * 
- * **Usage in Runner.ts:**
- * ```typescript
- * const mockApiBaseUrl = testEnvironment.getVar('MOCK_API_BASE_URL');
- * const mockApiFetchPath = testEnvironment.getVar('MOCK_API_FETCH_PATH');
- * 
- * if (mockApiBaseUrl) {
- *   messageBody.baseUrl = mockApiBaseUrl;
- *   messageBody.fetchPath = mockApiFetchPath || '/';
- * }
- * ```
- * 
+ * **Usage with the Runner:** set RUNNER_SOURCE_SIMULATOR=true (a mock landscape only); the Runner looks up this
+ * function's URL itself (SourceSimulatorFunctionURL, src/chunking/fetch/SourceSimulator.ts), and any
+ * RUNNER_SOURCE_SIMULATOR_MOCK_* settings travel as query parameters in the run's fetchPath. More:
+ * docs/SOURCE_SIMULATOR.md.
+ *
  * **Environment Variables:**
  * - MOCK_TOTAL_POPULATION: Total persons available (e.g., 10000)
  * - MOCK_ERROR_RATE: Probability of simulated errors (0.0-1.0, default: 0.0)
- * - MOCK_API_KEY: Expected API key for validation
+ * - MOCK_SIMULATED_DELAY_SECONDS: Delay added to each response (default: 0)
+ * - SECRET_ARN: The config secret, whose dataSource.<people|person|terms>.endpointConfig.apiKey values are the API keys
+ *   requests must carry (x-api-key)
+ * - STACK_ID, REGION, LANDSCAPE: for the simulator's run counters
  */
 export class SourceSimulator extends Construct {
   public readonly function: NodejsFunction;
@@ -147,8 +144,8 @@ export class SourceSimulator extends Construct {
 
     // Output usage instructions
     new CfnOutput(this, 'SourceSimulatorUsage', {
-      value: `Set RUNNER_MOCK_API_BASE_URL="${this.functionUrl.replace(/\/$/, '')}" in Runner.ts environment`,
-      description: 'How to use the Source Simulator in Runner.ts',
+      value: 'Set RUNNER_SOURCE_SIMULATOR=true for the Runner, which looks up this URL itself',
+      description: 'How to use the Source Simulator with the Runner (src/runner/Runner.ts)',
     });
   }
 }

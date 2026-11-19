@@ -1,6 +1,6 @@
 import { Config } from 'integration-huron-person';
 import { SyncPopulation } from '../../../docker/chunkTypes';
-import { IMetadataStorage, MarkRunFailedParams, ReadMetadataParams, WriteFlagsParams, WriteMetadataParams } from './IMetadataStorage';
+import { IMetadataStorage, MarkRunFailedParams, ReadMetadataParams, RecordRunFailureParams, WriteFlagsParams, WriteMetadataParams } from './IMetadataStorage';
 import { MetadataFactory } from './MetadataFactory';
 
 export type MetadataBrokerParams = {
@@ -133,5 +133,13 @@ export class MetadataBroker {
   }): Promise<{ chunkCount: number; totalRecords: number }> {
     const { bucketName, chunkDirectory, region } = this;
     return this.metadata.accumulateMetadataTotals({ bucketName, chunkDirectory, region, ...params });
+  }
+
+  /**
+   * Merge the run's failure into its METADATA record, keeping the totals accumulated so far.
+   */
+  public async recordRunFailure(params: Omit<RecordRunFailureParams, 'bucketName' | 'chunkDirectory' | 'region'>): Promise<void> {
+    const { bucketName, chunkDirectory, region } = this;
+    await this.metadata.recordRunFailure({ bucketName, chunkDirectory, region, ...params });
   }
 }

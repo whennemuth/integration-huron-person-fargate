@@ -4,11 +4,13 @@
  * This module acts as a switchboard that routes to the appropriate post-processor
  * implementation based on storage mode detected from environment variables.
  * 
- * ## Storage Mode Detection
- * 
- * Uses the same logic as processor.ts router:
- * - If DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME or DYNAMODB_PERSON_HISTORY_TABLE_NAME is set → DynamoDB mode
- * - Otherwise → S3 mode (default)
+ * ## Storage Mode Selection
+ *
+ * Switches on PREVIOUS_STORAGE_TYPE, which CDK bakes into every task definition:
+ * - 's3' → S3 mode
+ * - 'dynamodb' → DynamoDB mode, which also requires both DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME and
+ *   DYNAMODB_PERSON_HISTORY_TABLE_NAME
+ * - unset, or any other value → throws
  * 
  * ## Architecture
  * 
@@ -27,23 +29,19 @@
  * 
  * BOTH modes need the post-processor service:
  * - S3 mode: File consolidation + deletion handling
- * - DynamoDB mode: Deletion handling only
- * 
- * The comment in lib/AppConstruct.ts stating "Only create post-processor service for file-based
- * delta storage" is INCORRECT. DynamoDB mode also needs post-processor for DeferredDeleteHandler.
+ * - DynamoDB mode: Deletion handling only (DeferredDeleteHandler)
  * 
  * ## Deployment
  * 
  * This single entry point is used for both modes:
  * - Docker image: Built once, contains both implementations
  * - ECS task: CMD="node dist/docker/post-processor.js"
- * - Environment variables determine which implementation runs
+ * - PREVIOUS_STORAGE_TYPE determines which implementation runs
  * 
  * ## Environment Variables
  * 
- * Mode Detection:
- * - DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME: If set, uses DynamoDB mode
- * - DYNAMODB_PERSON_HISTORY_TABLE_NAME: If set, uses DynamoDB mode
+ * Mode Selection:
+ * - PREVIOUS_STORAGE_TYPE: 's3' or 'dynamodb' (required)
  * 
  * Common Variables (both modes):
  * - SQS_QUEUE_URL: SQS queue URL for task parameters (ECS mode)
@@ -72,11 +70,7 @@ import { PostProcessorForDynamoDB } from '../src/post-processing/PostProcessorFo
 import { PostProcessorForS3 } from '../src/post-processing/PostProcessorForS3';
 
 /**
- * Route to appropriate post-processor based on storage mode.
- * 
- * Detection logic matches processor.ts router:
- * - Checks for DynamoDB-mode-specific table names
- * - Falls back to S3 mode if not found
+ * Route to appropriate post-processor based on storage mode (PREVIOUS_STORAGE_TYPE, as the processor router does).
  */
 async function main() {
   const { 

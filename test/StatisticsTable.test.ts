@@ -432,6 +432,15 @@ describe('StatisticsTable', () => {
       expect(putItems()).toContainEqual(runMarker);
     });
 
+    it('is written by mergeRunFailure', async () => {
+      dynamoMock.on(UpdateCommand).resolves({});
+      await statisticsTable.mergeRunFailure(integrationTimestamp, {
+        source: 's', chunkDirectory: 'c', itemsPerChunk: 1, bulkReset: false, trustPreviousStorage: false,
+        syncPopulation: 'p', deltaStoragePath: 'd', runFailureMessage: 'm', runFailureTimestamp: 't'
+      });
+      expect(putItems()).toContainEqual(runMarker);
+    });
+
     it('is backfilled once per distinct run', async () => {
       const other = '2026-05-15T12:00:00.000Z';
       dynamoMock.on(ScanCommand).resolves({ Items: [
@@ -630,6 +639,41 @@ describe('StatisticsTable', () => {
       const result = await statisticsTable.addToMetadataTotals(integrationTimestamp, baseParams);
 
       expect(result).toEqual({ chunkCount: 0, totalRecords: 0 });
+    });
+  });
+
+  describe('mergeRunFailure', () => {
+    const params = {
+      source: 'https://api.example.com/people',
+      chunkDirectory: 'chunks/person-full/2026-05-14T12:00:00.000Z',
+      itemsPerChunk: 200,
+      bulkReset: false,
+      trustPreviousStorage: true,
+      syncPopulation: 'person-full',
+      deltaStoragePath: 'deltas/person-full/2026-05-14T12:00:00.000Z',
+      runFailureMessage: 'retries exhausted',
+      runFailureTimestamp: '2026-05-14T12:30:00.000Z'
+    };
+
+    it('SETs the failure fields on METADATA without touching the totals', async () => {
+      dynamoMock.on(UpdateCommand).resolves({});
+      dynamoMock.on(BatchWriteCommand).resolves({});
+
+      await statisticsTable.mergeRunFailure(integrationTimestamp, params);
+
+      const updates = dynamoMock.commandCalls(UpdateCommand);
+      expect(updates).toHaveLength(1);
+      const { Key, UpdateExpression, ExpressionAttributeNames, ExpressionAttributeValues } = updates[0].args[0].input;
+      expect(Key).toEqual({ integrationTimestamp, eventType: 'METADATA' });
+      expect(UpdateExpression).toContain('#runFailed = :runFailed');
+      expect(UpdateExpression).toContain('#runFailureMessage = :runFailureMessage');
+      expect(UpdateExpression).toContain('if_not_exists(#source, :source)');
+      expect(UpdateExpression).not.toContain('ADD');
+      expect(UpdateExpression).not.toContain('chunkCount');
+      expect(ExpressionAttributeNames).not.toHaveProperty('#chunkCount');
+      expect(ExpressionAttributeValues).toMatchObject({
+        ':runFailed': true, ':runFailureMessage': 'retries exhausted', ':runFailureTimestamp': '2026-05-14T12:30:00.000Z'
+      });
     });
   });
 

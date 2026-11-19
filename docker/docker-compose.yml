@@ -1,16 +1,15 @@
-version: '3.8'
-
 # Docker Compose configuration for local development and testing
 # 
 # AWS Credentials:
 #   Uses AWS_PROFILE environment variable to reference profiles in ~/.aws/credentials
-#   The ~/.aws directory is mounted read-only, providing access to:
+#   The ~/.aws directory is mounted read-only at the home of the image's user (nodejs: /home/nodejs, not /root,
+#   which that user can't read), providing access to:
 #     - ~/.aws/credentials (access keys per profile)
 #     - ~/.aws/config (region and other settings per profile)
 #
 # Usage:
-#   Normal mode:    docker-compose up chunker
-#   Manual mode:    docker-compose -f docker-compose.yml -f docker-compose.manual.yml up -d chunker
+#   Normal mode:    docker-compose up --no-deps chunker   (or ./run.sh chunker)
+#   Manual mode:    docker-compose -f docker-compose.yml -f docker-compose.manual.yml up -d --no-deps chunker
 #                   docker exec -it huron-chunker sh
 #
 # Note: In Fargate, these containers use IAM roles instead of profiles
@@ -30,7 +29,7 @@ services:
       - ./chunker.env
     volumes:
       # Mount AWS credentials/config directory (read-only)
-      - ~/.aws:/root/.aws:ro
+      - ~/.aws:/home/nodejs/.aws:ro
     networks:
       - huron-network
 
@@ -48,7 +47,7 @@ services:
       - ./processor.env
     volumes:
       # Mount AWS credentials/config directory (read-only)
-      - ~/.aws:/root/.aws:ro
+      - ~/.aws:/home/nodejs/.aws:ro
     networks:
       - huron-network
     depends_on:
@@ -68,7 +67,7 @@ services:
       - ./post-processor.env
     volumes:
       # Mount AWS credentials/config directory (read-only)
-      - ~/.aws:/root/.aws:ro
+      - ~/.aws:/home/nodejs/.aws:ro
     networks:
       - huron-network
     depends_on:

@@ -177,6 +177,64 @@ describe('MetadataForS3.accumulateMetadataTotals', () => {
     expect(sendSpy.mock.calls.filter(([c]) => c instanceof PutObjectCommand)).toHaveLength(1);
   });
 
+  describe('recordRunFailure', () => {
+    const failure = { runFailureMessage: 'retries exhausted', runFailureTimestamp: '2026-10-24T18:00:00.000Z' };
+    const failureParams = (overrides: Record<string, any> = {}) => {
+      const { chunkCountDelta, totalRecordsDelta, ...rest } = params(overrides);
+      return { ...rest, ...failure };
+    };
+
+    it('merges the failure into _metadata.json, keeping the run totals and end-of-records flag', async () => {
+      const metadata = newMetadata();
+      await metadata.accumulateMetadataTotals(params({ chunkCountDelta: 4, totalRecordsDelta: 800, partialOrEmptyChunkEncountered: true }));
+      const { createdAt } = storedMetadata();
+
+      await metadata.recordRunFailure(failureParams({ source: 'https://elsewhere.example.com' }));
+
+      expect(puts[1].IfMatch).toBe('"etag-1"');
+      expect(storedMetadata()).toEqual(expect.objectContaining({
+        chunkCount: 4, totalRecords: 800, partialOrEmptyChunkEncountered: true, createdAt,
+        source: 'https://source.example.com/person?buid=U0000144',
+        runFailed: true, ...failure
+      }));
+    });
+
+    it('creates _metadata.json with the run description when no task has written it yet', async () => {
+      await newMetadata().recordRunFailure(failureParams());
+
+      expect(puts[0].IfNoneMatch).toBe('*');
+      expect(storedMetadata()).toEqual(expect.objectContaining({
+        chunkDirectory, itemsPerChunk: 200, syncPopulation: 'person-delta', runFailed: true, ...failure
+      }));
+      expect(storedMetadata().chunkCount).toBeUndefined();
+    });
+
+    it('re-reads after losing a race, so another task\'s totals are not lost', async () => {
+      const metadata = newMetadata();
+      await metadata.accumulateMetadataTotals(params({ chunkCountDelta: 1, totalRecordsDelta: 200 }));
+
+      const realSend = sendSpy.getMockImplementation()!;
+      let interfered = false;
+      sendSpy.mockImplementation(async (command: any) => {
+        if (command instanceof PutObjectCommand && !interfered) {
+          interfered = true;
+          const other = { ...JSON.parse(stored!.body), chunkCount: 2, totalRecords: 400 };
+          stored = { body: JSON.stringify(other), etag: `"etag-${++etagCounter}"` };
+        }
+        return realSend(command);
+      });
+
+      await metadata.recordRunFailure(failureParams());
+
+      expect(storedMetadata()).toEqual(expect.objectContaining({ chunkCount: 2, totalRecords: 400, runFailed: true }));
+    });
+
+    it('writes nothing in a dry run', async () => {
+      await newMetadata().recordRunFailure(failureParams({ dryRun: true }));
+      expect(sendSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('statistics copy', () => {
     it('does not touch the statistics table when none is configured', async () => {
       const fromTableName = jest.spyOn(StatisticsTable, 'fromTableName');

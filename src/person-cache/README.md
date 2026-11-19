@@ -302,6 +302,9 @@ PERSON_CACHE_PERSON_CACHE_BUCKET_NAME=my-bucket
 PERSON_CACHE_PERSON_CACHE_KEY=chunks/person-full/2026-08-13T10:30:00.000Z/_personCache.txt
 PERSON_CACHE_REGION=us-east-2
 PERSON_CACHE_OUTPUT_FILE_PATH=./cache-output.txt  # Optional for local file
+# The config, for the target API: one of
+PERSON_CACHE_SECRET_ARN=arn:aws:secretsmanager:...
+PERSON_CACHE_HURON_PERSON_CONFIG_PATH=../integration-huron-person/config/config.json
 ```
 
 **Execution**:
@@ -309,9 +312,9 @@ PERSON_CACHE_OUTPUT_FILE_PATH=./cache-output.txt  # Optional for local file
 npx ts-node src/person-cache/PersonCacheForS3.ts
 ```
 
-**Known issue**: the harness constructs `new PersonCacheForS3()` without a `personTarget` or config, so building the
-cache fails with `PersonTarget is not initialized` until the harness passes them (e.g. `{ personTarget: new
-PersonTargetReal() }` after loading config). Keep the key ending in `_personCache.txt`: the lock key is derived from it.
+The harness builds the cache as `PersonCacheFactory` does, with `{ personTarget: new PersonTargetReal() }`; the config
+loads from the variables above when the population is first fetched. Keep the key ending in `_personCache.txt`: the
+lock key is derived from it.
 
 ## API Reference
 

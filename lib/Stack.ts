@@ -109,8 +109,8 @@ export class IntegrationHuronPersonLambdaStack extends Stack {
 
       // Output usage instructions
       new CfnOutput(this, 'SourceSimulatorUsage', {
-        value: `Set RUNNER_MOCK_API_BASE_URL="${functionUrl.replace(/\/$/, '')}" in Runner.ts environment`,
-        description: 'How to use the Source Simulator in Runner.ts',
+        value: 'Set RUNNER_SOURCE_SIMULATOR=true for the Runner, which looks up this URL itself',
+        description: 'How to use the Source Simulator with the Runner (src/runner/Runner.ts)',
       });
     }
 

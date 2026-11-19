@@ -89,7 +89,7 @@ export type AbstractDynamoDbTable = {
  *   sortKey: 'timestamp' // optional
  * });
  * 
- * const items = await table.queryByPartitionKey('user-123');
+ * const items = await table.queryByPartitionKey({ partitionKeyValue: 'user-123' });
  * ```
  */
 export class DynamoDBTable implements AbstractDynamoDbTable {

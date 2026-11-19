@@ -10,6 +10,7 @@ import {
   ReadFlagsParams,
   ReadMetadataParams,
   ReadTerminalErrorParams,
+  RecordRunFailureParams,
   TerminalError,
   WriteFlagsParams,
   WriteMetadataParams
@@ -387,5 +388,29 @@ export class MetadataForDynamoDb implements IMetadataStorage {
       source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage,
       syncPopulation, deltaStoragePath, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
     });
+  }
+
+  /**
+   * Merge the run's failure into its METADATA record with an UpdateItem, keeping the totals accumulated so far.
+   */
+  public async recordRunFailure(params: RecordRunFailureParams): Promise<void> {
+    const {
+      chunkDirectory, source, target, itemsPerChunk, bulkReset, trustPreviousStorage,
+      syncPopulation, runFailureMessage, runFailureTimestamp, dryRun = false
+    } = params;
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
+
+    if (dryRun) {
+      console.log(`[DRY RUN] Would merge run failure into DynamoDB METADATA: syncRunId=${syncRunId}`);
+      console.log(`[DRY RUN] Content: ${JSON.stringify({ runFailed: true, runFailureMessage, runFailureTimestamp }, null, 2)}`);
+      return;
+    }
+
+    const deltaStoragePath = this.metadataUtils.deriveDeltaStoragePath(chunkDirectory);
+    await this.statisticsTable.mergeRunFailure(syncRunId, {
+      source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage,
+      syncPopulation, deltaStoragePath, runFailureMessage, runFailureTimestamp
+    });
+    console.log(`✓ Run failure merged into DynamoDB METADATA: syncRunId=${syncRunId}`);
   }
 }

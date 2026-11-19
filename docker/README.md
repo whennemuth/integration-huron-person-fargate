@@ -38,7 +38,7 @@ exporting `main()`:
 **Mode selection:** both routers switch on `PREVIOUS_STORAGE_TYPE` (`s3` or `dynamodb`), which CDK bakes into every
 task definition. It must be set, and any other value throws. `dynamodb` also requires both
 `DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME` and `DYNAMODB_PERSON_HISTORY_TABLE_NAME`. (`MetadataFactoryForBootstrap`, in
-`src/chunking/metadata/MetadataFactory.ts`, decides by the person tables' variables instead.)
+`src/chunking/metadata/MetadataFactory.ts`, switches on it too, but in `dynamodb` mode needs only one of the two.)
 
 **Local Development (docker-compose):**
 - Reads `CHUNKS_BUCKET` and `CHUNK_KEY` environment variables
@@ -123,8 +123,9 @@ DynamoDB mode's. More: [docs/STORAGE_MODES.md](../docs/STORAGE_MODES.md).
   `example-env-s3.md` and `example-env-dynamodb.md`
 - `build.sh` - builds the image with `docker buildx` (ARM64, Docker v2 manifest); `npm run docker-build`
 - `push.sh` - ECR login, tag and push; `npm run docker-push`. `publish.sh` builds then pushes; `npm run docker-publish`
-- `run.sh` - `npm run chunker` / `processor` / `post-processor`: checks the variables and **prints** the docker-compose
-  command (its `docker-compose up` lines are commented out), so run that command yourself
+- `run.sh` - `npm run chunker` / `processor` / `post-processor` (and `*-debug` for manual mode): checks the phase's
+  env file names `PREVIOUS_STORAGE_TYPE` (and warns without `AWS_PROFILE`), then runs that phase alone with
+  `docker compose up --no-deps`, exiting with the container's exit code
 - `../.dockerignore` - files to exclude from the build context
 - `SECURITY.md` - security notes and vulnerability mitigation
 
@@ -141,13 +142,16 @@ This builds an ARM64 image for Graviton2 processors (~20% cost savings on AWS Fa
 ### Run Locally (Normal Mode)
 
 Set the variables in `docker/chunker.env`, `processor.env` or `post-processor.env`: the compose services read only
-those files, so variables exported in your shell don't reach the container. Then, from `docker/`:
+those files, so variables exported in your shell don't reach the container. Then, from the repo root:
 
 ```bash
-docker-compose up chunker
-docker-compose up processor        # with CHUNK_KEY=chunks/person-full/<syncRunId>/chunk-0000.ndjson in processor.env
-docker-compose up post-processor   # with CHUNK_DIRECTORY=chunks/person-full/<syncRunId> in post-processor.env
+npm run chunker
+npm run processor        # with CHUNK_KEY=chunks/person-full/<syncRunId>/chunk-0000.ndjson in processor.env
+npm run post-processor   # with CHUNK_DIRECTORY=chunks/person-full/<syncRunId> in post-processor.env
 ```
+
+or, from `docker/`, `./run.sh <phase>` or `docker compose up --no-deps <phase>`. Without `--no-deps`, compose also
+starts the phases the service `depends_on` (the processor starts the chunker; the post-processor starts both).
 
 ### Run in Manual/Debug Mode
 
@@ -155,8 +159,8 @@ Manual mode keeps the container running without executing the node command, so y
 interactively.
 
 ```bash
-# Start in manual mode
-docker-compose -f docker-compose.yml -f docker-compose.manual.yml up -d processor
+# Start in manual mode (or: npm run processor-debug)
+docker-compose -f docker-compose.yml -f docker-compose.manual.yml up -d --no-deps processor
 
 # Shell in
 docker exec -it huron-processor sh
@@ -181,9 +185,9 @@ docker-compose down
 
 ### AWS Credentials
 **For Local Development:** set `AWS_PROFILE` in the phase's `.env` file. Compose mounts your `~/.aws` directory
-read-only at `/root/.aws`. Note that the image runs as the non-root user `nodejs`, whose home isn't `/root`; if the SDK
-can't find your profile, point it there with `AWS_SHARED_CREDENTIALS_FILE=/root/.aws/credentials` and
-`AWS_CONFIG_FILE=/root/.aws/config` (not verified), or mount the directory at the `nodejs` user's home.
+read-only at `/home/nodejs/.aws`, the home of the image's non-root user `nodejs`, where the SDK looks for it. (Not
+`/root/.aws`: the SDK wouldn't look there, and `nodejs` can't read `/root`.) Being read-only, the mount can't take a
+refreshed SSO token: for an SSO profile, log in on the host (`aws sso login`) before running.
 
 **For AWS Fargate:**
 - Credentials are provided via IAM task roles
@@ -291,8 +295,7 @@ See `SECURITY.md` for vulnerability analysis and mitigation strategies.
 1. Check your `~/.aws/credentials` file exists and contains profiles
 2. Verify `AWS_PROFILE` matches a profile name in credentials file
 3. Test credentials outside Docker: `aws s3 ls --profile infnprd`
-4. Check the volume mount is working: `docker exec -it huron-chunker cat /root/.aws/credentials`, and see the note on
-   the `nodejs` user above
+4. Check the volume mount is working: `docker exec -it huron-chunker ls /home/nodejs/.aws`
 
 **Profile-specific region not used:**
 - Set `REGION` environment variable explicitly, or
@@ -322,8 +325,8 @@ See `SECURITY.md` for vulnerability analysis and mitigation strategies.
 ### Manual Mode Debugging
 
 ```bash
-# Start in manual mode (from docker/)
-docker-compose -f docker-compose.yml -f docker-compose.manual.yml up -d chunker
+# Start in manual mode (from docker/; or: npm run chunker-debug)
+docker-compose -f docker-compose.yml -f docker-compose.manual.yml up -d --no-deps chunker
 
 # Shell in
 docker exec -it huron-chunker sh

@@ -13,6 +13,7 @@ import {
   ReadFlagsParams,
   ReadMetadataParams,
   ReadTerminalErrorParams,
+  RecordRunFailureParams,
   TerminalError,
   WriteFlagsParams,
   WriteMetadataParams
@@ -164,6 +165,8 @@ export class MetadataForS3 implements IMetadataStorage {
    * Write flags file to S3 before chunking starts.
    * This file contains only bulkReset and syncPopulation flags needed by processors.
    * Written early so processor tasks can read flags even before chunking completes.
+   * Every chunker task of a run calls this; unless replace is true, the first task's flags stand and later calls
+   * skip the write, as MetadataForDynamoDb.writeFlags() does with the FLAGS record.
    */
   public async writeFlags(params: WriteFlagsParams): Promise<void> {
     const {
@@ -224,6 +227,17 @@ export class MetadataForS3 implements IMetadataStorage {
       console.log(`[DRY RUN] Would write flags to: ${flagsLog}`);
       console.log(`[DRY RUN] Content: ${flagsJson}`);
     } else {
+      // Don't overwrite the flags an earlier task of the run wrote, unless asked to
+      if ( ! replace) {
+        const exists = this.storage
+          ? await this.storage.objectExists(flagsKey)
+          : await objectExistsInS3(bucketName, flagsKey, region);
+        if (exists) {
+          console.warn(`Flags file already exists at ${flagsLog}. Skipping write.`);
+          return;
+        }
+      }
+
       // Use provided storage adapter or create S3Client
       if (this.storage) {
         await this.storage.writeFile(flagsKey, flagsJson, 'application/json');
@@ -507,26 +521,97 @@ export class MetadataForS3 implements IMetadataStorage {
     if (!bucketName) {
       throw new Error('bucketName is required for S3 metadata operations');
     }
-    const metadataKey = this.metadataUtils.getMetadataKey(chunkDirectory);
     const deltaStoragePath = this.metadataUtils.deriveDeltaStoragePath(chunkDirectory);
+
+    const { updated, attempt, metadataLog } = await this.updateMetadataConditionally({
+      bucketName, chunkDirectory, region, what: 'run totals',
+      update: existing => {
+        const updated: ChunkMetadata = {
+          ...this.newMetadataFields({ chunkDirectory, source, target, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation }),
+          ...existing, // Fields already in the file win - they were set by whichever task wrote first
+          chunkCount: (existing?.chunkCount ?? 0) + chunkCountDelta,
+          totalRecords: (existing?.totalRecords ?? 0) + totalRecordsDelta
+        } as ChunkMetadata;
+        if (partialOrEmptyChunkEncountered) {
+          updated.partialOrEmptyChunkEncountered = true;
+        }
+        return updated;
+      }
+    });
+    console.log(`✓ Metadata totals updated (attempt ${attempt}): ${metadataLog} ` +
+      `[chunkCount=${updated.chunkCount}, totalRecords=${updated.totalRecords}` +
+      `${updated.partialOrEmptyChunkEncountered ? ', partialOrEmptyChunkEncountered=true' : ''}]`);
+
+    await this.copyTotalsToStatistics(params, deltaStoragePath);
+    return { chunkCount: updated.chunkCount!, totalRecords: updated.totalRecords! };
+  }
+
+  /**
+   * Merge the run's failure into _metadata.json with the same conditional read-modify-write as
+   * accumulateMetadataTotals(), so the run totals the file already holds survive.
+   */
+  public async recordRunFailure(params: RecordRunFailureParams): Promise<void> {
+    const {
+      bucketName, chunkDirectory, region, source, target, itemsPerChunk, bulkReset, trustPreviousStorage,
+      syncPopulation, runFailureMessage, runFailureTimestamp, dryRun = false
+    } = params;
+    if (!bucketName) {
+      throw new Error('bucketName is required for S3 metadata operations');
+    }
+    const failure = { runFailed: true, runFailureMessage, runFailureTimestamp };
+
+    if (dryRun) {
+      const metadataKey = this.metadataUtils.getMetadataKey(chunkDirectory);
+      console.log(`[DRY RUN] Would merge run failure into: s3://${bucketName}/${metadataKey}`);
+      console.log(`[DRY RUN] Content: ${JSON.stringify(failure, null, 2)}`);
+      return;
+    }
+
+    const { attempt, metadataLog } = await this.updateMetadataConditionally({
+      bucketName, chunkDirectory, region, what: 'run failure',
+      update: existing => ({
+        ...this.newMetadataFields({ chunkDirectory, source, target, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation }),
+        ...existing,
+        ...failure
+      } as ChunkMetadata)
+    });
+    console.log(`✓ Run failure merged into metadata (attempt ${attempt}): ${metadataLog}`);
+  }
+
+  /**
+   * The descriptive fields a new _metadata.json starts with; a merge spreads the existing file over them.
+   */
+  private newMetadataFields = (params: Pick<ChunkMetadata,
+    'chunkDirectory' | 'source' | 'target' | 'itemsPerChunk' | 'bulkReset' | 'trustPreviousStorage' | 'syncPopulation'>
+  ): ChunkMetadata => {
+    const { chunkDirectory, source, target, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation } = params;
+    return {
+      source, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation,
+      deltaStoragePath: this.metadataUtils.deriveDeltaStoragePath(chunkDirectory),
+      createdAt: new Date().toISOString(),
+      ...(target !== undefined ? { target } : {})
+    };
+  }
+
+  /**
+   * Conditional read-modify-write of _metadata.json: read it with its ETag, apply update, and write the result back
+   * only if the file hasn't changed since (IfMatch) or still doesn't exist (IfNoneMatch), retrying with backoff when
+   * another task's write wins the race.
+   * @throws If the write keeps losing races after TOTALS_MAX_ATTEMPTS attempts
+   */
+  private updateMetadataConditionally = async (params: {
+    bucketName: string; chunkDirectory: string; region?: string; what: string;
+    update: (existing: Partial<ChunkMetadata> | undefined) => ChunkMetadata;
+  }): Promise<{ updated: ChunkMetadata; attempt: number; metadataLog: string }> => {
+    const { bucketName, chunkDirectory, region, what, update } = params;
+    const metadataKey = this.metadataUtils.getMetadataKey(chunkDirectory);
     const metadataLog = `s3://${bucketName}/${metadataKey}`;
     const s3Client = new S3Client({ region });
     const maxAttempts = MetadataForS3.TOTALS_MAX_ATTEMPTS;
 
     for (let attempt = 1; ; attempt++) {
       const { metadata: existing, etag } = await this.readMetadataWithETag(s3Client, bucketName, metadataKey);
-
-      const updated: ChunkMetadata = {
-        source, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation, deltaStoragePath,
-        createdAt: new Date().toISOString(),
-        ...(target !== undefined ? { target } : {}),
-        ...existing, // Fields already in the file win - they were set by whichever task wrote first
-        chunkCount: (existing?.chunkCount ?? 0) + chunkCountDelta,
-        totalRecords: (existing?.totalRecords ?? 0) + totalRecordsDelta
-      } as ChunkMetadata;
-      if (partialOrEmptyChunkEncountered) {
-        updated.partialOrEmptyChunkEncountered = true;
-      }
+      const updated = update(existing);
 
       try {
         await s3Client.send(new PutObjectCommand({
@@ -536,23 +621,18 @@ export class MetadataForS3 implements IMetadataStorage {
           ContentType: 'application/json',
           ...(etag ? { IfMatch: etag } : { IfNoneMatch: '*' })
         }));
-        console.log(`✓ Metadata totals updated (attempt ${attempt}): ${metadataLog} ` +
-          `[chunkCount=${updated.chunkCount}, totalRecords=${updated.totalRecords}` +
-          `${updated.partialOrEmptyChunkEncountered ? ', partialOrEmptyChunkEncountered=true' : ''}]`);
-
-        await this.copyTotalsToStatistics(params, deltaStoragePath);
-        return { chunkCount: updated.chunkCount!, totalRecords: updated.totalRecords! };
+        return { updated, attempt, metadataLog };
       }
       catch (error: any) {
         if (!isConditionalWriteConflict(error)) {
           throw error;
         }
         if (attempt >= maxAttempts) {
-          throw new Error(`Could not update run totals in ${metadataLog}: it kept changing under ` +
+          throw new Error(`Could not update ${what} in ${metadataLog}: it kept changing under ` +
             `this task's conditional write (${maxAttempts} attempts)`);
         }
         const delayMs = Math.min(100 * 2 ** (attempt - 1), 3000) + Math.floor(Math.random() * 100);
-        console.log(`Metadata totals write lost a race with another task (attempt ${attempt}) - retrying in ${delayMs}ms`);
+        console.log(`Metadata ${what} write lost a race with another task (attempt ${attempt}) - retrying in ${delayMs}ms`);
         await new Promise(resolve => setTimeout(resolve, delayMs));
       }
     }

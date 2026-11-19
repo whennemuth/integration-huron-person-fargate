@@ -189,6 +189,25 @@ export interface AccumulateMetadataTotalsParams {
   partialOrEmptyChunkEncountered?: boolean;
 }
 
+/**
+ * The run's failure, merged into its METADATA by recordRunFailure(). The descriptive fields only fill in a record no
+ * task has written yet.
+ */
+export interface RecordRunFailureParams {
+  bucketName?: string;
+  chunkDirectory: string;
+  region?: string;
+  source: string;
+  target?: string;
+  itemsPerChunk: number;
+  bulkReset: boolean;
+  trustPreviousStorage: boolean;
+  syncPopulation: SyncPopulation;
+  runFailureMessage: string;
+  runFailureTimestamp: string;
+  dryRun?: boolean;
+}
+
 
 /**
  * IMetadataStorage - Core metadata storage operations interface
@@ -305,4 +324,12 @@ export interface IMetadataStorage {
    * record, creating it (with one-time descriptive fields) on first contribution.
    */
   accumulateMetadataTotals(params: AccumulateMetadataTotalsParams): Promise<{ chunkCount: number; totalRecords: number }>;
+
+  /**
+   * Merge the run's failure (runFailed, runFailureMessage, runFailureTimestamp) into its METADATA record, keeping
+   * everything already there (the run totals accumulateMetadataTotals() built, partialOrEmptyChunkEncountered), and
+   * creating the record if no task has written it yet. Diagnostic only: the TERMINAL_ERROR marker (markRunFailed())
+   * is what stops the run.
+   */
+  recordRunFailure(params: RecordRunFailureParams): Promise<void>;
 }

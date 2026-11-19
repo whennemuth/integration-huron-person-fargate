@@ -68,7 +68,7 @@ describe('termsEndpoint propagation', () => {
 
   it('S3-mode flags include it when present', async () => {
     const writeFile = jest.fn().mockResolvedValue(undefined);
-    const metadata = new MetadataForS3({ config, storage: { writeFile } as any });
+    const metadata = new MetadataForS3({ config, storage: { writeFile, objectExists: async () => false } as any });
 
     await metadata.writeFlags({
       bucketName: 'bucket', chunkDirectory: 'chunks/person-full/2026-01-01T00:00:00.000Z',
