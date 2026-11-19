@@ -386,6 +386,36 @@ DASHBOARD_LAUNCH_FLAG_REGION=<aws-region>
 # raise: how long the made-up launch stands (default 5)
 DASHBOARD_LAUNCH_FLAG_LIFETIME_MINUTES=5
 
+# ------- Harness Groups for dashboard\src\authorization\RoleAssignmentStore.ts ------- #
+# A landscape's role assignments, in its dashboard's access table (<STACK_ID>-access-<landscape>). Also how the first
+# Admin is seeded after the dashboard is deployed (README, "Dashboard access")
+# TASK options: list | get | set (replace PRINCIPAL's roles with ROLES; empty removes them all) | grant | revoke
+DASHBOARD_ROLE_ASSIGNMENTS_TASK=list
+DASHBOARD_ROLE_ASSIGNMENTS_LANDSCAPE=<landscape>
+DASHBOARD_ROLE_ASSIGNMENTS_REGION=<aws-region>
+# The dashboard's STACK_ID (default hp-dashboard)
+# DASHBOARD_ROLE_ASSIGNMENTS_STACK_ID=hp-dashboard
+# get, set, grant, revoke: a buPrincipal or <id>@bu.edu
+DASHBOARD_ROLE_ASSIGNMENTS_PRINCIPAL=<buPrincipal>
+# set, grant, revoke: comma-delimited, from RunViewer, PersonViewer, Viewer, PersonOperator, PipelineOperator, Operator, Admin
+DASHBOARD_ROLE_ASSIGNMENTS_ROLES=Admin
+# Recorded with each role added (default harness)
+# DASHBOARD_ROLE_ASSIGNMENTS_GRANTED_BY=<your-buPrincipal>
+
+# ------- Harness Groups for dashboard\src\audit\AuditStore.ts ------- #
+# A landscape's audit trail, in its dashboard's audit table (<STACK_ID>-audit-<landscape>). Read only
+# TASK options: list (newest first)
+DASHBOARD_AUDIT_TRAIL_TASK=list
+DASHBOARD_AUDIT_TRAIL_LANDSCAPE=<landscape>
+DASHBOARD_AUDIT_TRAIL_REGION=<aws-region>
+# DASHBOARD_AUDIT_TRAIL_STACK_ID=hp-dashboard
+# Optional filters: one person's (a buPrincipal, <id>@bu.edu or anonymous), one action's (e.g. bulk:start)
+# DASHBOARD_AUDIT_TRAIL_PRINCIPAL=<buPrincipal>
+# DASHBOARD_AUDIT_TRAIL_ACTION=<action>
+# Page size (default 50, at most 100), and the cursor a previous page printed
+# DASHBOARD_AUDIT_TRAIL_LIMIT=50
+# DASHBOARD_AUDIT_TRAIL_CURSOR=<cursor>
+
 # ------- Harness Groups for dashboard\src\ShibbolethSecret.ts ------- #
 # Reads or creates the active landscape's dashboard Shibboleth secret (DASHBOARD.SHIBBOLETH.secret in context/context.json)
 # TASK options: read (which values exist; prints only the public ones) | create (fails if the secret exists)

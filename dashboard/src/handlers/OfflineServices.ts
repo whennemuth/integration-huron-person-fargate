@@ -2,6 +2,7 @@
 // AWS access (LOCAL_OFFLINE=true, the launcher's OFFLINE switch). Not to be confused with a mock landscape, whose
 // pipeline's target is mocked: --landscape mock plays one.
 import { LaunchFlag } from '../services/LaunchFlag';
+import type { RequestAuthorizer } from '../authorization/Authorizer';
 import {
   PersonLookupService,
   PersonSyncService,
@@ -211,12 +212,12 @@ export class OfflineBulkSyncService implements BulkSyncService {
     return this.service.describe();
   }
 
-  plan(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncPlan> {
-    return this.service.plan(request, startedBy);
+  plan(request: BulkSyncRequestBody, startedBy?: StartedBy, authorizer?: RequestAuthorizer): Promise<BulkSyncPlan> {
+    return this.service.plan(request, startedBy, authorizer);
   }
 
-  start(request: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncResult> {
-    return this.service.start(request, startedBy);
+  start(request: BulkSyncRequestBody, startedBy?: StartedBy, authorizer?: RequestAuthorizer): Promise<BulkSyncResult> {
+    return this.service.start(request, startedBy, authorizer);
   }
 
   resetState(): Promise<MockLandscapeResetState> {

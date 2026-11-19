@@ -260,6 +260,35 @@ the token's 7 days), each landscape prompts again. To let landscapes share one s
 - `sharedSignIn` needs `ORIGIN.subdomain` and `AUTHENTICATION_MODE` `authenticated`, and can't be
   combined with `SHIBBOLETH.cookieName` or `cookieDomain` in the context; synth fails otherwise.
 
+## Dashboard access
+
+A landscape's dashboard decides who may do what by role (RunViewer, PersonViewer, Viewer, PersonOperator, PipelineOperator, Operator, Admin), held per person in the
+landscape's own access table, `<dashboard STACK_ID>-access-<landscape>` (e.g. `hp-dashboard-access-staging`).
+A signed-in user with no role sees the pages but none of their data. The Lambda verifies the sign-in token with the
+JWT public key of the landscape's Shibboleth secret, which synth reads (it fails if the secret has none).
+Admins manage roles on the dashboard's Access page (Administration), one person at a time or several at once: the
+page lists everyone's `buPrincipal` below its table, to copy into another landscape's "Give roles to several people"
+form, which gives the roles only to those who hold none yet. The table is created with the dashboard stack, empty, and destroyed with it,
+so after a landscape's dashboard is first deployed (or redeployed after a teardown), seed the first Admin by hand.
+A person is named by their `buPrincipal` (their BU login, e.g. `jdoe`; `jdoe@bu.edu` is accepted by the harness).
+
+With the harness (`DASHBOARD_ROLE_ASSIGNMENTS` group in `.env`, see `example-env.md`):
+
+```bash
+export AWS_PROFILE=<profile>
+DASHBOARD_ROLE_ASSIGNMENTS_TASK=grant DASHBOARD_ROLE_ASSIGNMENTS_LANDSCAPE=staging DASHBOARD_ROLE_ASSIGNMENTS_REGION=us-east-2 DASHBOARD_ROLE_ASSIGNMENTS_PRINCIPAL=jdoe DASHBOARD_ROLE_ASSIGNMENTS_ROLES=Admin npx ts-node -r dotenv/config dashboard/src/authorization/RoleAssignmentStore.ts
+```
+
+`list`, `get`, `set` (replace a person's roles), `grant` and `revoke` are its tasks. Or with the AWS CLI (one item
+per role held):
+
+```bash
+aws dynamodb put-item --region us-east-2 --table-name hp-dashboard-access-staging   --item '{"buPrincipal":{"S":"jdoe"},"sk":{"S":"Admin"},"grantedBy":{"S":"seed"},"grantedAt":{"S":"2026-11-17T00:00:00.000Z"}}'
+```
+
+The landscape's audit trail is in `<dashboard STACK_ID>-audit-<landscape>`, readable with the `DASHBOARD_AUDIT_TRAIL`
+harness (`dashboard/src/audit/AuditStore.ts`, task `list`).
+
 ## Test Harnesses
 
 Test harnesses are executable modules that verify individual components using environment-based configuration via the `TestEnvironment` utility from `integration-core`. Each harness loads its own prefixed environment variables and validates component behavior in isolation.
@@ -271,7 +300,7 @@ Harness configuration is documented in [example-env.md](./example-env.md). The f
 - **Post-processing Pipeline**: `DeferredDeleteHandler`, `PersonCache`, `StatisticsTable`
 - **Docker Entry Points**: `chunker.ts`, `processor.ts`, `post-processor.ts`
 - **Storage & Error Handling**: `S3StorageAdapter`, `ApiErrorTracking`, `EcrChecker`
-- **Dashboard**: `ServiceProvider` (`dashboard/src/services/ServiceProvider.ts` - the dashboard's services, called as its handler calls them: run reporting, landscape registry, person lookup and sync preview), `ShibbolethSecret` (`dashboard/src/ShibbolethSecret.ts` - reads or creates the dashboard's Shibboleth secret)
+- **Dashboard**: `ServiceProvider` (`dashboard/src/services/ServiceProvider.ts` - the dashboard's services, called as its handler calls them: run reporting, landscape registry, person lookup and sync preview), `ShibbolethSecret` (`dashboard/src/ShibbolethSecret.ts` - reads or creates the dashboard's Shibboleth secret), `RoleAssignmentStore` (`dashboard/src/authorization/RoleAssignmentStore.ts` - a landscape's role assignments; seeds the first Admin, see "Dashboard access"), `AuditStore` (`dashboard/src/audit/AuditStore.ts` - lists a landscape's audit trail)
 
 ### Running Test Harnesses
 

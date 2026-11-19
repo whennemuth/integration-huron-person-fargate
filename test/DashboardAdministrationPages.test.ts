@@ -1,0 +1,443 @@
+/**
+ * The Administration scripts (dashboard/public/js/administration.js: WhoAmI, AccessPage, AuditTrailPage) and the
+ * redacted state every section shows for a 403 (PageState.failed(), page-state.js). Browser code with no module
+ * system, so it runs in a vm context (as written and as the Lambda build minifies it), after the scripts it builds on,
+ * against a minimal stand-in for the DOM.
+ */
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { Script, createContext } from 'vm';
+import { minifyJS } from '../dashboard/scripts/BuildTemplates';
+
+const JS_DIR = join(__dirname, '../dashboard/public/js');
+const SCRIPTS = ['page-state.js', 'run-history.js', 'administration.js'];
+const CLASSES = ['PageState', 'WhoAmI', 'AccessPage', 'AuditTrailPage', 'ImpersonateControl'];
+
+/** Just enough of an element: classes, attributes, text, markup, children and listeners */
+class FakeElement {
+  className = '';
+  textContent = '';
+  hidden = false;
+  dataset: Record<string, string> = {};
+  attributes: Record<string, string> = {};
+  children: FakeElement[] = [];
+  listeners: Record<string, (event?: any) => void> = {};
+  private markup = '';
+  constructor(public tagName = 'div') {}
+  get innerHTML() { return this.markup; }
+  set innerHTML(markup: string) { this.markup = markup; this.children = []; }
+  setAttribute(name: string, value: string) { this.attributes[name] = value; }
+  appendChild(child: FakeElement) { this.children.push(child); return child; }
+  replaceChildren(...children: FakeElement[]) { this.children = children; this.markup = ''; }
+  addEventListener(type: string, listener: (event?: any) => void) { this.listeners[type] = listener; }
+  querySelector(): FakeElement | null { return null; }
+  querySelectorAll(): FakeElement[] { return []; }
+  /** The text this element shows, its children's included */
+  get text(): string {
+    const text = (element: FakeElement): string => [element.textContent, ...element.children.map(text)].join(' ');
+    return text(this).replace(/\s+/g, ' ').trim();
+  }
+}
+
+const loadScripts = (minified = false): Record<string, any> => {
+  const document = { createElement: (tag: string) => new FakeElement(tag) };
+  const context = createContext({ URL, URLSearchParams, FormData: class {}, console, document, window: {} });
+  const source = SCRIPTS.map(file => readFileSync(join(JS_DIR, file), 'utf-8')).join('\n');
+  const exports = CLASSES.map(name => `this.${name} = ${name};`).join('\n');
+  new Script(`${minified ? minifyJS(source).minified : source}\n${exports}`).runInContext(context);
+  return context as any;
+};
+
+/** A 403 as fetchSectionData() throws it */
+const forbidden = (action = 'runs:read') => Object.assign(new Error(`None of your roles (Viewer) has a policy that grants ${action}.`), { status: 403, action });
+
+describe.each([false, true])('administration.js (minified: %s)', minified => {
+  const scripts = loadScripts(minified);
+  const { PageState, WhoAmI, AccessPage, AuditTrailPage, ImpersonateControl } = scripts;
+
+  describe('PageState.failed', () => {
+    it('shows a 403 as redacted, naming the action the roles lack', () => {
+      const container = new FakeElement();
+      PageState.failed(container, 'Runs could not be loaded', forbidden('audit:read'));
+      const [state] = container.children;
+      expect(state.dataset.state).toBe('redacted');
+      expect(state.text).toContain('Content redacted');
+      expect(state.text).toContain('This content is redacted. It needs audit:read, which none of your roles grants.');
+    });
+
+    it('shows any other failure as the error state with the server\'s message', () => {
+      const container = new FakeElement();
+      PageState.failed(container, 'Runs could not be loaded', Object.assign(new Error('Table not found'), { status: 503 }));
+      const [state] = container.children;
+      expect(state.dataset.state).toBe('error');
+      expect(state.text).toBe('Runs could not be loaded Table not found');
+    });
+
+    it('builds the same element to place yourself, compact', () => {
+      const element = PageState.failedElement('More could not be loaded', forbidden(), { compact: true });
+      expect(element.className).toContain('page-state-compact');
+      expect(element.dataset.state).toBe('redacted');
+    });
+  });
+
+  describe('WhoAmI', () => {
+    const me = {
+      signedIn: true, publicMode: false,
+      user: { buPrincipal: 'jdoe', eppn: 'jdoe@bu.edu', displayName: 'Jane <Doe>' },
+      roles: [{ name: 'Viewer', description: 'Sees the runs', policies: [{ name: 'RunReporting', description: 'Runs', actions: ['runs:read'] }] }],
+      actions: ['runs:read'], unknownRoles: ['Ghost']
+    };
+
+    it("shows the user's identity, roles, policies and actions, escaped", () => {
+      const html = WhoAmI.dialogHtml(me);
+      expect(html).toContain('Jane &lt;Doe&gt;');
+      expect(html).toContain('jdoe@bu.edu');
+      expect(html).toContain('Viewer');
+      expect(html).toContain('RunReporting');
+      expect(html).toContain('runs:read');
+      expect(html).toContain('unknown to this dashboard (ignored): Ghost');
+    });
+
+    it("says whose roles are in force while impersonating", () => {
+      const html = WhoAmI.dialogHtml({ ...me, viewedAs: { buPrincipal: 'amy', label: 'Amy Lee' } });
+      expect(html).toContain('You are seeing this');
+      expect(html).toContain('Amy Lee');
+      expect(html).toContain("Amy Lee's roles in this landscape");
+      expect(WhoAmI.dialogHtml({ ...me, roles: [], unknownRoles: [], viewedAs: { buPrincipal: 'amy', label: 'amy' } }))
+        .toContain('None. They see every page, but not its data.');
+    });
+
+    it('says when the user has no role', () => {
+      expect(WhoAmI.dialogHtml({ ...me, roles: [], unknownRoles: [] })).toContain('None. You can see every page, but not its data.');
+    });
+
+    it('shows the no-role notice only to a signed-in user with no role, never in public mode', () => {
+      expect(WhoAmI.hasNoRole({ ...me, roles: [] })).toBe(true);
+      expect(WhoAmI.hasNoRole(me)).toBe(false);
+      expect(WhoAmI.hasNoRole({ ...me, roles: [], publicMode: true })).toBe(false);
+      expect(WhoAmI.hasNoRole({ signedIn: false, publicMode: false, roles: [] })).toBe(false);
+      expect(WhoAmI.hasNoRole(null)).toBe(false);
+    });
+
+    it('reads /api/me once, and again after a failure', async () => {
+      const getJson = jest.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(me);
+      const whoAmI = new WhoAmI({ getJson, root: {} });
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+      expect(await whoAmI.me()).toBeNull();
+      expect(await whoAmI.me()).toBe(me);
+      expect(await whoAmI.me()).toBe(me);
+      expect(getJson).toHaveBeenCalledTimes(2);
+      jest.restoreAllMocks();
+    });
+  });
+
+  describe('AccessPage', () => {
+    /** An Access page over stand-in parts, with the person jdoe shown holding these roles and these checked */
+    const page = (options: { held: string[]; checked: string[]; me?: string; confirm?: boolean; send?: jest.Mock }) => {
+      const parts: Record<string, any> = {
+        '[data-access-list]': new FakeElement(),
+        '[data-access-person]': new FakeElement(),
+        '[data-access-lookup]': new FakeElement('form'),
+        '#accessPrincipal': new FakeElement('input'),
+        '[data-refresh-stamp="access"]': new FakeElement('span'),
+        '[data-action="refresh-access"]': new FakeElement('button')
+      };
+      const result = new FakeElement('span');
+      parts['[data-access-person]'].querySelector = () => result;
+      const confirm = jest.fn().mockReturnValue(options.confirm ?? false);
+      const sendJson = options.send ?? jest.fn().mockResolvedValue({ buPrincipal: 'jdoe', added: [], removed: ['Admin'], roles: options.checked, grants: [] });
+      const getJson = jest.fn().mockResolvedValue({ roles: [], assignments: [] });
+      const access = new AccessPage({
+        getJson, sendJson, confirm,
+        me: async () => ({ user: { buPrincipal: options.me ?? 'jdoe' } }),
+        root: { querySelector: (selector: string) => parts[selector] || null }
+      });
+      access.shown = { buPrincipal: 'jdoe', roles: options.held };
+      access.checkedRoles = () => options.checked;
+      return { access, confirm, sendJson, result };
+    };
+
+    it('asks before an Admin removes their own Admin role, and saves nothing if they decline', async () => {
+      const { access, confirm, sendJson } = page({ held: ['Admin'], checked: ['Viewer'] });
+      await access.save();
+      expect(confirm).toHaveBeenCalledWith(AccessPage.OWN_ADMIN_CONFIRMATION);
+      expect(sendJson).not.toHaveBeenCalled();
+    });
+
+    it('saves once they confirm, saying what changed', async () => {
+      const { access, sendJson, result } = page({ held: ['Admin', 'Viewer'], checked: ['Viewer'], confirm: true });
+      await access.save();
+      expect(sendJson).toHaveBeenCalledWith('PUT', '/api/access/assignments/jdoe', { roles: ['Viewer'] });
+      expect(result.text).toBe('Saved: removed Admin');
+    });
+
+    it("doesn't ask when the change is to someone else's roles", async () => {
+      const { access, confirm, sendJson } = page({ held: ['Admin'], checked: [], me: 'boss' });
+      await access.save();
+      expect(confirm).not.toHaveBeenCalled();
+      expect(sendJson).toHaveBeenCalled();
+    });
+
+    it("shows a refused save with the server's message", async () => {
+      const send = jest.fn().mockRejectedValue(Object.assign(new Error('jdoe is the landscape\'s last Admin: give someone else Admin first.'), { status: 409 }));
+      const { access, result } = page({ held: ['Admin'], checked: [], me: 'boss', send });
+      await access.save();
+      expect(result.text).toContain("jdoe is the landscape's last Admin");
+    });
+
+    const ROLES = [
+      { name: 'Viewer', policies: [{ actions: ['runs:read'] }] },
+      { name: 'Operator', policies: [{ actions: ['runs:read'] }, { actions: ['bulk:start'] }] },
+      { name: 'Admin', policies: [{ actions: ['runs:read', 'bulk:start'] }, { actions: ['audit:read'] }] },
+      { name: 'Auditor', policies: [{ actions: ['audit:read'] }] }
+    ];
+
+    it("works out coverage by the server's rule", () => {
+      expect(AccessPage.coverage(ROLES, ['Viewer', 'Operator', 'Admin'])).toEqual({ kept: ['Admin'], coveredBy: { Viewer: 'Admin', Operator: 'Admin' } });
+      expect(AccessPage.coverage(ROLES, ['Viewer', 'Operator'])).toEqual({ kept: ['Operator'], coveredBy: { Viewer: 'Operator' } });
+      expect(AccessPage.coverage(ROLES, ['Operator', 'Auditor'])).toEqual({ kept: ['Operator', 'Auditor'], coveredBy: {} });
+      expect(AccessPage.coverage(ROLES, [])).toEqual({ kept: [], coveredBy: {} });
+    });
+
+    it('shows a covered role checked, disabled and included, and frees it when its coverer is unchecked', () => {
+      const inputs = ['Viewer', 'Operator', 'Admin'].map(value => Object.assign(new FakeElement('input'), { name: 'role', value, checked: false, disabled: false }));
+      const notes: Record<string, FakeElement> = Object.fromEntries(inputs.map(input => [input.value, new FakeElement('span')]));
+      const person = Object.assign(new FakeElement(), {
+        querySelectorAll: () => inputs,
+        querySelector: (selector: string) => notes[selector.match(/data-included="([^"]+)"/)?.[1] ?? ''] ?? null
+      });
+      const access = Object.create(AccessPage.prototype);
+      Object.assign(access, { person, roles: ROLES, chosen: new Set(['Viewer']) });
+      access.applyCoverage();
+      expect(inputs.map(i => [i.value, i.checked, i.disabled])).toEqual([['Viewer', true, false], ['Operator', false, false], ['Admin', false, false]]);
+
+      inputs[2].checked = true;
+      access.choose(inputs[2]);
+      expect(inputs.map(i => [i.value, i.checked, i.disabled])).toEqual([['Viewer', true, true], ['Operator', true, true], ['Admin', true, false]]);
+      expect(notes.Operator.textContent).toBe('included in Admin');
+      expect(access.checkedRoles()).toEqual(['Admin']);
+
+      inputs[2].checked = false;
+      access.choose(inputs[2]);
+      // Viewer was chosen before Admin covered it, so it is chosen again; Operator never was
+      expect(inputs.map(i => [i.value, i.checked, i.disabled])).toEqual([['Viewer', true, false], ['Operator', false, false], ['Admin', false, false]]);
+      expect(notes.Operator.textContent).toBe('');
+      expect(access.checkedRoles()).toEqual(['Viewer']);
+    });
+
+    it('says which chosen roles the server did not keep', () => {
+      expect(AccessPage.savedElement({ added: ['Admin'], removed: [], pruned: [{ role: 'Viewer', coveredBy: 'Admin' }] }).textContent)
+        .toBe('Saved: added Admin; not kept Viewer (included in Admin)');
+    });
+
+    it('lists a person with their name, roles and latest grant, escaped', () => {
+      const html = AccessPage.rowHtml({
+        buPrincipal: 'jdoe', profile: { displayName: '<b>Jane</b>' },
+        grants: [{ role: 'Viewer', grantedBy: 'boss', grantedAt: '2026-11-17T10:00:00.000Z' }, { role: 'Admin', grantedBy: 'seed', grantedAt: '2026-11-17T12:00:00.000Z' }]
+      });
+      expect(html).toContain('data-principal="jdoe"');
+      expect(html).toContain('&lt;b&gt;Jane&lt;/b&gt;');
+      expect(html).toContain('by seed');
+      expect(html).toContain('Viewer');
+      expect(html).toContain('Admin');
+    });
+
+    it("lists everyone's buPrincipal below the table, comma-delimited and escaped, to copy", () => {
+      const assignments = [{ buPrincipal: 'jdoe' }, { buPrincipal: 'amy<x>' }, { buPrincipal: 'bob' }];
+      expect(AccessPage.principalsText(assignments)).toBe('jdoe, amy<x>, bob');
+      const html = AccessPage.principalsHtml(assignments);
+      expect(html).toContain('data-access-principals>jdoe, amy&lt;x&gt;, bob</div>');
+      expect(html).toContain('Everyone above (3)');
+      expect(html).toContain('data-action="copy-principals"');
+    });
+
+    it('reads a pasted list of people, however it is separated', () => {
+      expect(AccessPage.principalsOf(' jdoe, amy;bob\n carl@bu.edu\t,, ')).toEqual(['jdoe', 'amy', 'bob', 'carl@bu.edu']);
+      expect(AccessPage.principalsOf(undefined)).toEqual([]);
+    });
+
+    it("shows one way of changing roles at a time, one person's first, and opens it for a person picked from the list", () => {
+      const tab = () => {
+        const classes = new Set<string>();
+        return Object.assign(new FakeElement('button'), { classList: { toggle: (name: string, on: boolean) => (on ? classes.add(name) : classes.delete(name)), contains: (name: string) => classes.has(name) } });
+      };
+      const parts: Record<string, any> = {
+        '[data-access-list]': new FakeElement(),
+        '[data-access-person]': new FakeElement(),
+        '[data-access-lookup]': new FakeElement('form'),
+        '#accessPrincipal': new FakeElement('input'),
+        '[data-access-mode="person"]': tab(),
+        '[data-access-mode="bulk"]': tab(),
+        '[data-access-panel="person"]': new FakeElement(),
+        '[data-access-panel="bulk"]': Object.assign(new FakeElement(), { hidden: true })
+      };
+      const access = new AccessPage({ getJson: jest.fn().mockResolvedValue({ roles: [] }), sendJson: jest.fn(), me: async () => null, root: { querySelector: (selector: string) => parts[selector] || null } });
+      const shown = () => AccessPage.MODES.map((mode: string) => [mode, parts[`[data-access-mode="${mode}"]`].classList.contains('active'), parts[`[data-access-mode="${mode}"]`].attributes['aria-selected'], parts[`[data-access-panel="${mode}"]`].hidden]);
+
+      parts['[data-access-mode="bulk"]'].listeners.click();
+      expect(shown()).toEqual([['person', false, 'false', true], ['bulk', true, 'true', false]]);
+
+      access.lookUp = jest.fn();
+      const row = { dataset: { principal: 'amy' } };
+      parts['[data-access-list]'].listeners.click({ target: { closest: (selector: string) => (selector === 'tr[data-principal]' ? row : null) } });
+      expect(shown()).toEqual([['person', true, 'true', false], ['bulk', false, 'false', true]]);
+      expect(access.lookUp).toHaveBeenCalledWith('amy');
+    });
+
+    it("gives each form's checkboxes their own ids", () => {
+      const role = { name: 'Viewer', description: 'Reads', policies: [] };
+      expect(AccessPage.roleCheckboxHtml(role, false)).toContain('id="accessRoleViewer"');
+      expect(AccessPage.roleCheckboxHtml(role, false, 'accessBulkRole')).toContain('id="accessBulkRoleViewer"');
+    });
+
+    describe('giving roles to several people', () => {
+      const bulkPage = (value: string, chosen: string[], send?: jest.Mock) => {
+        const result = new FakeElement();
+        const parts: Record<string, any> = {
+          '[data-access-list]': new FakeElement(),
+          '[data-access-person]': new FakeElement(),
+          '[data-access-lookup]': new FakeElement('form'),
+          '#accessPrincipal': new FakeElement('input'),
+          '[data-access-bulk]': new FakeElement('form'),
+          '[data-access-bulk-roles]': new FakeElement(),
+          '[data-access-bulk-result]': result,
+          '#accessBulkPrincipals': Object.assign(new FakeElement('textarea'), { value })
+        };
+        const sendJson = send ?? jest.fn().mockResolvedValue({ roles: ['Viewer'], pruned: [], granted: ['amy'], unchanged: [] });
+        const getJson = jest.fn().mockResolvedValue({ roles: ROLES, assignments: [] });
+        const access = new AccessPage({ getJson, sendJson, me: async () => null, root: { querySelector: (selector: string) => parts[selector] || null } });
+        access.roles = ROLES;
+        chosen.forEach(role => access.bulkChosen.add(role));
+        return { access, sendJson, getJson, result };
+      };
+
+      it('sends the people and the roles less the covered ones, then reloads the list', async () => {
+        const { access, sendJson, getJson, result } = bulkPage('amy, bob@bu.edu', ['Viewer', 'Operator']);
+        await access.grantMany();
+        expect(sendJson).toHaveBeenCalledWith('POST', '/api/access/assignments', { principals: ['amy', 'bob@bu.edu'], roles: ['Operator'] });
+        expect(result.text).toContain('Gave Viewer to 1 person: amy.');
+        expect(getJson).toHaveBeenCalledWith('/api/access/assignments');
+      });
+
+      it('asks for people and for a role before sending anything', async () => {
+        for (const [value, chosen, title] of [[' , ', ['Viewer'], 'Enter the people to give roles to'], ['amy', [], 'Choose at least one role to give']] as [string, string[], string][]) {
+          const { access, sendJson, result } = bulkPage(value, chosen);
+          await access.grantMany();
+          expect(sendJson).not.toHaveBeenCalled();
+          expect(result.children[0].dataset.state).toBe('error');
+          expect(result.text).toContain(title);
+        }
+      });
+
+      it("shows a refusal with the server's message", async () => {
+        const send = jest.fn().mockRejectedValue(Object.assign(new Error('Nothing was saved. Not a buPrincipal or <id>@bu.edu: bob@gmail.com'), { status: 400 }));
+        const { access, result } = bulkPage('amy, bob@gmail.com', ['Viewer'], send);
+        await access.grantMany();
+        expect(result.text).toBe('The roles could not be given Nothing was saved. Not a buPrincipal or <id>@bu.edu: bob@gmail.com');
+      });
+
+      it('keeps its own choice of roles, with coverage, apart from the person form', () => {
+        const inputs = ['Viewer', 'Operator', 'Admin'].map(value => Object.assign(new FakeElement('input'), { name: 'role', value, checked: false, disabled: false }));
+        const container = Object.assign(new FakeElement(), { querySelectorAll: () => inputs, querySelector: () => null });
+        const { access } = bulkPage('', []);
+        access.chosen = new Set(['Viewer']);
+        inputs[1].checked = true;
+        access.choose(inputs[1], access.bulkChosen, container);
+        expect(inputs.map(i => [i.value, i.checked, i.disabled])).toEqual([['Viewer', true, true], ['Operator', true, false], ['Admin', false, false]]);
+        expect([...access.bulkChosen]).toEqual(['Operator']);
+        expect([...access.chosen]).toEqual(['Viewer']);
+      });
+
+      it('says, gently, who already had a role and was left as they were', () => {
+        const element = AccessPage.grantedElement({
+          roles: ['Viewer'], granted: ['carl', 'dan'], pruned: [{ role: 'RunViewer', coveredBy: 'Viewer' }],
+          unchanged: [{ buPrincipal: 'amy', roles: ['Operator'] }, { buPrincipal: 'jdoe', roles: ['Admin', 'Auditor'] }]
+        });
+        const [gave, notKept, unchanged] = element.children;
+        expect(gave.textContent).toBe('Gave Viewer to 2 people: carl, dan.');
+        expect(notKept.textContent).toBe('Not kept: RunViewer (included in Viewer).');
+        expect(unchanged.className).toBe('access-unchanged');
+        expect(unchanged.textContent).toBe('2 people already had a role and were left as they are: amy (Operator), jdoe (Admin, Auditor). To change their roles, look each one up above.');
+        expect(AccessPage.grantedElement({ roles: ['Viewer'], granted: [], unchanged: [{ buPrincipal: 'amy', roles: ['Viewer'] }] }).text)
+          .toBe('No one was given a role. 1 person already had a role and was left as they are: amy (Viewer). To change their roles, look each one up above.');
+      });
+    });
+
+    it('shows a list it may not read as redacted', async () => {
+      const list = new FakeElement();
+      const access = new AccessPage({
+        getJson: jest.fn().mockRejectedValue(forbidden('access:admin')), sendJson: jest.fn(), me: async () => null,
+        root: { querySelector: (selector: string) => (selector === '[data-access-list]' ? list : new FakeElement()) }
+      });
+      expect(await access.load()).toBe(false);
+      expect(list.children[0].dataset.state).toBe('redacted');
+      expect(list.children[0].text).toContain('access:admin');
+    });
+  });
+
+  describe('ImpersonateControl', () => {
+    const control = (sendJson: jest.Mock) => {
+      const person = new FakeElement();
+      const startButton = Object.assign(new FakeElement('button'), { disabled: true });
+      const reload = jest.fn();
+      const impersonate = new ImpersonateControl({ getJson: jest.fn(), sendJson, root: {}, reload });
+      Object.assign(impersonate, { person, startButton });
+      return { impersonate, person, startButton, reload };
+    };
+
+    it("shows the chosen person's roles, or that they have none", () => {
+      expect(ImpersonateControl.personHtml({ buPrincipal: 'amy', roles: ['Viewer'], profile: { displayName: 'Amy <Lee>' } }))
+        .toMatch(/Amy &lt;Lee&gt;[\s\S]*Viewer/);
+      expect(ImpersonateControl.personHtml({ buPrincipal: 'amy', roles: [] })).toContain('No role');
+    });
+
+    it('starts only once someone is chosen, then reloads', async () => {
+      const sendJson = jest.fn().mockResolvedValue({});
+      const { impersonate, startButton, reload } = control(sendJson);
+      await impersonate.begin();
+      expect(sendJson).not.toHaveBeenCalled();
+      impersonate.choose({ buPrincipal: 'amy' });
+      expect(startButton.disabled).toBe(false);
+      await impersonate.begin();
+      expect(sendJson).toHaveBeenCalledWith('POST', '/api/impersonation', { principal: 'amy' });
+      expect(reload).toHaveBeenCalled();
+    });
+
+    it("shows a refused start with the server's message, and stays", async () => {
+      const sendJson = jest.fn().mockRejectedValue(new Error("You can't impersonate yourself."));
+      const { impersonate, person, reload } = control(sendJson);
+      impersonate.choose({ buPrincipal: 'jdoe' });
+      await impersonate.begin();
+      expect(person.text).toContain("You can't impersonate yourself.");
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it('stops, then reloads', async () => {
+      const sendJson = jest.fn().mockResolvedValue({ impersonating: null });
+      const { impersonate, reload } = control(sendJson);
+      await impersonate.stop();
+      expect(sendJson).toHaveBeenCalledWith('DELETE', '/api/impersonation');
+      expect(reload).toHaveBeenCalled();
+    });
+  });
+
+  describe('AuditTrailPage', () => {
+    it('asks for the filtered page after the cursor', () => {
+      expect(AuditTrailPage.path({}, undefined)).toBe('/api/audit');
+      expect(AuditTrailPage.path({ principal: 'jdoe', action: 'bulk:start' }, 'abc')).toBe('/api/audit?principal=jdoe&action=bulk%3Astart&cursor=abc');
+    });
+
+    it('shows a record: who, as whom, what, and how it went, escaped', () => {
+      const html = AuditTrailPage.rowHtml({
+        at: '2026-11-17T12:00:00.000Z', buPrincipal: 'boss', viewedAs: 'jdoe', action: 'bulk:start', target: 'U1',
+        decision: 'DENIED', detail: '<script>'
+      });
+      expect(html).toContain('boss');
+      expect(html).toContain('as jdoe');
+      expect(html).toContain('Denied');
+      expect(html).toContain('&lt;script&gt;');
+      expect(AuditTrailPage.rowHtml({ at: 'x', buPrincipal: 'a', action: 'person:sync', decision: 'ALLOWED', outcome: 'FAILED' }))
+        .toContain('Failed');
+    });
+  });
+});

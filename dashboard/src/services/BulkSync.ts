@@ -1,4 +1,7 @@
 import { GetFunctionConfigurationCommand, GetFunctionUrlConfigCommand, InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
+import type { Action } from '../authorization/Actions';
+import type { RequestAuthorizer } from '../authorization/Authorizer';
+import { ForbiddenError } from '../authorization/RequestGate';
 import { Config } from 'integration-huron-person';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 import type { ApiChunkerEvent, MockLandscapeResetEvent } from '../../../src/chunking/ChunkerSubscriber';
@@ -691,10 +694,44 @@ export class BulkSync implements BulkSyncService {
     return RunStarter.dashboard(principal ? `${principal}` : undefined);
   }
 
+  /**
+   * The actions a request's choices need beyond bulk:start (authorization-plan.md, decisions 5 and 7): Start from
+   * scratch empties a mock landscape (mock:reset), and Processor tasks above the landscape's maximum presses Huron
+   * harder than the landscape was set for (bulk:processors; any override when the maximum isn't known). At or below
+   * the maximum, Processor tasks needs nothing more.
+   */
+  choiceActions(request: BulkSyncRequest): Action[] {
+    const actions: Action[] = [];
+    if (request.resetState) {
+      actions.push('mock:reset');
+    }
+    const override = request.processorScalingCapacityOverride;
+    const max = this.deps.settings.processorMaxScalingCapacity;
+    if (override !== undefined && (max === undefined || override > max)) {
+      actions.push('bulk:processors');
+    }
+    return actions;
+  }
+
+  /** Refuse (ForbiddenError, a 403) a choice the request's authorizer doesn't grant, before anything is checked or sent */
+  private async checkChoices(request: BulkSyncRequest, authorizer?: RequestAuthorizer): Promise<void> {
+    if (!authorizer) {
+      return;
+    }
+    for (const action of this.choiceActions(request)) {
+      const decision = await authorizer.authorize(action);
+      if (!decision.allowed) {
+        throw new ForbiddenError(decision);
+      }
+    }
+  }
+
   /** What a start would send, after the same checks; nothing is started */
-  async plan(body: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncPlan> {
+  async plan(body: BulkSyncRequestBody, startedBy?: StartedBy, authorizer?: RequestAuthorizer): Promise<BulkSyncPlan> {
     const { settings } = this.deps;
     const request = BulkSyncRequest.parse(body, { mockLandscape: this.mockLandscape });
+    // What can't be started can't be reviewed either
+    await this.checkChoices(request, authorizer);
     await this.checkParallelStart(request);
     const { latestRun, launch } = await this.activity();
     await this.checkGuards(latestRun, request, launch);
@@ -707,9 +744,10 @@ export class BulkSync implements BulkSyncService {
     };
   }
 
-  async start(body: BulkSyncRequestBody, startedBy?: StartedBy): Promise<BulkSyncResult> {
+  async start(body: BulkSyncRequestBody, startedBy?: StartedBy, authorizer?: RequestAuthorizer): Promise<BulkSyncResult> {
     const { settings, functions } = this.deps;
     const request = BulkSyncRequest.parse(body, { mockLandscape: this.mockLandscape });
+    await this.checkChoices(request, authorizer);
     await this.checkParallelStart(request);
     const { latestRun, launch: earlier } = await this.activity();
     await this.checkGuards(latestRun, request, earlier);

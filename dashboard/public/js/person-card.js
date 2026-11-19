@@ -112,14 +112,32 @@ class PersonCard {
     }
 
     /**
-     * Render error message
+     * Render an error: what failed, and why when the server said (e.g. which action the user's roles lack)
      */
-    renderError(message = 'Error looking up person') {
+    renderError(message = 'Error looking up person', detail) {
         // Clear global cache on error
         window.cachedSourceData = null;
         window.cachedTargetData = null;
 
-        PageState.error(this.container, message);
+        PageState.error(this.container, message, detail);
+    }
+
+    /** Replace the source column's content with a line saying why there is no source data (text, never markup) */
+    showSourceMessage(text, tone) {
+        const row = this.container.querySelector('.person-result .row');
+        const sourceCol = row && row.querySelector('.col-md-6:first-child');
+        const box = sourceCol && sourceCol.querySelector('.border');
+        if ( ! box) {
+            return;
+        }
+        box.innerHTML = '';
+        const line = document.createElement('div');
+        line.className = tone === 'danger' ? 'text-danger' : 'text-warning';
+        const icon = document.createElement('i');
+        icon.className = `fas ${tone === 'danger' ? 'fa-exclamation-circle' : 'fa-exclamation-triangle'} me-1`;
+        line.appendChild(icon);
+        line.appendChild(document.createTextNode(text));
+        box.appendChild(line);
     }
 
     /**
@@ -720,7 +738,15 @@ class PersonCard {
 
             loading.remove();
 
-            if (response.ok && result.sourceData && result.sourceData.length > 0) {
+            if ( ! response.ok) {
+                // Refused or failed: say why (a 403 names the action the user's roles lack), not that no data exists
+                const reason = result.message || result.error;
+                this.showSourceMessage(`Error looking up CDM data${reason ? `: ${reason}` : ''}`, 'danger');
+                this.targetHrn = undefined;
+                return;
+            }
+
+            if (result.sourceData && result.sourceData.length > 0) {
                 // Update global cache with the newly retrieved source data (extract first element if array)
                 const sourceData = result.sourceData;
                 window.cachedSourceData = Array.isArray(sourceData) && sourceData.length > 0 ? sourceData[0] : sourceData;
@@ -757,40 +783,13 @@ class PersonCard {
                     resultDiv.appendChild(syncContainer);
                 }
             } else {
-                // Update the existing source column to show "no data found"
-                const row = this.container.querySelector('.person-result .row');
-                if (row) {
-                    const sourceCol = row.querySelector('.col-md-6:first-child');
-                    if (sourceCol) {
-                        const box = sourceCol.querySelector('.border');
-                        if (box) {
-                            box.innerHTML = '';
-                            const noData = document.createElement('div');
-                            noData.className = 'text-warning';
-                            noData.innerHTML = '<i class="fas fa-exclamation-triangle me-1"></i>CDM: No source data found';
-                            box.appendChild(noData);
-                        }
-                    }
-                }
+                this.showSourceMessage('CDM: No source data found', 'warning');
                 // Clear cached hrn since there's no matching source record
                 this.targetHrn = undefined;
             }
         } catch (error) {
             loading.remove();
-            const row = this.container.querySelector('.person-result .row');
-            if (row) {
-                const sourceCol = row.querySelector('.col-md-6:first-child');
-                if (sourceCol) {
-                    const box = sourceCol.querySelector('.border');
-                    if (box) {
-                        box.innerHTML = '';
-                        const errorMsg = document.createElement('div');
-                        errorMsg.className = 'text-danger';
-                        errorMsg.innerHTML = '<i class="fas fa-exclamation-circle me-1"></i>Error looking up CDM data';
-                        box.appendChild(errorMsg);
-                    }
-                }
-            }
+            this.showSourceMessage(`Error looking up CDM data${error && error.message ? `: ${error.message}` : ''}`, 'danger');
             // Clear cached hrn on error
             this.targetHrn = undefined;
             console.error('CDM lookup error:', error);

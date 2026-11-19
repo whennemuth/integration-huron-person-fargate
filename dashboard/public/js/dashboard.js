@@ -8,6 +8,10 @@ let searchTypeManager;
 let runHistoryPage;
 let overviewPage;
 let bulkSyncPage;
+let whoAmI;
+let accessPage;
+let auditTrailPage;
+let impersonateControl;
 
 // Tab management - use 'load' event instead of 'DOMContentLoaded' for Lambda compatibility
 window.addEventListener('load', function() {
@@ -35,6 +39,20 @@ window.addEventListener('load', function() {
     const bulkRoot = document.getElementById('bulk');
     if (bulkRoot) {
         bulkSyncPage = new BulkSyncPage({ getJson: fetchSectionData, postJson: postSectionData, runs: runsApi, root: bulkRoot });
+    }
+    whoAmI = new WhoAmI({ getJson: fetchSectionData, root: document });
+    if (document.querySelector('[data-no-role-notice], #whoAmIDialog')) {
+        whoAmI.start();
+    }
+    impersonateControl = new ImpersonateControl({ getJson: fetchSectionData, sendJson: sendSectionData, root: document });
+    impersonateControl.start();
+    const accessRoot = document.getElementById('access');
+    if (accessRoot) {
+        accessPage = new AccessPage({ getJson: fetchSectionData, sendJson: sendSectionData, me: () => whoAmI.me(), root: accessRoot });
+    }
+    const auditRoot = document.getElementById('audit');
+    if (auditRoot) {
+        auditTrailPage = new AuditTrailPage({ getJson: fetchSectionData, root: auditRoot });
     }
 
     // Initialize mapping experiment form
@@ -166,6 +184,10 @@ function onPageShown(page) {
         bulkSyncPage.load();
     } else if (page === 'system') {
         loadSystemStatus();
+    } else if (page === 'access' && accessPage) {
+        accessPage.load();
+    } else if (page === 'audit' && auditTrailPage) {
+        auditTrailPage.load();
     }
 }
 
@@ -240,10 +262,11 @@ async function handlePersonLookupSubmit(e) {
             // Use PersonCard component to render results
             personCard.render(result, searchData.personId);
         } else {
-            personCard.renderError('Error looking up person');
+            // The server's reason, e.g. a 403's "None of your roles (Viewer) has a policy that grants person:lookup."
+            personCard.renderError('Error looking up person', result.message || result.error);
         }
     } catch (error) {
-        personCard.renderError('Error looking up person');
+        personCard.renderError('Error looking up person', error.message);
         console.error('Lookup error:', error);
     } finally {
         form.classList.remove('tab-loading');
@@ -618,6 +641,15 @@ async function postSectionData(path, body) {
     }));
 }
 
+/** Send JSON with a method (PUT, DELETE) and read its JSON answer, failing as fetchSectionData() does */
+async function sendSectionData(method, path, body) {
+    return readSectionResponse(await fetch(`${API_BASE}${path}`, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    }));
+}
+
 /** A response's JSON, or an Error carrying the server's message, its status and its code (if any) */
 async function readSectionResponse(response) {
     let data = {};
@@ -630,6 +662,8 @@ async function readSectionResponse(response) {
         const error = new Error(data.message || data.error || `The server answered ${response.status}`);
         error.status = response.status;
         error.code = data.code;
+        // A 403's refused action (authorization-plan.md decision 7): PageState.failed() names it
+        error.action = data.action;
         throw error;
     }
     return data;
@@ -664,7 +698,7 @@ async function loadSystemStatus() {
             </div>
         `;
     } catch (error) {
-        PageState.error(servicesContainer, 'Service status could not be loaded', error.message);
+        PageState.failed(servicesContainer, 'Service status could not be loaded', error);
         metricsContainer.replaceChildren();
         console.error('Status load error:', error);
     }

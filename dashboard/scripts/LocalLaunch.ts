@@ -104,7 +104,13 @@ const startServer = (): void => {
   if (process.env[LOCAL_SIGN_IN] === 'true') {
     const { LocalSignIn } = require('./LocalSignIn') as typeof import('./LocalSignIn');
     const localSignIn = LocalSignIn.fromEnvironment(process.env);
-    console.log(`Local sign-in: every request is signed in as ${localSignIn.userName} (JWT cookie ${localSignIn.cookieName})`);
+    // The handler verifies sign-in tokens (ClaimsReader): this server's are signed with the local sign-in's key pair,
+    // in place of the landscape's (a deployed Lambda's JWT_PUBLIC_KEY, online)
+    process.env.JWT_PUBLIC_KEY = localSignIn.publicKey;
+    const roles = process.env.LOCAL_OFFLINE === 'true'
+      ? `, with role(s) ${process.env.USER_ROLES || 'none'} (USER_ROLES)`
+      : `, with the roles the ${process.env.LANDSCAPE} landscape's access table gives them`;
+    console.log(`Local sign-in: every request is signed in as ${localSignIn.userName} (JWT cookie ${localSignIn.cookieName})${roles}`);
     requestDecorator = localSignIn;
   }
   startLocalServer({ requestDecorator });

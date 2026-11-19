@@ -64,7 +64,7 @@ class OverviewPage {
 
     renderRun(result) {
         if (result.status === 'rejected') {
-            PageState.error(this.runContainer, 'The latest run could not be loaded', result.reason && result.reason.message);
+            PageState.failed(this.runContainer, 'The latest run could not be loaded', result.reason);
             return;
         }
         const run = (result.value.items || [])[0];
@@ -83,7 +83,7 @@ class OverviewPage {
 
     renderServices(result) {
         if (result.status === 'rejected') {
-            PageState.error(this.servicesContainer, 'Service status could not be loaded', result.reason && result.reason.message);
+            PageState.failed(this.servicesContainer, 'Service status could not be loaded', result.reason);
             return;
         }
         ServiceStatusTable.show(this.servicesContainer, result.value.services);
@@ -95,8 +95,14 @@ class OverviewPage {
             return;
         }
         if (result.status === 'rejected') {
+            // Refused for the viewer's role: whether this is a mock landscape is part of what was refused, so the
+            // section stays hidden rather than appearing, redacted, in a landscape that has no mock options
+            if (PageState.isForbidden(result.reason)) {
+                this.resetSection.hidden = true;
+                return;
+            }
             this.resetSection.hidden = false;
-            PageState.error(this.resetContainer, "The mock landscape's last reset could not be read", result.reason && result.reason.message);
+            PageState.failed(this.resetContainer, "The mock landscape's last reset could not be read", result.reason);
             return;
         }
         this.resetSection.hidden = ! result.value.mockLandscape;

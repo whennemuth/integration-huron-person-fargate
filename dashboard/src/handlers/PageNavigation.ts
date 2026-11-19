@@ -6,7 +6,7 @@
  * for (`?tab=<id>`), else the default. In the browser, a URL fragment (`#<id>`) then takes precedence
  * (`public/js/dashboard.js`), since the server never sees it.
  */
-export type PageId = 'overview' | 'individual' | 'mapping' | 'bulk' | 'runs' | 'system';
+export type PageId = 'overview' | 'individual' | 'mapping' | 'bulk' | 'runs' | 'system' | 'access' | 'audit';
 
 /** A page as the sidebar shows it */
 export type PageDefinition = {
@@ -61,6 +61,14 @@ export const DEFAULT_PAGE_GROUPS: PageGroupDefinition[] = [
     label: 'System',
     pages: [
       { id: 'system', label: 'Status', icon: 'fa-heart-pulse' },
+    ]
+  },
+  {
+    // Shown to everyone: the API decides who sees their data (authorization-plan.md, "UI")
+    label: 'Administration',
+    pages: [
+      { id: 'access', label: 'Access', icon: 'fa-user-shield' },
+      { id: 'audit', label: 'Audit trail', icon: 'fa-list-check' },
     ]
   }
 ];

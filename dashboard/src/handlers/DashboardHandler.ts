@@ -16,6 +16,14 @@ import { RUN_LIST_DEFAULT_LIMIT, RUN_LIST_MAX_LIMIT, RunList } from './RunList';
 import { areTheSame } from '../Utils';
 import { ChangeType, ReportingError } from '../../../src/reporting/RunReporting';
 import { Config } from 'integration-huron-person';
+import { ForbiddenError, RequestAccess, RequestGate } from '../authorization/RequestGate';
+import { Impersonation } from '../authorization/Impersonation';
+import { PrincipalResolver } from '../authorization/Principal';
+import { RequestAuthorizer } from '../authorization/Authorizer';
+import { AuditTrail, auditsAllowed, describeRequest } from '../audit/AuditTrail';
+import { AuditError } from '../audit/AuditStore';
+import { AccessRoutes, UnchangedPerson } from './AccessRoutes';
+import { ACTIONS } from '../authorization/Actions';
 
 // import { ConfigManager } from 'integration-huron-person';
 
@@ -39,7 +47,7 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
   try {
     // Get request object to handle auth and origin verification
     const request = new Request(new Authenticator(event), new OriginHeader(event));
-    const {path, body, queryParams } = request;
+    const { path, body } = request;
 
     // Verify origin header to ensure request came from CloudFront
     if ( ! request.originVerified) {
@@ -53,97 +61,169 @@ export const handler = async (event: LambdaFunctionUrlEvent): Promise<LambdaFunc
         error: 'Request is not authenticated. Requires valid JWT token.' 
       }));
     }
-   
-    // Route handling
-    switch (path) {
-      case '/': case '/dashboard':
-        if ( ! request.isAuthenticated) {
-          console.log('Request is not authenticated. Returning login response.');
-          return { statusCode: 302, headers: {
-            ["content-type"]: "text/html",
-            Location: '/login-page'
-          }}
 
-        }
-        return await renderDashboard(request, queryParams.tab);
-
-      case '/login-page':
-        if(request.isAuthenticated) {
-          return { statusCode: 302, headers: {
-            ["content-type"]: "text/html",
-            Location: '/dashboard'
-          }}
-        }
-        return await renderLoginPage();
-
-      case '/login-redirect':
-        if(request.isAuthenticated) {
-          return { statusCode: 302, headers: {
-            ["content-type"]: "text/html",
-            Location: '/dashboard'
-          }}
-        }
-        return request.getLoginResponse();
-      
-      case '/api/person-lookup':
-        return await handlePersonLookup({requestBody: body, cache });
-
-      case '/api/person-sync/preview-experiment':
-        return await handlePersonSyncPreviewExperiment({requestBody: body, cache });
-
-      case '/api/person-sync/preview':
-        return await handlePersonSyncPreview({requestBody: body, cache });
-      
-      case '/api/person-sync':
-        return await handlePersonSync({requestBody: body, cache });
-      
-      case '/api/bulk-sync':
-        return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user });
-
-      case '/api/bulk-sync/plan':
-        return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user, plan: true });
-
-      case '/api/mock-landscape/reset':
-        return await handleMockLandscapeReset({ method: request.method, cache, user: request.user });
-      
-      case '/api/status':
-        return await getSystemStatus();
-
-      case '/api/runs':
-        return await handleListRuns(request.method, queryParams);
-
-      case '/api/capabilities':
-        return handleCapabilities(request.method);
-
-      case '/api/landscapes':
-        return await handleLandscapes(request.method);
-      
-      default:
-        if (path.startsWith('/api/runs/')) {
-          return await handleRunRoute({ method: request.method, path, queryParams });
-        }
-        return createResponse(404, 'text/html', '<h1>404 - Page Not Found</h1>');
+    // Authorization (authorization-plan.md, decision 7): one gate before routing, deny by default
+    const gate = new RequestGate(ServiceProvider.getRoleAssignmentStore(), ServiceProvider.getRoleCatalog());
+    const { access, refusal } = await gate.check({
+      method: request.method, path, publicMode: !request.signInRequired, claims: request.user, cookieHeader: event.headers?.cookie
+    });
+    // The audit trail (decision 9): every denial, and the allowed requests that read personal data or change something
+    const audit = new AuditTrail({
+      store: ServiceProvider.getAuditStore(), landscape: process.env.LANDSCAPE || LOCAL_LANDSCAPE,
+      principal: access.principal, viewedAs: access.viewedAs
+    });
+    // An impersonation cookie refused (its user's Admin role is gone, or it was made by hand): ignored and cleared
+    if (access.impersonationDenial) {
+      await audit.record({ action: 'access:impersonate', decision: 'DENIED', detail: access.impersonationDenial });
     }
+    if (refusal) {
+      if (access.decision) {
+        access.decision.allowed
+          // Allowed by the person's roles, refused because impersonating is viewing only
+          ? await audit.record({ action: access.decision.action, decision: 'DENIED', ...describeRequest(path, body), detail: `${refusal.body.message}` })
+          : await audit.denied(access.decision, describeRequest(path, body).target);
+      }
+      const response = jsonResponse(refusal.status, refusal.body);
+      return withCookies({ ...response, headers: { ...response.headers, ...refusal.headers } }, access);
+    }
+
+    let response: LambdaFunctionUrlResult;
+    try {
+      response = await route(request, access, audit);
+    } catch (error) {
+      console.error('Dashboard handler error:', error);
+      response = internalError(error);
+    }
+    // A choice refused within the route (Bulk sync's) was recorded as a denial already
+    if (auditsAllowed(access.permission) && !audit.denialRecorded) {
+      await audit.allowed(access.permission.action, response.statusCode, describeRequest(path, body));
+    }
+    return withCookies(response, access);
   } catch (error) {
     console.error('Dashboard handler error:', error);
-    return createResponse(500, 'application/json', JSON.stringify({ 
-      error: 'Internal Server Error',
-      message: error instanceof Error ? error.message : 'Unknown error'
-    }));
+    return internalError(error);
   }
 };
+
+/** The response, carrying the Set-Cookie the gate asked for (clearing a refused impersonation cookie), unless it sets its own */
+const withCookies = (response: LambdaFunctionUrlResult, access: RequestAccess): LambdaFunctionUrlResult =>
+  access.setCookies.length && !response.headers?.['Set-Cookie']
+    ? { ...response, headers: { ...response.headers, 'Set-Cookie': access.setCookies[0] } }
+    : response;
+
+const internalError = (error: unknown): LambdaFunctionUrlResult => createResponse(500, 'application/json', JSON.stringify({
+  error: 'Internal Server Error',
+  message: error instanceof Error ? error.message : 'Unknown error'
+}));
+
+/** Answer a request the gate let through */
+async function route(request: Request, access: RequestAccess, audit: AuditTrail): Promise<LambdaFunctionUrlResult> {
+  const { path, body, queryParams } = request;
+  // Route handling
+  switch (path) {
+    case '/': case '/dashboard':
+      if ( ! request.isAuthenticated) {
+        console.log('Request is not authenticated. Returning login response.');
+        return { statusCode: 302, headers: {
+          ["content-type"]: "text/html",
+          Location: '/login-page'
+        }}
+
+      }
+      await recordProfile(access);
+      return await renderDashboard(request, queryParams.tab, access);
+
+    case '/login-page':
+      if(request.isAuthenticated) {
+        return { statusCode: 302, headers: {
+          ["content-type"]: "text/html",
+          Location: '/dashboard'
+        }}
+      }
+      return await renderLoginPage();
+
+    case '/login-redirect':
+      if(request.isAuthenticated) {
+        return { statusCode: 302, headers: {
+          ["content-type"]: "text/html",
+          Location: '/dashboard'
+        }}
+      }
+      return request.getLoginResponse();
+    
+    case '/api/me':
+      return await handleMe(access);
+
+    case '/api/impersonation':
+      return await handleImpersonation(request, access, audit);
+
+    case '/api/person-lookup':
+      return await handlePersonLookup({requestBody: body, cache });
+
+    case '/api/person-sync/preview-experiment':
+      return await handlePersonSyncPreviewExperiment({requestBody: body, cache });
+
+    case '/api/person-sync/preview':
+      return await handlePersonSyncPreview({requestBody: body, cache });
+    
+    case '/api/person-sync':
+      return await handlePersonSync({requestBody: body, cache });
+    
+    case '/api/bulk-sync':
+      return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user, authorizer: access.authorizer, audit });
+
+    case '/api/bulk-sync/plan':
+      return await handleBulkSync({ method: request.method, requestBody: body, cache, user: request.user, authorizer: access.authorizer, audit, plan: true });
+
+    case '/api/mock-landscape/reset':
+      return await handleMockLandscapeReset({ method: request.method, cache, user: request.user });
+    
+    case '/api/status':
+      return await getSystemStatus();
+
+    case '/api/runs':
+      return await handleListRuns(request.method, queryParams);
+
+    case '/api/capabilities':
+      return handleCapabilities(request.method);
+
+    case '/api/landscapes':
+      return await handleLandscapes(request.method);
+
+    case '/api/audit':
+      return await handleAudit(queryParams);
+
+    case '/api/access/roles':
+    case '/api/access/assignments':
+      return await handleAccess(request, access, audit);
+    
+    default:
+      if (path.startsWith('/api/runs/')) {
+        return await handleRunRoute({ method: request.method, path, queryParams });
+      }
+      if (path.startsWith('/api/access/assignments/')) {
+        return await handleAccess(request, access, audit);
+      }
+      return createResponse(404, 'text/html', '<h1>404 - Page Not Found</h1>');
+  }
+}
 
 /**
  * Render the dashboard page: the sidebar and top bar, with the requested page (`?tab=<id>`) shown
  */
-async function renderDashboard(request: Request, activeTab?: string): Promise<LambdaFunctionUrlResult> {
+async function renderDashboard(request: Request, activeTab: string | undefined, access: RequestAccess): Promise<LambdaFunctionUrlResult> {
   try {
     const navigationBar = buildNavigationBar({
       listing: await landscapeListingOrNone(),
       landscape: process.env.LANDSCAPE || LOCAL_LANDSCAPE,
       landscapeTone: process.env.LANDSCAPE_TONE,
       signInRequired: request.signInRequired,
-      user: request.user
+      user: request.user,
+      // The Impersonate button for those who may, and while impersonating, Stop and the impersonating tone
+      impersonation: {
+        mayImpersonate: access.mayImpersonate,
+        ...(access.viewedAs && { person: await personLabel(access.viewedAs.buPrincipal!) })
+      }
     });
     const template = TemplateService.getDashboardTemplate();
     const partials = TemplateService.getPartials();
@@ -153,6 +233,8 @@ async function renderDashboard(request: Request, activeTab?: string): Promise<La
     const data = {
       title: 'Integration Dashboard - Boston University Person → Huron',
       ...new PageNavigation().templateData(activeTab),
+      // The Audit trail page's action filter
+      auditActions: ACTIONS,
       ...navigationBar,
       cssAssets,
       jsAssets
@@ -385,9 +467,10 @@ async function handlePersonSync(params: { requestBody: string | null, cache: Das
  * 409 a run underway or stalled or a subscriber in DRY_RUN, 503 not configured) and { error, code }.
  */
 async function handleBulkSync(params: {
-  method: string, requestBody: string | null, cache: DashboardCache, user?: any, plan?: boolean
+  method: string, requestBody: string | null, cache: DashboardCache, user?: any, authorizer: RequestAuthorizer, audit: AuditTrail,
+  plan?: boolean
 }): Promise<LambdaFunctionUrlResult> {
-  const { method, requestBody, cache, user, plan = false } = params;
+  const { method, requestBody, cache, user, authorizer, audit, plan = false } = params;
   const allowed = plan ? ['POST'] : ['GET', 'POST'];
   if (!allowed.includes(method)) {
     const response = jsonResponse(405, { error: 'Method not allowed' });
@@ -407,12 +490,17 @@ async function handleBulkSync(params: {
     }
     // Who is starting it: the signed-in user, from the request's sign-in token
     const startedBy = BulkSync.startedBy(user);
+    // The request's choices are checked against the user's roles too (Start from scratch, Processor tasks)
     return plan
-      ? jsonResponse(200, await bulkSyncService.plan(body, startedBy))
-      : jsonResponse(202, await bulkSyncService.start(body, startedBy));
+      ? jsonResponse(200, await bulkSyncService.plan(body, startedBy, authorizer))
+      : jsonResponse(202, await bulkSyncService.start(body, startedBy, authorizer));
   } catch (error) {
     if (error instanceof BulkSyncError) {
       return jsonResponse(error.status, { error: error.message, code: error.code });
+    }
+    if (error instanceof ForbiddenError) {
+      await audit.denied(error.decision);
+      return jsonResponse(403, error.body);
     }
     console.error('Error in bulk sync:', error);
     return jsonResponse(500, {
@@ -622,6 +710,136 @@ function runReportingErrorResponse(error: unknown, description: string): LambdaF
 function methodNotAllowed(): LambdaFunctionUrlResult {
   const response = jsonResponse(405, { error: 'Method not allowed' });
   return { ...response, headers: { ...response.headers, Allow: 'GET' } };
+}
+
+/** The Access page's routes (AccessRoutes), behind the gate's access:admin; a change is recorded as granted by the user */
+async function handleAccess(request: Request, access: RequestAccess, audit: AuditTrail): Promise<LambdaFunctionUrlResult> {
+  const routes = new AccessRoutes({ store: ServiceProvider.getRoleAssignmentStore(), catalog: ServiceProvider.getRoleCatalog() });
+  const { status, body } = await routes.answer({
+    method: request.method, path: request.path, body: request.body, grantedBy: access.principal.buPrincipal ?? 'anonymous'
+  });
+  const pruned = (body.pruned as { role: string; coveredBy: string }[] | undefined) ?? [];
+  const dropped = pruned.length ? `; dropped ${pruned.map(({ role, coveredBy }) => `${role} (covered by ${coveredBy})`).join(', ')}` : '';
+  // A saved change is audited with the roles saved, after pruning, and what was dropped
+  if (status === 200 && Array.isArray(body.roles) && body.added !== undefined) {
+    audit.note(`roles=${(body.roles as string[]).join(',') || 'none'}${dropped}`);
+  }
+  // A bulk grant: a record for each person given the roles, and the request's own record saying who was left as they were
+  if (status === 200 && Array.isArray(body.granted)) {
+    const roles = `roles=${(body.roles as string[]).join(',')}`;
+    for (const person of body.granted as string[]) {
+      await audit.record({ action: 'access:admin', decision: 'ALLOWED', outcome: 'SUCCEEDED', target: person, detail: `${roles} (bulk)` });
+    }
+    const unchanged = body.unchanged as UnchangedPerson[];
+    audit.note(`bulk ${roles}${dropped}; granted ${(body.granted as string[]).length}`
+      + (unchanged.length ? `; left as they were ${unchanged.length}: ${unchanged.map(({ buPrincipal, roles: held }) => `${buPrincipal} (${held.join(',')})`).join(', ')}` : ''));
+  }
+  return jsonResponse(status, body);
+}
+
+/**
+ * GET /api/audit?cursor&limit&principal&action: the landscape's audit trail, newest first, a page at a time
+ * (`{ items, cursor? }`; the cursor continues the list), optionally one person's (a buPrincipal, <id>@bu.edu or
+ * anonymous) or one action's. A bad cursor, limit or filter is 400 { error, code }.
+ */
+async function handleAudit(queryParams: { [key: string]: string }): Promise<LambdaFunctionUrlResult> {
+  const { cursor, limit, principal, action } = queryParams;
+  try {
+    return jsonResponse(200, await ServiceProvider.getAuditStore().list({
+      cursor: cursor || undefined,
+      limit: limit === undefined || limit === '' ? undefined : Number(limit),
+      buPrincipal: principal || undefined,
+      action: action || undefined
+    }));
+  } catch (error) {
+    if (error instanceof AuditError) {
+      return jsonResponse(400, { error: error.message, code: error.code });
+    }
+    throw error;
+  }
+}
+
+/**
+ * GET /api/me: who the dashboard takes the request to be, and what they may do in this landscape (authorization-plan.md,
+ * decision 10's who-am-I dialog): their identity, roles with each role's policies and actions, and every action they
+ * hold. Needs only sign-in, so a user with no role can see that they have none.
+ */
+async function handleMe(access: RequestAccess): Promise<LambdaFunctionUrlResult> {
+  const { principal, authorizer, publicMode, viewedAs, mayImpersonate } = access;
+  await recordProfile(access);
+  const { buPrincipal, eppn, mail, displayName } = principal;
+  return jsonResponse(200, {
+    signedIn: !principal.isAnonymous,
+    ...(buPrincipal && { user: { buPrincipal, eppn, mail, displayName } }),
+    // The roles in force: the impersonated person's while impersonating (decision 14)
+    ...await authorizer.effectivePermissions(),
+    mayImpersonate,
+    ...(viewedAs && { viewedAs: await personLabel(viewedAs.buPrincipal!) }),
+    publicMode
+  });
+}
+
+/** A person as the top bar and /api/me name them: their buPrincipal, and their name if they have signed in here */
+async function personLabel(buPrincipal: string): Promise<{ buPrincipal: string; label: string; displayName?: string }> {
+  let profile;
+  try {
+    profile = await ServiceProvider.getRoleAssignmentStore().getProfile(buPrincipal);
+  } catch (error) {
+    console.warn(`Couldn't read the profile of ${buPrincipal}: ${error instanceof Error ? error.message : error}`);
+  }
+  const displayName = profile?.displayName;
+  return { buPrincipal, label: displayName || buPrincipal, ...(displayName && { displayName }) };
+}
+
+/**
+ * Impersonation (decision 14), behind the gate (starting needs the user's own access:impersonate; stopping, only sign-in):
+ * - `POST /api/impersonation` `{ principal }` (a buPrincipal or <id>@bu.edu): sets the cookie naming the person, whose
+ *   roles decide every later request, for viewing only, until stopped. Starting another replaces it. Not yourself.
+ * - `DELETE /api/impersonation`: clears it.
+ * Both are audited (access:impersonate, the person as the target).
+ */
+async function handleImpersonation(request: Request, access: RequestAccess, audit: AuditTrail): Promise<LambdaFunctionUrlResult> {
+  if (request.method === 'DELETE') {
+    if (access.viewedAs) {
+      await audit.record({ action: 'access:impersonate', decision: 'ALLOWED', outcome: 'SUCCEEDED', target: access.viewedAs.buPrincipal, detail: 'stopped' });
+    }
+    const response = jsonResponse(200, { impersonating: null });
+    return { ...response, headers: { ...response.headers, 'Set-Cookie': Impersonation.clearCookieValue() } };
+  }
+  let input: unknown;
+  try {
+    input = JSON.parse(request.body || '').principal;
+  } catch {
+    return jsonResponse(400, { error: 'The request body must be JSON: { "principal": "..." }', code: 'INVALID_REQUEST' });
+  }
+  const resolution = PrincipalResolver.resolve(input);
+  if (!resolution.ok) {
+    return jsonResponse(400, { error: resolution.reason, code: 'INVALID_PRINCIPAL' });
+  }
+  const refusal = Impersonation.startRefusal(access.principal, resolution.buPrincipal);
+  if (refusal) {
+    return jsonResponse(400, { error: refusal, code: 'INVALID_PRINCIPAL' });
+  }
+  const person = await personLabel(resolution.buPrincipal);
+  const roles = await ServiceProvider.getRoleAssignmentStore().getRoles(resolution.buPrincipal);
+  await audit.record({ action: 'access:impersonate', decision: 'ALLOWED', outcome: 'SUCCEEDED', target: person.buPrincipal, detail: 'started' });
+  const response = jsonResponse(200, { impersonating: { ...person, roles } });
+  return { ...response, headers: { ...response.headers, 'Set-Cookie': Impersonation.setCookie(person.buPrincipal) } };
+}
+
+/**
+ * Keep what the signed-in user's token says of them (name, eppn, mail), so the Access page can show who people are.
+ * On a page load and /api/me only, not on every request. Never fails the request.
+ */
+async function recordProfile(access: RequestAccess): Promise<void> {
+  if (access.publicMode || access.principal.isAnonymous) {
+    return;
+  }
+  try {
+    await ServiceProvider.getRoleAssignmentStore().recordProfile(access.principal);
+  } catch (error) {
+    console.warn(`Couldn't record the profile of ${access.principal.buPrincipal}: ${error instanceof Error ? error.message : error}`);
+  }
 }
 
 function jsonResponse(statusCode: number, body: unknown): LambdaFunctionUrlResult {

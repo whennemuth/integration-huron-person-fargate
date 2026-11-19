@@ -6,6 +6,7 @@ import { assertLandscapeHostname } from './DashboardDomain';
 import { DefaultLandscapeRedirect, planDefaultLandscapeRedirect } from './DefaultLandscapeRedirect';
 import { landscapeResources } from './LandscapeResources';
 import { assertSingleDefaultLandscape } from './LandscapeRegistration';
+import { JwtPublicKey } from './JwtPublicKey';
 import { applySharedSignIn } from './SharedSignIn';
 import { AuthenticatedStack, PublicStack } from './Stack';
 
@@ -52,8 +53,10 @@ export const createDashboardStack = async (app: cdk.App, landscapeContext: Lands
   if (context.AUTHENTICATION_MODE === AuthenticationMode.AUTHENTICATED) {
     // The Lambda (AUTH_COOKIE_NAME) and the edge functions must read the same cookie
     const authContext = applySharedSignIn(context);
+    // The Lambda verifies the sign-in's tokens with the public key of the edge functions' key pair
+    const jwtPublicKey = await JwtPublicKey.read(authContext);
     const dashboardStack = new AuthenticatedStack({
-      scope: app, stackName, context: authContext, landscapeResources: resources, stackProps
+      scope: app, stackName, context: authContext, landscapeResources: resources, stackProps, jwtPublicKey
     });
 
     // The Shibboleth construct fronts the function URL, so it needs the URL in its context

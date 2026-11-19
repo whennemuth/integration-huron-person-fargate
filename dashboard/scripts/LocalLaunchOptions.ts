@@ -23,6 +23,7 @@
  *   --landscape <name>            the landscape the offline services play, e.g. mock for a mock landscape's page
  *                                 (offline only; npm run dashboard:dev:offline:mock)
  *   --allow-production            ALLOW_PRODUCTION
+ *   --roles <Role,...>            USER_ROLES: the local user's roles, offline (none: no role)
  *
  * The names before 2026-11-15 still work, each with a warning saying what it is now (RENAMED): MOCKED,
  * MOCK_STORAGE_MODE and AUTHENTICATION=mock in LocalLaunch.env, and --mocks, --no-mocks and --auth mock.
@@ -67,6 +68,12 @@ const SIGN_IN_HEADERS = Object.keys(LOCAL_SIGN_IN_HEADERS);
  */
 export const OFFLINE_LANDSCAPE = 'local';
 
+/**
+ * The roles USER_ROLES may name (StaticRoleCatalog's, not imported: nothing of the server may load before its
+ * environment is set; a test keeps them the same)
+ */
+export const ROLE_NAMES = ['RunViewer', 'PersonViewer', 'Viewer', 'PersonOperator', 'PipelineOperator', 'Operator', 'Admin'] as const;
+
 /** A landscape's name, as the stacks name them: lower case letters and digits, after a letter */
 const LANDSCAPE_NAME = /^[a-z][a-z0-9]*$/;
 
@@ -86,6 +93,7 @@ type Flags = {
   storageMode?: string;
   allowProduction?: boolean;
   landscape?: string;
+  roles?: string;
 }
 
 export class LocalLaunchOptions {
@@ -96,6 +104,11 @@ export class LocalLaunchOptions {
   readonly allowProduction: boolean;
   /** Offline: the landscape the offline services play (--landscape, else OFFLINE_LANDSCAPE) */
   readonly offlineLandscape?: string;
+  /**
+   * Offline with the local sign-in: the local user's roles (USER_ROLES, or --roles), which the offline role store is
+   * seeded with. Empty: no role. Undefined when they don't apply (online, the landscape's access table decides).
+   */
+  readonly roles?: string[];
   /** Old names used (RENAMED), each with what it is now: for the launcher to print */
   readonly warnings: string[] = [];
   /** LocalLaunch.env's variables, with any old setting names given their new ones */
@@ -136,6 +149,31 @@ export class LocalLaunchOptions {
     if (this.authentication === 'local' && !setting('USER_PRINCIPAL')) {
       throw new Error('AUTHENTICATION=local signs in as USER_PRINCIPAL: set it in LocalLaunch.env (a buPrincipal, e.g. jdoe), or use AUTHENTICATION=none');
     }
+    const roles = flags.roles ?? this.file.USER_ROLES;
+    if (roles !== undefined) {
+      const names = LocalLaunchOptions.parseRoles(roles);
+      if (!this.offline) {
+        this.warnings.push(`USER_ROLES${flags.roles !== undefined ? ' (--roles)' : ''} is ignored online: the ${this.landscape} landscape's access table ` +
+          'holds the roles (seed them with the DASHBOARD_ROLE_ASSIGNMENTS harness)');
+      } else if (this.authentication !== 'local') {
+        this.warnings.push('USER_ROLES is ignored with AUTHENTICATION=none: a public dashboard authorizes everything');
+      } else {
+        this.roles = names;
+      }
+    }
+  }
+
+  /** USER_ROLES: comma-delimited role names (none: no role) */
+  static parseRoles(value: string): string[] {
+    const names = value.split(',').map(name => name.trim()).filter(Boolean);
+    if (names.length === 1 && names[0].toLowerCase() === 'none') {
+      return [];
+    }
+    const unknown = names.filter(name => !(ROLE_NAMES as readonly string[]).includes(name));
+    if (unknown.length) {
+      throw new Error(`USER_ROLES (or --roles) names unknown role(s): ${unknown.join(', ')} (known: ${ROLE_NAMES.join(', ')}, or none)`);
+    }
+    return [...new Set(names)];
   }
 
   /** LocalLaunch.env with each old setting name (RENAMED.settings) given its new one, unless the new one is also set */
@@ -210,6 +248,12 @@ export class LocalLaunchOptions {
       ...(this.offlineLandscape ? { LANDSCAPE: this.offlineLandscape } : {})
     };
     const unset: string[] = [];
+    // The offline role store's seed (ServiceProvider.getRoleAssignmentStore()); nowhere else is it read
+    if (this.roles) {
+      variables.USER_ROLES = this.roles.join(',');
+    } else {
+      delete variables.USER_ROLES;
+    }
     if (this.authentication === 'none') {
       // Public mode: no app login/logout headers, so nothing requires a sign-in
       SIGN_IN_HEADERS.forEach(name => { delete variables[name]; unset.push(name); });
@@ -250,6 +294,14 @@ export class LocalLaunchOptions {
         case '--watch': flags.watch = true; break;
         case '--no-watch': flags.watch = false; break;
         case '--allow-production': flags.allowProduction = true; break;
+        case '--roles': {
+          const value = args[++i];
+          if (value === undefined || value.startsWith('--')) {
+            throw new Error(`--roles must be followed by role names, e.g. Operator or Viewer,Admin, or none (got ${value === undefined ? 'nothing' : `'${value}'`})`);
+          }
+          flags.roles = value;
+          break;
+        }
         case '--auth': flags.authentication = valueOf('--auth', ++i, AUTHENTICATION_MODES); break;
         case '--storage-mode': flags.storageMode = valueOf('--storage-mode', ++i, STORAGE_MODES); break;
         case '--landscape': {
@@ -265,7 +317,7 @@ export class LocalLaunchOptions {
     }
     if (unknown.length > 0) {
       throw new Error(`Unknown option(s): ${unknown.join(', ')} (expected --offline, --online, --auth <${AUTHENTICATION_MODES.join('|')}>, ` +
-        `--watch, --no-watch, --storage-mode <${STORAGE_MODES.join('|')}>, --landscape <name>, --allow-production)`);
+        `--watch, --no-watch, --storage-mode <${STORAGE_MODES.join('|')}>, --landscape <name>, --allow-production, --roles <Role,...>)`);
     }
     return flags;
   }

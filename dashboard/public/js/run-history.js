@@ -673,7 +673,7 @@ class PagedTable {
         try {
             items = await this.pager.next();
         } catch (error) {
-            PageState.error(container, text.error, error.message);
+            PageState.failed(container, text.error, error);
             return false;
         }
         if (items === null) {
@@ -739,7 +739,7 @@ class PagedTable {
         const { text } = this.options;
         this.footer.replaceChildren();
         if (error) {
-            this.footer.appendChild(PageState.element('error', { title: text.errorMore, message: error.message, compact: true }));
+            this.footer.appendChild(PageState.failedElement(text.errorMore, error, { compact: true }));
         }
         const count = document.createElement('span');
         count.className = 'table-footer-count';
@@ -912,7 +912,7 @@ class RunDetailView {
             if (error.status === 404) {
                 PageState.empty(body, 'No such run', `Nothing is recorded for a run started at ${this.syncRunId}.`);
             } else {
-                PageState.error(body, 'The run could not be loaded', error.message);
+                PageState.failed(body, 'The run could not be loaded', error);
             }
             return false;
         }
@@ -1306,7 +1306,7 @@ class RunDetailView {
             chunks = await this.chunks();
         } catch (error) {
             this.loadedSections.delete('chunks');
-            PageState.error(panel, 'Chunk statistics could not be loaded', error.message);
+            PageState.failed(panel, 'Chunk statistics could not be loaded', error);
             return;
         }
         if (chunks.length === 0) {

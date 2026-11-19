@@ -18,9 +18,6 @@ export class Request {
   public get path (): string {
     return this.event.rawPath || this.event.requestContext?.http?.path || '/';
   }
-  public isAuthorized = (): boolean => {
-    return this.authenticator.isAuthorized();
-  }
   public getLoginResponse = (): LambdaFunctionUrlResult => {
     return this.authenticator.getLoginResponse();
   }

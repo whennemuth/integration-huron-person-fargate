@@ -3,6 +3,8 @@
  * Shibboleth construct, the cookie name the dashboard Lambda reads (AUTH_COOKIE_NAME), and the
  * synth failures for settings that can't work.
  */
+import { JwtPublicKey } from '../dashboard/lib/JwtPublicKey';
+import { TestSignIn } from './support/TestSignIn';
 import { App } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import { JwtTools } from 'shibboleth-sp';
@@ -12,6 +14,7 @@ import { AuthenticatedContext, AuthenticationMode } from '../dashboard/context/I
 import { createDashboardStack } from '../dashboard/lib/DashboardStacks';
 import { applySharedSignIn, SHARED_SIGN_IN_COOKIE_NAME } from '../dashboard/lib/SharedSignIn';
 
+const signIn = new TestSignIn();
 const SUBDOMAIN = 'mock.person.huron.cssnprd.warhen.work';
 
 const makeDashboard = (overrides: Record<string, any> = {}): Record<string, any> => ({
@@ -78,6 +81,8 @@ describe('createDashboardStack cookie settings', () => {
       shibContexts.push(params.context);
       return undefined as any;
     });
+    // Read from the Shibboleth secret at synth, as the construct reads it
+    jest.spyOn(JwtPublicKey, 'read').mockResolvedValue(signIn.publicKey);
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -87,8 +92,15 @@ describe('createDashboardStack cookie settings', () => {
     const app = new App({ context: { 'aws:cdk:bundling-stacks': [] } });
     const stack = await createDashboardStack(app, makeLandscape(dashboard));
     const [fn] = Object.values(Template.fromStack(stack!).findResources('AWS::Lambda::Function'));
-    return { shibContext: shibContexts[0], authCookieName: fn.Properties.Environment.Variables.AUTH_COOKIE_NAME };
+    const variables = fn.Properties.Environment.Variables;
+    return { shibContext: shibContexts[0], authCookieName: variables.AUTH_COOKIE_NAME, jwtPublicKey: variables.JWT_PUBLIC_KEY };
   };
+
+  it("gives the Lambda the sign-in's JWT public key, read from the Shibboleth secret at synth", async () => {
+    const { jwtPublicKey } = await synth(makeDashboard());
+    expect(jwtPublicKey).toBe(signIn.publicKey);
+    expect(JwtPublicKey.read).toHaveBeenCalledWith(expect.objectContaining({ SHIBBOLETH: expect.anything() }));
+  });
 
   it('gives the edge functions and the Lambda the shared cookie for a sharedSignIn landscape', async () => {
     const { shibContext, authCookieName } = await synth(makeDashboard({ sharedSignIn: true }));
@@ -119,12 +131,12 @@ describe('Authenticator cookie name', () => {
   const ORIGINAL_ENV = process.env;
   afterEach(() => { process.env = ORIGINAL_ENV; });
 
-  const token = (user: string) =>
-    `header.${Buffer.from(JSON.stringify({ [JwtTools.TOKEN_NAME]: { user } })).toString('base64')}.signature`;
+  // Signed as the sign-in signs it: the Lambda reads only a token that verifies (ClaimsReader)
+  const token = (user: string) => signIn.token(user as any);
 
   // Authentication.ts reads its environment when it loads, so load it fresh for each environment
   const userFor = (cookie: string, env: Record<string, string>): string | undefined => {
-    process.env = { ...ORIGINAL_ENV, ...env };
+    process.env = { ...ORIGINAL_ENV, ...signIn.environment, ...env };
     let user: string | undefined;
     jest.isolateModules(() => {
       const { Authenticator } = require('../dashboard/src/services/Authentication');

@@ -102,6 +102,41 @@ class PageState {
     static redacted(target, options = {}) {
         return PageState.show(target, 'redacted', options);
     }
+
+    /**
+     * What a section shows when its data couldn't be loaded: redacted when the server refused it for the viewer's
+     * role (a 403, naming the action the role lacks: authorization-plan.md decision 7), else the error state with the
+     * server's message. Every section that loads content to display reports a failed load through this, so a refusal
+     * reads the same everywhere. (An action the viewer triggers shows the error pattern with the server's message.)
+     * @param {Error} error as fetchSectionData() throws it: message, status, and the refused action
+     */
+    static failed(target, title, error, options = {}) {
+        const container = typeof target === 'string' ? document.getElementById(target) : target;
+        if ( ! container) {
+            return null;
+        }
+        const state = PageState.failedElement(title, error, options);
+        container.replaceChildren(state);
+        return state;
+    }
+
+    /** The element PageState.failed() shows, to place yourself (e.g. under a list's loaded rows) */
+    static failedElement(title, error, options = {}) {
+        if (PageState.isForbidden(error)) {
+            return PageState.element('redacted', { ...options, message: PageState.redactedMessage(error) });
+        }
+        return PageState.element('error', { ...options, title, message: error && error.message });
+    }
+
+    static isForbidden(error) {
+        return !!error && error.status === 403;
+    }
+
+    /** The redacted state's line: what was redacted, the action the viewer's roles lack, and what would change it */
+    static redactedMessage(error) {
+        const needs = error && error.action ? ` It needs ${error.action}, which` : ' It needs an action that';
+        return `This content is redacted.${needs} none of your roles grants. A dashboard administrator can give you a role, or raise the one you have.`;
+    }
 }
 
 /**

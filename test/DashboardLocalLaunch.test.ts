@@ -5,7 +5,8 @@
  */
 import { DashboardFunctionNotFoundError, LambdaFunction } from '../dashboard/scripts/LambdaFunction';
 import { lookupFailure } from '../dashboard/scripts/LocalLaunch';
-import { LOCAL_SIGN_IN, LocalLaunchOptions, LOCAL_SIGN_IN_HEADERS } from '../dashboard/scripts/LocalLaunchOptions';
+import { LOCAL_SIGN_IN, LocalLaunchOptions, LOCAL_SIGN_IN_HEADERS, ROLE_NAMES } from '../dashboard/scripts/LocalLaunchOptions';
+import { StaticRoleCatalog } from '../dashboard/src/authorization/RoleCatalog';
 
 /** A LocalLaunch.env for a real landscape, signed out (public mode) */
 const FILE = {
@@ -236,5 +237,52 @@ describe('lookupFailure', () => {
     const expired = Object.assign(new Error('The security token included in the request is expired'), { name: 'ExpiredTokenException' });
     expect(lookupFailure('preview', expired).message).toContain(`The security token included in the request is expired\n${SESSION_HINT}`);
     expect(lookupFailure('preview', 'not an Error').message).toContain(`not an Error\n${SESSION_HINT}`);
+  });
+});
+
+describe("LocalLaunchOptions: the local user's roles (USER_ROLES, --roles)", () => {
+  const SIGNED_IN_OFFLINE = { ...OFFLINE_FILE, AUTHENTICATION: 'local' };
+
+  it("knows the catalog's roles", () => {
+    expect([...ROLE_NAMES]).toEqual(new StaticRoleCatalog().listRoles().map(role => role.name));
+  });
+
+  it('seeds the offline role store with USER_ROLES', () => {
+    const options = new LocalLaunchOptions({ ...SIGNED_IN_OFFLINE, USER_ROLES: ' Operator, Viewer,Operator ' });
+    expect(options.roles).toEqual(['Operator', 'Viewer']);
+    expect(options.environment().variables.USER_ROLES).toBe('Operator,Viewer');
+  });
+
+  it('takes --roles over USER_ROLES, and none for no role', () => {
+    expect(new LocalLaunchOptions({ ...SIGNED_IN_OFFLINE, USER_ROLES: 'Viewer' }, ['--roles', 'Admin']).roles).toEqual(['Admin']);
+    const none = new LocalLaunchOptions({ ...SIGNED_IN_OFFLINE, USER_ROLES: 'Viewer' }, ['--roles', 'none']);
+    expect(none.roles).toEqual([]);
+    expect(none.environment().variables.USER_ROLES).toBe('');
+  });
+
+  it('gives no role without USER_ROLES', () => {
+    const options = new LocalLaunchOptions(SIGNED_IN_OFFLINE);
+    expect(options.roles).toBeUndefined();
+    expect(options.environment().variables.USER_ROLES).toBeUndefined();
+  });
+
+  it('refuses an unknown role, and --roles without names', () => {
+    expect(() => new LocalLaunchOptions({ ...SIGNED_IN_OFFLINE, USER_ROLES: 'Admin,Superuser' }))
+      .toThrow('USER_ROLES (or --roles) names unknown role(s): Superuser');
+    expect(() => new LocalLaunchOptions(SIGNED_IN_OFFLINE, ['--roles'])).toThrow(/--roles must be followed by role names/);
+    expect(() => new LocalLaunchOptions(SIGNED_IN_OFFLINE, ['--roles', '--watch'])).toThrow(/--roles must be followed by role names/);
+  });
+
+  it("ignores them online, where the landscape's access table holds the roles, and says so", () => {
+    const options = new LocalLaunchOptions({ ...FILE, AUTHENTICATION: 'local', USER_ROLES: 'Admin' });
+    expect(options.roles).toBeUndefined();
+    expect(options.warnings.join(' ')).toMatch(/USER_ROLES is ignored online: the preview landscape's access table holds the roles/);
+    expect(options.environment(LAMBDA).variables.USER_ROLES).toBeUndefined();
+  });
+
+  it('ignores them in public mode, and says so', () => {
+    const options = new LocalLaunchOptions({ ...OFFLINE_FILE, USER_ROLES: 'Admin' });
+    expect(options.roles).toBeUndefined();
+    expect(options.warnings.join(' ')).toMatch(/USER_ROLES is ignored with AUTHENTICATION=none/);
   });
 });

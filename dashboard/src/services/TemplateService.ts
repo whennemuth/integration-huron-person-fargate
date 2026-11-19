@@ -46,7 +46,9 @@ export class TemplateService {
         'mapping-tab': readFileSync(join(partialsPath, 'mapping-tab.mustache'), 'utf-8'),
         'bulk-tab': readFileSync(join(partialsPath, 'bulk-tab.mustache'), 'utf-8'),
         'runs-tab': readFileSync(join(partialsPath, 'runs-tab.mustache'), 'utf-8'),
-        'system-tab': readFileSync(join(partialsPath, 'system-tab.mustache'), 'utf-8')
+        'system-tab': readFileSync(join(partialsPath, 'system-tab.mustache'), 'utf-8'),
+        'access-tab': readFileSync(join(partialsPath, 'access-tab.mustache'), 'utf-8'),
+        'audit-tab': readFileSync(join(partialsPath, 'audit-tab.mustache'), 'utf-8')
       };
     }
   }
@@ -80,7 +82,8 @@ export class TemplateService {
         'runHistory': assets['run-history'] || '',
         'systemStatus': assets['system-status'] || '',
         'overview': assets['overview'] || '',
-        'bulkSync': assets['bulk-sync'] || ''
+        'bulkSync': assets['bulk-sync'] || '',
+        'administration': assets['administration'] || ''
       };
     } else {
       const jsPath = join(__dirname, '../../public/js');
@@ -92,7 +95,8 @@ export class TemplateService {
         'runHistory': readFileSync(join(jsPath, 'run-history.js'), 'utf-8'),
         'systemStatus': readFileSync(join(jsPath, 'system-status.js'), 'utf-8'),
         'overview': readFileSync(join(jsPath, 'overview.js'), 'utf-8'),
-        'bulkSync': readFileSync(join(jsPath, 'bulk-sync.js'), 'utf-8')
+        'bulkSync': readFileSync(join(jsPath, 'bulk-sync.js'), 'utf-8'),
+        'administration': readFileSync(join(jsPath, 'administration.js'), 'utf-8')
       };
     }
   }

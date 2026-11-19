@@ -424,11 +424,12 @@ env var, which the Docker routers branch on; the runtime factories below then sw
      run after the stack update that adds the index and before the dashboard that reads it is deployed.
    - **Change the statistics table's GSIs one per deploy**: CloudFormation refuses an update that adds or removes
      more than one. As of 2026-11-12, preview and mock have `run-list-index`, and so does staging, whose pipeline
-     stack was recreated that day: a table created with the index needs no `backfill-runs`. Migration has no run
-     index yet. Its pipeline stack is still July's, which can't be updated in place: that stack had a Merger service,
-     and its ECS log groups have since moved to new logical IDs under the same names, so CloudFormation would try to
-     create them before deleting the old ones and fail with "already exists". Recreated as staging was, its table
-     gets the index at creation.
+     stack was recreated that day: a table created with the index needs no `backfill-runs`. Migration's has it too,
+     since its pipeline stack was recreated the same way on 2026-11-19. A July stack couldn't be updated in place: it
+     had a Merger service, and its ECS log groups have since moved to new logical IDs under the same names, so
+     CloudFormation would try to create them before deleting the old ones and fail with "already exists". Recreating
+     one: `teardown-fargate`, then `deploy-fargate` (which creates the empty ECR repository, with the services at 0
+     tasks), then `docker-push`, then `deploy-dashboard`.
    - `STATISTICS-chunk-*` items carry the chunk's `IntegrationResult` counts (success/failure/skipped,
      added/updated/removed) as well as its error counts. Added/updated/removed are the successful pushes
      counted by operation (`pushedChangeCounts()` in `src/processing/ProcessorCommon.ts`), so they sum to
@@ -777,8 +778,8 @@ full in us-east-2) are why the landscapes share one network rather than each hav
   and created by an ordinary deploy after it. A gateway attachment's identifier is `AttachmentType: IGW` (not
   `igw`) plus the VPC ID, and a route's is its route table ID plus `0.0.0.0/0`. The layout has a route table per
   public subnet; resources imported with other tags show as drift until their tags are set to the stack's.
-- **Migration** still runs on its July pipeline stack, whose services point at the subnets deleted on 2026-11-12;
-  recreating that stack (as staging's was) puts it on the parameters too.
+- **Every landscape is on the parameters**: migration was the last, its July pipeline stack (on the subnets deleted
+  on 2026-11-12) recreated on 2026-11-19, with its first dashboard stack.
 - Tests: `test/NetworkStack.test.ts` (the layout, retained resources, protection, parameters, tags, the
   dependency), `test/EcsInfrastructureNetwork.test.ts` (the pipeline's services from the parameters).
 

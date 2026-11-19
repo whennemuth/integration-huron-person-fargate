@@ -1,0 +1,65 @@
+<!-- Access page: who holds which roles in this landscape (authorization-plan.md, decisions 3 and 11) -->
+<div class="tab-pane fade {{#accessActive}}show active{{/accessActive}}" id="access" role="tabpanel" aria-labelledby="access-tab">
+    <div class="page">
+        <header class="page-header">
+            <div>
+                <h1 class="page-title">Access</h1>
+                <p class="page-description">Who holds which roles in this landscape. A role is a set of policies, and a policy a set of actions.</p>
+            </div>
+            <div class="page-actions">
+                <span class="refresh-stamp" data-refresh-stamp="access"></span>
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-action="refresh-access">
+                    <i class="fas fa-rotate-right me-1"></i>Refresh
+                </button>
+            </div>
+        </header>
+
+        <!-- Two ways to change roles, one shown at a time: one person's (the default), or several people's at once -->
+        <section class="page-section access-modes">
+            <nav class="nav nav-underline run-sections" role="tablist" aria-label="Change roles">
+                <button class="nav-link active" type="button" role="tab" id="accessModePersonTab" data-access-mode="person"
+                        aria-controls="accessModePerson" aria-selected="true">A person's roles</button>
+                <button class="nav-link" type="button" role="tab" id="accessModeBulkTab" data-access-mode="bulk"
+                        aria-controls="accessModeBulk" aria-selected="false">Give roles to several people</button>
+            </nav>
+            <div class="surface" role="tabpanel" id="accessModePerson" aria-labelledby="accessModePersonTab" data-access-panel="person">
+                <form class="access-lookup" data-access-lookup novalidate>
+                    <label for="accessPrincipal" class="form-label">Person</label>
+                    <div class="input-group access-lookup-input">
+                        <input id="accessPrincipal" name="principal" class="form-control" placeholder="jdoe or jdoe@bu.edu" autocomplete="off" spellcheck="false">
+                        <button class="btn btn-primary" type="submit">
+                            <i class="fas fa-magnifying-glass me-1"></i>Look up
+                        </button>
+                    </div>
+                    <div class="form-text">Their BU login (buPrincipal), or their eduPersonPrincipalName ending in @bu.edu.</div>
+                </form>
+                <!-- Filled by AccessPage (administration.js): the person's profile and a checkbox per role -->
+                <div class="access-person" data-access-person></div>
+            </div>
+            <div class="surface" role="tabpanel" id="accessModeBulk" aria-labelledby="accessModeBulkTab" data-access-panel="bulk" hidden>
+                <form class="access-bulk" data-access-bulk novalidate>
+                    <label for="accessBulkPrincipals" class="form-label">People</label>
+                    <textarea id="accessBulkPrincipals" name="principals" class="form-control access-bulk-principals" rows="3" placeholder="jdoe, asmith, bjones@bu.edu" autocomplete="off" spellcheck="false"></textarea>
+                    <div class="form-text">BU logins (buPrincipal) or eduPersonPrincipalNames ending in @bu.edu, separated by commas, spaces or new lines; at most 100 at a time. Anyone who already holds a role keeps exactly what they hold.</div>
+                    <fieldset class="access-bulk-roles">
+                        <legend class="form-label fs-6">Roles to give</legend>
+                        <!-- Filled by AccessPage: a checkbox per role -->
+                        <div data-access-bulk-roles></div>
+                    </fieldset>
+                    <div class="access-person-actions">
+                        <button class="btn btn-primary btn-sm" type="submit"><i class="fas fa-user-plus me-1"></i>Give roles</button>
+                    </div>
+                    <div class="access-bulk-result" data-access-bulk-result></div>
+                </form>
+            </div>
+        </section>
+
+        <section class="page-section" aria-labelledby="accessListHeading">
+            <div class="section-heading">
+                <h2 class="section-title" id="accessListHeading">Everyone with a role</h2>
+            </div>
+            <!-- Filled by AccessPage when the page is shown: the table, and below it everyone's buPrincipal to copy -->
+            <div class="surface surface-flush" data-access-list></div>
+        </section>
+    </div>
+</div>
