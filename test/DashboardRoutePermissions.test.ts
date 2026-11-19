@@ -34,6 +34,7 @@ describe('RoutePermissions', () => {
     ['GET', '/api/capabilities', 'runs:read', false],
     ['GET', '/api/landscapes', 'runs:read', false],
     ['GET', '/api/access/assignments', 'access:admin', false],
+    ['POST', '/api/access/assignments', 'access:admin', true],
     ['GET', '/api/access/roles', 'access:admin', false],
     ['GET', '/api/access/assignments/jdoe', 'access:admin', false],
     ['PUT', '/api/access/assignments/jdoe', 'access:admin', true],
@@ -84,6 +85,7 @@ describe('RoutePermissions', () => {
     expect(allowed('POST', '/api/mock-landscape/reset')).toBe(false);
     expect(allowed('PUT', '/api/access/assignments/jdoe')).toBe(false);
     expect(allowed('DELETE', '/api/access/assignments/jdoe')).toBe(false);
+    expect(allowed('POST', '/api/access/assignments')).toBe(false);
     expect(allowed('GET', '/api/secret')).toBe(false);
   });
 });

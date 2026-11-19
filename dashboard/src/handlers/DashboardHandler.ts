@@ -22,7 +22,7 @@ import { PrincipalResolver } from '../authorization/Principal';
 import { RequestAuthorizer } from '../authorization/Authorizer';
 import { AuditTrail, auditsAllowed, describeRequest } from '../audit/AuditTrail';
 import { AuditError } from '../audit/AuditStore';
-import { AccessRoutes } from './AccessRoutes';
+import { AccessRoutes, UnchangedPerson } from './AccessRoutes';
 import { ACTIONS } from '../authorization/Actions';
 
 // import { ConfigManager } from 'integration-huron-person';
@@ -718,11 +718,21 @@ async function handleAccess(request: Request, access: RequestAccess, audit: Audi
   const { status, body } = await routes.answer({
     method: request.method, path: request.path, body: request.body, grantedBy: access.principal.buPrincipal ?? 'anonymous'
   });
+  const pruned = (body.pruned as { role: string; coveredBy: string }[] | undefined) ?? [];
+  const dropped = pruned.length ? `; dropped ${pruned.map(({ role, coveredBy }) => `${role} (covered by ${coveredBy})`).join(', ')}` : '';
   // A saved change is audited with the roles saved, after pruning, and what was dropped
   if (status === 200 && Array.isArray(body.roles) && body.added !== undefined) {
-    const pruned = (body.pruned as { role: string; coveredBy: string }[] | undefined) ?? [];
-    audit.note(`roles=${(body.roles as string[]).join(',') || 'none'}`
-      + (pruned.length ? `; dropped ${pruned.map(({ role, coveredBy }) => `${role} (covered by ${coveredBy})`).join(', ')}` : ''));
+    audit.note(`roles=${(body.roles as string[]).join(',') || 'none'}${dropped}`);
+  }
+  // A bulk grant: a record for each person given the roles, and the request's own record saying who was left as they were
+  if (status === 200 && Array.isArray(body.granted)) {
+    const roles = `roles=${(body.roles as string[]).join(',')}`;
+    for (const person of body.granted as string[]) {
+      await audit.record({ action: 'access:admin', decision: 'ALLOWED', outcome: 'SUCCEEDED', target: person, detail: `${roles} (bulk)` });
+    }
+    const unchanged = body.unchanged as UnchangedPerson[];
+    audit.note(`bulk ${roles}${dropped}; granted ${(body.granted as string[]).length}`
+      + (unchanged.length ? `; left as they were ${unchanged.length}: ${unchanged.map(({ buPrincipal, roles: held }) => `${buPrincipal} (${held.join(',')})`).join(', ')}` : ''));
   }
   return jsonResponse(status, body);
 }

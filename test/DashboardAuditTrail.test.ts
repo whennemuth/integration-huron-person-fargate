@@ -18,6 +18,7 @@ describe('which allowed requests are audited', () => {
     ['POST', '/api/bulk-sync', true],
     ['POST', '/api/mock-landscape/reset', true],
     ['GET', '/api/access/assignments', false],
+    ['POST', '/api/access/assignments', true],
     ['GET', '/api/access/assignments/jdoe', false],
     ['PUT', '/api/access/assignments/jdoe', true],
     ['DELETE', '/api/access/assignments/jdoe', true],
@@ -50,6 +51,8 @@ describe('describeRequest', () => {
 
   it("names the person of an access route, and copes with a body it can't read", () => {
     expect(describeRequest('/api/access/assignments/jdoe%40bu.edu', null)).toEqual({ target: 'jdoe@bu.edu' });
+    expect(describeRequest('/api/access/assignments', JSON.stringify({ principals: ['amy', 'bob'], roles: ['Viewer'] })))
+      .toEqual({ target: '2 people', detail: 'roles=Viewer' });
     expect(describeRequest('/api/person-sync', '{not json')).toEqual({});
     expect(describeRequest('/api/mock-landscape/reset', null)).toEqual({});
   });

@@ -57,6 +57,12 @@ export const describeRequest = (path: string, body: string | null): { target?: s
         .map(name => `${name}=${typeof fields[name] === 'object' ? JSON.stringify(fields[name]) : fields[name]}`);
       return { target: text(fields.buid), detail: choices.join(', ') || undefined };
     }
+    case '/api/access/assignments': {
+      // A bulk grant: how many people, and the roles asked for (each person granted gets a record of their own)
+      const count = Array.isArray(fields.principals) ? fields.principals.length : 0;
+      const roles = Array.isArray(fields.roles) ? `roles=${fields.roles.join(',') || 'none'}` : undefined;
+      return { target: `${count} ${count === 1 ? 'person' : 'people'}`, ...(roles && { detail: roles }) };
+    }
     default: {
       // One person's assignments: the person, and the roles they were given
       const person = path.match(/^\/api\/access\/assignments\/([^/]+)$/)?.[1];

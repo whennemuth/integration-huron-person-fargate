@@ -53,6 +53,7 @@ describe('the gate, signed in', () => {
     ['POST', '/api/bulk-sync', 'bulk:start', { runType: 'full' }],
     ['POST', '/api/mock-landscape/reset', 'mock:reset', undefined],
     ['GET', '/api/access/assignments', 'access:admin', undefined],
+    ['POST', '/api/access/assignments', 'access:admin', { principals: ['amy'], roles: ['Viewer'] }],
     ['GET', '/api/audit', 'audit:read', undefined]
   ];
 

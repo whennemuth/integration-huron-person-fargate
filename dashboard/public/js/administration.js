@@ -2,7 +2,9 @@
  * The Administration pages and the who-am-I dialog (authorization-plan.md, decisions 3, 9, 10 and 11):
  *
  *   WhoAmI          GET /api/me: the top bar's who-am-I dialog, and the notice for a user with no role
- *   AccessPage      who holds which roles: look a person up, check their roles, save; everyone with a role
+ *   AccessPage      who holds which roles: two tabs, one person's roles (look up, check, save) and giving roles to
+ *                   several people at once (only those who hold none); everyone with a role, and their buPrincipals
+ *                   to copy
  *   AuditTrailPage  the audit trail, newest first, filtered by person and action, a page at a time
  *   ImpersonateControl  the top bar's Impersonate dialog and Stop impersonating button (decision 14)
  *
@@ -140,10 +142,54 @@ class AccessPage {
             refresh.addEventListener('click', () => this.load());
         }
         this.list.addEventListener('click', event => {
+            if (event.target.closest('[data-action="copy-principals"]')) {
+                this.copyPrincipals();
+                return;
+            }
             const row = event.target.closest('tr[data-principal]');
             if (row) {
+                this.showMode('person');
                 this.input.value = row.dataset.principal;
                 this.lookUp(row.dataset.principal);
+            }
+        });
+        // The two ways to change roles, as tabs: one person's (shown first) or several people's
+        AccessPage.MODES.forEach(mode => {
+            const tab = this.root.querySelector(`[data-access-mode="${mode}"]`);
+            if (tab) {
+                tab.addEventListener('click', () => this.showMode(mode));
+            }
+        });
+        // Giving roles to several people: its own choice of roles, with the same coverage as one person's
+        this.bulk = this.root.querySelector('[data-access-bulk]');
+        this.bulkRoles = this.root.querySelector('[data-access-bulk-roles]');
+        this.bulkChosen = new Set();
+        if (this.bulk && this.bulkRoles) {
+            this.bulk.addEventListener('submit', event => {
+                event.preventDefault();
+                this.grantMany();
+            });
+            this.bulk.addEventListener('change', event => this.choose(event.target, this.bulkChosen, this.bulkRoles));
+        }
+    }
+
+    /** The tabs: 'person' (one person's roles) and 'bulk' (giving roles to several people) */
+    static get MODES() {
+        return ['person', 'bulk'];
+    }
+
+    /** Show one tab's panel and hide the other's */
+    showMode(mode) {
+        this.mode = mode;
+        AccessPage.MODES.forEach(each => {
+            const tab = this.root.querySelector(`[data-access-mode="${each}"]`);
+            const panel = this.root.querySelector(`[data-access-panel="${each}"]`);
+            if (tab) {
+                tab.classList.toggle('active', each === mode);
+                tab.setAttribute('aria-selected', String(each === mode));
+            }
+            if (panel) {
+                panel.hidden = each !== mode;
             }
         });
     }
@@ -158,6 +204,7 @@ class AccessPage {
             ]);
             this.roles = roles.roles || [];
             this.renderList(assignments.assignments || []);
+            this.renderBulkRoles();
             RefreshStamp.set(this.stamp);
             return true;
         } catch (error) {
@@ -183,7 +230,114 @@ class AccessPage {
                     <tbody>${assignments.map(AccessPage.rowHtml).join('')}</tbody>
                 </table>
             </div>
+            ${AccessPage.principalsHtml(assignments)}
         `;
+    }
+
+    /** Everyone's buPrincipal, comma-delimited in small print: one click selects it all, to paste into the bulk form */
+    static principalsHtml(assignments) {
+        return `
+            <div class="access-principals">
+                <div class="access-principals-head">
+                    <span class="secondary">Everyone above (${assignments.length}), to paste into Give roles to several people</span>
+                    <button type="button" class="btn btn-link btn-sm p-0" data-action="copy-principals"><i class="fas fa-copy me-1" aria-hidden="true"></i>Copy</button>
+                </div>
+                <div class="access-principals-list" data-access-principals>${Html.escape(AccessPage.principalsText(assignments))}</div>
+            </div>
+        `;
+    }
+
+    static principalsText(assignments) {
+        return assignments.map(assignment => assignment.buPrincipal).join(', ');
+    }
+
+    /** Copy the buPrincipals to the clipboard; where it can't be written, select them for the user to copy */
+    async copyPrincipals() {
+        const list = this.list.querySelector('[data-access-principals]');
+        const button = this.list.querySelector('[data-action="copy-principals"]');
+        if ( ! list) {
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(list.textContent);
+            if (button) {
+                button.innerHTML = '<i class="fas fa-check me-1" aria-hidden="true"></i>Copied';
+            }
+        } catch (error) {
+            const range = document.createRange();
+            range.selectNodeContents(list);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+    }
+
+    /** The bulk form's role checkboxes, as chosen so far */
+    renderBulkRoles() {
+        if ( ! this.bulkRoles) {
+            return;
+        }
+        this.bulkRoles.innerHTML = (this.roles || []).map(role => AccessPage.roleCheckboxHtml(role, false, 'accessBulkRole')).join('');
+        this.applyCoverage(this.bulkRoles, this.bulkChosen);
+    }
+
+    /** The people typed or pasted: separated by commas, semicolons, spaces or new lines */
+    static principalsOf(text) {
+        return String(text || '').split(/[\s,;]+/).map(value => value.trim()).filter(Boolean);
+    }
+
+    /** Give the chosen roles to the people listed who hold none; say who was left as they were */
+    async grantMany() {
+        const result = this.root.querySelector('[data-access-bulk-result]');
+        const principals = AccessPage.principalsOf((this.root.querySelector('#accessBulkPrincipals') || {}).value);
+        const roles = AccessPage.coverage(this.roles || [], [...this.bulkChosen]).kept;
+        if ( ! principals.length) {
+            PageState.error(result, 'Enter the people to give roles to', 'Paste or type their buPrincipals, separated by commas.', { compact: true });
+            return;
+        }
+        if ( ! roles.length) {
+            PageState.error(result, 'Choose at least one role to give', undefined, { compact: true });
+            return;
+        }
+        PageState.loading(result, `Giving ${roles.join(', ')} to ${AccessPage.people(principals.length)}`, { compact: true });
+        try {
+            const answer = await this.options.sendJson('POST', '/api/access/assignments', { principals, roles });
+            result.replaceChildren(AccessPage.grantedElement(answer));
+            this.load();
+        } catch (error) {
+            PageState.error(result, 'The roles could not be given', error.message, { compact: true });
+        }
+    }
+
+    static people(count) {
+        return `${count} ${count === 1 ? 'person' : 'people'}`;
+    }
+
+    /** What a bulk grant did: who was given the roles, what wasn't kept, and, gently, who was left as they were */
+    static grantedElement(answer) {
+        const granted = answer.granted || [];
+        const unchanged = answer.unchanged || [];
+        const pruned = answer.pruned || [];
+        const element = document.createElement('div');
+        element.setAttribute('role', 'status');
+        const line = (className, text) => {
+            const paragraph = document.createElement('p');
+            paragraph.className = className;
+            paragraph.textContent = text;
+            element.appendChild(paragraph);
+        };
+        line('access-saved', granted.length
+            ? `Gave ${(answer.roles || []).join(', ')} to ${AccessPage.people(granted.length)}: ${granted.join(', ')}.`
+            : 'No one was given a role.');
+        if (pruned.length) {
+            line('access-saved', `Not kept: ${pruned.map(({ role, coveredBy }) => `${role} (included in ${coveredBy})`).join(', ')}.`);
+        }
+        if (unchanged.length) {
+            line('access-unchanged', `${unchanged.length === 1 ? '1 person already had a role and was' : `${unchanged.length} people already had a role and were`} left as they are: `
+                + `${unchanged.map(({ buPrincipal, roles }) => `${buPrincipal} (${roles.join(', ')})`).join(', ')}. `
+                + 'To change their roles, look each one up above.');
+        }
+        return element;
     }
 
     static rowHtml(assignment) {
@@ -260,8 +414,9 @@ class AccessPage {
         `;
     }
 
-    static roleCheckboxHtml(role, checked) {
-        const id = `accessRole${role.name}`;
+    /** prefix: the checkbox ids' prefix, unique to each form the checkboxes are in */
+    static roleCheckboxHtml(role, checked, prefix = 'accessRole') {
+        const id = `${prefix}${role.name}`;
         return `
             <div class="form-check access-role">
                 <input class="form-check-input" type="checkbox" id="${Html.escape(id)}" name="role" value="${Html.escape(role.name)}" ${checked ? 'checked' : ''}>
@@ -318,28 +473,31 @@ class AccessPage {
         return included;
     }
 
-    /** A role checked or unchecked: the roles chosen change, and so does what they cover */
-    choose(input) {
+    /**
+     * A role checked or unchecked: the roles chosen change, and so does what they cover. chosen and container are the
+     * form's: one person's by default, or the bulk form's.
+     */
+    choose(input, chosen = this.chosen, container = this.person) {
         if ( ! input || input.name !== 'role' || input.disabled) {
             return;
         }
         if (input.checked) {
-            this.chosen.add(input.value);
+            chosen.add(input.value);
         } else {
-            this.chosen.delete(input.value);
+            chosen.delete(input.value);
         }
-        this.applyCoverage();
+        this.applyCoverage(container, chosen);
     }
 
     /** Show every role a chosen role covers as checked, disabled and "included in <role>"; free the rest */
-    applyCoverage() {
+    applyCoverage(container = this.person, chosen = this.chosen) {
         const roles = this.roles || [];
-        const coveredBy = AccessPage.includedIn(roles, AccessPage.coverage(roles, [...this.chosen]).kept);
-        this.person.querySelectorAll('input[name="role"]').forEach(input => {
+        const coveredBy = AccessPage.includedIn(roles, AccessPage.coverage(roles, [...chosen]).kept);
+        container.querySelectorAll('input[name="role"]').forEach(input => {
             const coverer = coveredBy[input.value];
             input.disabled = !! coverer;
-            input.checked = !! coverer || this.chosen.has(input.value);
-            const note = this.person.querySelector(`[data-included="${input.value}"]`);
+            input.checked = !! coverer || chosen.has(input.value);
+            const note = container.querySelector(`[data-included="${input.value}"]`);
             if (note) {
                 note.textContent = coverer ? `included in ${coverer}` : '';
             }

@@ -242,6 +242,127 @@ describe.each([false, true])('administration.js (minified: %s)', minified => {
       expect(html).toContain('Admin');
     });
 
+    it("lists everyone's buPrincipal below the table, comma-delimited and escaped, to copy", () => {
+      const assignments = [{ buPrincipal: 'jdoe' }, { buPrincipal: 'amy<x>' }, { buPrincipal: 'bob' }];
+      expect(AccessPage.principalsText(assignments)).toBe('jdoe, amy<x>, bob');
+      const html = AccessPage.principalsHtml(assignments);
+      expect(html).toContain('data-access-principals>jdoe, amy&lt;x&gt;, bob</div>');
+      expect(html).toContain('Everyone above (3)');
+      expect(html).toContain('data-action="copy-principals"');
+    });
+
+    it('reads a pasted list of people, however it is separated', () => {
+      expect(AccessPage.principalsOf(' jdoe, amy;bob\n carl@bu.edu\t,, ')).toEqual(['jdoe', 'amy', 'bob', 'carl@bu.edu']);
+      expect(AccessPage.principalsOf(undefined)).toEqual([]);
+    });
+
+    it("shows one way of changing roles at a time, one person's first, and opens it for a person picked from the list", () => {
+      const tab = () => {
+        const classes = new Set<string>();
+        return Object.assign(new FakeElement('button'), { classList: { toggle: (name: string, on: boolean) => (on ? classes.add(name) : classes.delete(name)), contains: (name: string) => classes.has(name) } });
+      };
+      const parts: Record<string, any> = {
+        '[data-access-list]': new FakeElement(),
+        '[data-access-person]': new FakeElement(),
+        '[data-access-lookup]': new FakeElement('form'),
+        '#accessPrincipal': new FakeElement('input'),
+        '[data-access-mode="person"]': tab(),
+        '[data-access-mode="bulk"]': tab(),
+        '[data-access-panel="person"]': new FakeElement(),
+        '[data-access-panel="bulk"]': Object.assign(new FakeElement(), { hidden: true })
+      };
+      const access = new AccessPage({ getJson: jest.fn().mockResolvedValue({ roles: [] }), sendJson: jest.fn(), me: async () => null, root: { querySelector: (selector: string) => parts[selector] || null } });
+      const shown = () => AccessPage.MODES.map((mode: string) => [mode, parts[`[data-access-mode="${mode}"]`].classList.contains('active'), parts[`[data-access-mode="${mode}"]`].attributes['aria-selected'], parts[`[data-access-panel="${mode}"]`].hidden]);
+
+      parts['[data-access-mode="bulk"]'].listeners.click();
+      expect(shown()).toEqual([['person', false, 'false', true], ['bulk', true, 'true', false]]);
+
+      access.lookUp = jest.fn();
+      const row = { dataset: { principal: 'amy' } };
+      parts['[data-access-list]'].listeners.click({ target: { closest: (selector: string) => (selector === 'tr[data-principal]' ? row : null) } });
+      expect(shown()).toEqual([['person', true, 'true', false], ['bulk', false, 'false', true]]);
+      expect(access.lookUp).toHaveBeenCalledWith('amy');
+    });
+
+    it("gives each form's checkboxes their own ids", () => {
+      const role = { name: 'Viewer', description: 'Reads', policies: [] };
+      expect(AccessPage.roleCheckboxHtml(role, false)).toContain('id="accessRoleViewer"');
+      expect(AccessPage.roleCheckboxHtml(role, false, 'accessBulkRole')).toContain('id="accessBulkRoleViewer"');
+    });
+
+    describe('giving roles to several people', () => {
+      const bulkPage = (value: string, chosen: string[], send?: jest.Mock) => {
+        const result = new FakeElement();
+        const parts: Record<string, any> = {
+          '[data-access-list]': new FakeElement(),
+          '[data-access-person]': new FakeElement(),
+          '[data-access-lookup]': new FakeElement('form'),
+          '#accessPrincipal': new FakeElement('input'),
+          '[data-access-bulk]': new FakeElement('form'),
+          '[data-access-bulk-roles]': new FakeElement(),
+          '[data-access-bulk-result]': result,
+          '#accessBulkPrincipals': Object.assign(new FakeElement('textarea'), { value })
+        };
+        const sendJson = send ?? jest.fn().mockResolvedValue({ roles: ['Viewer'], pruned: [], granted: ['amy'], unchanged: [] });
+        const getJson = jest.fn().mockResolvedValue({ roles: ROLES, assignments: [] });
+        const access = new AccessPage({ getJson, sendJson, me: async () => null, root: { querySelector: (selector: string) => parts[selector] || null } });
+        access.roles = ROLES;
+        chosen.forEach(role => access.bulkChosen.add(role));
+        return { access, sendJson, getJson, result };
+      };
+
+      it('sends the people and the roles less the covered ones, then reloads the list', async () => {
+        const { access, sendJson, getJson, result } = bulkPage('amy, bob@bu.edu', ['Viewer', 'Operator']);
+        await access.grantMany();
+        expect(sendJson).toHaveBeenCalledWith('POST', '/api/access/assignments', { principals: ['amy', 'bob@bu.edu'], roles: ['Operator'] });
+        expect(result.text).toContain('Gave Viewer to 1 person: amy.');
+        expect(getJson).toHaveBeenCalledWith('/api/access/assignments');
+      });
+
+      it('asks for people and for a role before sending anything', async () => {
+        for (const [value, chosen, title] of [[' , ', ['Viewer'], 'Enter the people to give roles to'], ['amy', [], 'Choose at least one role to give']] as [string, string[], string][]) {
+          const { access, sendJson, result } = bulkPage(value, chosen);
+          await access.grantMany();
+          expect(sendJson).not.toHaveBeenCalled();
+          expect(result.children[0].dataset.state).toBe('error');
+          expect(result.text).toContain(title);
+        }
+      });
+
+      it("shows a refusal with the server's message", async () => {
+        const send = jest.fn().mockRejectedValue(Object.assign(new Error('Nothing was saved. Not a buPrincipal or <id>@bu.edu: bob@gmail.com'), { status: 400 }));
+        const { access, result } = bulkPage('amy, bob@gmail.com', ['Viewer'], send);
+        await access.grantMany();
+        expect(result.text).toBe('The roles could not be given Nothing was saved. Not a buPrincipal or <id>@bu.edu: bob@gmail.com');
+      });
+
+      it('keeps its own choice of roles, with coverage, apart from the person form', () => {
+        const inputs = ['Viewer', 'Operator', 'Admin'].map(value => Object.assign(new FakeElement('input'), { name: 'role', value, checked: false, disabled: false }));
+        const container = Object.assign(new FakeElement(), { querySelectorAll: () => inputs, querySelector: () => null });
+        const { access } = bulkPage('', []);
+        access.chosen = new Set(['Viewer']);
+        inputs[1].checked = true;
+        access.choose(inputs[1], access.bulkChosen, container);
+        expect(inputs.map(i => [i.value, i.checked, i.disabled])).toEqual([['Viewer', true, true], ['Operator', true, false], ['Admin', false, false]]);
+        expect([...access.bulkChosen]).toEqual(['Operator']);
+        expect([...access.chosen]).toEqual(['Viewer']);
+      });
+
+      it('says, gently, who already had a role and was left as they were', () => {
+        const element = AccessPage.grantedElement({
+          roles: ['Viewer'], granted: ['carl', 'dan'], pruned: [{ role: 'RunViewer', coveredBy: 'Viewer' }],
+          unchanged: [{ buPrincipal: 'amy', roles: ['Operator'] }, { buPrincipal: 'jdoe', roles: ['Admin', 'Auditor'] }]
+        });
+        const [gave, notKept, unchanged] = element.children;
+        expect(gave.textContent).toBe('Gave Viewer to 2 people: carl, dan.');
+        expect(notKept.textContent).toBe('Not kept: RunViewer (included in Viewer).');
+        expect(unchanged.className).toBe('access-unchanged');
+        expect(unchanged.textContent).toBe('2 people already had a role and were left as they are: amy (Operator), jdoe (Admin, Auditor). To change their roles, look each one up above.');
+        expect(AccessPage.grantedElement({ roles: ['Viewer'], granted: [], unchanged: [{ buPrincipal: 'amy', roles: ['Viewer'] }] }).text)
+          .toBe('No one was given a role. 1 person already had a role and was left as they are: amy (Viewer). To change their roles, look each one up above.');
+      });
+    });
+
     it('shows a list it may not read as redacted', async () => {
       const list = new FakeElement();
       const access = new AccessPage({

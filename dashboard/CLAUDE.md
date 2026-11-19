@@ -143,8 +143,8 @@ The Lambda function serves two primary roles:
 - `GET /dashboard` - Main dashboard interface with inline assets
 - `GET /api/me` - who the request is taken to be and what they may do here (see "Authorization"); needs only sign-in.
 - `GET /api/audit` - the landscape's audit trail, a page at a time (see "Authorization"; `audit:read`)
-- `GET /api/access/roles`, `GET /api/access/assignments`, `GET|PUT|DELETE /api/access/assignments/{person}` - who
-  holds which roles (see "Authorization"; `access:admin`)
+- `GET /api/access/roles`, `GET|POST /api/access/assignments`, `GET|PUT|DELETE /api/access/assignments/{person}` -
+  who holds which roles, and giving roles to several people at once (see "Authorization"; `access:admin`)
 - `POST|DELETE /api/impersonation` - start or stop seeing the dashboard through another person's roles (see
   "Authorization"; starting needs `access:impersonate`)
   Every other `/api` route needs an action of the signed-in user's roles, and answers `403` without it
@@ -506,6 +506,19 @@ Who may do what in a landscape's dashboard, by role, per landscape (`authorizati
   INVALID_ROLE`, and `409 LAST_ADMIN` for a change that would leave no Admin (decision 11; checked against the store
   as it is, so two Admins removing each other at the same moment could both pass). Tests:
   `test/DashboardAccessRoutes.test.ts`.
+- **Giving roles to several people** (since 2026-11-19): `POST /api/access/assignments { principals, roles }` gives
+  the roles, less the covered ones, to each person listed (each once, at most `MAX_BULK_PRINCIPALS` = 100, a read and
+  a write each within the Lambda's 30 seconds) **who holds no role**. Anyone who already holds a role keeps exactly what
+  they hold, so a bulk grant never overwrites a role given one person at a time; the answer
+  `{ roles, pruned, granted, unchanged: [{ buPrincipal, roles }] }` lists them, and the page says so gently ("left as
+  they are ... look each one up above"). Nothing is saved unless every principal is valid (`400 INVALID_PRINCIPAL`
+  with `invalid`); also `400 TOO_MANY_PRINCIPALS`. It only adds, so the last-Admin safeguard has nothing to guard.
+  Audited as a record per person given the roles (`roles=Viewer (bulk)`) and the request's own record (target
+  `N people`, detail the roles, how many were granted and who was left as they were). On the Access page, below the
+  table of role holders, everyone's `buPrincipal` is listed comma-delimited in small print (one click selects it all;
+  Copy writes it to the clipboard, or selects it where the clipboard can't be written), to paste into the form
+  "Give roles to several people" in another landscape. That form has its own role checkboxes, with the same coverage
+  as one person's (`AccessPage.choose()` / `applyCoverage()` take the form's container and chosen set).
 - **Covered roles are pruned** (decision 15; `pruneCoveredRoles()` in `RoleCatalog.ts`): of the roles chosen for a
   person, one is dropped when every action it grants is also granted by another chosen role (actions compared, not a
   ranking; of two granting the same actions, the later in the catalog is kept). The `PUT` route and the
@@ -514,9 +527,11 @@ Who may do what in a landscape's dashboard, by role, per landscape (`authorizati
   shows checked, disabled and "included in Admin", and unchecking its coverer frees it. Assignments saved before are
   pruned the next time they are saved.
 - **The Administration pages** (sidebar group Administration, shown to everyone; `public/js/administration.js`,
-  `templates/partials/access-tab.mustache` and `audit-tab.mustache`): **Access** (`AccessPage`: look a person up,
-  their profile and a checkbox per role, Save, asking first when an Admin removes their own Admin role; everyone with
-  a role, a row opening that person) and **Audit trail** (`AuditTrailPage`: a `PagedTable` over `/api/audit`,
+  `templates/partials/access-tab.mustache` and `audit-tab.mustache`): **Access** (`AccessPage`: two ways of changing
+  roles as tabs, one shown at a time (`showMode()`, `AccessPage.MODES`; underlined like a run's sections): **A person's
+  roles**, the default (look a person up, their profile and a checkbox per role, Save, asking first when an Admin
+  removes their own Admin role), and **Give roles to several people** (above); below them, everyone with a role, a row
+  opening that person in the first tab) and **Audit trail** (`AuditTrailPage`: a `PagedTable` over `/api/audit`,
   filtered by person and action; the action list comes from `ACTIONS`, as the template's `auditActions`). Tests:
   `test/DashboardAdministrationPages.test.ts`.
 - **Who am I** (`WhoAmI`, decision 10): the top bar's user is a button opening a dialog with the user's identity,

@@ -54,7 +54,8 @@ export class RoutePermissions {
     '/api/landscapes': { GET: read('runs:read') },
 
     // Administration (step 5), and impersonation (decision 14)
-    '/api/access/assignments': { GET: read('access:admin') },
+    // Everyone with a role, and giving roles to several people at once (only to those who hold none)
+    '/api/access/assignments': { GET: read('access:admin'), POST: change('access:admin') },
     '/api/access/roles': { GET: read('access:admin') },
     '/api/audit': { GET: read('audit:read') },
     '/api/impersonation': { POST: { kind: 'impersonation', stop: false }, DELETE: { kind: 'impersonation', stop: true } }
