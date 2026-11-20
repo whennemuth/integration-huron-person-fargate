@@ -15,7 +15,8 @@ and queues the chunker's work. For a run's first event it applies the refusals (
 maximum, a mock reset, the counter reset and a parallel start, in that order.
 
 **Run start** (shared by the subscriber and the Runner):
-- `ScheduledRun.ts`: the schedule's input, and `previousStateFlags(bulkReset)`.
+- `ScheduledRun` (in `src/schedule/`, [schedule/CLAUDE.md](../schedule/CLAUDE.md)): the schedule's input, and
+  `previousStateFlags(bulkReset)`.
 - `StartedBy.ts`: `StartedBy` / `RunStarter`, who started a run.
 - `RunCounters.ts`: `resetRunCounters()`, `runCounterNames()`, `isRunStartEvent()`.
 - `ParallelStart.ts`: seed N messages, wait for the scale-in alarm, set the desired count.

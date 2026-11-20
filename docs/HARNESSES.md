@@ -47,7 +47,9 @@ call names. Each folder's CLAUDE.md lists its own:
   `docker/post-processor.ts` (`DOCKER_POST_PROCESSOR`).
 - **Utilities** (`src/`): `DesiredCount` (`DESIRED_COUNT`), `Alarm` (`ALARM`), `ApiErrorTracking`
   (`API_ERROR_TRACKING`).
-- **Schedules** (`src/schedule/`): `CronSchedule` (`CRON_SCHEDULE`: parse, build and compare cron expressions, no AWS).
+- **Schedules** (`src/schedule/`): `CronSchedule` (`CRON_SCHEDULE`: parse, build and compare cron expressions, no AWS),
+  `ScheduledRun` (`SCHEDULED_RUN`: a landscape's bulk sync schedule in EventBridge Scheduler: get, list, preview,
+  create, enable, disable, change its cron, delete).
 
 ## Running a harness
 

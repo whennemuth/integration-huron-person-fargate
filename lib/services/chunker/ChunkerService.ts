@@ -4,7 +4,7 @@ import { Schedule, ScheduleExpression, ScheduleTargetInput } from 'aws-cdk-lib/a
 import { LambdaInvoke } from 'aws-cdk-lib/aws-scheduler-targets';
 import { Construct } from 'constructs';
 import { ConfigManager } from 'integration-huron-person';
-import { ScheduledRun } from '../../../src/chunking/ScheduledRun';
+import { ScheduledRun } from '../../../src/schedule/ScheduledRun';
 import { AbstractService, AbstractServiceProps } from '../AbstractService';
 
 export const SERVICE_LOGICAL_ID = 'Chunker';
@@ -30,7 +30,7 @@ export interface ChunkerServiceProps extends AbstractServiceProps {
  * - Schedule only created if the context has SCHEDULE.cronExpression, and always disabled (bulk-sync-schedule-plan.md:
  *   the dashboard is to manage the schedule, and this deployed one goes)
  * - Schedule triggers ChunkerSubscriber Lambda with API parameters: a full sync with stored hashes trusted
- *   (ScheduledRun, src/chunking/ScheduledRun.ts, which the dashboard's Bulk sync defaults also take)
+ *   (ScheduledRun, src/schedule/ScheduledRun.ts, which the dashboard's Bulk sync defaults also take)
  * - Lambda sends message to chunker queue to trigger Fargate task
  */
 export class ChunkerService extends AbstractService {
@@ -99,7 +99,7 @@ export class ChunkerService extends AbstractService {
     // Create the EventBridge schedule with cron as a child of the QueueProcessingFargateService
     const { Landscape } = context.TAGS;
     this.schedule = new Schedule(this.service, 'ApiChunkingSchedule', {
-      scheduleName: `chunker-api-schedule-${Landscape.toLowerCase()}`,
+      scheduleName: ScheduledRun.scheduleName(Landscape),
       description: `Triggers API-based chunker on schedule: ${cronExpression}`,
       schedule: ScheduleExpression.expression(cronExpression),
       enabled: cronEnabled,

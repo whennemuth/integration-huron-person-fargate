@@ -2,8 +2,9 @@ import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { ApiChunkerEvent } from '../ChunkerSubscriber';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 import { TaskParameters } from './ChunkFromAPI';
+import { CHUNKER_SUBSCRIBER_BASE_NAME } from '../../Utils';
 
-export const FUNCTION_BASE_NAME = 'chunker-subscriber';
+export const FUNCTION_BASE_NAME = CHUNKER_SUBSCRIBER_BASE_NAME;
 
 const { 
   CHUNKER_QUEUE_URL,

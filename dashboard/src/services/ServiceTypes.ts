@@ -187,7 +187,7 @@ export type RunActivityState = {
 /** What starting a run in this landscape would do, and whether it is allowed now (GET /api/bulk-sync) */
 export type BulkSyncState = {
   landscape: string;
-  /** The form's starting values: the scheduled run's choices (src/chunking/ScheduledRun.ts), 10 chunks per task, and one message */
+  /** The form's starting values: the scheduled run's choices (src/schedule/ScheduledRun.ts), 10 chunks per task, and one message */
   defaults: {
     runType: BulkSyncRunType; bulkReset: boolean; iterationLimit: number; parallelStart: number;
     /** The landscape's processor maximum (maxScalingCapacity), where Processor tasks starts; unknown to an older deploy */

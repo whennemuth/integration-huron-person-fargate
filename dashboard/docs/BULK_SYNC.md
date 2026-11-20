@@ -27,7 +27,7 @@ landscape the way its schedule does (`GET`/`POST /api/bulk-sync`, `POST /api/bul
     cache, and the person was chunked twice (preview 2026-11-12). On the page, choosing Test checks Single task and
     locks both chunk modes, and choosing another run type unlocks them and restores the mode chosen before, kept on
     the fieldset as `data-chosen-mode` (`BulkSyncPage.lockChunkMode()`).
-- The defaults are the scheduled run's (`ScheduledRun`, fargate `src/chunking/ScheduledRun.ts`). The Custom settings
+- The defaults are the scheduled run's (`ScheduledRun`, fargate `src/schedule/ScheduledRun.ts`). The Custom settings
   hint lists the three defaults (`BulkSyncView.defaultsText()`).
 
 ### Parallel start

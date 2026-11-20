@@ -80,7 +80,7 @@ AWS EventBridge uses a 6-field cron format: `cron(Minutes Hours Day-of-month Mon
    - Reads the context's `SCHEDULE.cronExpression`, and `baseUrl` and `fetchPath` from the integration config
    - When all three are present, creates the schedule `chunker-api-schedule-<landscape>` with a Lambda target,
      disabled
-   - The schedule's input is `ScheduledRun.scheduleInput()` (`src/chunking/ScheduledRun.ts`)
+   - The schedule's input is `ScheduledRun.scheduleInput()` (`src/schedule/ScheduledRun.ts`)
 
 2. **Runtime**:
    - The schedule invokes the chunker subscriber with a full sync, stored hashes trusted:
@@ -474,7 +474,7 @@ BigJsonFetch
 - **src/chunking/ChunkerSubscriber.ts**: Lambda handler (dispatcher)
 - **src/chunking/fetch/ChunkerApiSubscriber.ts**: API event handler
 - **src/chunking/filedrop/ChunkerS3Subscriber.ts**: S3 event handler
-- **src/chunking/ScheduledRun.ts**: the schedule's input
+- **src/schedule/ScheduledRun.ts**: the schedule's input
 - **docker/chunker.ts**: Fargate task entry point
 - **src/chunking/fetch/ChunkFromAPI.ts**: API-based chunking implementation
 - **src/chunking/filedrop/ChunkFromS3.ts**: S3-based chunking implementation

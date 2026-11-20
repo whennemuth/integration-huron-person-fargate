@@ -7,7 +7,7 @@ import { SyncPopulation } from '../../../docker/chunkTypes';
 import type { ApiChunkerEvent, MockLandscapeResetEvent } from '../../../src/chunking/ChunkerSubscriber';
 import { MockLandscapeReset, MockLandscapeResetRecord } from '../../../src/chunking/MockLandscapeReset';
 import { ProcessorScalingCapacity } from '../../../src/chunking/ProcessorScalingCapacity';
-import { ScheduledRun } from '../../../src/chunking/ScheduledRun';
+import { ScheduledRun } from '../../../src/schedule/ScheduledRun';
 import { RunStarter, StartedBy } from '../../../src/chunking/StartedBy';
 import type { RunReport } from '../../../src/reporting/RunReporting';
 import type { RunnerEnv } from '../../../src/runner/RunnerTypes';
@@ -408,7 +408,7 @@ type SettingValue = Omit<BulkSyncSetting, 'name'>;
  * run's first event (resetCountersForRunStart() in src/chunking/ChunkerSubscriber.ts), for the schedule's runs and
  * these alike. The source endpoint comes from the landscape's integration config: the people endpoint, or the
  * person endpoint with ?buid= for a test (as RunnerForSinglePerson does). The form starts at the scheduled run's
- * choices (src/chunking/ScheduledRun.ts).
+ * choices (src/schedule/ScheduledRun.ts).
  *
  * Guards, until phase 6's roles decide who may start a run: no start in a production-toned landscape, none when the
  * dashboard's environment lacks what a start needs, none while the newest run is underway (a stalled one needs

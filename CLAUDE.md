@@ -56,7 +56,7 @@ All chunking modules use `TestEnvironment` from `integration-core`; harness pref
   and write it only with `StatisticsTable.writeTerminalError()`/`readTerminalError()`.
 
 **How a run starts** (paths, grants, refusals, timings and the reasoning: [docs/RUN_START.md](docs/RUN_START.md)):
-- **The schedule** (`ScheduledRun`, `src/chunking/ScheduledRun.ts`) sends a full sync (`person-full`) with stored
+- **The schedule** (`ScheduledRun`, `src/schedule/ScheduledRun.ts`) sends a full sync (`person-full`) with stored
   hashes trusted (`bulkReset: false`, `trustPreviousStorage: true`): it fetches everyone, sends only people whose hash
   changed, and deactivates people missing from the source. The two previous-state flags only act together; set them
   with `ScheduledRun.previousStateFlags(bulkReset)`. The context's `BULK_RESET` / `TRUST_PREVIOUS_STORAGE` are only
