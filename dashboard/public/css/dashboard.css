@@ -444,9 +444,11 @@ code, pre, kbd, samp {
     color: var(--hp-text-muted);
 }
 
-/* Two sections side by side on wide screens (main, then aside), stacked below lg */
+/* Two sections side by side on wide screens (main, then aside), stacked below lg. The one column below lg may shrink
+   below its content (minmax(0, ...)), so a wide table scrolls in its .table-responsive rather than widening the page */
 .page-columns {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 2rem;
     align-items: start;
 }
