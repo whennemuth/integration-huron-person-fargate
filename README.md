@@ -95,8 +95,8 @@ The `cdk.json` file tells the CDK Toolkit how to execute your app.
   task definition and an SQS queue plus dead-letter queue
 - **Subscriber Lambdas**: the chunker subscriber (starts runs), the processor subscriber (forwards chunk files to the
   processor queue) and the post-processor subscriber (S3 mode: queues the post-processor once every chunk is done)
-- **EventBridge Scheduler schedule**: invokes the chunker subscriber on the integration config's
-  `dataSource.people.fetchSchedule`; runs can also be started from the dashboard's Bulk sync or the Runner
+- **EventBridge Scheduler schedule**: invokes the chunker subscriber on the context's `SCHEDULE` cron (deployed
+  disabled for now); runs can also be started from the dashboard's Bulk sync or the Runner
 - **Source**: the BU CDM person API, or optionally a JSON file dropped in S3
 - **S3**: the chunks bucket (chunk files, delta chunks and, in S3 mode, the baseline)
 - **DynamoDB**: the statistics, atomic counter and addon log tables, plus PersonCurrentState and PersonHistory in

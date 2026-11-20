@@ -152,17 +152,9 @@ export interface IContext {
    * Huron Person Integration Configuration
    * This is passed to the processor tasks as environment variables
    * Note: Most HURON_API fields are replaced by this comprehensive config
-   * 
-   * For API-based chunking via EventBridge schedule, configure:
-   *   dataSource.people.fetchSchedule = {
-   *     enabled: boolean,        // Enable/disable the schedule
-   *     cronExpression: string   // AWS cron expression (e.g., 'cron(0 2 * * ? *)')
-   *   }
-   * 
-   * The EventBridge schedule is only created when:
-   * - dataSource.people.fetchSchedule exists
-   * - fetchSchedule.enabled is true
-   * - fetchSchedule.cronExpression is a valid cron expression
+   *
+   * The EventBridge schedule's endpoint (baseUrl and fetchPath) comes from its dataSource.people; when it runs is
+   * SCHEDULE, below.
    */
   HURON_PERSON_CONFIG: Partial<HuronPersonConfig> | {
     /** 
@@ -170,6 +162,24 @@ export interface IContext {
      * Processor will load this instead of individual env vars
      */
     configPath?: string;
+  };
+
+  /**
+   * The landscape's default bulk sync schedule (bulk-sync-schedule-plan.md). The schedule itself is EventBridge
+   * Scheduler's chunker-api-schedule-<landscape>, which invokes the chunker subscriber with ScheduledRun's input.
+   *
+   * For now ChunkerService deploys that schedule from this cron, always disabled (it was the integration config's
+   * dataSource.people.fetchSchedule, whose enabled was false in every landscape). Once the dashboard manages the
+   * schedule, it is never deployed and this is only the cron a new schedule starts from. Without SCHEDULE, no
+   * schedule is deployed.
+   */
+  SCHEDULE?: {
+    /**
+     * AWS cron, at most once a day, read in America/New_York (once the dashboard manages the schedule; deployed by
+     * CDK it is read in UTC), e.g. 'cron(0 4 * * ? *)'. Give each landscape a different hour: schedules that read the
+     * real source must start an hour apart.
+     */
+    cronExpression: string;
   };
 
   /** Bulk reset configuration - controls whether to perform a bulk reset (delete all existing records in source system) before syncing */

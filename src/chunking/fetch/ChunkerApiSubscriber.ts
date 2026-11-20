@@ -56,8 +56,8 @@ const sqsClient = new SQSClient({ region });
  * - 'person-delta': Fetch only changed person records (incremental sync)
  * 
  * Note: This handler is invoked by EventBridge schedule with a synthetic event containing
- * API endpoint configuration. The schedule is only created if the IContext configuration
- * specifies fetchSchedule with enabled=true and a valid cronExpression.
+ * API endpoint configuration (ScheduledRun.scheduleInput()). The schedule is only created if
+ * the context has SCHEDULE.cronExpression (bulk-sync-schedule-plan.md).
  * 
  * @param event - API-based chunker event
  * @returns Response object with status code and message

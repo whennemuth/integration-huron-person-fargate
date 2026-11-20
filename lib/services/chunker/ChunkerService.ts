@@ -27,7 +27,8 @@ export interface ChunkerServiceProps extends AbstractServiceProps {
  * - Chunks large JSON files into smaller NDJSON files
  * 
  * Also optionally creates an EventBridge schedule to trigger API-based chunking:
- * - Schedule only created if HURON_PERSON_CONFIG.dataSource.people.fetchSchedule is configured
+ * - Schedule only created if the context has SCHEDULE.cronExpression, and always disabled (bulk-sync-schedule-plan.md:
+ *   the dashboard is to manage the schedule, and this deployed one goes)
  * - Schedule triggers ChunkerSubscriber Lambda with API parameters: a full sync with stored hashes trusted
  *   (ScheduledRun, src/chunking/ScheduledRun.ts, which the dashboard's Bulk sync defaults also take)
  * - Lambda sends message to chunker queue to trigger Fargate task
@@ -50,13 +51,12 @@ export class ChunkerService extends AbstractService {
   }
 
   /**
-   * Creates an EventBridge schedule to trigger API-based chunking on a cron schedule.
-   * Only creates the schedule if:
+   * Creates an EventBridge schedule to trigger API-based chunking on a cron schedule, always disabled (the
+   * integration config's fetchSchedule it replaces was disabled in every landscape). Only creates the schedule if:
    * - chunkerLambda is provided
    * - context is provided
-   * - HURON_PERSON_CONFIG.dataSource.people.fetchSchedule is configured
-   * - fetchSchedule.enabled is true
-   * - fetchSchedule.cronExpression is valid
+   * - the context has SCHEDULE.cronExpression
+   * - the integration config's dataSource.people has endpointConfig.baseUrl and fetchPath
    */
   private createApiChunkingSchedule(props: ChunkerServiceProps): void {
     const { chunkerLambda, chunksPerTask: iterationLimit = 0 } = props;
@@ -67,33 +67,27 @@ export class ChunkerService extends AbstractService {
       return;
     }
 
-    // Extract fetchSchedule config from HURON_PERSON_CONFIG
+    const cronExpression = context.SCHEDULE?.cronExpression;
+    if (!cronExpression) {
+      console.log('[ChunkerService] Skipping EventBridge schedule: the context has no SCHEDULE.cronExpression');
+      return;
+    }
+    const cronEnabled = false;
+
+    // The endpoint for the event payload, from the integration config
     let huronConfig = context.HURON_PERSON_CONFIG as any;
     if (huronConfig.configPath) {
       huronConfig = ConfigManager.getInstance().fromFileSystem(huronConfig.configPath).getConfig('people');
     }
-
-    // Extract API configuration for the event payload
-    const { 
-      dataSource: { 
-        people: {  
-          fetchSchedule, fetchSchedule: { cronExpression, enabled: cronEnabled } = {}, 
-          fetchPath, 
-          endpointConfig: { baseUrl } = {}  
-        } = {} 
-      } = {} 
+    const {
+      dataSource: {
+        people: {
+          fetchPath,
+          endpointConfig: { baseUrl } = {}
+        } = {}
+      } = {}
     } = huronConfig;
 
-    if (!fetchSchedule) {
-      console.log('[ChunkerService] Skipping EventBridge schedule: fetchSchedule not configured');
-      return;
-    }
-
-    if (!fetchSchedule.cronExpression) {
-      console.warn('[ChunkerService] Skipping EventBridge schedule: fetchSchedule.cronExpression is missing');
-      return;
-    }
-    
     if (!baseUrl || !fetchPath) {
       console.warn('[ChunkerService] Skipping EventBridge schedule: baseUrl or fetchPath not configured');
       return;

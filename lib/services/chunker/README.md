@@ -42,32 +42,23 @@ sets the chunker service's desired count. Details: [docs/RUN_START.md](../../../
 
 ## EventBridge Schedule Configuration
 
-The ChunkerService creates an EventBridge Scheduler schedule for periodic API-based data fetching when the integration
-config is set up for it.
+The ChunkerService creates an EventBridge Scheduler schedule for periodic API-based data fetching when the landscape's
+context has a `SCHEDULE`. The schedule is always deployed **disabled**: the dashboard is to manage it, and then CDK
+stops deploying it (`bulk-sync-schedule-plan.md`).
 
 ### Configuration Requirements
 
-The landscape's context names its integration config in `HURON_PERSON_CONFIG`, usually as a file
-(`"HURON_PERSON_CONFIG": { "configPath": "../integration-huron-person/config/config.<landscape>.json" }`), or inline.
-Set the schedule there:
+When it runs is the context's `SCHEDULE` (`context/context.<landscape>.json`):
 
 ```json
-{
-  "dataSource": {
-    "people": {
-      "endpointConfig": {
-        "baseUrl": "https://prod-budev-fm.snaplogic.io",
-        "apiKey": "your-api-key-here"
-      },
-      "fetchPath": "/api/1/rest/feed/run/task/BUTest/Admin-Integration-Services/GenericGets/huronIRBgetPersonByPopulation",
-      "fetchSchedule": {
-        "enabled": true,
-        "cronExpression": "cron(0 2 * * ? *)"
-      }
-    }
-  }
+"SCHEDULE": {
+  "cronExpression": "cron(0 4 * * ? *)"
 }
 ```
+
+Where it reads from is the integration config's `dataSource.people` (`endpointConfig.baseUrl` and `fetchPath`). The
+context names that config in `HURON_PERSON_CONFIG`, usually as a file
+(`"HURON_PERSON_CONFIG": { "configPath": "../integration-huron-person/config/config.<landscape>.json" }`), or inline.
 
 ### Cron Expression Examples
 
@@ -86,9 +77,9 @@ AWS EventBridge uses a 6-field cron format: `cron(Minutes Hours Day-of-month Mon
 ### How the Schedule Works
 
 1. **Deployment Time** (`ChunkerService.createApiChunkingSchedule()`):
-   - Reads `dataSource.people.fetchSchedule` from the integration config
-   - When `cronExpression`, `baseUrl` and `fetchPath` are present, creates the schedule
-     `chunker-api-schedule-<landscape>` with a Lambda target, enabled or disabled per `fetchSchedule.enabled`
+   - Reads the context's `SCHEDULE.cronExpression`, and `baseUrl` and `fetchPath` from the integration config
+   - When all three are present, creates the schedule `chunker-api-schedule-<landscape>` with a Lambda target,
+     disabled
    - The schedule's input is `ScheduledRun.scheduleInput()` (`src/chunking/ScheduledRun.ts`)
 
 2. **Runtime**:
@@ -260,11 +251,11 @@ A refused start (e.g. an invalid `parallelStart`) answers with a 400 result rath
 **Symptoms**: EventBridge schedule doesn't exist after deployment
 
 **Possible Causes**:
-1. `fetchSchedule.cronExpression` is missing or invalid
+1. The context's `SCHEDULE.cronExpression` is missing or invalid
 2. `baseUrl` or `fetchPath` not configured
 3. ChunkerService didn't receive Lambda function reference
 
-(With `fetchSchedule.enabled: false` the schedule exists but is disabled.)
+(The deployed schedule is always disabled.)
 
 **Solution**: Check the `cdk synth` / deploy console output for `[ChunkerService]` messages, which are logged at synth
 time.

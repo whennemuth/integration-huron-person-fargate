@@ -60,7 +60,7 @@ npx ts-node src/runner/Runner.ts
 | `chunker-subscriber-<landscape>` | Lambda | Starts runs: from the schedule, the dashboard or a dropped file |
 | `processor-subscriber-<landscape>` | Lambda | Forwards chunk files' S3 events to the processor queue |
 | `post-processor-subscriber-<landscape>` | Lambda | S3 mode: queues the post-processor once every chunk is done |
-| `chunker-api-schedule-<landscape>` | EventBridge Scheduler schedule | Invokes the chunker subscriber, when the integration config has `dataSource.people.fetchSchedule` |
+| `chunker-api-schedule-<landscape>` | EventBridge Scheduler schedule | Invokes the chunker subscriber; deployed (disabled) when the context has `SCHEDULE` |
 | Statistics, atomic counter, addon log, PersonCurrentState, PersonHistory tables | DynamoDB | Run metadata and state; the person tables in DynamoDB storage mode (`lib/DynamoDB.ts`) |
 | The integration config secret | Secrets Manager | The integration config, with API credentials (`lib/Secrets.ts`) |
 | `source-simulator-<landscape>`, `target-simulator-<landscape>` | Lambdas | Mock landscapes only ([MOCK_LANDSCAPES.md](MOCK_LANDSCAPES.md)) |
