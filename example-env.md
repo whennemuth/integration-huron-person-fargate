@@ -336,6 +336,20 @@ SERVICE_TOGGLER_SERVICE=CHUNKER
 SERVICE_TOGGLER_REGION=us-east-2
 SERVICE_TOGGLER_LANDSCAPE=dev
 
+# ------- Harness Groups for src\schedule\CronSchedule.ts ------- #
+# Test harness for the schedule package's cron model (no AWS access)
+# TASK options: parse (EXPRESSION) | build (TIME and DAYS, or EXPRESSION) | overlap (EXPRESSION, OTHER_EXPRESSION)
+CRON_SCHEDULE_TASK=parse
+CRON_SCHEDULE_EXPRESSION=cron(0 4 ? * MON-FRI *)
+# build: a 24-hour time, and every-day | weekdays | weekends | days such as MON,WED,FRI (leave EXPRESSION empty)
+CRON_SCHEDULE_TIME=04:00
+CRON_SCHEDULE_DAYS=weekdays
+# overlap: the other schedule, and how many minutes apart the two must start (default 60)
+CRON_SCHEDULE_OTHER_EXPRESSION=cron(30 4 * * ? *)
+CRON_SCHEDULE_BUFFER_MINUTES=60
+# Default: America/New_York, the bulk sync schedules' zone
+CRON_SCHEDULE_TIME_ZONE=America/New_York
+
 # ------- Harness Groups for dashboard\src\services\ServiceProvider.ts ------- #
 # Test harness for the dashboard's services, called the way DashboardHandler calls them (read only)
 # TASK options: capabilities | runs | summary | chunks | errors | changes | landscapes | lookup | preview | status

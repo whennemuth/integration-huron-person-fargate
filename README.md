@@ -309,6 +309,7 @@ Harness configuration is documented in [example-env.md](./example-env.md). The f
 - **Post-processing Pipeline**: `DeferredDeleteHandler`, `ChunkPopulationReader`, `PersonCache` (`src/person-cache/PersonCacheForS3.ts`), `StatisticsTable` (`src/dynamodb/`)
 - **Docker Entry Points**: `chunker.ts`, `processor.ts`, `post-processor.ts`
 - **Storage & Error Handling**: `S3StorageAdapter`, `ApiErrorTracking`
+- **Schedules**: `CronSchedule` (`src/schedule/CronSchedule.ts` - parses, builds and compares AWS cron expressions, no AWS access)
 - **Dashboard**: `ServiceProvider` (`dashboard/src/services/ServiceProvider.ts` - the dashboard's services, called as its handler calls them: run reporting, landscape registry, person lookup and sync preview), `ShibbolethSecret` (`dashboard/src/ShibbolethSecret.ts` - reads or creates the dashboard's Shibboleth secret), `RoleAssignmentStore` (`dashboard/src/authorization/RoleAssignmentStore.ts` - a landscape's role assignments; seeds the first Admin, see "Dashboard access"), `AuditStore` (`dashboard/src/audit/AuditStore.ts` - lists a landscape's audit trail)
 
 ### Running Test Harnesses

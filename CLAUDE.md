@@ -6,7 +6,7 @@ processing, post-processing) on Lambda, ECS Fargate, S3, SQS and DynamoDB, plus 
 its siblings (especially `integration-core`) through dependencies, not workspace-level source control.
 
 Folder-level CLAUDE.md files hold more detail: `lib/`, `docker/`, `src/`, `src/chunking/`, `src/processing/`,
-`src/post-processing/`, `src/runner/`, `dashboard/`. Reference docs are in [docs/](docs/).
+`src/post-processing/`, `src/runner/`, `src/schedule/`, `dashboard/`. Reference docs are in [docs/](docs/).
 
 **Workspace setup**: the shared skills are the integration-skills repository cloned as `<workspace root>/.claude`, and
 the workspace-wide instructions are its `CLAUDE.md`. How to install them and get VS Code, Copilot CLI or Claude Code

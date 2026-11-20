@@ -47,6 +47,7 @@ call names. Each folder's CLAUDE.md lists its own:
   `docker/post-processor.ts` (`DOCKER_POST_PROCESSOR`).
 - **Utilities** (`src/`): `DesiredCount` (`DESIRED_COUNT`), `Alarm` (`ALARM`), `ApiErrorTracking`
   (`API_ERROR_TRACKING`).
+- **Schedules** (`src/schedule/`): `CronSchedule` (`CRON_SCHEDULE`: parse, build and compare cron expressions, no AWS).
 
 ## Running a harness
 

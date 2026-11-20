@@ -84,6 +84,7 @@
     "@aws-sdk/util-dynamodb": "^3.400.0",
     "aws-cdk-lib": "^2.260.0",
     "constructs": "^10.0.0",
+    "cronstrue": "3.38.0",
     "integration-huron-person": "https://simple-npm-package-bucket.s3.us-east-1.amazonaws.com/dynamodb/integration-huron-person-1.0.1.tgz",
     "stream-json": "^1.8.0"
   },
