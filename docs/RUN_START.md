@@ -13,9 +13,10 @@ parallel start (or the single queued message).
 ## The scheduled run
 
 **The scheduled run is a full sync with stored hashes trusted** (`ScheduledRun`, `src/schedule/ScheduledRun.ts`, since
-2026-11-11): the EventBridge schedule's input (`ChunkerService.createApiChunkingSchedule()`, built by
-`ScheduledRun.scheduleInput()`) is `populationType: person-full`, `bulkReset: false`, `trustPreviousStorage: true`,
-with the people endpoint, `iterationLimit` = the context's `ECS.chunkerService.chunksPerTask` and `offset: 0`.
+2026-11-11): the EventBridge schedule's input (`ScheduledRun.scheduleInput()`; the schedule is managed at run time
+through `ScheduledRun`, never deployed) is `populationType: person-full`, `bulkReset: false`,
+`trustPreviousStorage: true`, with the people endpoint, `iterationLimit` = the context's
+`ECS.chunkerService.chunksPerTask` and `offset: 0`.
 
 - No source endpoint returns only the people who changed yet, so a scheduled run fetches everyone. Trusting the
   stored hashes keeps people whose hash matches from reaching the target, which is the effect a delta run would

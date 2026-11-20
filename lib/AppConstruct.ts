@@ -164,7 +164,7 @@ export class AppConstruct extends Construct {
     // 6. Subscribing Lambdas (Chunker & Post-processor)
     // ========================================
     // Create subscribing lambdas before services so chunker lambda can be
-    // passed to ChunkerService for EventBridge schedule configuration
+    // passed to ChunkerService for the bulk sync schedule's role
     this.subscribingLambdas = new SubscribingLambdas(this, 'SubscribingLambdas', {
       ecsInfra: this.ecs,
       chunksBucket: this.chunksBucket,
@@ -180,7 +180,7 @@ export class AppConstruct extends Construct {
     // ========================================
     // 7. Chunker Service (Phase 1)
     // ========================================
-    // Pass chunker lambda for EventBridge schedule configuration
+    // Pass chunker lambda for the bulk sync schedule's role, which may invoke it
     this.ecs.createChunkerService(
       this.queue.chunkerQueue,
       this.queue.chunkerDeadLetterQueue,

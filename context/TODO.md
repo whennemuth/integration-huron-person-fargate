@@ -123,7 +123,7 @@ After 1–4, very little is left to check. If a gate is still wanted, it reduces
   |---|---|
   | `DATASOURCE_ENDPOINTCONFIG_{PERSON,PEOPLE,CURRENT_TERMS}_{BASE_URL,API_KEY,PATH}` | `dataSource.{person,people,terms}` endpoint, key, path |
   | `DATASOURCE_PEOPLE_FETCH_BATCHED` | `dataSource.people.fetchBatched` |
-  | `DATASOURCE_PEOPLE_FETCH_SCHEDULE_{ENABLED,CRON_EXPRESSION}` | `dataSource.people.fetchSchedule` (no longer read here: the schedule's cron is the context's `SCHEDULE`; both go from huron-person in bulk-sync-schedule-plan.md, step 7) |
+  | `DATASOURCE_PEOPLE_FETCH_SCHEDULE_{ENABLED,CRON_EXPRESSION}` | `dataSource.people.fetchSchedule` (no longer read here: the schedule is managed at run time through `ScheduledRun`, and the context's `SCHEDULE` is a new schedule's default cron; both go from huron-person in bulk-sync-schedule-plan.md, step 7) |
   | `S3_BUCKET`, `S3_KEY` | `dataSource.people.bucketName`, `key` |
   | `DATATARGET_ENDPOINTCONFIG_{BASE_URL,USERNAME,PASSWORD,LOGIN_SVC_PATH,LOGIN_USERID,EXTERNAL_TOKEN,AUTH_METHOD}` | `dataTarget.endpointConfig.*` |
   | `DATATARGET_PERSONS_PATH`, `DATATARGET_ORGANIZATIONS_PATH` | `dataTarget` paths |

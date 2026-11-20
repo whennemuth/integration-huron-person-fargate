@@ -165,19 +165,14 @@ export interface IContext {
   };
 
   /**
-   * The landscape's default bulk sync schedule (bulk-sync-schedule-plan.md). The schedule itself is EventBridge
-   * Scheduler's chunker-api-schedule-<landscape>, which invokes the chunker subscriber with ScheduledRun's input.
-   *
-   * For now ChunkerService deploys that schedule from this cron, always disabled (it was the integration config's
-   * dataSource.people.fetchSchedule, whose enabled was false in every landscape). Once the dashboard manages the
-   * schedule, it is never deployed and this is only the cron a new schedule starts from. Without SCHEDULE, no
-   * schedule is deployed.
+   * The landscape's default bulk sync schedule: the cron a new schedule starts from. The schedule itself is EventBridge
+   * Scheduler's chunker-api-schedule-<landscape>, managed at run time through ScheduledRun (src/schedule/), from the
+   * dashboard or the SCHEDULED_RUN harness, and never deployed, so nothing here changes an existing schedule.
    */
   SCHEDULE?: {
     /**
-     * AWS cron, at most once a day, read in America/New_York (once the dashboard manages the schedule; deployed by
-     * CDK it is read in UTC), e.g. 'cron(0 4 * * ? *)'. Give each landscape a different hour: schedules that read the
-     * real source must start an hour apart.
+     * AWS cron, at most once a day, read in America/New_York, e.g. 'cron(0 4 * * ? *)'. Give each landscape a
+     * different hour: schedules that read the real source must start an hour apart.
      */
     cronExpression: string;
   };

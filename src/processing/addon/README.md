@@ -115,12 +115,10 @@ task - so it can be changed per-run without redeploying anything. The full path:
 2. Each runner (`RunnerForSingleMessage.ts`, `RunnerForSinglePerson.ts`, and
    `RunnerForQueueSeeding.ts` via `QueueSeeder.ts`) copies that value into the `ApiChunkerEvent` it
    sends (`ChunkerSubscriber.ts`'s `ApiChunkerEvent.personRecordProcessorAddons`).
-3. **Scheduled production invocation** (`lib/services/chunker/ChunkerService.ts`'s
-   `createApiChunkingSchedule()`): the EventBridge schedule's static `ScheduleTargetInput` also
-   includes a `personRecordProcessorAddons` field (currently left `undefined` as a placeholder
-   pending a decision on how to source a real value for scheduled runs - see the `// TODO LATER`
-   comment there) - the consuming side described below already handles it whenever a value is
-   present.
+3. **Scheduled production invocation** (the landscape's bulk sync schedule, managed through
+   `src/schedule/ScheduledRun.ts`): its input can carry a `personRecordProcessorAddons` field
+   (`ScheduledRun.scheduleInput()` takes one), though no schedule sets one yet - the consuming
+   side described below already handles it whenever a value is present.
 4. `ChunkerApiSubscriber.ts`'s `handleApiEvent()` extracts it from the incoming event and forwards
    it into the `TaskParameters` SQS message it sends to the chunker queue.
 5. `ChunkFromAPI.ts` parses it off the queue message into `TaskParameters.personRecordProcessorAddons`

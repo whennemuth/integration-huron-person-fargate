@@ -56,9 +56,9 @@ const sqsClient = new SQSClient({ region });
  * - 'person-full': Fetch all person records (initial sync or full refresh)
  * - 'person-delta': Fetch only changed person records (incremental sync)
  * 
- * Note: This handler is invoked by EventBridge schedule with a synthetic event containing
- * API endpoint configuration (ScheduledRun.scheduleInput()). The schedule is only created if
- * the context has SCHEDULE.cronExpression (bulk-sync-schedule-plan.md).
+ * Note: This handler is invoked by the landscape's bulk sync schedule (EventBridge Scheduler)
+ * with a synthetic event containing API endpoint configuration (e.g. ScheduledRun.scheduleInput()).
+ * The schedule is managed at run time through ScheduledRun (src/schedule/), never deployed.
  * 
  * @param event - API-based chunker event
  * @returns Response object with status code and message
