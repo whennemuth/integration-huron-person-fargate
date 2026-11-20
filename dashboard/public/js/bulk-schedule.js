@@ -3,8 +3,9 @@
  * chunker-api-schedule-<landscape> (GET, PUT and DELETE /api/bulk-schedule; POST /api/bulk-schedule/when, /plan and
  * /state; dashboard/src/services/BulkSchedule.ts). With a schedule, the page shows it (when, the run it starts, on or
  * off, who changed it last, the last scheduled run skipped) with Activate or Deactivate, Edit schedule and Delete
- * schedule. Without one, it shows Bulk sync's form, with When first, and Review run; the review asks "Schedule this
- * run?" and Schedule run saves it.
+ * schedule. Without one (and after a delete), the Schedule card is minimized to a message saying so and Create
+ * schedule, which opens Bulk sync's form, with When first, and Review run; the review asks "Schedule this run?" and
+ * Schedule run saves it.
  *
  * When is gathered as choices (a time and days, or a cron expression) and sent to the server, which builds and checks
  * the cron and answers with the expression, its words, the next runs, any problem by field, and any other landscape's
@@ -215,6 +216,25 @@ class BulkScheduleView {
         `;
     }
 
+    /**
+     * With no schedule, the Schedule card minimized: a message that this landscape has none, and Create schedule, which
+     * opens the form. Where the dashboard can't create one (BulkScheduleState.blocked), that is said and the button is
+     * disabled.
+     */
+    static noScheduleHtml(state) {
+        const blocked = state.blocked;
+        return `
+            <div class="schedule-none" data-schedule-none>
+                ${BulkSyncView.noteHtml('info', 'No bulk sync schedule',
+                    `${state.landscape} has no bulk sync schedule, so a bulk sync runs here only when someone starts one. Click Create schedule to make one.`)}
+                ${blocked ? BulkSyncView.noteHtml('warning', "A schedule can't be created here", blocked.message) : ''}
+                <button class="btn btn-primary" type="button" data-action="schedule-create"${blocked ? ' disabled' : ''}>
+                    <i class="fas fa-calendar-plus me-2" aria-hidden="true"></i>Create schedule
+                </button>
+            </div>
+        `;
+    }
+
     /** The other landscapes' schedules (BulkScheduleState.otherSchedules) */
     static othersHtml(others) {
         if ( ! others || others.length === 0) {
@@ -276,6 +296,7 @@ class BulkSchedulePage {
         this.stamp = root.querySelector('[data-refresh-stamp="schedule"]');
         this.state = undefined;
         this.editing = false;
+        this.creating = false;
         this.values = undefined;
         this.when = undefined;
         this.enabled = undefined;
@@ -295,6 +316,7 @@ class BulkSchedulePage {
             if (name === 'confirm-start') this.confirm();
             if (name === 'cancel-start') this.cancel();
             if (name === 'schedule-toggle') this.toggle();
+            if (name === 'schedule-create') this.create();
             if (name === 'schedule-edit') this.edit();
             if (name === 'schedule-edit-cancel') this.stopEditing();
             if (name === 'schedule-delete') this.askDelete(true);
@@ -329,7 +351,10 @@ class BulkSchedulePage {
         return true;
     }
 
-    /** The card when there is a schedule and it isn't being edited, else the form */
+    /**
+     * The card when there is a schedule and it isn't being edited; with none, the message that says so and Create
+     * schedule, until that is clicked; else the form
+     */
     render() {
         const { state } = this;
         this.othersContainer.innerHTML = BulkScheduleView.othersHtml(state.otherSchedules);
@@ -337,7 +362,18 @@ class BulkSchedulePage {
             this.main.innerHTML = BulkScheduleView.cardHtml(state);
             return;
         }
+        if ( ! state.schedule && ! this.creating) {
+            this.main.innerHTML = BulkScheduleView.noScheduleHtml(state);
+            return;
+        }
         this.renderForm();
+    }
+
+    /** Create schedule: the form for a new schedule, from the defaults */
+    create() {
+        this.forgetEntries();
+        this.creating = true;
+        this.render();
     }
 
     /**
@@ -352,9 +388,8 @@ class BulkSchedulePage {
         const values = this.values || (schedule ? Object.assign({ custom: true }, schedule.run) : undefined);
         const enabled = this.enabled !== undefined ? this.enabled : (schedule ? schedule.enabled : true);
         const blocked = state.blocked ? BulkSyncView.noteHtml('warning', "The schedule can't be changed here", state.blocked.message) : '';
-        const cancel = this.editing
-            ? '<div class="mb-3"><button class="btn btn-sm btn-outline-secondary" type="button" data-action="schedule-edit-cancel">Cancel editing</button></div>'
-            : '';
+        // Back to the card (editing) or to the message that there is no schedule (creating), dropping what was entered
+        const cancel = `<div class="mb-3"><button class="btn btn-sm btn-outline-secondary" type="button" data-action="schedule-edit-cancel">${this.editing ? 'Cancel editing' : 'Cancel'}</button></div>`;
         this.main.innerHTML = blocked + BulkScheduleView.runFormHtml(state.form, values, {
             leadHtml: BulkScheduleView.whenHtml(when, state.when),
             tailHtml: BulkScheduleView.enabledHtml(enabled) + cancel
@@ -496,14 +531,16 @@ class BulkSchedulePage {
         this.render();
     }
 
-    /** Back to the card, dropping what was entered */
+    /** Back to the card, or with no schedule to the message that says so, dropping what was entered */
     stopEditing() {
         this.forgetEntries();
         this.render();
     }
 
+    /** Drop what was entered, and leave editing or creating (a save, a delete or a cancel) */
     forgetEntries() {
         this.editing = false;
+        this.creating = false;
         this.values = undefined;
         this.when = undefined;
         this.enabled = undefined;

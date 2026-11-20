@@ -320,6 +320,20 @@ describe.each([false, true])('bulk-schedule.js (minified: %s)', minified => {
       expect(calls).toContainEqual(['POST', '/api/bulk-schedule/state', { enabled: false }]);
     });
 
+    it('says there is no schedule, with Create schedule, until that opens the form; Cancel goes back', async () => {
+      const { instance, main } = page({ state: state(false) });
+      await instance.load();
+      expect(main.innerHTML).toMatch(/data-schedule-none/);
+      expect(main.innerHTML).toMatch(/preview has no bulk sync schedule/);
+      expect(main.innerHTML).toMatch(/data-action="schedule-create"/);
+      expect(main.innerHTML).not.toMatch(/data-schedule-when/);
+      instance.create();
+      expect(main.innerHTML).toMatch(/data-schedule-when/);
+      expect(main.innerHTML).toMatch(/data-action="schedule-edit-cancel">Cancel</);
+      instance.stopEditing();
+      expect(main.innerHTML).toMatch(/data-schedule-none/);
+    });
+
     it('loads the form when there is none, reviews the choices, and saves them', async () => {
       const plan = {
         landscape: 'preview', enabled: true, replaces: false,
@@ -328,6 +342,7 @@ describe.each([false, true])('bulk-schedule.js (minified: %s)', minified => {
       };
       const { instance, main, confirm, calls } = page({ state: state(false), plan });
       await instance.load();
+      instance.create();
       expect(main.innerHTML).toMatch(/data-schedule-when/);
       expect(main.innerHTML).toMatch(/Review run/);
       const form = {
@@ -350,6 +365,7 @@ describe.each([false, true])('bulk-schedule.js (minified: %s)', minified => {
     it('shows a refused review under the form, and unlocks it', async () => {
       const { instance, formError, fields } = page({ state: state(false) });
       await instance.load();
+      instance.create();
       instance.postJson = jest.fn(async (path: string) => {
         if (path.endsWith('/plan')) throw new Error("staging's schedule starts at 3:00 AM");
         return {};
@@ -375,12 +391,23 @@ describe.each([false, true])('bulk-schedule.js (minified: %s)', minified => {
       expect(main.innerHTML).toMatch(/Cancel editing/);
     });
 
-    it('deletes the schedule, and loads again', async () => {
-      const { instance, calls } = page({ state: state(true) });
+    it('deletes the schedule, and loads again, to the message that there is none', async () => {
+      const answers = { state: state(true) };
+      const { instance, main, calls } = page(answers);
       await instance.load();
+      answers.state = state(false);
       expect(await instance.remove()).toBe(true);
       expect(calls).toContainEqual(['DELETE', '/api/bulk-schedule', undefined]);
       expect(calls.filter(([method]) => method === 'GET')).toHaveLength(2);
+      expect(main.innerHTML).toMatch(/data-schedule-none/);
+      expect(main.innerHTML).not.toMatch(/data-schedule-when/);
+    });
+
+    it("disables Create schedule, and says why, where the dashboard can't create one", async () => {
+      const { instance, main } = page({ state: { ...state(false), blocked: { code: 'NOT_CONFIGURED', message: 'lacks SCHEDULE_ROLE_ARN' } } });
+      await instance.load();
+      expect(main.innerHTML).toMatch(/A schedule can&#39;t be created here|A schedule can't be created here/);
+      expect(main.innerHTML).toMatch(/data-action="schedule-create" disabled/);
     });
   });
 });

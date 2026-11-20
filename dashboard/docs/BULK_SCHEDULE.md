@@ -26,8 +26,11 @@ schedule's own description. A deploy never touches it, and `bin/teardown.sh` del
     is a snapshot);
   - the last scheduled run the chunker subscriber skipped because a run was underway (`lastRefusal`);
   - **Activate** or **Deactivate**, **Edit schedule**, and **Delete schedule** (which asks first).
-- **Without one**, or while editing, Bulk sync's form in schedule mode with **When** first and **Turn the schedule on**
-  last, and **Review run**.
+- **Without one**, and after a delete, the Schedule card minimized: a message that the landscape has no schedule and
+  **Create schedule** (`BulkScheduleView.noScheduleHtml()`; disabled, with the reason, where the dashboard can't create
+  one). The button opens the form.
+- **The form** (creating, or editing): Bulk sync's form in schedule mode with **When** first and **Turn the schedule
+  on** last, **Cancel** (back to the message, or **Cancel editing** back to the card), and **Review run**.
 - **Other landscapes**: every other landscape's schedule in the account, on or off, its words and its source, since
   only those that are on and read the real source keep this one an hour away.
 

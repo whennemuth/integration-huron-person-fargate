@@ -1234,6 +1234,12 @@ code, pre, kbd, samp {
     margin-top: 0.75rem;
 }
 
+/* No schedule: the message, then Create schedule */
+.schedule-none .run-note {
+    margin-top: 0;
+    margin-bottom: 0.75rem;
+}
+
 /* The sections block follows the tiles, or the note when there is one */
 .run-detail-sections {
     margin-top: 2rem;
