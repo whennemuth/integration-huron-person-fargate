@@ -71,6 +71,21 @@ describe('BulkSchedule', () => {
       expect((await make({ defaultCron: 'every morning' }).service.describe()).when.defaults).toEqual(BulkSchedule.FALLBACK_WHEN);
     });
 
+    it('shows the last scheduled start the chunker subscriber skipped, and nothing when it can\'t be read', async () => {
+      const refusal = { refusedAt: '2026-11-19T09:00:00.000Z', reason: 'The scheduled run was skipped: run x is underway in this landscape', syncRunId: 'x' };
+      const { scheduledRun, offline } = make();
+      const shown = new BulkSchedule({
+        bulkSync: offline.bulkSync, scheduledRun, landscape: 'mock', now: () => now,
+        refusals: { record: async () => {}, read: async () => refusal },
+      });
+      expect((await shown.describe()).lastRefusal).toEqual(refusal);
+      const unreadable = new BulkSchedule({
+        bulkSync: offline.bulkSync, scheduledRun, landscape: 'mock', now: () => now,
+        refusals: { record: async () => {}, read: async () => { throw new Error('denied'); } },
+      });
+      expect((await unreadable.describe()).lastRefusal).toBeUndefined();
+    });
+
     it("says why the schedule can't be changed when the environment lacks what that needs", async () => {
       const state = await make({ missing: ['SCHEDULE_ROLE_ARN'] }).service.describe();
       expect(state.blocked).toEqual({ code: 'NOT_CONFIGURED', message: expect.stringMatching(/SCHEDULE_ROLE_ARN/) });

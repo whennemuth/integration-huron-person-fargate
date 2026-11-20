@@ -240,6 +240,10 @@ describe('FunctionUrlOrigin', () => {
     expect(JSON.stringify(variables.SCHEDULE_TARGET_ARN)).toContain(':function:chunker-subscriber-mock');
     // No SCHEDULE in this context: no default cron
     expect(variables.SCHEDULE_DEFAULT_CRON).toBeUndefined();
+
+    // The last scheduled start the chunker subscriber skipped: read its one parameter, write nothing there
+    expect(JSON.stringify(of('ssm:GetParameter').map((s: any) => s.Resource))).toContain('parameter/hp-dashboard/schedule-refusals/mock');
+    expect(JSON.stringify(of('ssm:PutParameter').map((s: any) => s.Resource))).not.toContain('schedule-refusals');
   });
 
   it("may read the chunker service's maximum for Parallel start, and change no scaling itself", () => {
@@ -311,9 +315,13 @@ describe('FunctionUrlOrigin', () => {
     const ssm = statements.filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('ssm:'))
       && JSON.stringify(s.Resource).includes('/hp-dashboard/landscapes'));
     expect(ssm.flatMap((s: any) => [s.Action].flat())).toEqual(['ssm:GetParametersByPath']);
-    // Nothing else may touch SSM besides reading the registry and keeping the launch flag
+    // Nothing else may touch SSM besides reading the registry, keeping the launch flag, and reading the last skipped
+    // scheduled start (tested with the schedule's grants)
     const others = statements.filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('ssm:')) && !ssm.includes(s));
-    expect(others.map((s: any) => JSON.stringify(s.Resource))).toEqual([expect.stringContaining('/hp-dashboard/launch-flags/mock')]);
+    expect(others.map((s: any) => JSON.stringify(s.Resource))).toEqual([
+      expect.stringContaining('/hp-dashboard/launch-flags/mock'),
+      expect.stringContaining('/hp-dashboard/schedule-refusals/mock'),
+    ]);
     const resources = JSON.stringify(ssm.map((s: any) => s.Resource));
     expect(resources).toContain(':parameter/hp-dashboard/landscapes\"');
     expect(resources).toContain(':parameter/hp-dashboard/landscapes/*');

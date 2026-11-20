@@ -26,6 +26,7 @@ import { BulkSync } from './BulkSync';
 import { BulkSchedule } from './BulkSchedule';
 import { InMemorySchedulerClient } from '../handlers/OfflineScheduler';
 import { ScheduledRun } from '../../../src/schedule/ScheduledRun';
+import { MemoryScheduledStartRefusalRecord } from '../../../src/schedule/ScheduledStartGuard';
 import { SystemStatus } from './SystemStatus';
 import { runReportingFromEnvironment } from './RunReports';
 import { LandscapeRegistry, LOCAL_LANDSCAPE } from './LandscapeRegistry';
@@ -141,6 +142,8 @@ export class ServiceProvider {
         scheduledRun: this.offlineScheduledRun(),
         landscape: (process.env.LANDSCAPE || LOCAL_LANDSCAPE).toLowerCase(),
         defaultCron: 'cron(0 4 * * ? *)',
+        // Offline no scheduled start is ever made, so none is skipped
+        refusals: new MemoryScheduledStartRefusalRecord(),
       });
     }
     return BulkSchedule.fromEnvironment(config, this.getRunReportingService());

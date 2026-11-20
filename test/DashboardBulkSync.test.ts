@@ -13,8 +13,9 @@ import { LaunchFlag } from '../dashboard/src/services/LaunchFlag';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
 import { OFFLINE_SOURCE_CONFIG, OfflineBulkSyncService } from '../dashboard/src/handlers/OfflineServices';
 import {
-  AwsSourceSimulatorService, BulkSync, BulkSyncError, BulkSyncRequest, LambdaChunkerFunctions, RunActivity
+  AwsSourceSimulatorService, BulkSync, BulkSyncError, BulkSyncRequest, LambdaChunkerFunctions
 } from '../dashboard/src/services/BulkSync';
+import { RunActivity } from '../src/reporting/RunActivity';
 import { RunReport } from '../src/reporting/RunReporting';
 
 const MIN = 60_000;

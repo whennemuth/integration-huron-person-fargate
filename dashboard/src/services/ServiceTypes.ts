@@ -9,6 +9,7 @@ import { PersonHistoryRecord } from '../../../src/dynamodb/PersonHistoryTable';
 import { Capabilities, ChangeType, Page, RunIdPage, RunReport } from '../../../src/reporting/RunReporting';
 import type { ScheduleInfo, SchedulePreview, UpcomingStart } from '../../../src/schedule/ScheduledRun';
 import type { ScheduleChoices } from '../../../src/schedule/ScheduleChoices';
+import type { ScheduledStartRefusal } from '../../../src/schedule/ScheduledStartGuard';
 
 // Service Interfaces
 export type PersonLookupParams = {
@@ -90,6 +91,11 @@ export type BulkScheduleState = {
   landscape: string;
   /** Absent when the landscape has none */
   schedule?: BulkScheduleView;
+  /**
+   * The last scheduled start the chunker subscriber skipped, and why (a run underway, or one launching); absent when
+   * none was, or it can't be read
+   */
+  lastRefusal?: ScheduledStartRefusal;
   when: {
     /** The choices a new schedule's form starts from (the context's SCHEDULE cron, as choices) */
     defaults: ScheduleChoices;
@@ -243,14 +249,9 @@ export type BulkSyncRunType = 'full' | 'full-no-deactivations' | 'test';
 /** A run's population: a full sync deactivates people missing from its source, a delta sync doesn't */
 export type BulkSyncPopulation = 'person-full' | 'person-delta';
 
-/** The newest run's state, as far as starting another is concerned */
-export type RunActivityState = {
-  /** none (no runs yet), finished (summarized), failed, underway, stalled (no chunk finished for too long) */
-  kind: 'none' | 'finished' | 'failed' | 'underway' | 'stalled';
-  syncRunId?: string;
-  /** For underway or stalled: when its last chunk finished, if any has */
-  lastChunkAt?: string;
-};
+/** The newest run's state, as far as starting another is concerned (fargate src/reporting/RunActivity.ts) */
+export type { RunActivityState } from '../../../src/reporting/RunActivity';
+import type { RunActivityState } from '../../../src/reporting/RunActivity';
 
 /** What starting a run in this landscape would do, and whether it is allowed now (GET /api/bulk-sync) */
 export type BulkSyncState = {

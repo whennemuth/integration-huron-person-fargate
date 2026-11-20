@@ -54,7 +54,8 @@ stack:
   `chunker-schedule-<landscape>` (which the pipeline stack creates) only to `scheduler.amazonaws.com`. Its environment
   names that role (`SCHEDULE_ROLE_ARN`), the chunker subscriber as the target (`SCHEDULE_TARGET_ARN`) and the context's
   `SCHEDULE` cron (`SCHEDULE_DEFAULT_CRON`). These are the only writes on pipeline resources besides invoking the
-  chunker subscriber.
+  chunker subscriber. It reads the last scheduled start the chunker subscriber skipped (`ssm:GetParameter` on
+  `/hp-dashboard/schedule-refusals/<landscape>`, which the subscriber writes).
 - Its environment also carries what Bulk sync's review shows: `PIPELINE_STACK_ID`, `ITEMS_PER_CHUNK`, and the config
   secret's name (`lib/FunctionUrl.ts`).
 

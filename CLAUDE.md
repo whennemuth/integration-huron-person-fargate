@@ -62,7 +62,8 @@ All chunking modules use `TestEnvironment` from `integration-core`; harness pref
   with `ScheduledRun.previousStateFlags(bulkReset)`. The context's `BULK_RESET` / `TRUST_PREVIOUS_STORAGE` are only
   the chunker task's environment fallback. **The schedule is never deployed**: it is managed at run time through
   `ScheduledRun` (one per landscape, at most once a day, an hour from other landscapes'; CDK creates only its role),
-  so never add it back to CDK. Rules: [src/schedule/CLAUDE.md](src/schedule/CLAUDE.md).
+  so never add it back to CDK. A scheduled start is skipped (and recorded) while a run is underway in the landscape
+  (`ScheduledStartGuard`). Rules: [src/schedule/CLAUDE.md](src/schedule/CLAUDE.md).
 - **Who started it** (`startedBy`, `src/chunking/StartedBy.ts`): `{ by: 'dashboard', principal? }`, `{ by: 'schedule' }`
   or `{ by: 'runner' }`, carried along the run's messages into Flags and the run summary.
 - **The run counters** (`resetRunCounters()`, `src/chunking/RunCounters.ts`: the chunker's offset and chunk-ordinal

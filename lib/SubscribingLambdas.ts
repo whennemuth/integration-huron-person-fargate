@@ -90,6 +90,8 @@ export class SubscribingLambdas extends Construct {
       chunksBucketName: chunksBucket.bucketName,
       timeoutSeconds: ctx.LAMBDA.chunkerSubscriber.timeoutSeconds,
       memorySizeMb: ctx.LAMBDA.chunkerSubscriber.memorySizeMb,
+      // How the scheduled start guard reads the latest run
+      storageType: ctx.PREVIOUS_STORAGE_TYPE,
       dryRun: ctx.DRY_RUN?.lambda?.chunker,
       tags,
     });

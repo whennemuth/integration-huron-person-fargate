@@ -63,8 +63,9 @@ as `run`, Bulk sync's request body (no `test` run type, no `resetState`).
 - `GET /api/bulk-schedule` (`runs:read`) - `BulkScheduleState`: the schedule, or none (with its words, next runs,
   `choices` for the form, `run` read back as form values, who changed it last, and `staleEndpoint` when the config
   now names another endpoint); `when` (the form's starting choices from the context's `SCHEDULE`, the time zone, the
-  spacing); `form` (Bulk sync's `BulkSyncState`); the other landscapes' schedules; `blocked` when the dashboard can't
-  change the schedule (`NOT_CONFIGURED`).
+  spacing); `form` (Bulk sync's `BulkSyncState`); the other landscapes' schedules; `lastRefusal`, the last scheduled
+  start the chunker subscriber skipped because a run was underway (`{ refusedAt, reason, syncRunId? }`, fargate
+  `src/schedule/ScheduledStartGuard.ts`); `blocked` when the dashboard can't change the schedule (`NOT_CONFIGURED`).
 - `POST /api/bulk-schedule/when` (`schedule:edit`, changes nothing) - `{ when, run? }` gives a `SchedulePreview`:
   the expression, its words, the next three runs, `errors` by field with `errorCode`, the `conflict` with another
   landscape's schedule (unless `run.source` is the simulator), and daylight-saving `notes`. Invalid choices are a

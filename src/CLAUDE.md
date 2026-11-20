@@ -17,7 +17,7 @@ code both need live here (`src/Utils.ts`, the tables' `DYNAMODB_TABLE_NAME` expo
 | `runner/` | The manual Runner | [runner/CLAUDE.md](runner/CLAUDE.md) |
 | `dynamodb/` | Table classes: `StatisticsTable`, `AtomicCounter`, `OCCFlag`, `PersonCurrentStateTable`, `PersonHistoryTable`, `MockTargetPersonTable`, `PersonRecordProcessorLogTable`, the generic `DynamoDBTable` (`truncateTable()`), `BulkPurger`, `IntegrationRun` (prune one run) | [dynamodb/README.md](dynamodb/README.md), [docs/CONCURRENCY_CONTROL.md](../docs/CONCURRENCY_CONTROL.md), [docs/STATISTICS_TABLE.md](../docs/STATISTICS_TABLE.md) |
 | `person-cache/` | The cache of people in the target, built through `PersonTargetReal`; `PersonCacheFactory` picks the S3 or DynamoDB variant | [person-cache/README.md](person-cache/README.md) |
-| `reporting/` | `RunReporting`, the read side of runs, used by the dashboard | [docs/STATISTICS_TABLE.md](../docs/STATISTICS_TABLE.md#reading-runs-runreporting) |
+| `reporting/` | `RunReporting`, the read side of runs, used by the dashboard; `RunActivity`, whether the newest run is underway, stalled or done (the dashboard's guards and the scheduled start guard) | [docs/STATISTICS_TABLE.md](../docs/STATISTICS_TABLE.md#reading-runs-runreporting) |
 | `schedule/` | The bulk sync schedule: `ScheduledRun` (the landscape's schedule and its rules), `EventBridgeSchedule` (the SDK), and the AWS cron model (`CronExpression`, `CronSchedule`, `CronExpressionBuilder`, `TimeZone`) | [schedule/CLAUDE.md](schedule/CLAUDE.md) |
 | `storage/` | `IStorageAdapter` with S3 and file-system adapters | [docs/STORAGE_ADAPTER_USAGE.md](../docs/STORAGE_ADAPTER_USAGE.md) |
 

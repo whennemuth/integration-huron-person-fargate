@@ -6,6 +6,7 @@ import { CronExpressionBuilder } from '../../../src/schedule/CronExpressionBuild
 import { ScheduleChoices } from '../../../src/schedule/ScheduleChoices';
 import { ScheduledRun, ScheduleInfo, SchedulePreview } from '../../../src/schedule/ScheduledRun';
 import { ScheduleError } from '../../../src/schedule/ScheduleError';
+import { ScheduledStartRefusal, ScheduledStartRefusalRecord, SsmScheduledStartRefusalRecord } from '../../../src/schedule/ScheduledStartGuard';
 import { BulkSync, BulkSyncError } from './BulkSync';
 import {
   BulkSchedulePlan, BulkScheduleRequestBody, BulkScheduleSaved, BulkScheduleService, BulkScheduleState, BulkScheduleView,
@@ -34,6 +35,8 @@ export class BulkSchedule implements BulkScheduleService {
     defaultCron?: string;
     /** The environment variables creating or changing a schedule needs that are missing */
     missing?: string[];
+    /** The last scheduled start the chunker subscriber skipped (ScheduledStartGuard); absent: none shown */
+    refusals?: ScheduledStartRefusalRecord;
     now?: () => Date;
   }) {}
 
@@ -49,6 +52,7 @@ export class BulkSchedule implements BulkScheduleService {
       landscape,
       defaultCron: SCHEDULE_DEFAULT_CRON,
       missing,
+      ...(LANDSCAPE && REGION ? { refusals: new SsmScheduledStartRefusalRecord(LANDSCAPE, REGION) } : {}),
     });
   }
 
@@ -58,15 +62,28 @@ export class BulkSchedule implements BulkScheduleService {
 
   async describe(): Promise<BulkScheduleState> {
     const { scheduledRun, bulkSync, landscape, missing = [] } = this.deps;
-    const [info, form, others] = await Promise.all([scheduledRun.get(), bulkSync.describe(), scheduledRun.otherSchedules()]);
+    const [info, form, others, lastRefusal] = await Promise.all([
+      scheduledRun.get(), bulkSync.describe(), scheduledRun.otherSchedules(), this.lastRefusal()
+    ]);
     return {
       landscape,
       ...(info ? { schedule: this.view(info) } : {}),
+      ...(lastRefusal ? { lastRefusal } : {}),
       when: { defaults: this.defaultWhen(), timezone: ScheduledRun.TIMEZONE, minSpacingMinutes: ScheduledRun.MIN_SPACING_MINUTES },
       form,
       otherSchedules: others.map(({ landscape, enabled, realSource, description }) => ({ landscape, enabled, realSource, description })),
       ...(missing.length ? { blocked: { code: 'NOT_CONFIGURED', message: BulkSchedule.notConfigured(missing).message } } : {}),
     };
+  }
+
+  /** The last scheduled start the chunker subscriber skipped; none when there was none or it can't be read */
+  private async lastRefusal(): Promise<ScheduledStartRefusal | undefined> {
+    try {
+      return await this.deps.refusals?.read();
+    } catch (error) {
+      console.warn(`The last skipped scheduled start couldn't be read: ${error instanceof Error ? error.message : error}`);
+      return undefined;
+    }
   }
 
   async preview(body: BulkScheduleRequestBody): Promise<SchedulePreview> {

@@ -11,8 +11,9 @@ landscape's chunks bucket), which the processors pick up, and starts runs. How a
 **The chunker subscriber Lambda** (`ChunkerSubscriber.ts`, the dispatcher): takes an S3 event (a file dropped in the
 input bucket: `filedrop/ChunkerS3Subscriber.ts`), an API event (the EventBridge schedule, the dashboard's Bulk sync, or
 the Runner in-process: `fetch/ChunkerApiSubscriber.ts`, `handleApiEvent()`), or a mock landscape's reset-only event,
-and queues the chunker's work. For a run's first event it applies the refusals (`runStartRefusal()`), the processor
-maximum, a mock reset, the counter reset and a parallel start, in that order.
+and queues the chunker's work. For a run's first event it applies the refusals (`runStartRefusal()`), skips a
+scheduled start while a run is underway (`scheduledStartRefusal()`, `src/schedule/ScheduledStartGuard.ts`), then
+the processor maximum, a mock reset, the counter reset and a parallel start, in that order.
 
 **Run start** (shared by the subscriber and the Runner):
 - `ScheduledRun` (in `src/schedule/`, [schedule/CLAUDE.md](../schedule/CLAUDE.md)): the schedule's input, and

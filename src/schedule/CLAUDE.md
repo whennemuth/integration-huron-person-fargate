@@ -14,6 +14,10 @@ than a library: the plan doc `bulk-sync-schedule-plan.md` at the repo root while
   update), `save()` (create or replace), `setEnabled()`, `setCron()`, `replaceInput()`, `delete()`,
   `otherSchedules()`, `upcomingStarts()` (real-source schedules starting within the hour, for Bulk sync's warning),
   with the bulk sync rules below. The dashboard's `BulkSchedule` (`dashboard/src/services/`) is a thin layer over it.
+- `ScheduledStartGuard.ts`: the chunker subscriber skips a start the schedule makes while a run is underway in the
+  landscape or a dashboard launch is up, and records why in `/hp-dashboard/schedule-refusals/<landscape>` for the
+  dashboard (`SsmScheduledStartRefusalRecord`). Owns the launch flag's parameter path, which the dashboard's
+  `LaunchFlag` takes from it.
 - `EventBridgeSchedule.ts`: one named EventBridge Scheduler schedule through the SDK, knowing nothing about bulk
   syncs (`get()` gives a `ScheduleSnapshot`; `create()`, `update()`, `setEnabled()`, `delete()`, `list()`).
 - `CronField.ts`: one field of an AWS cron (`MinuteField`, `HourField`, `DayOfMonthField`, `MonthField`,
@@ -44,6 +48,8 @@ Tests: `test/schedule/`, and `test/ScheduledRun.test.ts` for the scheduled run's
   `termsEndpoint`) is never checked. Landscapes in another account or region can't be seen.
 - **UpdateSchedule replaces the whole schedule**: anything it isn't sent goes back to its default. Change a schedule
   only through `EventBridgeSchedule.update()`, which reads it and sends every field back with the change.
+- **A scheduled start never runs on top of another run in its landscape**: `ScheduledStartGuard` skips it (a stalled
+  run doesn't count; a run state that can't be read does). Details: [docs/RUN_START.md](../../docs/RUN_START.md).
 - **New schedules invoke once, on time**: no retries and no flexible window, so a missed day is a missing run, never
   a run hours late.
 - **AWS cron is its own dialect**: six fields with a year and no seconds, day-of-week **1 is Sunday** (`2` is Monday),

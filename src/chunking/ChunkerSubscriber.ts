@@ -53,6 +53,7 @@ import { MockLandscapeLocation, MockLandscapeReset, MockLandscapeResetVia } from
 import { SourceEndpoint, SyncPopulation } from '../../docker/chunkTypes';
 import type { StartedBy } from './StartedBy';
 import { ProcessorCapacity, ProcessorCapacityRecord } from './ProcessorCapacityRecord';
+import { ScheduledStartGuard } from '../schedule/ScheduledStartGuard';
 
 /**
  * S3-based event structure
@@ -291,8 +292,9 @@ export async function setProcessorCapacityForRunStart(
  * The Lambda handler function that dispatches based on event type.
  *
  * An API event is checked first (runStartRefusal(): a reset it asks for, a parallel start, a processor scaling capacity
- * override), before anything is reset or sent; a refusal is returned as a 400 rather than thrown. A run's first event
- * then sets the processor's live maximum (setProcessorCapacityForRunStart()). Then a mock landscape's run state is
+ * override), before anything is reset or sent; a refusal is returned as a 400 rather than thrown. A start the bulk sync
+ * schedule makes is then skipped (a 409) while a run is underway in the landscape (scheduledStartRefusal()). A run's
+ * first event then sets the processor's live maximum (setProcessorCapacityForRunStart()). Then a mock landscape's run state is
  * reset if the event asks for it (resetState). An event asking for a parallel start (parallelStart > 0) is started with
  * that many chunker tasks, the wait inside bounded by the Lambda's remaining time (context); any other is queued as one
  * message. A dropped file (an S3 event) sets the processor's maximum back to the landscape's before its run is queued.
@@ -317,6 +319,11 @@ export async function handler(event: S3ChunkerEvent | ApiChunkerEvent | MockLand
       console.error(`Run start refused: ${refusal}`);
       return { statusCode: 400, body: refusal };
     }
+    const skipped = await scheduledStartRefusal(apiEvent);
+    if (skipped) {
+      console.error(`Scheduled start skipped: ${skipped}`);
+      return { statusCode: 409, body: skipped };
+    }
     if (isRunStartEvent(apiEvent)) {
       apiEvent = withProcessorCapacity(apiEvent, await setProcessorCapacityForRunStart(apiEvent));
     }
@@ -334,6 +341,23 @@ export async function handler(event: S3ChunkerEvent | ApiChunkerEvent | MockLand
     console.error(errMsg);
     return { statusCode: 400, body: errMsg };
   }
+}
+
+/**
+ * Why a start the bulk sync schedule makes is skipped: a run underway in the landscape, or one launched from the
+ * dashboard moments ago (ScheduledStartGuard, src/schedule/ScheduledStartGuard.ts, which records the refusal for the
+ * dashboard). Checked after runStartRefusal() and before anything is set, reset or sent; returned as a 409, not thrown
+ * (the subscriber has no automatic retry, and EventBridge Scheduler doesn't retry an accepted invocation). Any other
+ * event is never refused here.
+ */
+export async function scheduledStartRefusal(
+  event: ApiChunkerEvent,
+  guard: () => ScheduledStartGuard | undefined = () => ScheduledStartGuard.fromEnvironment()
+): Promise<string | undefined> {
+  if (!ScheduledStartGuard.isScheduledStart(event)) {
+    return undefined;
+  }
+  return guard()?.refusal(event);
 }
 
 /**

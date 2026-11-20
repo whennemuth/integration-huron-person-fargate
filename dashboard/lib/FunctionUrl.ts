@@ -20,6 +20,7 @@ import { JWT_PUBLIC_KEY } from "../src/authorization/ClaimsReader";
 import { AccessTables } from "./AccessTables";
 import { LandscapeResources } from "./LandscapeResources";
 import { ScheduledRun } from "../../src/schedule/ScheduledRun";
+import { ScheduledStartGuard } from "../../src/schedule/ScheduledStartGuard";
 import { registerLandscape } from "./LandscapeRegistration";
 
 export class FunctionUrlOrigin {
@@ -195,6 +196,13 @@ export class FunctionUrlOrigin {
       effect: Effect.ALLOW,
       actions: ['ssm:PutParameter', 'ssm:GetParameter', 'ssm:DeleteParameter'],
       resources: [Stack.of(stack).formatArn({ service: 'ssm', resource: 'parameter', resourceName: LaunchFlag.parameterName(landscape).slice(1) })],
+    }));
+    // The last scheduled start the chunker subscriber skipped (src/schedule/ScheduledStartGuard.ts), which the Bulk sync
+    // schedule page shows: read its one SSM parameter; the subscriber writes it
+    this.lambda.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['ssm:GetParameter'],
+      resources: [Stack.of(stack).formatArn({ service: 'ssm', resource: 'parameter', resourceName: ScheduledStartGuard.refusalParameterName(landscape).slice(1) })],
     }));
     // A mock landscape only: look up the source simulator's Function URL, to offer it as a run's source. Its settings
     // are read from its own unauthenticated /health; nothing about it is changed.

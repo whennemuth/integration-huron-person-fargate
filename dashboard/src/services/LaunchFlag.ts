@@ -1,6 +1,7 @@
 import { DeleteParameterCommand, GetParameterCommand, PutParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { TestEnvironment } from 'integration-core';
 import type { StartedBy } from '../../../src/chunking/StartedBy';
+import { ScheduledStartGuard } from '../../../src/schedule/ScheduledStartGuard';
 import type { BulkSyncChoices } from './ServiceTypes';
 
 /**
@@ -104,7 +105,8 @@ export class MemoryLaunchFlagStore implements LaunchFlagStore {
  */
 export class LaunchFlag {
   /** Where every landscape's flag is kept, apart from the landscape registry (/hp-dashboard/landscapes) */
-  static readonly PARAMETER_PATH = '/hp-dashboard/launch-flags';
+  /** The chunker subscriber reads it too, to skip a scheduled start while a launch is up (ScheduledStartGuard) */
+  static readonly PARAMETER_PATH = ScheduledStartGuard.LAUNCH_FLAG_PARAMETER_PATH;
   /** How much earlier than its launch a run's syncRunId may be: the chunker task's clock against the dashboard's */
   static readonly CLOCK_SLACK_MS = 30_000;
   /** How long a launch's flag stands: a plain start's chunker task is running within minutes */
