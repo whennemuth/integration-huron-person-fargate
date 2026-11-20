@@ -136,20 +136,29 @@ class BulkSyncView {
      * test a single task whatever is sent: BulkSyncRequest.parse()). The fieldset keeps the mode the user chose
      * (data-chosen-mode), to restore when another run type is chosen. Parallel start is likewise held at 0 for a test or
      * a single task (seeded offsets need chunks per task), its own choice kept on its wrapper (data-chosen-parallel).
+     *
+     * layout.schedule: the form for a bulk sync schedule's run (bulk-schedule.js). A schedule can't run a test or
+     * start from scratch, and isn't held back by the runs now (the chunker subscriber skips a scheduled start that
+     * finds one underway), so those are left out. layout.leadHtml goes first among the fields (the schedule's When)
+     * and layout.tailHtml after them; both are locked with them during a review.
      */
-    static formHtml(state, values) {
+    static formHtml(state, values, layout = {}) {
+        const { schedule = false, leadHtml = '', tailHtml = '' } = layout;
         const {
             latestRun = {}, blocked, warnings = [], iterationLimit: chunks = { max: 50 }, parallelStart: parallel = { max: 20, enabled: false },
             processorScalingCapacity: processors = { max: 20 }
         } = state;
         const landscapeProcessors = state.defaults.processorScalingCapacity;
         const form = BulkSyncView.formValues(state, values);
+        if (schedule && form.runType === 'test') {
+            form.runType = state.defaults.runType;
+        }
         const test = form.runType === 'test';
         const single = form.singleTask || test;
         const simulator = state.mock && state.mock.simulator && state.mock.simulator.available ? state.mock.simulator : undefined;
         const simulatorTest = test && !! simulator && form.source === 'simulator';
-        const stalled = latestRun.kind === 'stalled';
-        const refused = blocked && blocked.code !== 'RUN_STALLED' ? blocked : undefined;
+        const stalled = ! schedule && latestRun.kind === 'stalled';
+        const refused = ! schedule && blocked && blocked.code !== 'RUN_STALLED' ? blocked : undefined;
         const options = (from, to, selected) => {
             const list = [];
             for (let count = from; count <= to; count++) {
@@ -159,9 +168,11 @@ class BulkSyncView {
         };
         return `
             ${warnings.map(warning => BulkSyncView.noteHtml('info', 'Before you start', warning)).join('')}
+            ${schedule ? '' : BulkSyncView.upcomingSchedulesHtml(state.upcomingSchedules)}
             <form data-bulk-sync-form novalidate${simulatorTest ? ` class="${BulkSyncView.SIMULATOR_TEST_CLASS}"` : ''}
                   data-default-parallel="${Html.escape(String(state.defaults.parallelStart || 0))}"${landscapeProcessors !== undefined ? ` data-default-processors="${Html.escape(String(landscapeProcessors))}"` : ''}>
                 <fieldset class="bulk-fields" data-bulk-fields>
+                ${leadHtml}
                 <fieldset class="mb-3">
                     <legend class="form-label">Run type</legend>
                     ${BulkSyncView.radioHtml({
@@ -176,12 +187,12 @@ class BulkSyncView {
                         name: 'runType', value: 'delta', label: 'Delta sync', disabled: true,
                         hint: 'Only the people who changed. Not available yet: a source of only the people who changed does not exist yet.'
                     })}
-                    ${BulkSyncView.radioHtml({
+                    ${schedule ? '' : BulkSyncView.radioHtml({
                         name: 'runType', value: 'test', label: 'Test', checked: form.runType === 'test',
                         hint: 'One person, to check the integration end to end.'
                     })}
                 </fieldset>
-                <div class="bulk-test mb-3" data-bulk-test${form.runType === 'test' ? '' : ' hidden'}>
+                ${schedule ? '' : `<div class="bulk-test mb-3" data-bulk-test${form.runType === 'test' ? '' : ' hidden'}>
                     <p class="bulk-test-note">
                         A test puts a single person through the whole sync, from the source's person endpoint through
                         the chunker, the processor and post-processing into Huron, to check that the integration works
@@ -191,7 +202,7 @@ class BulkSyncView {
                     <input class="form-control bulk-buid" type="text" name="buid" id="bulk-buid" value="${Html.escape(form.buid)}"
                            placeholder="${simulatorTest ? BulkSyncView.SIMULATOR_BUID_PLACEHOLDER : BulkSyncView.BUID_PLACEHOLDER}" autocomplete="off" spellcheck="false">
                     ${simulator ? `<div class="form-text bulk-buid-simulator">${Html.escape(BulkSyncView.simulatorBuidHint(simulator.defaults.totalPopulation))}</div>` : ''}
-                </div>
+                </div>`}
                 ${BulkSyncView.checkboxHtml({
                     name: 'bulkReset', label: 'Bulk reset', checked: form.bulkReset,
                     hint: 'Check every person against Huron. Each time someone is synced, the integration keeps a fingerprint of their record as it came from the source. Normally, anyone whose record has not changed since then (the same fingerprint) is skipped, and Huron is not contacted for them. With a bulk reset, everyone is looked up in Huron and created or updated as needed: slower, but it also puts right records that were changed in Huron directly.'
@@ -245,11 +256,12 @@ class BulkSyncView {
                         </div>
                     </div>
                 </fieldset>
-                ${state.mock ? BulkSyncView.mockHtml(state.mock, form) : ''}
+                ${state.mock ? BulkSyncView.mockHtml(state.mock, form, { schedule }) : ''}
                 ${stalled ? BulkSyncView.checkboxHtml({
                     name: 'overrideStalled', label: 'Start despite the stalled run', checked: form.overrideStalled,
                     hint: `The run of ${RunFormat.dateTime(latestRun.syncRunId)} has stalled without finishing. Check that it has stopped first.`
                 }) : ''}
+                ${tailHtml}
                 </fieldset>
                 <p class="bulk-form-error" data-bulk-form-error role="alert" hidden></p>
                 ${refused ? BulkSyncView.noteHtml('warning', "A run can't be started now", refused.message) : ''}
@@ -274,10 +286,28 @@ class BulkSyncView {
     }
 
     /**
-     * A mock landscape's own options (BulkSyncState.mock): the source, the simulator's settings while it is the
-     * source, and Start from scratch. The simulator's settings start at its deployed ones.
+     * Bulk sync schedules starting within the hour (BulkSyncState.upcomingSchedules): a run started now would share the
+     * source with them, so it is said, though starting is still allowed. Nothing when there are none.
      */
-    static mockHtml(mock, form) {
+    static upcomingSchedulesHtml(upcoming) {
+        if ( ! upcoming || upcoming.length === 0) {
+            return '';
+        }
+        const which = upcoming.map(start => {
+            const whose = start.thisLandscape ? "This landscape's scheduled run" : `${start.landscape}'s scheduled run`;
+            const when = start.minutesAway <= 0 ? 'now' : `in ${start.minutesAway} minute${start.minutesAway === 1 ? '' : 's'}`;
+            return `${whose} starts at ${start.at}, ${when}.`;
+        });
+        return BulkSyncView.noteHtml('warning', 'A scheduled run starts soon',
+            `${which.join(' ')} Every landscape reads the same source, which takes one client at a time, so a run started now would share it.`);
+    }
+
+    /**
+     * A mock landscape's own options (BulkSyncState.mock): the source, the simulator's settings while it is the
+     * source, and Start from scratch (not for a schedule: options.schedule). The simulator's settings start at its
+     * deployed ones.
+     */
+    static mockHtml(mock, form, options = {}) {
         const { simulator } = mock;
         const simulated = form.source === 'simulator' && simulator.available;
         return `
@@ -307,7 +337,7 @@ class BulkSyncView {
                         </div>
                     `).join('')}
                 </div>
-                ${BulkSyncView.checkboxHtml({
+                ${options.schedule ? '' : BulkSyncView.checkboxHtml({
                     name: 'resetState', label: 'Start from scratch', checked: form.resetState,
                     hint: "Before the run starts, empty this landscape's target simulator and its Run history, and forget every person's fingerprint, so everyone is created again. Use it to see a first sync as it would happen. Run history then starts again from this run."
                 })}
@@ -317,18 +347,22 @@ class BulkSyncView {
 
     /**
      * What a run will do, one sentence a line, from its choices (BulkSyncChoices) and the chunker's chunk size.
-     * simulatorPeople: the source simulator's own population, which a test with it doesn't send (BulkSyncState.mock)
+     * simulatorPeople: the source simulator's own population, which a test with it doesn't send (BulkSyncState.mock).
+     * options.when: a bulk sync schedule's run, recurring at that time (its description, e.g. "At 04:00 AM, Monday
+     * through Friday (America/New_York)"), said in the first line, with what happens when a run is underway then.
      */
-    static summaryLines(choices, landscape, latestRun, itemsPerChunk, simulatorPeople) {
+    static summaryLines(choices, landscape, latestRun, itemsPerChunk, simulatorPeople, options = {}) {
+        const { when } = options;
         const lines = [];
         // A mock landscape's run (its choices have a source) goes into its target simulator
         const target = choices.source ? `${landscape}'s target simulator` : `${landscape}'s Huron`;
+        const sync = when ? `${when}: a full sync` : 'Full sync';
         if (choices.runType === 'test') {
             lines.push(`Test of ${choices.buid} alone, into ${target}. No one is deactivated.`);
         } else if (choices.runType === 'full') {
-            lines.push(`Full sync of everyone in the source, into ${target}. People no longer in the source are deactivated afterward.`);
+            lines.push(`${sync} of everyone in the source, into ${target}. People no longer in the source are deactivated afterward.`);
         } else {
-            lines.push(`Full sync of everyone in the source, into ${target}. No one is deactivated.`);
+            lines.push(`${sync} of everyone in the source, into ${target}. No one is deactivated.`);
         }
         if (choices.source === 'simulator') {
             lines.push(choices.runType === 'test'
@@ -361,10 +395,13 @@ class BulkSyncView {
             }
         }
         if (choices.processorScalingCapacityOverride !== undefined) {
-            lines.push(`It uses up to ${choices.processorScalingCapacityOverride} processor tasks at once, for this run only.`);
+            lines.push(`It uses up to ${choices.processorScalingCapacityOverride} processor tasks at once, ${when ? 'in each scheduled run' : 'for this run only'}.`);
         }
-        if (choices.overrideStalled && latestRun && latestRun.syncRunId) {
+        if ( ! when && choices.overrideStalled && latestRun && latestRun.syncRunId) {
             lines.push(`The stalled run of ${RunFormat.dateTime(latestRun.syncRunId)} is left as it is.`);
+        }
+        if (when) {
+            lines.push('A scheduled run that finds another run underway in this landscape is skipped that day.');
         }
         return lines;
     }
@@ -456,25 +493,37 @@ class BulkSyncView {
         `;
     }
 
-    /** The review: what will run, and the event the chunker subscriber will receive (from BulkSyncPlan) */
-    /** The review of a run (BulkSyncPlan); simulatorPeople is the source simulator's own population, as summaryLines() takes */
-    static confirmationHtml(plan, latestRun, simulatorPeople) {
+    /**
+     * The review of a run (BulkSyncPlan: its choices, event, settings and landscape); simulatorPeople is the source
+     * simulator's own population, as summaryLines() takes. options.schedule: the review of a bulk sync schedule's run
+     * (bulk-schedule.js), whose when (options.when, its description) leads the summary, under options.title (default
+     * "Schedule this run?") with options.button (default "Schedule run"), and options.whenHtml (the schedule's next
+     * runs and notes) after it. Either way the buttons are confirm-start and cancel-start.
+     */
+    static confirmationHtml(plan, latestRun, simulatorPeople, options = {}) {
+        const { schedule = false, when, whenHtml = '' } = options;
         const eventRows = Object.entries(plan.event).map(([name, value]) => ({ name, value }));
         const chunkSize = (plan.settings || []).find(setting => setting.name === 'itemsPerChunk');
         const itemsPerChunk = chunkSize && Number(chunkSize.value) > 0 ? Number(chunkSize.value) : undefined;
         const throttling = BulkSyncView.throttlingWarning(plan);
+        const title = schedule ? (options.title || 'Schedule this run?') : 'Start this run?';
+        const button = schedule ? (options.button || 'Schedule run') : 'Start run';
+        const icon = schedule ? 'fa-calendar-check' : 'fa-play';
+        const lines = BulkSyncView.summaryLines(plan.choices, plan.landscape, latestRun, itemsPerChunk, simulatorPeople, schedule ? { when } : {});
         return `
-            <div class="bulk-confirm" role="group" aria-label="Confirm the run">
-                <p class="bulk-confirm-title">Start this run?</p>
+            <div class="bulk-confirm" role="group" aria-label="${schedule ? 'Confirm the schedule' : 'Confirm the run'}">
+                <p class="bulk-confirm-title">${Html.escape(title)}</p>
                 <ul class="bulk-confirm-list">
-                    ${BulkSyncView.summaryLines(plan.choices, plan.landscape, latestRun, itemsPerChunk, simulatorPeople).map(line => `<li>${Html.escape(line)}</li>`).join('')}
+                    ${lines.map(line => `<li>${Html.escape(line)}</li>`).join('')}
                 </ul>
+                ${whenHtml}
                 ${throttling ? BulkSyncView.noteHtml('warning', 'Processors may be throttled', throttling) : ''}
-                ${BulkSyncView.settingsTableHtml('The event sent to the chunker subscriber', eventRows)}
+                ${schedule ? '' : BulkSyncView.upcomingSchedulesHtml(plan.upcomingSchedules)}
+                ${BulkSyncView.settingsTableHtml(schedule ? 'The event the schedule sends the chunker subscriber' : 'The event sent to the chunker subscriber', eventRows)}
                 <p class="bulk-form-error" data-bulk-start-error role="alert" hidden></p>
                 <div class="bulk-confirm-actions">
                     <button class="btn btn-primary btn-sm" type="button" data-action="confirm-start">
-                        <i class="fas fa-play me-1" aria-hidden="true"></i>Start run
+                        <i class="fas ${icon} me-1" aria-hidden="true"></i>${Html.escape(button)}
                     </button>
                     <button class="btn btn-outline-secondary btn-sm" type="button" data-action="cancel-start">Back</button>
                 </div>
@@ -597,7 +646,8 @@ class BulkSyncPage {
         const formDefaults = form.dataset || {};
         const checked = name => ([...fields[name]].find(radio => radio.checked) || {}).value;
         const runType = checked('runType');
-        const buid = String(fields.buid.value || '').trim().toUpperCase();
+        // A schedule's form has no test, so no BUID box, and no Start from scratch (BulkSyncView.formHtml(), layout.schedule)
+        const buid = fields.buid ? String(fields.buid.value || '').trim().toUpperCase() : '';
         const custom = !! fields.custom.checked;
         const single = runType === 'test' || checked('chunkMode') === 'single';
         // A mock landscape's own options, only when its section is on the page
@@ -625,7 +675,9 @@ class BulkSyncPage {
             } : (runType !== 'test' && defaultParallel > 0 ? { parallelStart: defaultParallel } : {})),
             ...(override !== undefined ? { processorScalingCapacityOverride: override } : {}),
             ...(fields.overrideStalled ? { overrideStalled: !! fields.overrideStalled.checked } : {}),
-            ...(source ? { source, ...(source === 'simulator' ? { simulator } : {}), resetState: !! fields.resetState.checked } : {}),
+            ...(source ? {
+                source, ...(source === 'simulator' ? { simulator } : {}), ...(fields.resetState ? { resetState: !! fields.resetState.checked } : {})
+            } : {}),
             custom
         };
     }

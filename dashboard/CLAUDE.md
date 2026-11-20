@@ -183,7 +183,7 @@ Rules:
 
 The page frame (sidebar, `#<page>` fragments, top bar, landscape navigator and tone, sign-out), the page patterns, Run
 history and Overview: [docs/PAGES.md](docs/PAGES.md). Bulk sync and the launch flag:
-[docs/BULK_SYNC.md](docs/BULK_SYNC.md).
+[docs/BULK_SYNC.md](docs/BULK_SYNC.md). The Bulk sync schedule page: [docs/BULK_SCHEDULE.md](docs/BULK_SCHEDULE.md).
 
 - **Reuse the page patterns** (`templates/partials/*-tab.mustache`, the "Page patterns" section of
   `public/css/dashboard.css`) rather than adding page-specific styles: `.page` / `header.page-header`,
@@ -205,8 +205,10 @@ history and Overview: [docs/PAGES.md](docs/PAGES.md). Bulk sync and the launch f
 - **The bulk sync schedule** (`src/services/BulkSchedule.ts` over fargate's `src/schedule/ScheduledRun.ts`): the
   schedule in EventBridge Scheduler is the record, read by name. The page sends when as `ScheduleChoices` and never
   builds or parses cron; the run reuses Bulk sync's form and checks (`BulkSync.scheduleEvent()`: no test, no Start
-  from scratch). Offline, the real classes run over an in-memory scheduler (`src/handlers/OfflineScheduler.ts`) seeded
-  with other landscapes' schedules. Bulk sync warns of a schedule starting within the hour (`upcomingSchedules`).
+  from scratch). The page (`public/js/bulk-schedule.js`) uses Bulk sync's form and review in schedule mode
+  (`BulkSyncView.formHtml()` `layout.schedule`), its ids renamed `schedule-` so they don't clash with Bulk sync's.
+  Offline, the real classes run over an in-memory scheduler (`src/handlers/OfflineScheduler.ts`) seeded with other
+  landscapes' schedules. Bulk sync warns of a schedule starting within the hour (`upcomingSchedules`).
 - **Overview** (`public/js/overview.js`): the latest run and the service checks, loaded independently; in a mock
   landscape, its last reset and Reset landscape.
 
@@ -225,8 +227,8 @@ add a Mustache template if needed (`templates/`), and run `npm run dashboard:bui
 2. Templates use `{{{cssAssets.dashboard}}}` and `{{{jsAssets.<name>}}}`. A new JS file must also be added to
    `TemplateService.getJsAssets()` (both branches) and given a `<script>` in `templates/dashboard.mustache`, in
    dependency order (`page-state.js`, `run-history.js`, `system-status.js`, `overview.js`, `bulk-sync.js`,
-   `administration.js`, then `dashboard.js`). A new partial must be added to `TemplateService.getPartials()` and to
-   `partialFiles` in `scripts/BuildTemplates.ts`.
+   `bulk-schedule.js`, `administration.js`, then `dashboard.js`). A new partial must be added to
+   `TemplateService.getPartials()` and to `partialFiles` in `scripts/BuildTemplates.ts`.
 3. **The minifier is regex-based**: it deletes everything after `//` on a line (including inside strings and
    regexes) and joins lines, so end every statement with a semicolon and never write `//` in a string or regex. The
    Lambda serves the minified assets and the local server the files as written, so a local run can't catch a minifier
