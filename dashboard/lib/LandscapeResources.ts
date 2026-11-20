@@ -9,6 +9,7 @@ import { SERVICE_LOGICAL_ID as CHUNKER_SERVICE_NAME } from '../../lib/services/c
 import { FUNCTION_BASE_NAME as sourceSimulatorBaseName } from '../../src/chunking/fetch/SourceSimulator';
 import { isMockLandscape } from '../../src/Utils';
 import { DYNAMODB_TABLE_NAME as atomicCounterTableName } from '../../src/dynamodb/AtomicCounter';
+import { ScheduledRun } from '../../src/schedule/ScheduledRun';
 
 /**
  * Names of the landscape's pipeline resources that its dashboard reads, derived the same way the
@@ -47,6 +48,14 @@ export type LandscapeResources = {
    * (src/chunking/MockLandscapeReset.ts), which Overview shows
    */
   atomicCounterTableName?: string;
+  /**
+   * The landscape's bulk sync schedule (src/schedule/ScheduledRun.ts), which the Bulk sync schedule page manages: its
+   * name, the role it invokes the chunker subscriber with (the pipeline stack creates it), and the context's SCHEDULE
+   * cron a new schedule starts from
+   */
+  scheduleName: string;
+  scheduleRoleName: string;
+  scheduleDefaultCron?: string;
 };
 
 export const landscapeResources = (context: LandscapeContext): LandscapeResources => {
@@ -68,6 +77,9 @@ export const landscapeResources = (context: LandscapeContext): LandscapeResource
     pipelineStackId: context.STACK_ID,
     itemsPerChunk: context.ITEMS_PER_CHUNK,
     processorMaxScalingCapacity: context.ECS?.processorService?.maxScalingCapacity ?? 1,
+    scheduleName: ScheduledRun.scheduleName(landscape),
+    scheduleRoleName: ScheduledRun.roleName(landscape),
+    ...(context.SCHEDULE?.cronExpression ? { scheduleDefaultCron: context.SCHEDULE.cronExpression } : {}),
     ...(isMockLandscape(landscape) ? {
       sourceSimulatorFunctionName: `${sourceSimulatorBaseName}-${landscape}`,
       atomicCounterTableName: atomicCounterTableName(context)

@@ -7,8 +7,9 @@ import { DashboardCache } from './DashboardCache';
 import { LambdaFunctionUrlEvent, LambdaFunctionUrlResult } from './DashboardTypes';
 import { OriginHeader } from './OriginVerification';
 import { CrudOperation, Status } from 'integration-core';
-import { BulkSyncRequestBody, LandscapeListing, PersonSyncResult } from '../services/ServiceTypes';
+import { BulkScheduleRequestBody, BulkSyncRequestBody, LandscapeListing, PersonSyncResult } from '../services/ServiceTypes';
 import { BulkSync, BulkSyncError } from '../services/BulkSync';
+import { ScheduleError, ScheduleErrorCode } from '../../../src/schedule/ScheduleError';
 import { buildNavigationBar } from './NavigationBar';
 import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
 import { PageNavigation } from './PageNavigation';
@@ -177,6 +178,15 @@ async function route(request: Request, access: RequestAccess, audit: AuditTrail)
 
     case '/api/mock-landscape/reset':
       return await handleMockLandscapeReset({ method: request.method, cache, user: request.user });
+
+    case '/api/bulk-schedule':
+    case '/api/bulk-schedule/when':
+    case '/api/bulk-schedule/plan':
+    case '/api/bulk-schedule/state':
+      return await handleBulkSchedule({
+        operation: path === '/api/bulk-schedule' ? 'schedule' : path.slice('/api/bulk-schedule/'.length) as BulkScheduleOperation,
+        method: request.method, requestBody: body, cache, user: request.user, authorizer: access.authorizer, audit
+      });
     
     case '/api/status':
       return await getSystemStatus();
@@ -505,6 +515,96 @@ async function handleBulkSync(params: {
     console.error('Error in bulk sync:', error);
     return jsonResponse(500, {
       error: method === 'GET' ? 'Bulk sync state could not be read' : plan ? 'The run could not be reviewed' : 'Bulk sync failed',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+}
+
+type BulkScheduleOperation = 'schedule' | 'when' | 'plan' | 'state';
+
+/** The status a refused schedule change is answered with */
+const SCHEDULE_ERROR_STATUS: Record<ScheduleErrorCode, number> = {
+  INVALID_CHOICES: 400,
+  INVALID_CRON: 400,
+  TOO_FREQUENT: 400,
+  NOT_FOUND: 404,
+  TOO_CLOSE: 409,
+  EXISTS: 409,
+};
+
+/**
+ * The landscape's bulk sync schedule (BulkSchedule, the Bulk sync schedule page):
+ * - GET /api/bulk-schedule: the schedule (or none), Bulk sync's form state, the other landscapes' schedules
+ *   (BulkScheduleState)
+ * - POST /api/bulk-schedule/when: when the page's choices ({ when, run }) would run, and any problem
+ *   (SchedulePreview); saves nothing, and invalid choices are answered 200 with their errors, for the form to show
+ * - POST /api/bulk-schedule/plan: the review of { when, run, enabled } after a save's checks (BulkSchedulePlan)
+ * - PUT /api/bulk-schedule: create the schedule (201), or replace the one there is (200), as reviewed
+ *   (BulkScheduleSaved); who changed it is the signed-in user
+ * - POST /api/bulk-schedule/state: { enabled } turns it on or off (BulkScheduleView)
+ * - DELETE /api/bulk-schedule: delete it ({ deleted })
+ * A refusal is a ScheduleError (400 invalid choices or cron, or too frequent; 404 no schedule; 409 too close to another
+ * landscape's, or one exists), answered with { error, code, errors, conflict? }, or a BulkSyncError for the run's
+ * settings, as Bulk sync's.
+ */
+async function handleBulkSchedule(params: {
+  operation: BulkScheduleOperation, method: string, requestBody: string | null, cache: DashboardCache, user?: any,
+  authorizer: RequestAuthorizer, audit: AuditTrail
+}): Promise<LambdaFunctionUrlResult> {
+  const { operation, method, requestBody, cache, user, authorizer, audit } = params;
+  const allowed = operation === 'schedule' ? ['GET', 'PUT', 'DELETE'] : ['POST'];
+  if (!allowed.includes(method)) {
+    const response = jsonResponse(405, { error: 'Method not allowed' });
+    return { ...response, headers: { ...response.headers, Allow: allowed.join(', ') } };
+  }
+  try {
+    const service = ServiceProvider.getBulkScheduleService(await serviceConfiguration(cache));
+    if (method === 'GET') {
+      return jsonResponse(200, await service.describe());
+    }
+    if (method === 'DELETE') {
+      return jsonResponse(200, await service.delete());
+    }
+    let body: BulkScheduleRequestBody & { enabled?: unknown };
+    try {
+      body = JSON.parse(requestBody || '');
+    } catch {
+      return jsonResponse(400, { error: 'The request body must be JSON', code: 'INVALID_REQUEST' });
+    }
+    // Who changed it: the signed-in user, from the request's sign-in token (never the body)
+    const changedBy = (BulkSync.startedBy(user) as { principal?: string }).principal;
+    switch (operation) {
+      case 'when':
+        return jsonResponse(200, await service.preview(body));
+      case 'plan':
+        return jsonResponse(200, await service.plan(body, authorizer));
+      case 'state':
+        if (typeof body?.enabled !== 'boolean') {
+          return jsonResponse(400, { error: 'Say whether the schedule is on: { "enabled": true } or false', code: 'INVALID_REQUEST' });
+        }
+        return jsonResponse(200, await service.setEnabled(body.enabled, changedBy));
+      default: {
+        const saved = await service.save(body, changedBy, authorizer);
+        return jsonResponse(saved.status === 'created' ? 201 : 200, saved);
+      }
+    }
+  } catch (error) {
+    if (error instanceof ScheduleError) {
+      const { conflict } = error.details as { conflict?: unknown };
+      return jsonResponse(SCHEDULE_ERROR_STATUS[error.code], {
+        error: error.message, code: error.code, errors: error.errors, ...(conflict ? { conflict } : {})
+      });
+    }
+    if (error instanceof BulkSyncError) {
+      return jsonResponse(error.status, { error: error.message, code: error.code });
+    }
+    if (error instanceof ForbiddenError) {
+      await audit.denied(error.decision);
+      return jsonResponse(403, error.body);
+    }
+    console.error('Error in the bulk sync schedule:', error);
+    return jsonResponse(500, {
+      error: method === 'GET' ? 'The bulk sync schedule could not be read' : 'The bulk sync schedule could not be changed',
       message: error instanceof Error ? error.message : 'Unknown error'
     });
   }

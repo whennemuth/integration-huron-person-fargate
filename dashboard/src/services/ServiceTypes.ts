@@ -7,6 +7,8 @@ import { PersonPushRequest } from "integration-huron-person";
 import { StatisticsItem } from '../../../src/ApiErrorTracking';
 import { PersonHistoryRecord } from '../../../src/dynamodb/PersonHistoryTable';
 import { Capabilities, ChangeType, Page, RunIdPage, RunReport } from '../../../src/reporting/RunReporting';
+import type { ScheduleInfo, SchedulePreview, UpcomingStart } from '../../../src/schedule/ScheduledRun';
+import type { ScheduleChoices } from '../../../src/schedule/ScheduleChoices';
 
 // Service Interfaces
 export type PersonLookupParams = {
@@ -46,6 +48,72 @@ export interface BulkSyncService {
   /** Start a mock landscape's reset on its own; throws a BulkSyncError when refused */
   requestReset(startedBy?: StartedBy): Promise<MockLandscapeResetRequested>;
 }
+
+/**
+ * The landscape's bulk sync schedule (the Bulk sync schedule page; BulkSchedule over src/schedule/ScheduledRun.ts).
+ * Refusals are ScheduleErrors (invalid choices or cron, too frequent, too close to another landscape's schedule,
+ * exists, not found) or BulkSyncErrors (the run's settings, not configured); a choice the authorizer doesn't grant is
+ * a ForbiddenError, as Bulk sync's.
+ */
+export interface BulkScheduleService {
+  describe(): Promise<BulkScheduleState>;
+  /** When a schedule made from the page's choices would run, and any problem with it, saving nothing */
+  preview(body: BulkScheduleRequestBody): Promise<SchedulePreview>;
+  /** The review: when, and the run, after the checks a save makes; saves nothing */
+  plan(body: BulkScheduleRequestBody, authorizer?: RequestAuthorizer): Promise<BulkSchedulePlan>;
+  /** Create the schedule, or replace the one there is, as reviewed */
+  save(body: BulkScheduleRequestBody, changedBy?: string, authorizer?: RequestAuthorizer): Promise<BulkScheduleSaved>;
+  setEnabled(enabled: boolean, changedBy?: string): Promise<BulkScheduleView>;
+  delete(): Promise<{ deleted: boolean }>;
+}
+
+/** What the page sends: when (ScheduleChoices), the run (Bulk sync's form), and whether the schedule is on */
+export type BulkScheduleRequestBody = {
+  when?: unknown;
+  run?: BulkSyncRequestBody;
+  /** Default true */
+  enabled?: unknown;
+};
+
+/** The landscape's schedule, as the page shows it */
+export type BulkScheduleView = ScheduleInfo & {
+  /** The run it starts, as Bulk sync's form values (what Edit schedule fills the form with) */
+  run: BulkSyncRequestBody;
+  /** Its event's endpoint, when the integration config now names another (the schedule would call the old one) */
+  staleEndpoint?: { scheduled: { baseUrl: string; fetchPath: string }; configured: { baseUrl: string; fetchPath: string } };
+};
+
+/** Another landscape's schedule, for the page to show beside When */
+export type OtherScheduleView = { landscape: string; enabled: boolean; realSource: boolean; description: string };
+
+export type BulkScheduleState = {
+  landscape: string;
+  /** Absent when the landscape has none */
+  schedule?: BulkScheduleView;
+  when: {
+    /** The choices a new schedule's form starts from (the context's SCHEDULE cron, as choices) */
+    defaults: ScheduleChoices;
+    timezone: string;
+    /** How far apart schedules of different landscapes that read the real source must start */
+    minSpacingMinutes: number;
+  };
+  /** Bulk sync's form state: defaults, ranges, a mock landscape's options */
+  form: BulkSyncState;
+  otherSchedules: OtherScheduleView[];
+  /** Why a schedule can't be created or changed here (e.g. the dashboard isn't told the schedule's role) */
+  blocked?: { code: string; message: string };
+};
+
+export type BulkSchedulePlan = {
+  landscape: string;
+  when: SchedulePreview;
+  run: { choices: BulkSyncChoices; event: Record<string, unknown>; settings: BulkSyncSetting[] };
+  enabled: boolean;
+  /** Whether saving replaces a schedule (else creates one) */
+  replaces: boolean;
+};
+
+export type BulkScheduleSaved = { status: 'created' | 'replaced'; schedule: BulkScheduleView };
 
 export interface SystemStatusService {
   getStatus(): Promise<SystemStatusResult>;
@@ -213,6 +281,11 @@ export type BulkSyncState = {
   mock?: MockLandscapeOptions;
   /** A run launched moments ago whose chunker hasn't written its first records yet (LaunchFlag); absent otherwise */
   launch?: Launch;
+  /**
+   * Bulk sync schedules (this landscape's or another's) that read the real source and start within the hour: a run
+   * started now would share the source with them. Absent when there are none.
+   */
+  upcomingSchedules?: UpcomingStart[];
 };
 
 export type BulkSyncErrorCode =
@@ -282,6 +355,8 @@ export type BulkSyncPlan = {
   /** The ApiChunkerEvent the chunker subscriber would receive; processingMetadata.processedAt is set at the start */
   event: Record<string, unknown>;
   settings: BulkSyncSetting[];
+  /** As BulkSyncState's: schedules starting within the hour */
+  upcomingSchedules?: UpcomingStart[];
 };
 
 /** A run that was started: what was asked of the chunker */

@@ -48,7 +48,15 @@ describe('landscapeResources', () => {
       processorMaxScalingCapacity: 1,
       sourceSimulatorFunctionName: 'source-simulator-mock',
       atomicCounterTableName: 'huron-person-fargate-processor-atomic-counter-mock',
+      scheduleName: 'chunker-api-schedule-mock',
+      scheduleRoleName: 'chunker-schedule-mock',
     });
+  });
+
+  it("passes the context's SCHEDULE cron, a new schedule's default, only when there is one", () => {
+    const context = { ...makeLandscape('dynamodb'), SCHEDULE: { cronExpression: 'cron(0 4 * * ? *)' } } as any;
+    expect(landscapeResources(context).scheduleDefaultCron).toBe('cron(0 4 * * ? *)');
+    expect(landscapeResources(makeLandscape('dynamodb'))).not.toHaveProperty('scheduleDefaultCron');
   });
 
   it("passes the context's processor maximum, for Bulk sync's Processor tasks", () => {
@@ -202,6 +210,36 @@ describe('FunctionUrlOrigin', () => {
     template.hasResourceProperties('AWS::Lambda::Function', {
       Environment: { Variables: Match.objectLike({ SOURCE_SIMULATOR_FUNCTION_NAME: 'source-simulator-mock' }) }
     });
+  });
+
+  it("may manage its landscape's bulk sync schedule only, read every landscape's, and pass only the schedule's role", () => {
+    const template = synth('dynamodb');
+    const statements = Object.values(template.findResources('AWS::IAM::Policy'))
+      .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+    const of = (action: string) => statements.filter((s: any) => [s.Action].flat().includes(action));
+    const resourceText = (action: string) => JSON.stringify(of(action).map((s: any) => s.Resource));
+
+    for (const action of ['scheduler:CreateSchedule', 'scheduler:UpdateSchedule', 'scheduler:DeleteSchedule']) {
+      expect(resourceText(action)).toContain(':schedule/default/chunker-api-schedule-mock');
+      expect(resourceText(action)).not.toContain('*');
+    }
+    expect(resourceText('scheduler:GetSchedule')).toContain(':schedule/default/chunker-api-schedule-*');
+    expect(of('scheduler:ListSchedules').map((s: any) => s.Resource)).toEqual(['*']);
+    expect(statements.flatMap((s: any) => [s.Action].flat()).filter((a: string) => a.startsWith('scheduler:')).sort()).toEqual([
+      'scheduler:CreateSchedule', 'scheduler:DeleteSchedule', 'scheduler:GetSchedule', 'scheduler:ListSchedules', 'scheduler:UpdateSchedule',
+    ]);
+
+    const passRole = of('iam:PassRole');
+    expect(passRole).toHaveLength(1);
+    expect(JSON.stringify(passRole[0].Resource)).toContain(':role/chunker-schedule-mock');
+    expect(passRole[0].Condition).toEqual({ StringEquals: { 'iam:PassedToService': 'scheduler.amazonaws.com' } });
+
+    const [fn] = Object.values(template.findResources('AWS::Lambda::Function')) as any[];
+    const variables = fn.Properties.Environment.Variables;
+    expect(JSON.stringify(variables.SCHEDULE_ROLE_ARN)).toContain(':role/chunker-schedule-mock');
+    expect(JSON.stringify(variables.SCHEDULE_TARGET_ARN)).toContain(':function:chunker-subscriber-mock');
+    // No SCHEDULE in this context: no default cron
+    expect(variables.SCHEDULE_DEFAULT_CRON).toBeUndefined();
   });
 
   it("may read the chunker service's maximum for Parallel start, and change no scaling itself", () => {

@@ -28,6 +28,7 @@ import type { MockLandscapeResetRecord } from '../../../src/chunking/MockLandsca
 import { MockLandscapeResetRequested, MockLandscapeResetState } from '../services/ServiceTypes';
 import { isMockLandscape } from '../../../src/Utils';
 import type { StartedBy } from '../../../src/chunking/StartedBy';
+import type { UpcomingStart } from '../../../src/schedule/ScheduledRun';
 import { LOCAL_LANDSCAPE } from '../services/LandscapeRegistry';
 import { OfflineRunReportingService } from './OfflineRunReporting';
 
@@ -159,6 +160,8 @@ export class OfflineBulkSyncService implements BulkSyncService {
     simulator?: SourceSimulatorService | null;
     /** The launch flag, kept in memory (default: one of its own) */
     launchFlag?: LaunchFlag;
+    /** The bulk sync schedules starting within the hour (default: none asked for, so no warning) */
+    upcomingSchedules?: () => Promise<UpcomingStart[]>;
     now?: () => number;
   } = {}) {
     const { runs = new OfflineRunReportingService(), settings = {}, dryRun = [], now } = params;
@@ -204,8 +207,14 @@ export class OfflineBulkSyncService implements BulkSyncService {
       resetRecords: { read: async () => this.resetRecord },
       // Offline no run ever appears, so a launch shows until its flag expires
       launchFlag: this.launchFlag,
+      ...(params.upcomingSchedules ? { upcomingSchedules: params.upcomingSchedules } : {}),
       now
     });
+  }
+
+  /** The real BulkSync underneath, which the offline Bulk sync schedule builds its runs with */
+  get bulkSync(): BulkSync {
+    return this.service;
   }
 
   describe(): Promise<BulkSyncState> {

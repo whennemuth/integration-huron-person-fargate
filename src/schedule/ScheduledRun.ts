@@ -8,7 +8,7 @@ import { CronExpressionBuilder } from './CronExpressionBuilder';
 import { CronSchedule } from './CronSchedule';
 import { EventBridgeSchedule, ScheduleSnapshot } from './EventBridgeSchedule';
 import { ScheduleChoices, ScheduleChoicesParser } from './ScheduleChoices';
-import { ScheduleError, ScheduleFieldError } from './ScheduleError';
+import { ScheduleError, ScheduleErrorCode, ScheduleFieldError } from './ScheduleError';
 import { TimeZone } from './TimeZone';
 
 /** A landscape's schedule as the dashboard shows it */
@@ -56,10 +56,23 @@ export type SchedulePreview = {
   nextRuns?: string[];
   /** Invalid choices or cron fields, or too frequent */
   errors?: ScheduleFieldError[];
+  /** The kind of problem the errors are: INVALID_CHOICES, INVALID_CRON or TOO_FREQUENT */
+  errorCode?: ScheduleErrorCode;
   /** The other landscape's schedule it would start too close to */
   conflict?: ScheduleConflict;
   /** Daylight saving, or an expression that never runs */
   notes?: string[];
+};
+
+/** A schedule whose next run starts soon (ScheduledRun.upcomingStarts()) */
+export type UpcomingStart = {
+  landscape: string;
+  /** Whether it is the landscape asking's own */
+  thisLandscape: boolean;
+  /** When, formatted in the schedule's zone */
+  at: string;
+  minutesAway: number;
+  description: string;
 };
 
 export type ScheduleConflict = {
@@ -230,7 +243,7 @@ export class ScheduledRun {
       if (!ScheduleError.isScheduleError(error)) {
         throw error;
       }
-      return { ...(choices ? { choices } : {}), errors: error.errors };
+      return { ...(choices ? { choices } : {}), errors: error.errors, errorCode: error.code };
     }
 
     const preview: SchedulePreview = {
@@ -248,6 +261,7 @@ export class ScheduledRun {
     }
     if (!schedule.isAtMostOnceADay()) {
       preview.errors = [ScheduledRun.tooFrequent(schedule).errors[0]];
+      preview.errorCode = 'TOO_FREQUENT';
       return preview;
     }
     if (realSource) {
@@ -332,9 +346,74 @@ export class ScheduledRun {
     }));
   }
 
+  /**
+   * Change when the schedule runs, the run it starts and whether it is on, all at once (the dashboard's Edit schedule):
+   * checked once, then one update, so a refusal leaves the schedule as it was.
+   * @throws ScheduleError NOT_FOUND, INVALID_CHOICES, INVALID_CRON, TOO_FREQUENT, TOO_CLOSE (on, reading the real
+   *   source)
+   */
+  async replace(params: { choices: unknown; input: ApiChunkerEvent; enabled: boolean; changedBy?: string; now?: Date }): Promise<void> {
+    const { choices, input, enabled, changedBy, now = new Date() } = params;
+    await this.current();
+    const schedule = this.scheduleFor(ScheduleChoicesParser.parse(choices));
+    if (enabled && ScheduledRun.usesRealSource(input)) {
+      await this.checkSpacing(schedule, now);
+    }
+    await this.schedule.update(snapshot => ({
+      ScheduleExpression: schedule.getAwsExpression(),
+      ScheduleExpressionTimezone: ScheduledRun.TIMEZONE,
+      State: enabled ? 'ENABLED' : 'DISABLED',
+      Target: { ...snapshot.target!, Input: JSON.stringify(input) },
+      Description: this.description(changedBy, now),
+    }));
+  }
+
+  /**
+   * Create the landscape's schedule, or replace the one it has (create() or replace()).
+   * @returns Which it did
+   */
+  async save(params: { choices: unknown; input: ApiChunkerEvent; enabled: boolean; changedBy?: string; now?: Date }): Promise<'created' | 'replaced'> {
+    if (await this.schedule.get()) {
+      await this.replace(params);
+      return 'replaced';
+    }
+    await this.create(params);
+    return 'created';
+  }
+
   /** @returns false when there was no schedule */
   async delete(): Promise<boolean> {
     return this.schedule.delete();
+  }
+
+  /**
+   * The enabled schedules that read the real source, this landscape's and the others', whose next run starts within
+   * the window: what a run started by hand now could run into (Bulk sync's warning).
+   */
+  async upcomingStarts(withinMinutes: number = ScheduledRun.MIN_SPACING_MINUTES, now: Date = new Date()): Promise<UpcomingStart[]> {
+    const own = await this.schedule.get();
+    const candidates: { landscape: string; snapshot: ScheduleSnapshot }[] = own ? [{ landscape: this.landscape, snapshot: own }] : [];
+    for (const name of (await EventBridgeSchedule.list(ScheduledRun.NAME_PREFIX, { client: this.client })).filter(name => name !== this.name)) {
+      const snapshot = await new EventBridgeSchedule({ name, client: this.client }).get();
+      if (snapshot) {
+        candidates.push({ landscape: name.slice(ScheduledRun.NAME_PREFIX.length), snapshot });
+      }
+    }
+    const starts: UpcomingStart[] = [];
+    for (const { landscape, snapshot } of candidates) {
+      const schedule = snapshot.cronSchedule;
+      if (!snapshot.enabled || !schedule || !ScheduledRun.usesRealSource(snapshot.input)) {
+        continue;
+      }
+      const next = schedule.getNextExecutionDate(now);
+      const minutesAway = next ? Math.round((next.getTime() - now.getTime()) / 60_000) : undefined;
+      if (next && minutesAway !== undefined && minutesAway <= withinMinutes) {
+        starts.push({
+          landscape, thisLandscape: landscape === this.landscape, at: schedule.timeZone.format(next), minutesAway, description: schedule.describe(),
+        });
+      }
+    }
+    return starts.sort((a, b) => a.minutesAway - b.minutesAway);
   }
 
   /** Every other landscape's schedule in this account and region */

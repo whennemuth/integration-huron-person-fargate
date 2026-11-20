@@ -52,6 +52,12 @@ describe('the gate, signed in', () => {
     ['POST', '/api/bulk-sync/plan', 'bulk:start', { runType: 'full' }],
     ['POST', '/api/bulk-sync', 'bulk:start', { runType: 'full' }],
     ['POST', '/api/mock-landscape/reset', 'mock:reset', undefined],
+    ['GET', '/api/bulk-schedule', 'runs:read', undefined],
+    ['POST', '/api/bulk-schedule/when', 'schedule:edit', { when: { mode: 'simple', time: '04:00', days: 'every-day' } }],
+    ['POST', '/api/bulk-schedule/plan', 'schedule:edit', { when: { mode: 'simple', time: '04:00', days: 'every-day' }, run: { runType: 'full' } }],
+    ['PUT', '/api/bulk-schedule', 'schedule:edit', { when: { mode: 'simple', time: '04:00', days: 'every-day' }, run: { runType: 'full' } }],
+    ['POST', '/api/bulk-schedule/state', 'schedule:edit', { enabled: false }],
+    ['DELETE', '/api/bulk-schedule', 'schedule:edit', undefined],
     ['GET', '/api/access/assignments', 'access:admin', undefined],
     ['POST', '/api/access/assignments', 'access:admin', { principals: ['amy'], roles: ['Viewer'] }],
     ['GET', '/api/audit', 'audit:read', undefined]

@@ -19,6 +19,7 @@ import { dashboardFunctionName } from "./DashboardFunctionName";
 import { JWT_PUBLIC_KEY } from "../src/authorization/ClaimsReader";
 import { AccessTables } from "./AccessTables";
 import { LandscapeResources } from "./LandscapeResources";
+import { ScheduledRun } from "../../src/schedule/ScheduledRun";
 import { registerLandscape } from "./LandscapeRegistration";
 
 export class FunctionUrlOrigin {
@@ -41,7 +42,7 @@ export class FunctionUrlOrigin {
       landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName,
       chunkerFunctionName, processorSubscriberFunctionName, pipelineStackId, itemsPerChunk, chunkerClusterName,
       sourceSimulatorFunctionName, atomicCounterTableName,
-      chunkerServiceName, processorMaxScalingCapacity
+      chunkerServiceName, processorMaxScalingCapacity, scheduleName, scheduleRoleName, scheduleDefaultCron
     } = landscapeResources;
 
     // The origin verification secret: 32 bytes from the cryptographically secure generator, base64url
@@ -80,6 +81,13 @@ export class FunctionUrlOrigin {
       PROCESSOR_MAX_SCALING_CAPACITY: String(processorMaxScalingCapacity),
       // A mock landscape only: the source simulator, which Bulk sync offers as the source
       ...(sourceSimulatorFunctionName && { SOURCE_SIMULATOR_FUNCTION_NAME: sourceSimulatorFunctionName }),
+      // The bulk sync schedule (BulkSchedule, dashboard/src/services/BulkSchedule.ts): the role it invokes the chunker
+      // subscriber with (the pipeline stack creates it), that subscriber, and the cron a new schedule starts from
+      SCHEDULE_ROLE_ARN: Stack.of(stack).formatArn({ service: 'iam', region: '', resource: 'role', resourceName: scheduleRoleName }),
+      SCHEDULE_TARGET_ARN: Stack.of(stack).formatArn({
+        service: 'lambda', resource: 'function', resourceName: chunkerFunctionName, arnFormat: ArnFormat.COLON_RESOURCE_NAME
+      }),
+      ...(scheduleDefaultCron && { SCHEDULE_DEFAULT_CRON: scheduleDefaultCron }),
     } as any;
 
     // Add authentication-related environment variables if applicable
@@ -206,6 +214,33 @@ export class FunctionUrlOrigin {
         resources: [Stack.of(stack).formatArn({ service: 'dynamodb', resource: 'table', resourceName: atomicCounterTableName })],
       }));
     }
+
+    // The bulk sync schedule (BulkSchedule): create, change and delete this landscape's schedule only; read every
+    // landscape's (their names share a prefix), to keep schedules an hour apart, since the landscapes share the source;
+    // list them (ListSchedules can't be narrowed to a resource); and pass the schedule's role to EventBridge Scheduler
+    // and nothing else. The first writes on a pipeline resource besides invoking the chunker subscriber.
+    const scheduleArn = (name: string) => Stack.of(stack).formatArn({ service: 'scheduler', resource: 'schedule', resourceName: `default/${name}` });
+    this.lambda.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['scheduler:CreateSchedule', 'scheduler:UpdateSchedule', 'scheduler:DeleteSchedule'],
+      resources: [scheduleArn(scheduleName)],
+    }));
+    this.lambda.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['scheduler:GetSchedule'],
+      resources: [scheduleArn(`${ScheduledRun.NAME_PREFIX}*`)],
+    }));
+    this.lambda.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['scheduler:ListSchedules'],
+      resources: ['*'],
+    }));
+    this.lambda.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['iam:PassRole'],
+      resources: [Stack.of(stack).formatArn({ service: 'iam', region: '', resource: 'role', resourceName: scheduleRoleName })],
+      conditions: { StringEquals: { 'iam:PassedToService': 'scheduler.amazonaws.com' } },
+    }));
 
     // Lambda function url for the web app.
     this.functionUrl = new FunctionUrl(this.lambda, 'url', {

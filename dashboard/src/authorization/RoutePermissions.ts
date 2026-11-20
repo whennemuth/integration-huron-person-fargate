@@ -44,6 +44,13 @@ export class RoutePermissions {
     '/api/bulk-sync': { GET: read('runs:read'), POST: change('bulk:start') },
     '/api/bulk-sync/plan': { POST: read('bulk:start') },
 
+    // The bulk sync schedule: reading it is a read; working out when choices would run, and the review, change
+    // nothing (so may be asked while impersonating); saving, turning it on or off, and deleting it change it
+    '/api/bulk-schedule': { GET: read('runs:read'), PUT: change('schedule:edit'), DELETE: change('schedule:edit') },
+    '/api/bulk-schedule/when': { POST: read('schedule:edit') },
+    '/api/bulk-schedule/plan': { POST: read('schedule:edit') },
+    '/api/bulk-schedule/state': { POST: change('schedule:edit') },
+
     // A mock landscape's last reset (a read), and starting one
     '/api/mock-landscape/reset': { GET: read('runs:read'), POST: change('mock:reset') },
 

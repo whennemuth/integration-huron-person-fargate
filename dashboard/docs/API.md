@@ -46,7 +46,40 @@ answer it doesn't expect.
   fingerprints; `202` once it has accepted it. Refusals as Bulk sync's (`BulkSyncError`): 400 not a mock landscape,
   409 a run underway (`RUN_UNDERWAY`) or launching (`RUN_LAUNCHING`), a reset still running (`RESET_UNDERWAY`) or the
   subscriber in `DRY_RUN`, 503 not configured.
+- `upcomingSchedules` (in `BulkSyncState` and `BulkSyncPlan`): bulk sync schedules, this landscape's or another's,
+  that read the real source and start within the hour (`UpcomingStart[]`: landscape, `thisLandscape`, `at`,
+  `minutesAway`, description), since a run started now shares the source with them; absent when there are none or
+  they can't be read. Starting is still allowed.
 - `GET /api/status` - system health status and metrics.
+
+## The bulk sync schedule
+
+The landscape's schedule, EventBridge Scheduler's `chunker-api-schedule-<landscape>`, read and changed through
+`BulkSchedule` (`src/services/BulkSchedule.ts`) over fargate's `src/schedule/ScheduledRun.ts`. When it runs travels
+as `when`, a `ScheduleChoices`: `{ mode: 'simple', time: 'HH:MM', days: 'every-day' | 'weekdays' | 'weekends' |
+['MON', ...] }` or `{ mode: 'cron', expression: 'cron(...)' }`; the backend builds and checks the cron. The run travels
+as `run`, Bulk sync's request body (no `test` run type, no `resetState`).
+
+- `GET /api/bulk-schedule` (`runs:read`) - `BulkScheduleState`: the schedule, or none (with its words, next runs,
+  `choices` for the form, `run` read back as form values, who changed it last, and `staleEndpoint` when the config
+  now names another endpoint); `when` (the form's starting choices from the context's `SCHEDULE`, the time zone, the
+  spacing); `form` (Bulk sync's `BulkSyncState`); the other landscapes' schedules; `blocked` when the dashboard can't
+  change the schedule (`NOT_CONFIGURED`).
+- `POST /api/bulk-schedule/when` (`schedule:edit`, changes nothing) - `{ when, run? }` gives a `SchedulePreview`:
+  the expression, its words, the next three runs, `errors` by field with `errorCode`, the `conflict` with another
+  landscape's schedule (unless `run.source` is the simulator), and daylight-saving `notes`. Invalid choices are a
+  `200` with their errors.
+- `POST /api/bulk-schedule/plan` (`schedule:edit`, changes nothing) - `{ when, run, enabled? }` gives a
+  `BulkSchedulePlan`: the preview, the run's choices, event and settings, `enabled` (default true) and whether saving
+  `replaces` a schedule; refused as a save would be.
+- `PUT /api/bulk-schedule` (`schedule:edit`) - create the schedule (`201`) or replace it (`200`), as reviewed;
+  `BulkScheduleSaved`. Who changed it is the signed-in user.
+- `POST /api/bulk-schedule/state` (`schedule:edit`) - `{ enabled }` turns it on or off; the schedule.
+- `DELETE /api/bulk-schedule` (`schedule:edit`) - `{ deleted }`.
+- **Refusals**: a `ScheduleError` as `{ error, code, errors, conflict? }`: 400 `INVALID_CHOICES`, `INVALID_CRON`,
+  `TOO_FREQUENT` (more than once a day); 404 `NOT_FOUND`; 409 `TOO_CLOSE` (within an hour of another landscape's
+  enabled schedule that reads the real source, when the schedule is to be on) or `EXISTS`. The run's settings are
+  refused as Bulk sync's (`BulkSyncError`), and a choice the user's roles don't grant is a `403`.
 
 ## Run reporting
 

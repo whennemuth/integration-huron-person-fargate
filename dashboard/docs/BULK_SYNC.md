@@ -87,6 +87,14 @@ which stays switched), skipping the counter reset (the chunker subscriber always
 chunker task's environment, set at deploy). The plan route's settings list them with their fixed values; the page
 doesn't show that list.
 
+### Schedules starting soon
+
+Every landscape reads the same source API, which takes one client at a time. So `describe()` and `plan()` report
+`upcomingSchedules`: the bulk sync schedules, this landscape's or another's, that are on, read the real source, and
+start within the hour (`ScheduledRun.upcomingStarts()`, fargate `src/schedule/`; the Lambda may read every landscape's
+schedule). They warn, and starting is still allowed. Absent when there are none or they can't be read. The schedule
+itself, and its page's routes: [API.md](API.md#the-bulk-sync-schedule).
+
 ## A mock landscape's own options
 
 `BulkSyncState.mock`, a "Mock landscape" section after Custom settings, only where `isMockLandscape()`

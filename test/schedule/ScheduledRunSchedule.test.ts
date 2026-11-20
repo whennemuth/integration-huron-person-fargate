@@ -99,10 +99,12 @@ describe("ScheduledRun: a landscape's schedule", () => {
           { field: 'time', message: expect.any(String) },
           { field: 'days', message: expect.any(String) },
         ],
+        errorCode: 'INVALID_CHOICES',
       });
       const badCron = await mock.preview({ mode: 'cron', expression: 'cron(0 4 * * MON *)' }, { now });
       expect(badCron.choices).toEqual({ mode: 'cron', expression: 'cron(0 4 * * MON *)' });
       expect(badCron.errors![0].message).toMatch(/must be '\?'/);
+      expect(badCron.errorCode).toBe('INVALID_CRON');
     });
 
     it('says a schedule that runs more than once a day is too frequent', async () => {
@@ -255,10 +257,58 @@ describe("ScheduledRun: a landscape's schedule", () => {
     });
   });
 
+  describe('replace and save', () => {
+    it('changes when, the run and on/off in one update, keeping the rest of the target', async () => {
+      given({ mock: stored('mock', { expression: 'cron(0 2 * * ? *)', enabled: false }) });
+      const input = { ...realSource, parallelStart: 15 };
+      await mock.replace({ choices: { mode: 'simple', time: '03:00', days: 'weekdays' }, input, enabled: true, changedBy: 'jdoe', now });
+      const updates = scheduler.commandCalls(UpdateScheduleCommand);
+      expect(updates).toHaveLength(1);
+      expect(updates[0].args[0].input).toMatchObject({
+        ScheduleExpression: 'cron(0 3 ? * MON-FRI *)',
+        ScheduleExpressionTimezone: 'America/New_York',
+        State: 'ENABLED',
+        Target: { Arn: targetArn, RoleArn: roleArn, Input: JSON.stringify(input), RetryPolicy: { MaximumRetryAttempts: 0 } },
+        Description: 'Bulk sync schedule for mock. Changed by jdoe at 2026-11-19T12:00:00.000Z',
+      });
+    });
+
+    it('changes nothing when refused', async () => {
+      given({ mock: stored('mock', { expression: 'cron(0 2 * * ? *)', enabled: false }), staging: stagingAt430 });
+      await expect(mock.replace({ choices: { mode: 'simple', time: '05:00', days: 'every-day' }, input: realSource, enabled: true, now }))
+        .rejects.toMatchObject({ code: 'TOO_CLOSE' });
+      expect(scheduler.commandCalls(UpdateScheduleCommand)).toHaveLength(0);
+    });
+
+    it('creates the schedule when there is none, and replaces it when there is one', async () => {
+      given({});
+      expect(await mock.save({ choices: { mode: 'simple', time: '02:00', days: 'every-day' }, input: realSource, enabled: false, now })).toBe('created');
+      given({ mock: stored('mock', { expression: 'cron(0 2 * * ? *)', enabled: false }) });
+      expect(await mock.save({ choices: { mode: 'simple', time: '02:00', days: 'every-day' }, input: realSource, enabled: false, now })).toBe('replaced');
+      expect(scheduler.commandCalls(CreateScheduleCommand)).toHaveLength(1);
+      expect(scheduler.commandCalls(UpdateScheduleCommand)).toHaveLength(1);
+    });
+  });
+
   it('deletes the schedule, saying whether there was one', async () => {
     scheduler.on(DeleteScheduleCommand).resolvesOnce({}).rejectsOnce(new ResourceNotFoundException({ message: 'gone', Message: 'gone', $metadata: {} }));
     expect(await mock.delete()).toBe(true);
     expect(await mock.delete()).toBe(false);
+  });
+
+  it('lists the enabled real-source schedules starting within the hour, its own included, soonest first', async () => {
+    given({
+      mock: stored('mock', { expression: 'cron(30 7 * * ? *)', enabled: true }),
+      staging: stored('staging', { expression: 'cron(15 7 * * ? *)', enabled: true }),
+      preview: stored('preview', { expression: 'cron(10 7 * * ? *)', enabled: false }),
+      mock1: stored('mock1', { expression: 'cron(5 7 * * ? *)', enabled: true, input: simulatorSource }),
+      migration: stored('migration', { expression: 'cron(0 9 * * ? *)', enabled: true }),
+    });
+    // now is 7:00 AM in New York
+    expect(await mock.upcomingStarts(60, now)).toEqual([
+      { landscape: 'staging', thisLandscape: false, at: 'Thu, Nov 19, 2026, 7:15 AM', minutesAway: 15, description: 'At 07:15 AM (America/New_York)' },
+      { landscape: 'mock', thisLandscape: true, at: 'Thu, Nov 19, 2026, 7:30 AM', minutesAway: 30, description: 'At 07:30 AM (America/New_York)' },
+    ]);
   });
 
   it("lists the other landscapes' schedules", async () => {

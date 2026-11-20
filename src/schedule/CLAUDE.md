@@ -10,8 +10,10 @@ than a library: the plan doc `bulk-sync-schedule-plan.md` at the repo root while
 
 - `ScheduledRun.ts` (harness `SCHEDULED_RUN`): the landscape's bulk sync schedule. Static: what a scheduled run is
   (`scheduleInput()`, `previousStateFlags()`, `scheduleName()`, `roleName()`, `usesRealSource()`, `TIMEZONE`,
-  `MIN_SPACING_MINUTES`). Instance: `get()`, `preview(choices)`, `create()`, `setEnabled()`, `setCron()`,
-  `replaceInput()`, `delete()`, `otherSchedules()`, with the bulk sync rules below.
+  `MIN_SPACING_MINUTES`). Instance: `get()`, `preview(choices)`, `create()`, `replace()` (when, run and on/off in one
+  update), `save()` (create or replace), `setEnabled()`, `setCron()`, `replaceInput()`, `delete()`,
+  `otherSchedules()`, `upcomingStarts()` (real-source schedules starting within the hour, for Bulk sync's warning),
+  with the bulk sync rules below. The dashboard's `BulkSchedule` (`dashboard/src/services/`) is a thin layer over it.
 - `EventBridgeSchedule.ts`: one named EventBridge Scheduler schedule through the SDK, knowing nothing about bulk
   syncs (`get()` gives a `ScheduleSnapshot`; `create()`, `update()`, `setEnabled()`, `delete()`, `list()`).
 - `CronField.ts`: one field of an AWS cron (`MinuteField`, `HourField`, `DayOfMonthField`, `MonthField`,

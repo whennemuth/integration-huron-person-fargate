@@ -7,7 +7,7 @@ import { SyncPopulation } from '../../../docker/chunkTypes';
 import type { ApiChunkerEvent, MockLandscapeResetEvent } from '../../../src/chunking/ChunkerSubscriber';
 import { MockLandscapeReset, MockLandscapeResetRecord } from '../../../src/chunking/MockLandscapeReset';
 import { ProcessorScalingCapacity } from '../../../src/chunking/ProcessorScalingCapacity';
-import { ScheduledRun } from '../../../src/schedule/ScheduledRun';
+import { ScheduledRun, UpcomingStart } from '../../../src/schedule/ScheduledRun';
 import { RunStarter, StartedBy } from '../../../src/chunking/StartedBy';
 import type { RunReport } from '../../../src/reporting/RunReporting';
 import type { RunnerEnv } from '../../../src/runner/RunnerTypes';
@@ -430,6 +430,12 @@ export class BulkSync implements BulkSyncService {
     resetRecords?: { read(): Promise<MockLandscapeResetRecord | undefined> };
     /** The landscape's launch flag (a run launched moments ago, not yet listed); absent: none is kept */
     launchFlag?: LaunchFlag;
+    /**
+     * The bulk sync schedules (this landscape's and the others') that read the real source and start within the hour
+     * (ScheduledRun.upcomingStarts()), which the state and the review warn of, since the landscapes share the source;
+     * absent: no warning
+     */
+    upcomingSchedules?: () => Promise<UpcomingStart[]>;
     now?: () => number;
   }) {}
 
@@ -440,6 +446,56 @@ export class BulkSync implements BulkSyncService {
 
   private get mockLandscape(): boolean {
     return isMockLandscape(this.deps.settings.landscape);
+  }
+
+  /** The schedules starting within the hour, for a warning: none when they aren't asked for, or can't be read */
+  private async upcomingSchedules(): Promise<{ upcomingSchedules?: UpcomingStart[] }> {
+    if (!this.deps.upcomingSchedules) {
+      return {};
+    }
+    try {
+      const upcoming = await this.deps.upcomingSchedules();
+      return upcoming.length ? { upcomingSchedules: upcoming } : {};
+    } catch (error) {
+      console.warn(`The bulk sync schedules couldn't be read: ${error instanceof Error ? error.message : error}`);
+      return {};
+    }
+  }
+
+  /** The people endpoint in the landscape's integration config, if it names one */
+  peopleEndpoint(): { baseUrl: string; fetchPath: string } | undefined {
+    const people = this.deps.config.dataSource?.people as any;
+    const baseUrl = people?.endpointConfig?.baseUrl as string | undefined;
+    const fetchPath = people?.fetchPath as string | undefined;
+    return baseUrl && fetchPath ? { baseUrl, fetchPath } : undefined;
+  }
+
+  /**
+   * The chunker event a bulk sync schedule would send for a request (the Bulk sync schedule page, BulkSchedule): the
+   * request is parsed and its choices checked as a start's are, but not the guards about runs underway, since the
+   * schedule starts it later (the chunker subscriber skips a scheduled start that finds a run underway). Refused for
+   * what a recurring run mustn't do: a test, which syncs one person once, and Start from scratch, which would empty
+   * the landscape every time. Started by the schedule, with the schedule's placeholder for when.
+   * @throws BulkSyncError INVALID_REQUEST or NOT_CONFIGURED; ForbiddenError for a choice the authorizer doesn't grant
+   */
+  async scheduleEvent(body: BulkSyncRequestBody, authorizer?: RequestAuthorizer): Promise<{
+    choices: BulkSyncChoices; event: ApiChunkerEvent; settings: BulkSyncSetting[]
+  }> {
+    const request = BulkSyncRequest.parse(body, { mockLandscape: this.mockLandscape });
+    if (request.runType === 'test') {
+      throw new BulkSyncError('INVALID_REQUEST', "A schedule can't run a test: a test syncs one person, once");
+    }
+    if (request.resetState) {
+      throw new BulkSyncError('INVALID_REQUEST', "A schedule can't start from scratch: it would empty the landscape every time it runs");
+    }
+    await this.checkChoices(request, authorizer);
+    await this.checkParallelStart(request);
+    const event = this.event(request, RunStarter.SCHEDULE, await this.simulatorUrlFor(request));
+    return {
+      choices: request.choices(),
+      event: { ...event, processingMetadata: { ...event.processingMetadata, processedAt: ScheduledRun.PROCESSED_AT_PLACEHOLDER } },
+      settings: this.runSettings(request),
+    };
   }
 
   /** The real service, from the dashboard Lambda's environment. Missing settings refuse starts; the page still shows */
@@ -478,7 +534,9 @@ export class BulkSync implements BulkSyncService {
         resetRecords: { read: () => MockLandscapeReset.readRecord({ stackId: PIPELINE_STACK_ID, region: REGION, landscape: LANDSCAPE! }) }
       } : {}),
       // Its SSM parameter (dashboard/lib/FunctionUrl.ts grants it)
-      ...(LANDSCAPE && REGION ? { launchFlag: LaunchFlag.forLandscape({ landscape: LANDSCAPE, region: REGION }) } : {})
+      ...(LANDSCAPE && REGION ? { launchFlag: LaunchFlag.forLandscape({ landscape: LANDSCAPE, region: REGION }) } : {}),
+      // Every landscape's bulk sync schedule, read for the warning (GetSchedule and ListSchedules granted)
+      ...(LANDSCAPE && REGION ? { upcomingSchedules: () => new ScheduledRun({ landscape: LANDSCAPE, region: REGION }).upcomingStarts() } : {})
     });
   }
 
@@ -535,7 +593,8 @@ export class BulkSync implements BulkSyncService {
       warnings: this.warnings(),
       ...(settings.itemsPerChunk !== undefined ? { itemsPerChunk: settings.itemsPerChunk } : {}),
       ...(this.mockLandscape ? { mock: await this.mockOptions() } : {}),
-      ...(launch ? { launch } : {})
+      ...(launch ? { launch } : {}),
+      ...(await this.upcomingSchedules())
     };
   }
 
@@ -740,7 +799,8 @@ export class BulkSync implements BulkSyncService {
       landscape: settings.landscape,
       choices: request.choices(),
       event: { ...event, processingMetadata: { ...event.processingMetadata, processedAt: 'set when the run is started' } },
-      settings: this.runSettings(request)
+      settings: this.runSettings(request),
+      ...(await this.upcomingSchedules())
     };
   }
 

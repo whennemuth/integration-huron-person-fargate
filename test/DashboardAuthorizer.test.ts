@@ -49,9 +49,9 @@ describe('StaticRoleCatalog', () => {
     expect(catalog.getRole('PersonViewer')!.actions()).toEqual(['person:lookup', 'person:preview']);
     expect(catalog.getRole('Viewer')!.actions()).toEqual(['runs:read', 'person:lookup', 'person:preview']);
     expect(catalog.getRole('PersonOperator')!.actions()).toEqual(['runs:read', 'person:lookup', 'person:preview', 'person:sync']);
-    expect(catalog.getRole('PipelineOperator')!.actions()).toEqual(['runs:read', 'person:lookup', 'person:preview', 'bulk:start', 'mock:reset']);
+    expect(catalog.getRole('PipelineOperator')!.actions()).toEqual(['runs:read', 'person:lookup', 'person:preview', 'bulk:start', 'schedule:edit', 'mock:reset']);
     expect(catalog.getRole('Operator')!.actions()).toEqual(
-      ['runs:read', 'person:lookup', 'person:preview', 'person:sync', 'bulk:start', 'mock:reset']);
+      ['runs:read', 'person:lookup', 'person:preview', 'person:sync', 'bulk:start', 'schedule:edit', 'mock:reset']);
     expect(catalog.getRole('Admin')!.actions()).toEqual([...ACTIONS]);
   });
 
