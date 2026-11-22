@@ -95,8 +95,9 @@ The `cdk.json` file tells the CDK Toolkit how to execute your app.
   task definition and an SQS queue plus dead-letter queue
 - **Subscriber Lambdas**: the chunker subscriber (starts runs), the processor subscriber (forwards chunk files to the
   processor queue) and the post-processor subscriber (S3 mode: queues the post-processor once every chunk is done)
-- **EventBridge Scheduler schedule**: invokes the chunker subscriber on the integration config's
-  `dataSource.people.fetchSchedule`; runs can also be started from the dashboard's Bulk sync or the Runner
+- **EventBridge Scheduler schedule**: the landscape's bulk sync schedule, invoking the chunker subscriber. Not
+  deployed: managed at run time through `ScheduledRun` (`src/schedule/`); CDK creates only its role. Runs can also be
+  started from the dashboard's Bulk sync or the Runner
 - **Source**: the BU CDM person API, or optionally a JSON file dropped in S3
 - **S3**: the chunks bucket (chunk files, delta chunks and, in S3 mode, the baseline)
 - **DynamoDB**: the statistics, atomic counter and addon log tables, plus PersonCurrentState and PersonHistory in
@@ -309,6 +310,7 @@ Harness configuration is documented in [example-env.md](./example-env.md). The f
 - **Post-processing Pipeline**: `DeferredDeleteHandler`, `ChunkPopulationReader`, `PersonCache` (`src/person-cache/PersonCacheForS3.ts`), `StatisticsTable` (`src/dynamodb/`)
 - **Docker Entry Points**: `chunker.ts`, `processor.ts`, `post-processor.ts`
 - **Storage & Error Handling**: `S3StorageAdapter`, `ApiErrorTracking`
+- **Schedules**: `CronSchedule` (`src/schedule/CronSchedule.ts` - parses, builds and compares AWS cron expressions, no AWS access), `ScheduledRun` (`src/schedule/ScheduledRun.ts` - a landscape's bulk sync schedule in EventBridge Scheduler: get, list, create, turn on or off, change its cron, delete)
 - **Dashboard**: `ServiceProvider` (`dashboard/src/services/ServiceProvider.ts` - the dashboard's services, called as its handler calls them: run reporting, landscape registry, person lookup and sync preview), `ShibbolethSecret` (`dashboard/src/ShibbolethSecret.ts` - reads or creates the dashboard's Shibboleth secret), `RoleAssignmentStore` (`dashboard/src/authorization/RoleAssignmentStore.ts` - a landscape's role assignments; seeds the first Admin, see "Dashboard access"), `AuditStore` (`dashboard/src/audit/AuditStore.ts` - lists a landscape's audit trail)
 
 ### Running Test Harnesses

@@ -122,6 +122,8 @@
 
                 {{>bulk-tab}}
 
+                {{>schedule-tab}}
+
                 {{>runs-tab}}
 
                 {{>system-tab}}
@@ -220,6 +222,11 @@
     <!-- Bulk Sync Page -->
     <script>
         {{{jsAssets.bulkSync}}}
+    </script>
+
+    <!-- Bulk Sync Schedule Page (builds on bulk-sync.js) -->
+    <script>
+        {{{jsAssets.bulkSchedule}}}
     </script>
 
     <!-- Administration: Access and Audit trail pages, and the who-am-I dialog -->

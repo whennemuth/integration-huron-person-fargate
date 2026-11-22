@@ -2,6 +2,7 @@ import {
   PersonLookupService,
   PersonSyncService,
   BulkSyncService,
+  BulkScheduleService,
   SystemStatusService,
   RunReportingService,
   LandscapeListingService,
@@ -22,6 +23,10 @@ import {
 import { PersonLookup } from './PersonLookup';
 import { PersonSync } from './PersonSync';
 import { BulkSync } from './BulkSync';
+import { BulkSchedule } from './BulkSchedule';
+import { InMemorySchedulerClient } from '../handlers/OfflineScheduler';
+import { ScheduledRun } from '../../../src/schedule/ScheduledRun';
+import { MemoryScheduledStartRefusalRecord } from '../../../src/schedule/ScheduledStartGuard';
 import { SystemStatus } from './SystemStatus';
 import { runReportingFromEnvironment } from './RunReports';
 import { LandscapeRegistry, LOCAL_LANDSCAPE } from './LandscapeRegistry';
@@ -48,6 +53,8 @@ export class ServiceProvider {
   private static landscapeListing?: LandscapeListingService;
   /** The offline Bulk sync service, for the landscape it plays */
   private static offlineBulkSync?: { landscape: string; service: OfflineBulkSyncService };
+  /** The offline EventBridge Scheduler, for the landscape it plays: the bulk sync schedule lasts from request to request */
+  private static offlineScheduler?: { landscape: string; client: InMemorySchedulerClient };
   private static launchFlags = new Map<string, LaunchFlag>();
   /** Who holds which roles: the landscape's access table, or offline the local user's USER_ROLES */
   private static roleAssignments?: { key: string; store: RoleAssignmentStore };
@@ -110,7 +117,10 @@ export class ServiceProvider {
       const landscape = process.env.LANDSCAPE || '';
       if (!this.offlineBulkSync || this.offlineBulkSync.landscape !== landscape) {
         this.offlineBulkSync = {
-          landscape, service: new OfflineBulkSyncService({ runs: this.getRunReportingService(), launchFlag: this.getLaunchFlag() })
+          landscape, service: new OfflineBulkSyncService({
+            runs: this.getRunReportingService(), launchFlag: this.getLaunchFlag(),
+            upcomingSchedules: () => this.offlineScheduledRun().upcomingStarts()
+          })
         };
       }
       return this.offlineBulkSync.service;
@@ -120,11 +130,45 @@ export class ServiceProvider {
   }
 
   /**
+   * The landscape's bulk sync schedule service (the Bulk sync schedule page). Offline, the real BulkSchedule and
+   * ScheduledRun over an in-memory EventBridge Scheduler seeded with a few other landscapes' schedules, and the offline
+   * Bulk sync for the run's settings.
+   */
+  static getBulkScheduleService(config: Config): BulkScheduleService {
+    if (this.isOffline()) {
+      const bulkSync = (this.getBulkSyncService(config) as OfflineBulkSyncService).bulkSync;
+      return new BulkSchedule({
+        bulkSync,
+        scheduledRun: this.offlineScheduledRun(),
+        landscape: (process.env.LANDSCAPE || LOCAL_LANDSCAPE).toLowerCase(),
+        defaultCron: 'cron(0 4 * * ? *)',
+        // Offline no scheduled start is ever made, so none is skipped
+        refusals: new MemoryScheduledStartRefusalRecord(),
+      });
+    }
+    return BulkSchedule.fromEnvironment(config, this.getRunReportingService());
+  }
+
+  /** The offline landscape's ScheduledRun, over the offline scheduler (one per landscape played) */
+  private static offlineScheduledRun(): ScheduledRun {
+    const landscape = (process.env.LANDSCAPE || LOCAL_LANDSCAPE).toLowerCase();
+    if (!this.offlineScheduler || this.offlineScheduler.landscape !== landscape) {
+      this.offlineScheduler = { landscape, client: new InMemorySchedulerClient(landscape) };
+    }
+    return new ScheduledRun({
+      landscape, region: 'us-east-2', client: this.offlineScheduler.client.asClient(),
+      roleArn: ScheduledRun.roleArn('123456789012', landscape),
+      targetArn: ScheduledRun.functionArn('us-east-2', '123456789012', `chunker-subscriber-${landscape}`),
+    });
+  }
+
+  /**
    * Forget the offline services' state (the last mock landscape reset, a launch flag): for tests, which share one
    * module instance, so that a run started in one doesn't hold back the next
    */
   static resetOfflineState(): void {
     this.offlineBulkSync = undefined;
+    this.offlineScheduler = undefined;
     this.launchFlags.clear();
     this.roleAssignments = undefined;
     this.auditStore = undefined;

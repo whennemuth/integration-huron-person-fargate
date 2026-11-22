@@ -1,7 +1,8 @@
 # Dashboard Pages
 
 How the dashboard page is framed (sidebar, fragments, top bar), the parts every page is built from, and what the Run
-history and Overview pages show and why. Bulk sync has its own doc, [BULK_SYNC.md](BULK_SYNC.md); the Administration
+history and Overview pages show and why. Bulk sync has its own doc, [BULK_SYNC.md](BULK_SYNC.md), and so does the Bulk
+sync schedule, [BULK_SCHEDULE.md](BULK_SCHEDULE.md); the Administration
 pages are in [AUTHORIZATION.md](AUTHORIZATION.md). Read this before changing a page's template
 (`templates/partials/*-tab.mustache`), its script (`public/js/`), or `public/css/dashboard.css`.
 
@@ -86,7 +87,7 @@ Every page (`templates/partials/*-tab.mustache`) is built from the same parts, s
   choose what it lists.
 
 Scripts load in dependency order: `page-state.js`, `run-history.js`, `system-status.js`, `overview.js`,
-`bulk-sync.js`, `administration.js`, then `dashboard.js`, which creates the pages.
+`bulk-sync.js`, `bulk-schedule.js`, `administration.js`, then `dashboard.js`, which creates the pages.
 
 ## Run history page
 

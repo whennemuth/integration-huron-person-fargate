@@ -178,10 +178,10 @@ describe('the chunker subscriber Lambda', () => {
     expect(fn.Properties.Environment.Variables).toMatchObject({ STACK_ID: 'huron-person-fargate-processor', LANDSCAPE: 'preview', REGION: 'us-east-2' });
   });
 
-  it('may update that one table, and no other', () => {
+  it('may update that one table, and write to no other (it reads the statistics table: test/schedule/ScheduledStartGuard.test.ts)', () => {
     const statements = Object.values(template.findResources('AWS::IAM::Policy'))
       .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement)
-      .filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('dynamodb:')));
+      .filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('dynamodb:') && !['dynamodb:GetItem', 'dynamodb:Query'].includes(a)));
     expect(statements.map((s: any) => s.Action)).toEqual(['dynamodb:UpdateItem']);
     expect(JSON.stringify(statements[0].Resource)).toContain('table/huron-person-fargate-processor-atomic-counter-preview');
   });

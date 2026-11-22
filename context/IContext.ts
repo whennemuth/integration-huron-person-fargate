@@ -152,17 +152,9 @@ export interface IContext {
    * Huron Person Integration Configuration
    * This is passed to the processor tasks as environment variables
    * Note: Most HURON_API fields are replaced by this comprehensive config
-   * 
-   * For API-based chunking via EventBridge schedule, configure:
-   *   dataSource.people.fetchSchedule = {
-   *     enabled: boolean,        // Enable/disable the schedule
-   *     cronExpression: string   // AWS cron expression (e.g., 'cron(0 2 * * ? *)')
-   *   }
-   * 
-   * The EventBridge schedule is only created when:
-   * - dataSource.people.fetchSchedule exists
-   * - fetchSchedule.enabled is true
-   * - fetchSchedule.cronExpression is a valid cron expression
+   *
+   * The EventBridge schedule's endpoint (baseUrl and fetchPath) comes from its dataSource.people; when it runs is
+   * SCHEDULE, below.
    */
   HURON_PERSON_CONFIG: Partial<HuronPersonConfig> | {
     /** 
@@ -170,6 +162,19 @@ export interface IContext {
      * Processor will load this instead of individual env vars
      */
     configPath?: string;
+  };
+
+  /**
+   * The landscape's default bulk sync schedule: the cron a new schedule starts from. The schedule itself is EventBridge
+   * Scheduler's chunker-api-schedule-<landscape>, managed at run time through ScheduledRun (src/schedule/), from the
+   * dashboard or the SCHEDULED_RUN harness, and never deployed, so nothing here changes an existing schedule.
+   */
+  SCHEDULE?: {
+    /**
+     * AWS cron, at most once a day, read in America/New_York, e.g. 'cron(0 4 * * ? *)'. Give each landscape a
+     * different hour: schedules that read the real source must start an hour apart.
+     */
+    cronExpression: string;
   };
 
   /** Bulk reset configuration - controls whether to perform a bulk reset (delete all existing records in source system) before syncing */

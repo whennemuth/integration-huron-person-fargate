@@ -27,7 +27,7 @@ landscape the way its schedule does (`GET`/`POST /api/bulk-sync`, `POST /api/bul
     cache, and the person was chunked twice (preview 2026-11-12). On the page, choosing Test checks Single task and
     locks both chunk modes, and choosing another run type unlocks them and restores the mode chosen before, kept on
     the fieldset as `data-chosen-mode` (`BulkSyncPage.lockChunkMode()`).
-- The defaults are the scheduled run's (`ScheduledRun`, fargate `src/chunking/ScheduledRun.ts`). The Custom settings
+- The defaults are the scheduled run's (`ScheduledRun`, fargate `src/schedule/ScheduledRun.ts`). The Custom settings
   hint lists the three defaults (`BulkSyncView.defaultsText()`).
 
 ### Parallel start
@@ -86,6 +86,15 @@ Command line only, or not yet: addons, `CHUNKING_ONLY` / `MESSAGING_ONLY` (they 
 which stays switched), skipping the counter reset (the chunker subscriber always resets), and `ITEMS_PER_CHUNK` (the
 chunker task's environment, set at deploy). The plan route's settings list them with their fixed values; the page
 doesn't show that list.
+
+### Schedules starting soon
+
+Every landscape reads the same source API, which takes one client at a time. So `describe()` and `plan()` report
+`upcomingSchedules`: the bulk sync schedules, this landscape's or another's, that are on, read the real source, and
+start within the hour (`ScheduledRun.upcomingStarts()`, fargate `src/schedule/`; the Lambda may read every landscape's
+schedule). The page warns of them in its form and its review (`BulkSyncView.upcomingSchedulesHtml()`), and starting is
+still allowed. Absent when there are none or they can't be read. The schedule
+itself, and its page's routes: [API.md](API.md#the-bulk-sync-schedule).
 
 ## A mock landscape's own options
 

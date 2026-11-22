@@ -43,7 +43,27 @@ cdk synth -q
 # Only an authenticated dashboard has an edge-lambda stack
 edge_stack="$(cdk list --app cdk.out 2>/dev/null | grep '^edge-lambda-stack-' || true)"
 
+# The landscape's bulk sync schedule isn't part of any stack (src/schedule/ScheduledRun.ts manages it at run time), so
+# delete it here: left behind, it would invoke a deleted chunker subscriber every day. Its name is
+# ScheduledRun.scheduleName(): chunker-api-schedule-<landscape>.
+delete_schedule() {
+  local landscape region schedule output
+  landscape="$(node -p "require('./context/context.json').TAGS.Landscape.toLowerCase()")"
+  region="$(node -p "require('./context/context.json').REGION")"
+  schedule="chunker-api-schedule-$landscape"
+  if output="$(aws scheduler delete-schedule --name "$schedule" --region "$region" 2>&1)" ; then
+    echo "Deleted the schedule $schedule"
+  elif echo "$output" | grep -q 'ResourceNotFoundException' ; then
+    echo "No schedule $schedule to delete"
+  else
+    echo -e "${YELLOW}Could not delete the schedule $schedule: $output${NC}" >&2
+    return 1
+  fi
+}
+
 if [ "$target" != "dashboard" ] ; then
+  echo -e "${GREEN}Deleting the bulk sync schedule...${NC}"
+  delete_schedule
   echo -e "${GREEN}Destroying $fargate_stack...${NC}"
   cdk destroy --app cdk.out -f "$fargate_stack"
 fi

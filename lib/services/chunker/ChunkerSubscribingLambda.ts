@@ -13,6 +13,7 @@ import { DYNAMODB_TABLE_NAME as personCurrentStateTableName } from '../../../src
 import { DYNAMODB_TABLE_NAME as personHistoryTableName } from '../../../src/dynamodb/PersonHistoryTable';
 import { MockLandscapeReset } from '../../../src/chunking/MockLandscapeReset';
 import { isMockLandscape } from '../../../src/Utils';
+import { ScheduledStartGuard } from '../../../src/schedule/ScheduledStartGuard';
 import { IContext } from '../../../context/IContext';
 
 export interface ChunkerSubscribingLambdaProps {
@@ -41,6 +42,8 @@ export interface ChunkerSubscribingLambdaProps {
   /** Long enough for a parallel start's wait for the scale-in alarm (up to 6 minutes): see the context's LAMBDA */
   timeoutSeconds: number;
   memorySizeMb: number;
+  /** The context's PREVIOUS_STORAGE_TYPE: how the scheduled start guard reads the latest run (default dynamodb) */
+  storageType?: string;
   dryRun?: boolean;
   tags?: { [key: string]: string };
 }
@@ -120,6 +123,10 @@ export class ChunkerSubscribingLambda extends Construct {
         // override (ProcessorScalingCapacity.fromEnvironment())
         PROCESSOR_SERVICE_NAME: props.processorServiceName,
         PROCESSOR_MAX_SCALING_CAPACITY: String(props.processorMaxScalingCapacity),
+        // A start the bulk sync schedule makes is skipped while a run is underway (ScheduledStartGuard): the run list
+        // it reads
+        DYNAMODB_STATISTICS_TABLE_NAME: statisticsTableName({ STACK_ID: props.stackId, TAGS: { Landscape: props.landscape } } as IContext),
+        PREVIOUS_STORAGE_TYPE: props.storageType ?? 'dynamodb',
         DESCRIPTION1:
           `Analyzes incoming event (S3 or API) and delegates to appropriate handler (ChunkerS3Subscriber 
           or ChunkerApiSubscriber). Both handlers send SQS messages to trigger Fargate tasks that create 
@@ -195,6 +202,30 @@ export class ChunkerSubscribingLambda extends Construct {
       effect: Effect.ALLOW,
       actions: ['ecs:UpdateService', 'ecs:DescribeServices'],
       resources: [`arn:aws:ecs:${region}:${account}:service/${props.chunkerClusterName}/${props.processorServiceName}`],
+    }));
+
+    // A start the bulk sync schedule makes (src/schedule/ScheduledStartGuard.ts) is skipped while a run is underway or
+    // a dashboard launch is up: read the statistics table (the run list index, the newest run's report) and the
+    // dashboard's launch flag, and record a skipped start where the dashboard reads it
+    const statisticsTableArn = Stack.of(this).formatArn({
+      service: 'dynamodb', resource: 'table',
+      resourceName: statisticsTableName({ STACK_ID: props.stackId, TAGS: { Landscape: props.landscape } } as IContext)
+    });
+    this.function.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['dynamodb:GetItem', 'dynamodb:Query'],
+      resources: [statisticsTableArn, `${statisticsTableArn}/index/*`],
+    }));
+    const parameterArn = (name: string) => Stack.of(this).formatArn({ service: 'ssm', resource: 'parameter', resourceName: name.slice(1) });
+    this.function.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['ssm:GetParameter'],
+      resources: [parameterArn(ScheduledStartGuard.launchFlagParameterName(props.landscape))],
+    }));
+    this.function.addToRolePolicy(new PolicyStatement({
+      effect: Effect.ALLOW,
+      actions: ['ssm:PutParameter'],
+      resources: [parameterArn(ScheduledStartGuard.refusalParameterName(props.landscape))],
     }));
 
     if (isMockLandscape(props.landscape) && props.chunksBucketName) {

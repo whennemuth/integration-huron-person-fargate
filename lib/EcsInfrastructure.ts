@@ -117,7 +117,6 @@ export class EcsInfrastructure extends Construct {
       context: this.context,  // Required for AbstractService (landscape suffix)
       tags: this.tags,
       chunkerLambda,
-      chunksPerTask: this.context.ECS.chunkerService?.chunksPerTask ?? 0,
     });
 
     return this.chunkerService;

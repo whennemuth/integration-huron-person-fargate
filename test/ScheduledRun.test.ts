@@ -1,11 +1,11 @@
 /**
- * Tests the scheduled run's definition (src/chunking/ScheduledRun.ts): a full sync with stored hashes trusted, the
+ * Tests the scheduled run's definition (src/schedule/ScheduledRun.ts): a full sync with stored hashes trusted, the
  * two previous-state flags set as one choice, and the EventBridge schedule's input that ChunkerService builds from it
  * (lib/services/chunker/ChunkerService.ts). The dashboard's Bulk sync defaults take the same definition
  * (test/DashboardBulkSync.test.ts).
  */
 import { isRunStartEvent } from '../src/chunking/RunCounters';
-import { ScheduledRun } from '../src/chunking/ScheduledRun';
+import { ScheduledRun } from '../src/schedule/ScheduledRun';
 
 describe('ScheduledRun', () => {
   it('is a full sync without a bulk reset, stored hashes trusted', () => {
@@ -46,6 +46,28 @@ describe('ScheduledRun', () => {
 
     it("starts a run, so the chunker subscriber resets the chunker's counters for it", () => {
       expect(isRunStartEvent(ScheduledRun.scheduleInput({ ...people, iterationLimit: 0 }))).toBe(true);
+    });
+
+    it('reads the real source', () => {
+      expect(ScheduledRun.usesRealSource(ScheduledRun.scheduleInput({ ...people, iterationLimit: 0 }))).toBe(true);
+    });
+  });
+
+  describe('names', () => {
+    it("names the landscape's schedule, its role and their ARNs", () => {
+      expect(ScheduledRun.scheduleName('Mock')).toBe('chunker-api-schedule-mock');
+      expect(ScheduledRun.roleName('Staging')).toBe('chunker-schedule-staging');
+      expect(ScheduledRun.roleArn('123456789012', 'mock')).toBe('arn:aws:iam::123456789012:role/chunker-schedule-mock');
+      expect(ScheduledRun.functionArn('us-east-2', '123456789012', 'chunker-subscriber-mock'))
+        .toBe('arn:aws:lambda:us-east-2:123456789012:function:chunker-subscriber-mock');
+    });
+  });
+
+  describe('usesRealSource', () => {
+    it('is false only for an event carrying the source simulator\'s terms endpoint', () => {
+      expect(ScheduledRun.usesRealSource({ baseUrl: 'https://source.example.edu' })).toBe(true);
+      expect(ScheduledRun.usesRealSource(undefined)).toBe(true);
+      expect(ScheduledRun.usesRealSource({ termsEndpoint: { baseUrl: 'https://sim.lambda-url.us-east-2.on.aws', fetchPath: '/terms' } })).toBe(false);
     });
   });
 });

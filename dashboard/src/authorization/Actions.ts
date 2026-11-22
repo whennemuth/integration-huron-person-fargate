@@ -13,6 +13,8 @@ export const ACTIONS = [
   'person:sync',
   /** Review and start a sync run (Bulk sync) */
   'bulk:start',
+  /** Create, change, turn on or off, and delete the landscape's bulk sync schedule */
+  'schedule:edit',
   /** Empty a mock landscape's run state: Overview's Reset landscape, or a start with Start from scratch */
   'mock:reset',
   /** Start a run with Processor tasks above the landscape's maximum */

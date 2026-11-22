@@ -25,6 +25,12 @@ export const ECS_CLUSTER_BASE_NAME = 'huron-person-cluster';
 export const ecsClusterName = (landscape: string): string => `${ECS_CLUSTER_BASE_NAME}-${landscape.toLowerCase()}`;
 /** The processor service's name in that cluster (lib/services/processor/ProcessorService.ts: its SERVICE_LOGICAL_ID) */
 export const PROCESSOR_SERVICE_NAME = 'Processor';
+/**
+ * A landscape's chunker subscriber Lambda is `${CHUNKER_SUBSCRIBER_BASE_NAME}-<landscape>` (ChunkerApiSubscriber's
+ * FUNCTION_BASE_NAME, which lib/ names the function with). Here so the schedule can name its target without loading
+ * the subscriber's module.
+ */
+export const CHUNKER_SUBSCRIBER_BASE_NAME = 'chunker-subscriber';
 
 export const MOCK_LANDSCAPE_PATTERN = /^mock\d*$/;
 

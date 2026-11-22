@@ -40,79 +40,63 @@ sets the chunker service's desired count. Details: [docs/RUN_START.md](../../../
 
 ---
 
-## EventBridge Schedule Configuration
+## The Bulk Sync Schedule
 
-The ChunkerService creates an EventBridge Scheduler schedule for periodic API-based data fetching when the integration
-config is set up for it.
+A landscape has at most one schedule, EventBridge Scheduler's `chunker-api-schedule-<landscape>`, which invokes the
+chunker subscriber with a scheduled run's event. It is **not deployed**: it is created, turned on or off, changed and
+deleted at run time through `ScheduledRun` (`src/schedule/ScheduledRun.ts`, from the dashboard or the
+`SCHEDULED_RUN` harness), so a deploy can't put back a schedule someone changed. CDK only creates the role the
+schedule invokes the subscriber with, `chunker-schedule-<landscape>` (`ChunkerService`), trusted by EventBridge
+Scheduler for this account and allowed nothing but invoking the chunker subscriber. `bin/teardown.sh` deletes the
+schedule before destroying the pipeline stack. The rules and the cron model: [src/schedule/CLAUDE.md](../../../src/schedule/CLAUDE.md).
 
-### Configuration Requirements
+### When it runs
 
-The landscape's context names its integration config in `HURON_PERSON_CONFIG`, usually as a file
-(`"HURON_PERSON_CONFIG": { "configPath": "../integration-huron-person/config/config.<landscape>.json" }`), or inline.
-Set the schedule there:
+AWS cron, `cron(minutes hours day-of-month month day-of-week year)`, read in `America/New_York` (day-of-week 1 is
+Sunday). A bulk sync schedule runs at most once a day, and schedules of different landscapes that read the real source
+start at least an hour apart, since they share the source API. The context's `SCHEDULE` is the cron a new schedule
+starts from (`context/context.<landscape>.json`):
+
+```json
+"SCHEDULE": {
+  "cronExpression": "cron(0 4 * * ? *)"
+}
+```
+
+| Schedule | Cron Expression |
+|----------|----------------|
+| Every day at 4 AM | `cron(0 4 * * ? *)` |
+| Weekdays at 4 AM | `cron(0 4 ? * MON-FRI *)` |
+| Mondays at 3 AM | `cron(0 3 ? * MON *)` |
+| The 1st of the month at 4 AM | `cron(0 4 1 * ? *)` |
+
+Try an expression without AWS: `CRON_SCHEDULE_TASK=parse CRON_SCHEDULE_EXPRESSION="cron(0 4 ? * MON-FRI *)" npx ts-node src/schedule/CronSchedule.ts`.
+
+### What it sends
+
+A full sync, stored hashes trusted (`ScheduledRun.scheduleInput()` for the integration config's endpoint; a schedule
+made in the dashboard carries the run settings reviewed there):
 
 ```json
 {
-  "dataSource": {
-    "people": {
-      "endpointConfig": {
-        "baseUrl": "https://prod-budev-fm.snaplogic.io",
-        "apiKey": "your-api-key-here"
-      },
-      "fetchPath": "/api/1/rest/feed/run/task/BUTest/Admin-Integration-Services/GenericGets/huronIRBgetPersonByPopulation",
-      "fetchSchedule": {
-        "enabled": true,
-        "cronExpression": "cron(0 2 * * ? *)"
-      }
-    }
+  "baseUrl": "<the config's people baseUrl>",
+  "fetchPath": "<the config's people fetchPath>",
+  "populationType": "person-full",
+  "iterationLimit": "<ECS.chunkerService.chunksPerTask>",
+  "offset": 0,
+  "bulkReset": false,
+  "trustPreviousStorage": true,
+  "startedBy": { "by": "schedule" },
+  "processingMetadata": {
+    "processedAt": "Placeholder. Override at runtime with ISO timestamp",
+    "processorVersion": "1.0.0"
   }
 }
 ```
 
-### Cron Expression Examples
-
-AWS EventBridge uses a 6-field cron format: `cron(Minutes Hours Day-of-month Month Day-of-week Year)`
-
-| Schedule | Cron Expression | Description |
-|----------|----------------|-------------|
-| Daily at 2 AM | `cron(0 2 * * ? *)` | Every day at 2:00 AM UTC |
-| Every 6 hours | `cron(0 */6 * * ? *)` | At minutes 0, 6, 12, 18 |
-| Weekly on Monday | `cron(0 3 ? * MON *)` | Every Monday at 3:00 AM UTC |
-| Monthly on 1st | `cron(0 4 1 * ? *)` | 1st of month at 4:00 AM UTC |
-| Hourly | `cron(0 * * * ? *)` | Every hour at minute 0 |
-
-**Note**: EventBridge uses UTC timezone. Convert local times to UTC when scheduling.
-
-### How the Schedule Works
-
-1. **Deployment Time** (`ChunkerService.createApiChunkingSchedule()`):
-   - Reads `dataSource.people.fetchSchedule` from the integration config
-   - When `cronExpression`, `baseUrl` and `fetchPath` are present, creates the schedule
-     `chunker-api-schedule-<landscape>` with a Lambda target, enabled or disabled per `fetchSchedule.enabled`
-   - The schedule's input is `ScheduledRun.scheduleInput()` (`src/chunking/ScheduledRun.ts`)
-
-2. **Runtime**:
-   - The schedule invokes the chunker subscriber with a full sync, stored hashes trusted:
-     ```json
-     {
-       "baseUrl": "<the config's people baseUrl>",
-       "fetchPath": "<the config's people fetchPath>",
-       "populationType": "person-full",
-       "iterationLimit": "<ECS.chunkerService.chunksPerTask>",
-       "offset": 0,
-       "bulkReset": false,
-       "trustPreviousStorage": true,
-       "startedBy": { "by": "schedule" },
-       "processingMetadata": {
-         "processedAt": "Placeholder. Override at runtime with ISO timestamp",
-         "processorVersion": "1.0.0"
-       }
-     }
-     ```
-   - The handler prepares the run (above) and delegates to ChunkerApiSubscriber, which sends the message to the
-     chunker queue
-   - QueueProcessingFargateService auto-scales and launches tasks
-   - Each task fetches its pages from the API, writes chunks, and chains the next message
+The handler prepares the run (above) and delegates to ChunkerApiSubscriber, which sends the message to the chunker
+queue; QueueProcessingFargateService auto-scales and launches tasks; each task fetches its pages from the API, writes
+chunks, and chains the next message.
 
 ### Population Types
 
@@ -255,19 +239,14 @@ A refused start (e.g. an invalid `parallelStart`) answers with a 400 result rath
 
 ## Troubleshooting
 
-### Schedule Not Created
+### No Schedule
 
-**Symptoms**: EventBridge schedule doesn't exist after deployment
+**Symptoms**: `chunker-api-schedule-<landscape>` doesn't exist
 
-**Possible Causes**:
-1. `fetchSchedule.cronExpression` is missing or invalid
-2. `baseUrl` or `fetchPath` not configured
-3. ChunkerService didn't receive Lambda function reference
-
-(With `fetchSchedule.enabled: false` the schedule exists but is disabled.)
-
-**Solution**: Check the `cdk synth` / deploy console output for `[ChunkerService]` messages, which are logged at synth
-time.
+It is never deployed: create it from the dashboard's Bulk sync schedule page, or with the harness
+(`SCHEDULED_RUN_TASK=create`, `src/schedule/ScheduledRun.ts`). Creating it needs the role
+`chunker-schedule-<landscape>`, which a deploy of the pipeline stack creates. `SCHEDULED_RUN_TASK=list` shows every
+landscape's schedule in the account.
 
 ### Manual Invocation Fails
 
@@ -483,7 +462,7 @@ BigJsonFetch
 - **src/chunking/ChunkerSubscriber.ts**: Lambda handler (dispatcher)
 - **src/chunking/fetch/ChunkerApiSubscriber.ts**: API event handler
 - **src/chunking/filedrop/ChunkerS3Subscriber.ts**: S3 event handler
-- **src/chunking/ScheduledRun.ts**: the schedule's input
+- **src/schedule/ScheduledRun.ts**: the schedule's input
 - **docker/chunker.ts**: Fargate task entry point
 - **src/chunking/fetch/ChunkFromAPI.ts**: API-based chunking implementation
 - **src/chunking/filedrop/ChunkFromS3.ts**: S3-based chunking implementation

@@ -336,6 +336,38 @@ SERVICE_TOGGLER_SERVICE=CHUNKER
 SERVICE_TOGGLER_REGION=us-east-2
 SERVICE_TOGGLER_LANDSCAPE=dev
 
+# ------- Harness Groups for src\schedule\CronSchedule.ts ------- #
+# Test harness for the schedule package's cron model (no AWS access)
+# TASK options: parse (EXPRESSION) | build (TIME and DAYS, or EXPRESSION) | overlap (EXPRESSION, OTHER_EXPRESSION)
+CRON_SCHEDULE_TASK=parse
+CRON_SCHEDULE_EXPRESSION=cron(0 4 ? * MON-FRI *)
+# build: a 24-hour time, and every-day | weekdays | weekends | days such as MON,WED,FRI (leave EXPRESSION empty)
+CRON_SCHEDULE_TIME=04:00
+CRON_SCHEDULE_DAYS=weekdays
+# overlap: the other schedule, and how many minutes apart the two must start (default 60)
+CRON_SCHEDULE_OTHER_EXPRESSION=cron(30 4 * * ? *)
+CRON_SCHEDULE_BUFFER_MINUTES=60
+# Default: America/New_York, the bulk sync schedules' zone
+CRON_SCHEDULE_TIME_ZONE=America/New_York
+
+# ------- Harness Groups for src\schedule\ScheduledRun.ts ------- #
+# Test harness for a landscape's bulk sync schedule in EventBridge Scheduler (chunker-api-schedule-<landscape>),
+# through the same rules as the dashboard (once a day, an hour from other landscapes' schedules)
+# TASK options: name | get | list | input | preview | create | enable | disable | cron | delete
+SCHEDULED_RUN_TASK=get
+# Defaults: the active context's (context/context.json TAGS.Landscape, REGION, ACCOUNT, HURON_PERSON_CONFIG.configPath)
+# SCHEDULED_RUN_LANDSCAPE=<landscape>
+# SCHEDULED_RUN_REGION=<aws-region>
+# SCHEDULED_RUN_ACCOUNT=<account-id>
+# SCHEDULED_RUN_CONFIG_PATH=../integration-huron-person/config/config.<landscape>.json
+# preview, create and cron: TIME and DAYS (every-day | weekdays | weekends | MON,WED,FRI), or CRON_EXPRESSION;
+# neither gives the context's SCHEDULE.cronExpression
+# SCHEDULED_RUN_TIME=04:00
+# SCHEDULED_RUN_DAYS=weekdays
+# SCHEDULED_RUN_CRON_EXPRESSION=cron(0 4 ? * MON-FRI *)
+# create: whether the new schedule is on (default false)
+SCHEDULED_RUN_ENABLED=false
+
 # ------- Harness Groups for dashboard\src\services\ServiceProvider.ts ------- #
 # Test harness for the dashboard's services, called the way DashboardHandler calls them (read only)
 # TASK options: capabilities | runs | summary | chunks | errors | changes | landscapes | lookup | preview | status

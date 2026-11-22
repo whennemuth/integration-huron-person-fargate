@@ -48,7 +48,15 @@ describe('landscapeResources', () => {
       processorMaxScalingCapacity: 1,
       sourceSimulatorFunctionName: 'source-simulator-mock',
       atomicCounterTableName: 'huron-person-fargate-processor-atomic-counter-mock',
+      scheduleName: 'chunker-api-schedule-mock',
+      scheduleRoleName: 'chunker-schedule-mock',
     });
+  });
+
+  it("passes the context's SCHEDULE cron, a new schedule's default, only when there is one", () => {
+    const context = { ...makeLandscape('dynamodb'), SCHEDULE: { cronExpression: 'cron(0 4 * * ? *)' } } as any;
+    expect(landscapeResources(context).scheduleDefaultCron).toBe('cron(0 4 * * ? *)');
+    expect(landscapeResources(makeLandscape('dynamodb'))).not.toHaveProperty('scheduleDefaultCron');
   });
 
   it("passes the context's processor maximum, for Bulk sync's Processor tasks", () => {
@@ -204,6 +212,40 @@ describe('FunctionUrlOrigin', () => {
     });
   });
 
+  it("may manage its landscape's bulk sync schedule only, read every landscape's, and pass only the schedule's role", () => {
+    const template = synth('dynamodb');
+    const statements = Object.values(template.findResources('AWS::IAM::Policy'))
+      .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+    const of = (action: string) => statements.filter((s: any) => [s.Action].flat().includes(action));
+    const resourceText = (action: string) => JSON.stringify(of(action).map((s: any) => s.Resource));
+
+    for (const action of ['scheduler:CreateSchedule', 'scheduler:UpdateSchedule', 'scheduler:DeleteSchedule']) {
+      expect(resourceText(action)).toContain(':schedule/default/chunker-api-schedule-mock');
+      expect(resourceText(action)).not.toContain('*');
+    }
+    expect(resourceText('scheduler:GetSchedule')).toContain(':schedule/default/chunker-api-schedule-*');
+    expect(of('scheduler:ListSchedules').map((s: any) => s.Resource)).toEqual(['*']);
+    expect(statements.flatMap((s: any) => [s.Action].flat()).filter((a: string) => a.startsWith('scheduler:')).sort()).toEqual([
+      'scheduler:CreateSchedule', 'scheduler:DeleteSchedule', 'scheduler:GetSchedule', 'scheduler:ListSchedules', 'scheduler:UpdateSchedule',
+    ]);
+
+    const passRole = of('iam:PassRole');
+    expect(passRole).toHaveLength(1);
+    expect(JSON.stringify(passRole[0].Resource)).toContain(':role/chunker-schedule-mock');
+    expect(passRole[0].Condition).toEqual({ StringEquals: { 'iam:PassedToService': 'scheduler.amazonaws.com' } });
+
+    const [fn] = Object.values(template.findResources('AWS::Lambda::Function')) as any[];
+    const variables = fn.Properties.Environment.Variables;
+    expect(JSON.stringify(variables.SCHEDULE_ROLE_ARN)).toContain(':role/chunker-schedule-mock');
+    expect(JSON.stringify(variables.SCHEDULE_TARGET_ARN)).toContain(':function:chunker-subscriber-mock');
+    // No SCHEDULE in this context: no default cron
+    expect(variables.SCHEDULE_DEFAULT_CRON).toBeUndefined();
+
+    // The last scheduled start the chunker subscriber skipped: read its one parameter, write nothing there
+    expect(JSON.stringify(of('ssm:GetParameter').map((s: any) => s.Resource))).toContain('parameter/hp-dashboard/schedule-refusals/mock');
+    expect(JSON.stringify(of('ssm:PutParameter').map((s: any) => s.Resource))).not.toContain('schedule-refusals');
+  });
+
   it("may read the chunker service's maximum for Parallel start, and change no scaling itself", () => {
     const template = synth('dynamodb');
     const actions = Object.values(template.findResources('AWS::IAM::Policy'))
@@ -273,9 +315,13 @@ describe('FunctionUrlOrigin', () => {
     const ssm = statements.filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('ssm:'))
       && JSON.stringify(s.Resource).includes('/hp-dashboard/landscapes'));
     expect(ssm.flatMap((s: any) => [s.Action].flat())).toEqual(['ssm:GetParametersByPath']);
-    // Nothing else may touch SSM besides reading the registry and keeping the launch flag
+    // Nothing else may touch SSM besides reading the registry, keeping the launch flag, and reading the last skipped
+    // scheduled start (tested with the schedule's grants)
     const others = statements.filter((s: any) => [s.Action].flat().some((a: string) => a.startsWith('ssm:')) && !ssm.includes(s));
-    expect(others.map((s: any) => JSON.stringify(s.Resource))).toEqual([expect.stringContaining('/hp-dashboard/launch-flags/mock')]);
+    expect(others.map((s: any) => JSON.stringify(s.Resource))).toEqual([
+      expect.stringContaining('/hp-dashboard/launch-flags/mock'),
+      expect.stringContaining('/hp-dashboard/schedule-refusals/mock'),
+    ]);
     const resources = JSON.stringify(ssm.map((s: any) => s.Resource));
     expect(resources).toContain(':parameter/hp-dashboard/landscapes\"');
     expect(resources).toContain(':parameter/hp-dashboard/landscapes/*');

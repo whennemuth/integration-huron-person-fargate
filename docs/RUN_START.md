@@ -7,15 +7,16 @@ the chunker subscriber Lambda (`src/chunking/ChunkerSubscriber.ts`, `lib/service
 `ScheduledRun`, the manual Runner's run start, or the dashboard's Bulk sync.
 
 The order of a run start in the chunker subscriber, for a run's first API event: refusals (parallel start, mock reset,
-processor maximum override), then the processor maximum, then a mock landscape's reset, then the run counters, then the
-parallel start (or the single queued message).
+processor maximum override), then a scheduled start skipped while a run is underway (below), then the processor
+maximum, then a mock landscape's reset, then the run counters, then the parallel start (or the single queued message).
 
 ## The scheduled run
 
-**The scheduled run is a full sync with stored hashes trusted** (`ScheduledRun`, `src/chunking/ScheduledRun.ts`, since
-2026-11-11): the EventBridge schedule's input (`ChunkerService.createApiChunkingSchedule()`, built by
-`ScheduledRun.scheduleInput()`) is `populationType: person-full`, `bulkReset: false`, `trustPreviousStorage: true`,
-with the people endpoint, `iterationLimit` = the context's `ECS.chunkerService.chunksPerTask` and `offset: 0`.
+**The scheduled run is a full sync with stored hashes trusted** (`ScheduledRun`, `src/schedule/ScheduledRun.ts`, since
+2026-11-11): the EventBridge schedule's input (`ScheduledRun.scheduleInput()`; the schedule is managed at run time
+through `ScheduledRun`, never deployed) is `populationType: person-full`, `bulkReset: false`,
+`trustPreviousStorage: true`, with the people endpoint, `iterationLimit` = the context's
+`ECS.chunkerService.chunksPerTask` and `offset: 0`.
 
 - No source endpoint returns only the people who changed yet, so a scheduled run fetches everyone. Trusting the
   stored hashes keeps people whose hash matches from reaching the target, which is the effect a delta run would
@@ -32,6 +33,29 @@ with the people endpoint, `iterationLimit` = the context's `ECS.chunkerService.c
   task's environment fallback, which a message carrying both flags never needs. Consolidating the flags into one
   setting is a TODO in integration-huron-person (`src/delta-strategy/TODO.md`).
 - A landscape gets this at its next pipeline deploy (a `lib/` change).
+
+### A scheduled start while a run is underway
+
+The chunker subscriber skips a start the bulk sync schedule makes (`startedBy.by === 'schedule'`, a run's first
+event) while a run is underway in its landscape, or while a run started from the dashboard moments ago is still
+starting (its launch flag, `/hp-dashboard/launch-flags/<landscape>`), since two runs at once would share the chunker's
+counters and the run list (`ScheduledStartGuard`, `src/schedule/ScheduledStartGuard.ts`, through
+`scheduledStartRefusal()` in `src/chunking/ChunkerSubscriber.ts`).
+
+- **Underway** is the dashboard's rule (`RunActivity`, `src/reporting/RunActivity.ts`, which Bulk sync's guards use
+  too), over the newest run in the statistics table's run list. A stalled run doesn't hold the schedule back, or a run
+  that died would stop every scheduled run after it; a finished or failed run doesn't either.
+- **When the run state can't be read, the start is skipped**: a missed day is safer than two runs at once.
+- **The skip is returned** as a 409 result, never thrown, like the other refusals, and **recorded** in
+  `/hp-dashboard/schedule-refusals/<landscape>` (an SSM parameter, the last one only), which the dashboard's Bulk sync
+  schedule page shows: EventBridge Scheduler doesn't record what its target answered, so otherwise a skipped day would
+  leave nothing but a missing run. A recording that fails only warns.
+- **Only the schedule's starts** are checked: a person starting a run has Bulk sync's or the Runner's own guards.
+- **Grants and environment**: the subscriber reads the statistics table (`GetItem`, `Query`, with its indexes; named in
+  `DYNAMODB_STATISTICS_TABLE_NAME`, with `PREVIOUS_STORAGE_TYPE`) and the launch flag, and writes the refusal record.
+  A subscriber deployed without `DYNAMODB_STATISTICS_TABLE_NAME` doesn't check, with a warning.
+- In S3 storage mode a failed run's terminal error is in the chunks bucket, which this doesn't read: such a run reads as
+  underway until it stalls, and scheduled starts are skipped until then.
 
 ## Who started a run (`startedBy`)
 

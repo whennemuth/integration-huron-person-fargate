@@ -2,8 +2,9 @@ import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { ApiChunkerEvent } from '../ChunkerSubscriber';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 import { TaskParameters } from './ChunkFromAPI';
+import { CHUNKER_SUBSCRIBER_BASE_NAME } from '../../Utils';
 
-export const FUNCTION_BASE_NAME = 'chunker-subscriber';
+export const FUNCTION_BASE_NAME = CHUNKER_SUBSCRIBER_BASE_NAME;
 
 const { 
   CHUNKER_QUEUE_URL,
@@ -55,9 +56,9 @@ const sqsClient = new SQSClient({ region });
  * - 'person-full': Fetch all person records (initial sync or full refresh)
  * - 'person-delta': Fetch only changed person records (incremental sync)
  * 
- * Note: This handler is invoked by EventBridge schedule with a synthetic event containing
- * API endpoint configuration. The schedule is only created if the IContext configuration
- * specifies fetchSchedule with enabled=true and a valid cronExpression.
+ * Note: This handler is invoked by the landscape's bulk sync schedule (EventBridge Scheduler)
+ * with a synthetic event containing API endpoint configuration (e.g. ScheduledRun.scheduleInput()).
+ * The schedule is managed at run time through ScheduledRun (src/schedule/), never deployed.
  * 
  * @param event - API-based chunker event
  * @returns Response object with status code and message

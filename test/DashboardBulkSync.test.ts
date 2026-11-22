@@ -3,7 +3,7 @@
  * it reads the newest run (underway, stalled, finished), the guards, the chunker event it sends (the chunker
  * subscriber resets the counters for it), the review (plan) with every run setting, the real Lambda port against a
  * mocked client, and the routes (GET and POST /api/bulk-sync, POST /api/bulk-sync/plan) offline. The form's
- * defaults are the scheduled run's (src/chunking/ScheduledRun.ts; test/ScheduledRun.test.ts).
+ * defaults are the scheduled run's (src/schedule/ScheduledRun.ts; test/ScheduledRun.test.ts).
  */
 import { GetFunctionConfigurationCommand, GetFunctionUrlConfigCommand, InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { mockClient } from 'aws-sdk-client-mock';
@@ -13,8 +13,9 @@ import { LaunchFlag } from '../dashboard/src/services/LaunchFlag';
 import { LambdaFunctionUrlEvent } from '../dashboard/src/handlers/DashboardTypes';
 import { OFFLINE_SOURCE_CONFIG, OfflineBulkSyncService } from '../dashboard/src/handlers/OfflineServices';
 import {
-  AwsSourceSimulatorService, BulkSync, BulkSyncError, BulkSyncRequest, LambdaChunkerFunctions, RunActivity
+  AwsSourceSimulatorService, BulkSync, BulkSyncError, BulkSyncRequest, LambdaChunkerFunctions
 } from '../dashboard/src/services/BulkSync';
+import { RunActivity } from '../src/reporting/RunActivity';
 import { RunReport } from '../src/reporting/RunReporting';
 
 const MIN = 60_000;

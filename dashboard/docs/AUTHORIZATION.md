@@ -41,7 +41,9 @@ request).
 `BulkSync.choiceActions()`, checked in `plan()` and `start()` with the request's authorizer, after the request is
 parsed and before anything else: Start from scratch needs `mock:reset`, and Processor tasks above the landscape's
 maximum (any override when the maximum isn't known) `bulk:processors`. A refusal is a `ForbiddenError`, answered with
-the same `403`; nothing is started or reviewed.
+the same `403`; nothing is started or reviewed. The bulk sync schedule's run is checked the same way
+(`BulkSync.scheduleEvent()`), on top of the schedule routes' own `schedule:edit`, which `PipelineControl` grants
+beside `bulk:start` (so PipelineOperator, Operator and Admin).
 
 ## The model
 

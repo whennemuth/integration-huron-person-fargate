@@ -26,8 +26,8 @@ services, CloudFront / Function URL / edge-lambda stack wiring, and sign-in (SAM
   and set a JWT cookie; the Lambda believes its claims only after verifying them against `JWT_PUBLIC_KEY`. A dashboard
   can also be public (no sign-in).
 - **Handler**: `src/handlers/DashboardHandler.ts` (gate, then routes) over `ServiceProvider`
-  (`src/services/ServiceProvider.ts`): PersonLookup, PersonSync, BulkSync, SystemStatus, RunReporting (`RunReports.ts`:
-  fargate's `src/reporting/RunReporting.ts` built from the Lambda environment), LandscapeListing
+  (`src/services/ServiceProvider.ts`): PersonLookup, PersonSync, BulkSync, BulkSchedule, SystemStatus, RunReporting
+  (`RunReports.ts`: fargate's `src/reporting/RunReporting.ts` built from the Lambda environment), LandscapeListing
   (`LandscapeRegistry.ts`), Template, the role catalog and stores, the audit store and the launch flag. Run reporting
   and the landscape listing live for the life of the Lambda instance (the registry caches what it reads from SSM).
 - **Templates**: `src/services/TemplateService.ts` renders `templates/` (compiled and cached) with minified, inlined
@@ -55,6 +55,8 @@ Every route, with request and response shapes and refusal codes: [docs/API.md](d
 | `GET /api/bulk-sync` | `runs:read` | what starting a run would do, and whether it may start now |
 | `POST /api/bulk-sync/plan`, `POST /api/bulk-sync` | `bulk:start` | review a run; start one |
 | `GET` / `POST /api/mock-landscape/reset` | `runs:read` / `mock:reset` | a mock landscape's last reset; start one |
+| `GET /api/bulk-schedule` | `runs:read` | the bulk sync schedule (or none), the form, the other landscapes' schedules |
+| `POST /api/bulk-schedule/when`, `/plan`; `PUT` / `DELETE /api/bulk-schedule`; `POST /api/bulk-schedule/state` | `schedule:edit` | when choices would run; review; save; delete; turn on or off |
 | `GET /api/runs[?include=report&limit&before]`, `/api/runs/{id}/summary\|chunks\|errors\|changes`, `/api/capabilities` | `runs:read` | run reporting |
 | `GET /api/landscapes`, `GET /api/status` | `runs:read` | the landscape registry; health checks |
 | `GET /api/audit` | `audit:read` | the audit trail |
@@ -63,7 +65,7 @@ Every route, with request and response shapes and refusal codes: [docs/API.md](d
 
 `RoutePermissions` (`src/authorization/RoutePermissions.ts`) is the authority for which action each route needs.
 Errors are `{ error, code }`: `ReportingError` → 400 (`RUN_LIST_UNAVAILABLE` → 503), `BulkSyncError` →
-400/403/409/503, anything else `500 { error, message }`.
+400/403/409/503, `ScheduleError` → 400/404/409 (with `errors` and `conflict`), anything else `500 { error, message }`.
 
 ## Local Development
 
@@ -181,7 +183,7 @@ Rules:
 
 The page frame (sidebar, `#<page>` fragments, top bar, landscape navigator and tone, sign-out), the page patterns, Run
 history and Overview: [docs/PAGES.md](docs/PAGES.md). Bulk sync and the launch flag:
-[docs/BULK_SYNC.md](docs/BULK_SYNC.md).
+[docs/BULK_SYNC.md](docs/BULK_SYNC.md). The Bulk sync schedule page: [docs/BULK_SCHEDULE.md](docs/BULK_SCHEDULE.md).
 
 - **Reuse the page patterns** (`templates/partials/*-tab.mustache`, the "Page patterns" section of
   `public/css/dashboard.css`) rather than adding page-specific styles: `.page` / `header.page-header`,
@@ -200,6 +202,13 @@ history and Overview: [docs/PAGES.md](docs/PAGES.md). Bulk sync and the launch f
   run locks the fields). Bulk reset always sends both previous-state flags. The run's `startedBy` comes from the
   signed-in user. A started run is guarded by the launch flag (`/hp-dashboard/launch-flags/<landscape>`) until it is
   listed. A mock landscape adds Source (real or simulator) and Start from scratch.
+- **The bulk sync schedule** (`src/services/BulkSchedule.ts` over fargate's `src/schedule/ScheduledRun.ts`): the
+  schedule in EventBridge Scheduler is the record, read by name. The page sends when as `ScheduleChoices` and never
+  builds or parses cron; the run reuses Bulk sync's form and checks (`BulkSync.scheduleEvent()`: no test, no Start
+  from scratch). The page (`public/js/bulk-schedule.js`) uses Bulk sync's form and review in schedule mode
+  (`BulkSyncView.formHtml()` `layout.schedule`), its ids renamed `schedule-` so they don't clash with Bulk sync's.
+  Offline, the real classes run over an in-memory scheduler (`src/handlers/OfflineScheduler.ts`) seeded with other
+  landscapes' schedules. Bulk sync warns of a schedule starting within the hour (`upcomingSchedules`).
 - **Overview** (`public/js/overview.js`): the latest run and the service checks, loaded independently; in a mock
   landscape, its last reset and Reset landscape.
 
@@ -218,8 +227,8 @@ add a Mustache template if needed (`templates/`), and run `npm run dashboard:bui
 2. Templates use `{{{cssAssets.dashboard}}}` and `{{{jsAssets.<name>}}}`. A new JS file must also be added to
    `TemplateService.getJsAssets()` (both branches) and given a `<script>` in `templates/dashboard.mustache`, in
    dependency order (`page-state.js`, `run-history.js`, `system-status.js`, `overview.js`, `bulk-sync.js`,
-   `administration.js`, then `dashboard.js`). A new partial must be added to `TemplateService.getPartials()` and to
-   `partialFiles` in `scripts/BuildTemplates.ts`.
+   `bulk-schedule.js`, `administration.js`, then `dashboard.js`). A new partial must be added to
+   `TemplateService.getPartials()` and to `partialFiles` in `scripts/BuildTemplates.ts`.
 3. **The minifier is regex-based**: it deletes everything after `//` on a line (including inside strings and
    regexes) and joins lines, so end every statement with a semicolon and never write `//` in a string or regex. The
    Lambda serves the minified assets and the local server the files as written, so a local run can't catch a minifier

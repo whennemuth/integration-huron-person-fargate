@@ -8,6 +8,7 @@ let searchTypeManager;
 let runHistoryPage;
 let overviewPage;
 let bulkSyncPage;
+let bulkSchedulePage;
 let whoAmI;
 let accessPage;
 let auditTrailPage;
@@ -39,6 +40,10 @@ window.addEventListener('load', function() {
     const bulkRoot = document.getElementById('bulk');
     if (bulkRoot) {
         bulkSyncPage = new BulkSyncPage({ getJson: fetchSectionData, postJson: postSectionData, runs: runsApi, root: bulkRoot });
+    }
+    const scheduleRoot = document.getElementById('schedule');
+    if (scheduleRoot) {
+        bulkSchedulePage = new BulkSchedulePage({ getJson: fetchSectionData, postJson: postSectionData, sendJson: sendSectionData, root: scheduleRoot });
     }
     whoAmI = new WhoAmI({ getJson: fetchSectionData, root: document });
     if (document.querySelector('[data-no-role-notice], #whoAmIDialog')) {
@@ -182,6 +187,8 @@ function onPageShown(page) {
         runHistoryPage.show(detailFromFragment('runs'));
     } else if (page === 'bulk' && bulkSyncPage) {
         bulkSyncPage.load();
+    } else if (page === 'schedule' && bulkSchedulePage) {
+        bulkSchedulePage.load();
     } else if (page === 'system') {
         loadSystemStatus();
     } else if (page === 'access' && accessPage) {

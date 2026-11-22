@@ -1,22 +1,16 @@
 import { ScalingInterval } from 'aws-cdk-lib/aws-applicationautoscaling';
+import { PolicyStatement, Role, ServicePrincipal } from 'aws-cdk-lib/aws-iam';
 import { IFunction } from 'aws-cdk-lib/aws-lambda';
-import { Schedule, ScheduleExpression, ScheduleTargetInput } from 'aws-cdk-lib/aws-scheduler';
-import { LambdaInvoke } from 'aws-cdk-lib/aws-scheduler-targets';
+import { Stack } from 'aws-cdk-lib';
+import { ScheduledRun } from '../../../src/schedule/ScheduledRun';
 import { Construct } from 'constructs';
-import { ConfigManager } from 'integration-huron-person';
-import { ScheduledRun } from '../../../src/chunking/ScheduledRun';
 import { AbstractService, AbstractServiceProps } from '../AbstractService';
 
 export const SERVICE_LOGICAL_ID = 'Chunker';
 
 export interface ChunkerServiceProps extends AbstractServiceProps {
-  /** The ChunkerSubscriber Lambda function to invoke on schedule */
+  /** The ChunkerSubscriber Lambda function, which the bulk sync schedule's role may invoke */
   chunkerLambda?: IFunction;
-  /**
-   * Optional: Number of chunks each task should process before exiting (default: 0 = process ALL 
-   * of the chunks for ALL of the people in the source system in just one task execution)
-   */
-  chunksPerTask?: number;
 }
 
 /**
@@ -25,15 +19,16 @@ export interface ChunkerServiceProps extends AbstractServiceProps {
  * - Auto-scales based on queue depth (0 to maxScalingCapacity)
  * - Task reads INPUT_BUCKET and INPUT_KEY from SQS messages
  * - Chunks large JSON files into smaller NDJSON files
- * 
- * Also optionally creates an EventBridge schedule to trigger API-based chunking:
- * - Schedule only created if HURON_PERSON_CONFIG.dataSource.people.fetchSchedule is configured
- * - Schedule triggers ChunkerSubscriber Lambda with API parameters: a full sync with stored hashes trusted
- *   (ScheduledRun, src/chunking/ScheduledRun.ts, which the dashboard's Bulk sync defaults also take)
- * - Lambda sends message to chunker queue to trigger Fargate task
+ *
+ * Also creates the role the landscape's bulk sync schedule invokes the chunker subscriber with
+ * (ScheduledRun.roleName(), chunker-schedule-<landscape>). The schedule itself is never deployed: it is managed at run
+ * time through ScheduledRun (src/schedule/ScheduledRun.ts), from the dashboard or its harness, so a deploy can't put
+ * back a schedule someone changed, and a schedule created in the dashboard can't collide with one CloudFormation
+ * would create. bin/teardown.sh deletes it.
  */
 export class ChunkerService extends AbstractService {
-  public schedule?: Schedule;
+  /** The role the bulk sync schedule assumes to invoke the chunker subscriber; absent without the subscriber */
+  public scheduleRole?: Role;
 
   public getServiceName(): string {
     return SERVICE_LOGICAL_ID;
@@ -45,80 +40,38 @@ export class ChunkerService extends AbstractService {
     // Expand the scaling activity to include invisible messages in the queue (not just visible).
     super.setupCompositeScaling();
 
-    // Create EventBridge schedule for API-based chunking if configured
-    this.createApiChunkingSchedule(props);
+    this.createScheduleRole(props);
   }
 
   /**
-   * Creates an EventBridge schedule to trigger API-based chunking on a cron schedule.
-   * Only creates the schedule if:
-   * - chunkerLambda is provided
-   * - context is provided
-   * - HURON_PERSON_CONFIG.dataSource.people.fetchSchedule is configured
-   * - fetchSchedule.enabled is true
-   * - fetchSchedule.cronExpression is valid
+   * The role EventBridge Scheduler assumes for the landscape's bulk sync schedule: trusted by the scheduler only for
+   * schedules in this account, and allowed only to invoke the chunker subscriber. Its name is fixed, so ScheduledRun
+   * can pass it when creating the schedule.
    */
-  private createApiChunkingSchedule(props: ChunkerServiceProps): void {
-    const { chunkerLambda, chunksPerTask: iterationLimit = 0 } = props;
+  private createScheduleRole(props: ChunkerServiceProps): void {
+    const { chunkerLambda } = props;
     const context = this.props.context;
 
     if (!chunkerLambda || !context) {
-      console.log('[ChunkerService] Skipping EventBridge schedule: chunkerLambda or context not provided');
+      console.log('[ChunkerService] Skipping the schedule role: chunkerLambda or context not provided');
       return;
     }
 
-    // Extract fetchSchedule config from HURON_PERSON_CONFIG
-    let huronConfig = context.HURON_PERSON_CONFIG as any;
-    if (huronConfig.configPath) {
-      huronConfig = ConfigManager.getInstance().fromFileSystem(huronConfig.configPath).getConfig('people');
-    }
-
-    // Extract API configuration for the event payload
-    const { 
-      dataSource: { 
-        people: {  
-          fetchSchedule, fetchSchedule: { cronExpression, enabled: cronEnabled } = {}, 
-          fetchPath, 
-          endpointConfig: { baseUrl } = {}  
-        } = {} 
-      } = {} 
-    } = huronConfig;
-
-    if (!fetchSchedule) {
-      console.log('[ChunkerService] Skipping EventBridge schedule: fetchSchedule not configured');
-      return;
-    }
-
-    if (!fetchSchedule.cronExpression) {
-      console.warn('[ChunkerService] Skipping EventBridge schedule: fetchSchedule.cronExpression is missing');
-      return;
-    }
-    
-    if (!baseUrl || !fetchPath) {
-      console.warn('[ChunkerService] Skipping EventBridge schedule: baseUrl or fetchPath not configured');
-      return;
-    }
-
-    // TODO LATER: Figure out the best way to assign this variable a value.
-    const personRecordProcessorAddons = undefined;
-
-    // Create the EventBridge schedule with cron as a child of the QueueProcessingFargateService
     const { Landscape } = context.TAGS;
-    this.schedule = new Schedule(this.service, 'ApiChunkingSchedule', {
-      scheduleName: `chunker-api-schedule-${Landscape.toLowerCase()}`,
-      description: `Triggers API-based chunker on schedule: ${cronExpression}`,
-      schedule: ScheduleExpression.expression(cronExpression),
-      enabled: cronEnabled,
-      target: new LambdaInvoke(chunkerLambda, {
-        input: ScheduleTargetInput.fromObject(
-          ScheduledRun.scheduleInput({ baseUrl, fetchPath, iterationLimit, personRecordProcessorAddons })
-        )
-      })
+    const { account } = Stack.of(this.service);
+    this.scheduleRole = new Role(this.service, 'ScheduleRole', {
+      roleName: ScheduledRun.roleName(Landscape),
+      description: `Lets the bulk sync schedule ${ScheduledRun.scheduleName(Landscape)} invoke the chunker subscriber`,
+      assumedBy: new ServicePrincipal('scheduler.amazonaws.com', {
+        conditions: { StringEquals: { 'aws:SourceAccount': account } },
+      }),
     });
-
-    console.log(`[ChunkerService] Created EventBridge schedule: ${cronExpression} (enabled: ${cronEnabled})`);
+    this.scheduleRole.addToPolicy(new PolicyStatement({
+      actions: ['lambda:InvokeFunction'],
+      resources: [chunkerLambda.functionArn],
+    }));
   }
-  
+
   /**
    * https://docs.aws.amazon.com/autoscaling/ec2/userguide/as-scaling-simple-step.html
    * @returns An array of ScalingInterval objects defining the scaling behavior based on queue depth
@@ -127,7 +80,7 @@ export class ChunkerService extends AbstractService {
     return [
       // Scale IN: when 0 messages, remove 1 task
       { upper: 0, change: -1 },
-    
+
       // Scale OUT: when >= 1 message, add 1 task (up to the max of set in the service props)
       { lower: 1, change: +1 }
     ];

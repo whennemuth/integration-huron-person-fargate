@@ -22,7 +22,7 @@
     "teardown-dashboard": "sh bin/teardown.sh dashboard",
     "npm-clean": "npm cache clean --force",
     "uninstall-tgz": "npm uninstall integration-huron-person",
-    "install-tgz": "npm install --force integration-huron-person https://simple-npm-package-bucket.s3.us-east-1.amazonaws.com/dynamodb/integration-huron-person-1.0.1.tgz",
+    "install-tgz": "npm install --force integration-huron-person https://simple-npm-package-bucket.s3.us-east-1.amazonaws.com/dynamodb/integration-huron-person-1.1.0.tgz",
     "reinstall-tgz": "npm run uninstall-tgz && npm run install-tgz",
     "reinstall-tgz-clean": "npm run npm-clean && npm run uninstall-tgz && npm run install-tgz",
     "docker-build": "cd docker && sh build.sh",
@@ -77,6 +77,7 @@
     "@aws-sdk/client-ecs": "^3.1012.0",
     "@aws-sdk/client-lambda": "^3.1075.0",
     "@aws-sdk/client-s3": "^3.400.0",
+    "@aws-sdk/client-scheduler": "^3.1158.0",
     "@aws-sdk/client-secrets-manager": "^3.1156.0",
     "@aws-sdk/client-sqs": "^3.1013.0",
     "@aws-sdk/client-ssm": "^3.1026.0",
@@ -84,7 +85,8 @@
     "@aws-sdk/util-dynamodb": "^3.400.0",
     "aws-cdk-lib": "^2.260.0",
     "constructs": "^10.0.0",
-    "integration-huron-person": "https://simple-npm-package-bucket.s3.us-east-1.amazonaws.com/dynamodb/integration-huron-person-1.0.1.tgz",
+    "cronstrue": "3.38.0",
+    "integration-huron-person": "https://simple-npm-package-bucket.s3.us-east-1.amazonaws.com/dynamodb/integration-huron-person-1.1.0.tgz",
     "stream-json": "^1.8.0"
   },
   "optionalDependencies": {

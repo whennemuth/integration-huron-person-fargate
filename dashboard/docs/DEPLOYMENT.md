@@ -43,8 +43,19 @@ stack:
 - In a mock landscape only, it may also look up the source simulator's Function URL (`lambda:GetFunctionUrlConfig` on
   `source-simulator-<landscape>`, named in its `SOURCE_SIMULATOR_FUNCTION_NAME`), and read its last reset's record
   (`dynamodb:GetItem` on the atomic counter table).
-- The one thing it writes outside its own tables is its landscape's launch flag (`ssm:PutParameter`, `GetParameter`,
-  `DeleteParameter` on `/hp-dashboard/launch-flags/<landscape>`; [BULK_SYNC.md](BULK_SYNC.md#the-launch-flag)).
+- Outside its own tables it writes its landscape's launch flag (`ssm:PutParameter`, `GetParameter`,
+  `DeleteParameter` on `/hp-dashboard/launch-flags/<landscape>`; [BULK_SYNC.md](BULK_SYNC.md#the-launch-flag)), and its
+  landscape's bulk sync schedule.
+- **The bulk sync schedule**, which no stack deploys (fargate `src/schedule/`), is created, changed and deleted from
+  the dashboard, so it may `scheduler:CreateSchedule`, `UpdateSchedule` and `DeleteSchedule` on
+  `schedule/default/chunker-api-schedule-<landscape>` only. To keep schedules an hour apart (the landscapes share the
+  source) it may `scheduler:GetSchedule` on every landscape's (`chunker-api-schedule-*`) and `ListSchedules` (which
+  can't be narrowed to a resource). Creating or changing one passes the schedule's role, so it may `iam:PassRole` on
+  `chunker-schedule-<landscape>` (which the pipeline stack creates) only to `scheduler.amazonaws.com`. Its environment
+  names that role (`SCHEDULE_ROLE_ARN`), the chunker subscriber as the target (`SCHEDULE_TARGET_ARN`) and the context's
+  `SCHEDULE` cron (`SCHEDULE_DEFAULT_CRON`). These are the only writes on pipeline resources besides invoking the
+  chunker subscriber. It reads the last scheduled start the chunker subscriber skipped (`ssm:GetParameter` on
+  `/hp-dashboard/schedule-refusals/<landscape>`, which the subscriber writes).
 - Its environment also carries what Bulk sync's review shows: `PIPELINE_STACK_ID`, `ITEMS_PER_CHUNK`, and the config
   secret's name (`lib/FunctionUrl.ts`).
 

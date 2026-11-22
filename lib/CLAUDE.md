@@ -31,7 +31,8 @@ project [CLAUDE.md](../CLAUDE.md); deployment steps in [docs/CDK_DEPLOYMENT.md](
   subscriber (delta chunk files).
 - **`Tagging.ts`**: tags applied to the stack and its resources.
 - **`services/`**: per service, its Fargate service, task definition and subscriber Lambda:
-  - `chunker/`: `ChunkerService.ts` (also the EventBridge schedule, `createApiChunkingSchedule()`),
+  - `chunker/`: `ChunkerService.ts` (also the bulk sync schedule's role, `chunker-schedule-<landscape>`; the
+    schedule itself is never deployed: `src/schedule/`),
     `ChunkerTaskDefinition.ts`, `ChunkerSubscribingLambda.ts`, `SourceSimulator.ts` (the source simulator's Function
     URL); [services/chunker/README.md](services/chunker/README.md).
   - `processor/`: `ProcessorService.ts`, `ProcessorTaskDefinition.ts` (bakes `STATIC_MAP_USAGE` from the config's

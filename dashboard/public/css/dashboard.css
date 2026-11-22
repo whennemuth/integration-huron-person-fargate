@@ -444,9 +444,11 @@ code, pre, kbd, samp {
     color: var(--hp-text-muted);
 }
 
-/* Two sections side by side on wide screens (main, then aside), stacked below lg */
+/* Two sections side by side on wide screens (main, then aside), stacked below lg. The one column below lg may shrink
+   below its content (minmax(0, ...)), so a wide table scrolls in its .table-responsive rather than widening the page */
 .page-columns {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 2rem;
     align-items: start;
 }
@@ -1187,6 +1189,55 @@ code, pre, kbd, samp {
     margin: 0.375rem 0 0;
     font-size: 0.875rem;
     color: var(--hp-text-muted);
+}
+
+/* Bulk sync schedule (public/js/bulk-schedule.js): When, the server's answer under it, and the schedule's card */
+.schedule-when {
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--hp-border);
+    border-radius: var(--hp-radius);
+}
+
+.schedule-days-select,
+.schedule-cron {
+    max-width: 22rem;
+}
+
+.schedule-preview {
+    margin-top: 0.75rem;
+}
+
+.schedule-preview:empty {
+    display: none;
+}
+
+.schedule-preview-line {
+    margin: 0 0 0.375rem;
+    font-size: 0.875rem;
+}
+
+.schedule-card-status {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 0.5rem;
+}
+
+.schedule-changed {
+    margin: 0 0 0.75rem;
+    font-size: 0.875rem;
+    color: var(--hp-text-muted);
+}
+
+.schedule-card [data-schedule-delete-confirm] {
+    margin-top: 0.75rem;
+}
+
+/* No schedule: the message, then Create schedule */
+.schedule-none .run-note {
+    margin-top: 0;
+    margin-bottom: 0.75rem;
 }
 
 /* The sections block follows the tiles, or the note when there is one */

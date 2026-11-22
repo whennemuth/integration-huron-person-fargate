@@ -49,7 +49,7 @@ export class StaticRoleCatalog implements RoleCatalog {
     RunReporting: new Policy('RunReporting', "Read the landscape's runs and status", ['runs:read']),
     PersonDataRead: new Policy('PersonDataRead', 'Look people up and preview their sync', ['person:lookup', 'person:preview']),
     PersonDataWrite: new Policy('PersonDataWrite', 'Sync a person into the target', ['person:sync']),
-    PipelineControl: new Policy('PipelineControl', "Review and start sync runs, and empty a mock landscape's run state", ['bulk:start', 'mock:reset']),
+    PipelineControl: new Policy('PipelineControl', "Review and start sync runs, manage the bulk sync schedule, and empty a mock landscape's run state", ['bulk:start', 'schedule:edit', 'mock:reset']),
     PipelineTuning: new Policy('PipelineTuning', "Start a run with more processor tasks than the landscape's maximum", ['bulk:processors']),
     AccessAdministration: new Policy('AccessAdministration', "Manage who holds which roles, and see the dashboard through another person's roles", ['access:admin', 'access:impersonate']),
     AuditReview: new Policy('AuditReview', 'Read the audit trail', ['audit:read'])

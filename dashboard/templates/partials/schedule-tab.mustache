@@ -1,0 +1,33 @@
+<!-- Bulk sync schedule page: this landscape's recurring bulk sync, in EventBridge Scheduler (public/js/bulk-schedule.js fills it) -->
+<div class="tab-pane fade {{#scheduleActive}}show active{{/scheduleActive}}" id="schedule" role="tabpanel" aria-labelledby="schedule-tab">
+    <div class="page">
+        <header class="page-header">
+            <div>
+                <h1 class="page-title">Bulk sync schedule</h1>
+                <p class="page-description">Run a bulk sync in this landscape on a schedule, the way Bulk sync starts one by hand.</p>
+            </div>
+            <div class="page-actions">
+                <span class="refresh-stamp" data-refresh-stamp="schedule"></span>
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-action="refresh-schedule">
+                    <i class="fas fa-rotate-right me-1"></i>Refresh
+                </button>
+            </div>
+        </header>
+
+        <div class="page-columns">
+            <section class="page-section" aria-labelledby="scheduleHeading">
+                <div class="section-heading">
+                    <h2 class="section-title" id="scheduleHeading">Schedule</h2>
+                </div>
+                <div class="surface" data-schedule-main></div>
+            </section>
+
+            <section class="page-section" aria-labelledby="scheduleOthersHeading">
+                <div class="section-heading">
+                    <h2 class="section-title" id="scheduleOthersHeading">Other landscapes</h2>
+                </div>
+                <div class="surface" data-schedule-others></div>
+            </section>
+        </div>
+    </div>
+</div>

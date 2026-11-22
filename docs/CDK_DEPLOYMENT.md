@@ -347,4 +347,7 @@ npm run teardown-dashboard  # dashboard + edge-lambda stacks (see "Edge-lambda t
    (`src/runner/Runner.ts`); the person sync itself is in `src/processing/` (`ProcessorForS3.ts`,
    `ProcessorForDynamoDb.ts`)
 3. **Test with a mock landscape or a small population** before a production run
-4. **Set up CloudWatch alarms** for DLQ messages and task failures
+4. **Schedule recurring runs**, if the landscape needs them: the dashboard's Bulk sync schedule page, or the
+   `SCHEDULED_RUN` harness (`src/schedule/ScheduledRun.ts`). No deploy creates or changes the schedule; a deploy creates
+   only its role, `chunker-schedule-<landscape>`, which creating one needs. `bin/teardown.sh` deletes it.
+5. **Set up CloudWatch alarms** for DLQ messages and task failures

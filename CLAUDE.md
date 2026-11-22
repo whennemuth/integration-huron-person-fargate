@@ -6,7 +6,7 @@ processing, post-processing) on Lambda, ECS Fargate, S3, SQS and DynamoDB, plus 
 its siblings (especially `integration-core`) through dependencies, not workspace-level source control.
 
 Folder-level CLAUDE.md files hold more detail: `lib/`, `docker/`, `src/`, `src/chunking/`, `src/processing/`,
-`src/post-processing/`, `src/runner/`, `dashboard/`. Reference docs are in [docs/](docs/).
+`src/post-processing/`, `src/runner/`, `src/schedule/`, `dashboard/`. Reference docs are in [docs/](docs/).
 
 **Workspace setup**: the shared skills are the integration-skills repository cloned as `<workspace root>/.claude`, and
 the workspace-wide instructions are its `CLAUDE.md`. How to install them and get VS Code, Copilot CLI or Claude Code
@@ -56,11 +56,14 @@ All chunking modules use `TestEnvironment` from `integration-core`; harness pref
   and write it only with `StatisticsTable.writeTerminalError()`/`readTerminalError()`.
 
 **How a run starts** (paths, grants, refusals, timings and the reasoning: [docs/RUN_START.md](docs/RUN_START.md)):
-- **The schedule** (`ScheduledRun`, `src/chunking/ScheduledRun.ts`) sends a full sync (`person-full`) with stored
+- **The schedule** (`ScheduledRun`, `src/schedule/ScheduledRun.ts`) sends a full sync (`person-full`) with stored
   hashes trusted (`bulkReset: false`, `trustPreviousStorage: true`): it fetches everyone, sends only people whose hash
   changed, and deactivates people missing from the source. The two previous-state flags only act together; set them
   with `ScheduledRun.previousStateFlags(bulkReset)`. The context's `BULK_RESET` / `TRUST_PREVIOUS_STORAGE` are only
-  the chunker task's environment fallback.
+  the chunker task's environment fallback. **The schedule is never deployed**: it is managed at run time through
+  `ScheduledRun` (one per landscape, at most once a day, an hour from other landscapes'; CDK creates only its role),
+  so never add it back to CDK. A scheduled start is skipped (and recorded) while a run is underway in the landscape
+  (`ScheduledStartGuard`). Rules: [src/schedule/CLAUDE.md](src/schedule/CLAUDE.md).
 - **Who started it** (`startedBy`, `src/chunking/StartedBy.ts`): `{ by: 'dashboard', principal? }`, `{ by: 'schedule' }`
   or `{ by: 'runner' }`, carried along the run's messages into Flags and the run summary.
 - **The run counters** (`resetRunCounters()`, `src/chunking/RunCounters.ts`: the chunker's offset and chunk-ordinal

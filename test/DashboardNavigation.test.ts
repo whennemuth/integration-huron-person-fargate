@@ -237,8 +237,11 @@ describe('Dashboard page sidebar', () => {
     const body = await render();
     const titles = body.match(/<h1 class="page-title">[^<]*<\/h1>/g) || [];
     expect(titles.map(title => title.replace(/<[^>]+>/g, ''))).toEqual(
-      ['Overview', 'Lookup and sync', 'Mapping experiment', 'Bulk sync', 'Run history', 'Status', 'Access', 'Audit trail']
+      ['Overview', 'Lookup and sync', 'Mapping experiment', 'Bulk sync', 'Bulk sync schedule', 'Run history', 'Status', 'Access', 'Audit trail']
     );
+    // The Bulk sync schedule page builds on Bulk sync's form and review
+    expect(body.indexOf('class BulkSyncView')).toBeLessThan(body.indexOf('class BulkScheduleView'));
+    expect(body.indexOf('class BulkSchedulePage')).toBeLessThan(body.indexOf('new BulkSchedulePage('));
     // The Administration pages build on the state patterns and the run history's PagedTable
     expect(body.indexOf('class PagedTable')).toBeLessThan(body.indexOf('class AuditTrailPage'));
     expect(body.indexOf('class AccessPage')).toBeLessThan(body.indexOf('new AccessPage('));
