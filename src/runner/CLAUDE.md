@@ -5,8 +5,10 @@ maximum, counters), optionally toggles the subscribers' `DRY_RUN` for test scena
 event(s). Not the normal path (that is the EventBridge schedule and the dashboard's Bulk sync, through the chunker
 subscriber Lambda), but the two share the run-start procedures in `src/chunking/` ([docs/RUN_START.md](../../docs/RUN_START.md)).
 
-Run it with `npx ts-node src/runner/Runner.ts` (or VS Code's "Debug current file"); its variables are the `RUNNER_`
-group of `.env` (`RunnerTypes.setTestEnvironment()`). The other harnesses here: `npx ts-node src/runner/MetricsCatchupDelay.ts`
+Run it with VS Code's "Debug current file" (whose launch config loads `.env`), or from a shell with
+`npx ts-node -r dotenv/config src/runner/Runner.ts`: plain `npx ts-node` doesn't load `.env` (`TestEnvironment` only
+reads `process.env`), so every variable is undefined. A variable set in the shell wins over `.env`'s. Its variables are
+the `RUNNER_` group of `.env` (`RunnerTypes.setTestEnvironment()`). The other harnesses here: `npx ts-node src/runner/MetricsCatchupDelay.ts`
 (`METRICS_CATCHUP_DELAY_`) and `npx ts-node src/runner/ServiceToggler.ts` (`SERVICE_TOGGLER_`).
 
 ## Files
@@ -14,7 +16,8 @@ group of `.env` (`RunnerTypes.setTestEnvironment()`). The other harnesses here: 
 - **`Runner.ts`**: entry point. Chooses the runner: single person (`SINGLE_PERSON_BUID`), queue seeding
   (`MESSAGES_TO_PREPOPULATE > 0`), or single message (default). Applies the decorators: `MESSAGING_ONLY`,
   `CHUNKING_ONLY`, `SOURCE_SIMULATOR`, otherwise restore full operation; and `MockLandscapeRunnerDecorator` whenever
-  `LANDSCAPE` is a mock landscape. Aborts if `SOURCE_SIMULATOR=true` targets a non-mock landscape.
+  `LANDSCAPE` is a mock landscape. Aborts if `SOURCE_SIMULATOR=true` targets a non-mock landscape, and if a single-person
+  run's `POPULATION_TYPE` is set to anything but `person-delta` (both before any runner or decorator acts).
 - **`AbstractRunner.ts`** (`ChunkingServiceRunner`), the template method `start()`:
   1. validate prerequisites (after refusing a `PROCESSOR_SCALING_CAPACITY_OVERRIDE` outside 1-20);
   2. load configuration (ConfigManager chain);
@@ -28,7 +31,8 @@ group of `.env` (`RunnerTypes.setTestEnvironment()`). The other harnesses here: 
      puts on its events (the queue seeder's too), for the run's Flags.
   Also shared helpers for endpoint validation, population normalization and source-simulator prediction logging.
 - **`RunnerForSinglePerson.ts`**: needs `SINGLE_PERSON_BUID` and the queue URL; uses the person endpoint with
-  `?buid=...`; sends one API chunker event.
+  `?buid=...`; sends one API chunker event, always `person-delta` (`POPULATION_TYPE` unset means `person-delta`;
+  anything else is refused by `singlePersonPopulationRefusal()`).
 - **`RunnerForSingleMessage.ts`**: the default, gradual ramp-up mode; sends one API chunker event, after resetting the
   run counters when stack, region and landscape are known (`resetRunCounters()` in `src/chunking/RunCounters.ts`, which
   the chunker subscriber also calls; [docs/RUN_START.md](../../docs/RUN_START.md#the-run-counters)).
@@ -101,6 +105,10 @@ is `extractEnvironment()` in `RunnerTypes.ts`.
 
 ## Invariants
 
+0. **A single-person run is `person-delta`.** A `person-full` run deactivates everyone in the baseline missing from its
+   source, so one person's would deactivate everyone else in the target. Check
+   run-level refusals in `Runner.ts` before building the runner: some decorators change things (a mock landscape's
+   reset, `DRY_RUN` toggles) before the runner's own `validatePrerequisites()` is reached.
 1. **Modes**: `MESSAGING_ONLY` and `CHUNKING_ONLY` can't both be true; `MESSAGING_ONLY` is incompatible with
    `SOURCE_SIMULATOR`; with `SOURCE_SIMULATOR`, `Runner.ts` doesn't apply `RestoreToFullOperationRunnerDecorator`, so
    the subscribers keep whatever `DRY_RUN` they had.
@@ -128,7 +136,7 @@ is `extractEnvironment()` in `RunnerTypes.ts`.
 5. `ServiceScaleInAlarm`'s discovery and period in `src/Alarm.ts`.
 6. Lambda environment batching in `LambdaFunctionEnvironmentVariable.ts`.
 
-Tests: `test/RunnerForQueueSeeding.test.ts`, `RunnerProcessorScalingCapacity`, `MetricsCatchupDelay`,
+Tests: `test/RunnerForQueueSeeding.test.ts`, `RunnerProcessorScalingCapacity`, `RunnerSinglePersonPopulation`, `MetricsCatchupDelay`,
 `SourceSimulatorRunnerDecorator`, `MockLandscape`, `MockLandscapeReset`, `ParallelStart`.
 
 Why the seeding waits for the alarm (the 2026-07-02 incident):

@@ -7,7 +7,7 @@ import { RestoreToFullOperationRunnerDecorator } from './decorators/RestoreToFul
 import { SourceSimulatorRunnerDecorator } from './decorators/SourceSimulatorRunnerDecorator';
 import { QueueSeedingRunner } from './RunnerForQueueSeeding';
 import { SingleMessageRunner } from './RunnerForSingleMessage';
-import { SinglePersonRunner } from './RunnerForSinglePerson';
+import { SinglePersonRunner, singlePersonPopulationRefusal } from './RunnerForSinglePerson';
 import { extractEnvironment, RunnerEnv, setTestEnvironment } from './RunnerTypes';
 
 /**
@@ -19,8 +19,9 @@ import { extractEnvironment, RunnerEnv, setTestEnvironment } from './RunnerTypes
  * off an initial chunking run or to test the service.
  * There are 3 types of runner, controlled by environment variables:
  * 
- * 1. Single Person Runner: If the environment variable HURON_PERSON_SOURCE_ID is set, the runner 
- *    will fetch and process a single person record for testing.
+ * 1. Single Person Runner: If the environment variable SINGLE_PERSON_BUID is set, the runner
+ *    will fetch and process a single person record for testing. Always person-delta: any other
+ *    POPULATION_TYPE is refused, since a person-full run of one person deactivates everyone else.
  * 
  * 2. Queue Seeding Runner: If the environment variable MESSAGES_TO_PREPOPULATE is set to a number 
  *    greater than 0, the runner will pre-populate the chunker queue with that many messages for 
@@ -54,6 +55,17 @@ export async function startChunkingService(env?: RunnerEnv) {
     console.error(`✗ SOURCE_SIMULATOR=true requires a mock landscape (matching ${MOCK_LANDSCAPE_PATTERN}), ` +
       `but LANDSCAPE=${env.landscape}. Aborting.`);
     return;
+  }
+
+  // SAFETY ENFORCEMENT: a single-person run is always person-delta (a person-full run of one person would deactivate
+  // everyone else in the target). Checked here, before any runner is built, because some decorators change things
+  // (a mock landscape's reset, service toggles) before the runner's own validatePrerequisites() is reached.
+  if (env.buid) {
+    const populationRefusal = singlePersonPopulationRefusal(env.populationType);
+    if (populationRefusal) {
+      console.error(populationRefusal);
+      return;
+    }
   }
 
   const seedNumber = parseInt(env.messagesToPrepopulate);

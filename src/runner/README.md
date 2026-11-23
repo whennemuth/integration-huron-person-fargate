@@ -33,8 +33,8 @@ flowchart LR
   end
 ```
 
-Run it with `npx ts-node src/runner/Runner.ts` (or F5 → "Debug current file" in VS Code), with its settings in the
-`RUNNER_` group of `.env`. Before sending anything, it sets the processor service's maximum for the run and resets the
+Run it with `npx ts-node -r dotenv/config src/runner/Runner.ts` (plain `npx ts-node` doesn't load `.env`) or F5 →
+"Debug current file" in VS Code, with its settings in the `RUNNER_` group of `.env`. Before sending anything, it sets the processor service's maximum for the run and resets the
 run counters (unless `SKIP_ATOMIC_COUNTER_RESET`), as the chunker subscriber does for a scheduled run or the
 dashboard's Bulk sync. The details, every setting and the pitfalls: [CLAUDE.md](./CLAUDE.md).
 
@@ -47,7 +47,8 @@ with no concurrency in chunking.
 
 ### Single person mode (testing)
 `SINGLE_PERSON_BUID=U12345678`: one message for that person, through the person endpoint (`?buid=`), so one chunk and
-one processor task.
+one processor task. Always `person-delta`: leave `POPULATION_TYPE` unset or set it to `person-delta`; anything else is
+refused, because a `person-full` run of one person would deactivate everyone else in the target.
 
 ### Queue seeding (concurrency from the start)
 `MESSAGES_TO_PREPOPULATE=N` seeds the queue with N messages, offsets a task's chunks apart, then (with `DESIRED_COUNT`
