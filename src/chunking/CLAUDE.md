@@ -33,6 +33,10 @@ the processor maximum, a mock reset, the counter reset and a parallel start, in 
 - `fetch/BigJsonFetch.ts` (harness `BIG_JSON_FETCH`): pages the source and streams the response into chunks; ordinals
   from `ChunkOrdinalAllocator`; end-of-records detection and the `maxTotalRecords` cutoff.
 - `fetch/ChunkConfigOverride.ts`: a queue message's `baseUrl` / `fetchPath` override the configured endpoint.
+- `fetch/SingleRequestSource.ts`: `isSingleRequestSource()`, whether the source returns the same records on every
+  request (person mode, or a `buid` in the fetch URL), and `DepletingSingleRequestDataSource`, which `BigJsonFetch`
+  fetches such a source through so it depletes like the real one: one fetch per run (`SINGLE_REQUEST_FETCH_CLAIM`),
+  then empty batches.
 - `fetch/ProcessorServiceBooster.ts` (harness `PROCESSOR_SERVICE_BOOSTER`): while chunking, raises the processor
   service's desired count straight to its maximum rather than waiting for alarm-driven scaling (once per run, by an
   `OCCFlag` claim).
@@ -61,3 +65,5 @@ writes and status checks, including the run's running `totalRecords`), `ChunkFil
 - **Counts come from what was read and written**, never from `recordCount`.
 - **A terminal error stops the run**: chained tasks check `isTerminalErrorEncountered()`; read the terminal error only
   through `StatisticsTable.readTerminalError()` in DynamoDB mode.
+- **A single-person run runs as a full sync of one**: never give it a code path of its own (skipping chaining,
+  stopping after one request). Make its source behave like the real one instead (`DepletingSingleRequestDataSource`).

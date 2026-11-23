@@ -64,7 +64,7 @@ Tracks integration run statistics, error events, and sync run metadata.
 
 ### Table Schema
 - **PK**: `integrationTimestamp` (ISO timestamp)
-- **SK**: `eventType` (STATISTICS-chunk-XXXX | ERROR:<statusCode>:<timestamp> | FLAGS | METADATA | TERMINAL_ERROR | CHUNK_STATUS_nnnn | PROCESSOR_BOOST_CLAIM | POST_PROCESSOR_TRIGGER_CLAIM | RUN | RUN_SUMMARY)
+- **SK**: `eventType` (STATISTICS-chunk-XXXX | ERROR:<statusCode>:<timestamp> | FLAGS | METADATA | TERMINAL_ERROR | CHUNK_STATUS_nnnn | PROCESSOR_BOOST_CLAIM | POST_PROCESSOR_TRIGGER_CLAIM | SINGLE_REQUEST_FETCH_CLAIM | RUN | RUN_SUMMARY)
 - **GSI1**: `errorType-timestamp-index` (for querying errors by status code)
 - **GSI2**: `run-list-index` (sparse, KEYS_ONLY; partition key `runList`, always `RUNS`, sort key `distinctRunId`): holds
   only the RUN marker items, so it lists every run in time order (`getRunIdsPage()`, `getAllRunIds()`). A table updated
@@ -141,6 +141,14 @@ Tracks integration run statistics, error events, and sync run metadata.
   sends the post-processor-trigger SQS message
 - Never released or treated as stale: once the post-processor has been triggered it must never be
   triggered again (see `docs/CONCURRENCY_CONTROL.md`)
+
+**10. SINGLE_REQUEST_FETCH_CLAIM**
+- SK: "SINGLE_REQUEST_FETCH_CLAIM"
+- Contains: claimedAt, claimedByChunk (optional - the offset of the chunker task that fetched)
+- Written by: Chunker tasks via `claimSingleRequestFetch()` (`DepletingSingleRequestDataSource`), only in a run
+  whose source is a single request (one person by BUID): the winner fetches the person, every later fetch in the run
+  returns an empty batch, so the source depletes like the real one. Used in both S3 and DynamoDB storage modes.
+- Never released or treated as stale: the person is fetched at most once per run
 
 ### Usage
 ```typescript

@@ -570,6 +570,35 @@ describe('StatisticsTable', () => {
     });
   });
 
+  describe('claimSingleRequestFetch', () => {
+    it('returns true and writes a SINGLE_REQUEST_FETCH_CLAIM record for the first fetch of the run', async () => {
+      dynamoMock.on(UpdateCommand).resolves({});
+      dynamoMock.on(BatchWriteCommand).resolves({});
+
+      const won = await statisticsTable.claimSingleRequestFetch(integrationTimestamp, '10');
+
+      expect(won).toBe(true);
+      const updateCall = dynamoMock.commandCalls(UpdateCommand)[0];
+      expect(updateCall.args[0].input.Key).toEqual({ integrationTimestamp, eventType: 'SINGLE_REQUEST_FETCH_CLAIM' });
+      expect(updateCall.args[0].input.ConditionExpression).toBe('attribute_not_exists(#attr)');
+      const requestItems = Object.values(dynamoMock.commandCalls(BatchWriteCommand)[0].args[0].input.RequestItems!)[0] as any[];
+      expect(requestItems[0].PutRequest.Item).toMatchObject({
+        integrationTimestamp, eventType: 'SINGLE_REQUEST_FETCH_CLAIM', claimedByChunk: '10'
+      });
+    });
+
+    it('returns false once the run has made its one fetch, however old the claim (no staleness recovery)', async () => {
+      dynamoMock.on(UpdateCommand).rejects({ name: 'ConditionalCheckFailedException' });
+      dynamoMock.on(GetCommand).resolves({ Item: { integrationTimestamp, eventType: 'SINGLE_REQUEST_FETCH_CLAIM', claimedAt: '2020-01-01T00:00:00.000Z' } });
+
+      const won = await statisticsTable.claimSingleRequestFetch(integrationTimestamp, '0');
+
+      expect(won).toBe(false);
+      expect(dynamoMock.commandCalls(UpdateCommand)).toHaveLength(1);
+      expect(dynamoMock.commandCalls(BatchWriteCommand)).toHaveLength(0);
+    });
+  });
+
   describe('addToMetadataTotals', () => {
     const baseParams = {
       source: 'https://api.example.com/people',

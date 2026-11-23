@@ -132,6 +132,8 @@ export class DynamoDbTables extends Construct {
    *      if stale
    *    - SK = "POST_PROCESSOR_TRIGGER_CLAIM": Exactly one processor task wins the right to send the
    *      post-processor-trigger SQS message; never released
+   *    - SK = "SINGLE_REQUEST_FETCH_CLAIM": In a single-person run, exactly one chunker task fetches the
+   *      person (every later fetch returns an empty batch); never released
    *
    * 6. Run marker (SK = "RUN", 1 record per integration run, attributes `distinctRunId` = PK and
    *    `runList` = "RUNS"):

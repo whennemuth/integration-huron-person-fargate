@@ -753,11 +753,34 @@ export class StatisticsTable {
    * @returns true if this call won the claim, false if another processor already triggered
    */
   public async claimPostProcessorTrigger(syncRunId: string, claimedByChunk?: string): Promise<boolean> {
+    return this.claimOnce(syncRunId, 'POST_PROCESSOR_TRIGGER_CLAIM', claimedByChunk);
+  }
+
+  /**
+   * Attempt to claim the one fetch a single-request source gets in this sync run (a person by BUID:
+   * SingleRequestSource.ts). Exactly one chunker task wins and fetches the person; every later fetch
+   * in the run, by any task, returns an empty batch, as a depleting source would once its one person
+   * was handed out. Like claimPostProcessorTrigger, there is no staleness recovery: once fetched, the
+   * person must never be fetched again in this run (a winner that dies before writing its chunk loses
+   * the person, as a real source's records are lost when a task dies after fetching them).
+   *
+   * @param claimedByChunk Identifies which chunker task/offset fetched, so its log stream can be found later
+   * @returns true if this call won (fetch the source), false if the run's one fetch was already made
+   */
+  public async claimSingleRequestFetch(syncRunId: string, claimedByChunk?: string): Promise<boolean> {
+    return this.claimOnce(syncRunId, 'SINGLE_REQUEST_FETCH_CLAIM', claimedByChunk);
+  }
+
+  /**
+   * First-writer-wins claim on this run's `sortKeyValue` record (OCCFlag on `claimedAt`), with no
+   * staleness recovery; the winner also records which chunk claimed it.
+   */
+  private async claimOnce(syncRunId: string, sortKeyValue: string, claimedByChunk?: string): Promise<boolean> {
     const { tableName, region } = this;
     const claimFlag = new OCCFlag({
       tableName, region,
       partitionKeyName: DYNAMODB_PARTITION_KEY, partitionKeyValue: syncRunId,
-      sortKeyName: DYNAMODB_SORT_KEY, sortKeyValue: 'POST_PROCESSOR_TRIGGER_CLAIM',
+      sortKeyName: DYNAMODB_SORT_KEY, sortKeyValue,
       attributeName: 'claimedAt'
     });
 
@@ -771,7 +794,7 @@ export class StatisticsTable {
     if (won && claimedByChunk !== undefined) {
       await this.table.putItem({
         [DYNAMODB_PARTITION_KEY]: syncRunId,
-        [DYNAMODB_SORT_KEY]: 'POST_PROCESSOR_TRIGGER_CLAIM',
+        [DYNAMODB_SORT_KEY]: sortKeyValue,
         claimedAt,
         claimedByChunk
       });
@@ -795,7 +818,7 @@ export class StatisticsTable {
   /**
    * Delete all records for a specific integration run.
    * Removes all records (STATISTICS, FLAGS, METADATA, TERMINAL_ERROR, CHUNK_STATUS, ERROR,
-   * PROCESSOR_BOOST_CLAIM, POST_PROCESSOR_TRIGGER_CLAIM records)
+   * PROCESSOR_BOOST_CLAIM, POST_PROCESSOR_TRIGGER_CLAIM, SINGLE_REQUEST_FETCH_CLAIM records)
    * associated with the given syncRunId.
    * 
    * This is useful for:

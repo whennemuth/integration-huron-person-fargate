@@ -588,7 +588,10 @@ export class ChunkFromAPI implements IChunkFromSource {
         retryStrategy: getRetryStrategy(process.env.RETRY_STRATEGY),
         stopAtFirstPartial: process.env.STOP_AT_FIRST_PARTIAL?.toLowerCase().trim() === 'true',
         maxTotalRecords,
-        runTotalRecordsAtStart
+        runTotalRecordsAtStart,
+        // A single-request source (one person by BUID) gets one fetch per run, by whichever task claims it
+        // first, so it depletes like the real source (DepletingSingleRequestDataSource)
+        claimSingleRequestFetch: () => metadataBroker.claimSingleRequestFetch(String(offset))
         // isOffsetPastKnownEnd intentionally omitted: each task's own fetch loop has a sufficient,
         // purely local stopping condition (its own end-of-records batch or exhausted iterationLimit) -
         // a cross-task signal here would risk discarding another task's still-legitimate data.

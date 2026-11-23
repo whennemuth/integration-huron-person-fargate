@@ -117,6 +117,16 @@ export class MetadataBroker {
   }
 
   /**
+   * Attempt to claim this run's one fetch of a single-request source (a person by BUID), so the run
+   * sees a population of one that depletes like the real source (SingleRequestSource.ts).
+   * @returns true if this task should fetch, false if the run's one fetch was already made
+   */
+  public async claimSingleRequestFetch(claimedByChunk?: string): Promise<boolean> {
+    const { bucketName, chunkDirectory, region } = this;
+    return this.metadata.claimSingleRequestFetch({ bucketName, chunkDirectory, region, claimedByChunk });
+  }
+
+  /**
    * Atomically add this task's own chunkCount/totalRecords contribution to the run's METADATA
    * record - every parallel chunker task calls this once (partial or full-iterationLimit).
    */

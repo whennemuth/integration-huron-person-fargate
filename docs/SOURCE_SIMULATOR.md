@@ -16,8 +16,9 @@ Path-based routing:
 - **`/person?buid=U0000042`**: one person, mirroring the real person API. Stateless (the depletion counter is
   untouched) and idempotent: `U0000042` is index 41, the same payload `/` produces for that person. A BUID beyond
   `MOCK_TOTAL_POPULATION` returns `{ response: [] }`; a missing or malformed one (not `U` + digits) returns 400. It
-  must be selected by a `buid` query parameter, because that is what makes the chunker do a single, non-paged request
-  (`BigJsonFetch.isNotBatchable()`). With `RUNNER_SINGLE_PERSON_BUID` set, `SourceSimulatorRunnerDecorator` points the
+  must be selected by a `buid` query parameter, because that is what makes the chunker treat it as a single-request
+  source: fetched without paging parameters, once per run, then depleted (`isSingleRequestSource()`,
+  `DepletingSingleRequestDataSource`). With `RUNNER_SINGLE_PERSON_BUID` set, `SourceSimulatorRunnerDecorator` points the
   source here.
 - **`/terms`**: mock current-terms data (6 static terms: 2 current, 2 past, 2 future) - required because
   `DataMapperOrg.isCurrentSemester()` needs terms data to filter student semesters, and running with
