@@ -230,6 +230,36 @@ const sharedDeltaStorageExists = async (bucket: string, region?: string): Promis
   }
 }
 
+/**
+ * Whether this task should cancel because another task has already reached the end of the run's
+ * records (MetadataBroker.isAlreadyFinished()); logs the cancellation when it does.
+ *
+ * Asked twice: at start-up, and again just before fetching, since the start-up steps between (the
+ * person cache, which can take minutes, and the Flags write) let another task reach the end meanwhile.
+ * @param when 'start-up' or 'before-fetch', for the log
+ * @returns true if the task should cancel
+ */
+export const cancelIfAlreadyFinished = async (
+  metadataBroker: Pick<MetadataBroker, 'isAlreadyFinished'>,
+  chunker: IChunkFromSource,
+  when: 'start-up' | 'before-fetch'
+): Promise<boolean> => {
+  if ( ! await metadataBroker.isAlreadyFinished()) {
+    return false;
+  }
+  let messageDetails = '';
+  if (chunker instanceof ChunkFromAPI) {
+    const { offset, iterationLimit } = chunker.getIterationLimitAndOffset();
+    messageDetails = ` [offset=${offset}, iterationLimit=${iterationLimit}, chunkDirectory=${chunker.getChunkDirectory()}]`;
+  }
+  if (when === 'start-up') {
+    console.log(`⊘ Cancelling. This means this task was based on a SQS message that was created before the service "realized" it had reached the end.${messageDetails}`);
+  } else {
+    console.log(`⊘ Cancelling before fetching. Another task reached the end of the records while this one was starting up (person cache, flags).${messageDetails}`);
+  }
+  return true;
+};
+
 export async function main() {
   console.log('=== Phase 1: Chunker ===\n');
 
@@ -323,14 +353,7 @@ export async function main() {
     // source queue can only be as drained or more drained by now, so a late-arriving task (based
     // on an SQS message created before that happened) can be safely abandoned - see
     // MetadataBroker.isAlreadyFinished doc comment.
-    const alreadyFinished = await metadataBroker.isAlreadyFinished();
-    if (alreadyFinished) {
-      let messageDetails = '';
-      if (chunker instanceof ChunkFromAPI) {
-        const { offset, iterationLimit } = chunker.getIterationLimitAndOffset();
-        messageDetails = ` [offset=${offset}, iterationLimit=${iterationLimit}, chunkDirectory=${chunker.getChunkDirectory()}]`;
-      }
-      console.log(`⊘ Cancelling. This means this task was based on a SQS message that was created before the service "realized" it had reached the end.${messageDetails}`);
+    if (await cancelIfAlreadyFinished(metadataBroker, chunker, 'start-up')) {
       await pauseBeforeEarlyExit(30); // Allow time for ECS auto scaling to stabilize before exiting
       exitCode = 0;
       return;
@@ -431,6 +454,16 @@ export async function main() {
         region: region! 
       };
       await cache.ensureCache(cacheParams);
+    }
+
+    // Second end check, just before fetching: the start-up steps above (above all the person cache,
+    // which can take minutes) leave a window in which another task may reach the end of the records.
+    // This narrows that window but can't close it; a single-request source (one person by BUID) can't be
+    // fetched twice in a run anyway, since it depletes after its first fetch (DepletingSingleRequestDataSource).
+    if (await cancelIfAlreadyFinished(metadataBroker, chunker, 'before-fetch')) {
+      await pauseBeforeEarlyExit(30); // Allow time for ECS auto scaling to stabilize before exiting
+      exitCode = 0;
+      return;
     }
 
     await chunker.runChunking(chunkFromParams);

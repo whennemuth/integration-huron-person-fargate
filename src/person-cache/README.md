@@ -254,16 +254,29 @@ U12345680
 
 - **A lock is active** (creation in progress):
   ```
-  ⏳ Cache creation in progress - waiting <n>ms (attempt i/20)
+  ⏳ Cache creation in progress - waiting <n>ms (waited <s>s so far)
   ```
-  Waits with exponential backoff (capped at 10 seconds a wait), and after 20 attempts throws
-  `Timeout waiting for cache creation…`.
+  Waits with exponential backoff (capped at 10 seconds a wait) for as long as the lock holds, up to `maxWaitMs`
+  (default: the lock's 10-minute TTL, `AbstractPersonCache.CACHE_LOCK_TTL_MS`), then continues with an empty set:
+  ```
+  ⚠️  Cache lock still held after <s>s - every person in this chunk will be looked up in the target directly
+  ```
 - **No lock**:
   ```
   ⚠️  Cache not found and no lock active - waiting for cache creation to start
-  ⚠️  Cache still not available after N attempts - proceeding without cache
+  ⚠️  Cache not found and no lock active - every person in this chunk will be looked up in the target directly
   ```
-  Waits once (2 seconds), then continues with an empty set, so everyone is treated as CREATE.
+  Looks for the cache once more (it may have been written between the two checks), waits once (2 seconds), then
+  continues with an empty set.
+- **Reading the cache fails** (an S3 error): continues with an empty set.
+
+An empty set is safe: the cache is only a short cut, and `UpsertDeltaStrategy` (integration-huron-person) looks up a
+person the cache doesn't hold in the target directly (UPDATE if found, CREATE if not). The cache is loaded once per
+chunk, so only the first person waits, and the lookup **never throws**: a throw would leave the cache unloaded, so
+every person in the chunk would wait again. (Until 2026-11-23 it threw after about 3 minutes of a held lock, and
+`UpsertDeltaStrategy` then sent the person a CREATE, rejected (presumably a 409) if they were already in Huron. Upsert
+now falls back to a direct lookup when the cache lookup throws, and classifies a person whose direct lookup also fails
+as UPDATE.)
 
 ### Cache Empty
 ```

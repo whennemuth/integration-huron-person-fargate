@@ -168,6 +168,12 @@ export interface ClaimProcessorBoostParams {
 }
 
 /**
+ * Parameters for claiming a run's one fetch of a single-request source (SingleRequestSource.ts). Its own
+ * dedicated record (SINGLE_REQUEST_FETCH_CLAIM) for the same reason as ClaimProcessorBoostParams.
+ */
+export type ClaimSingleRequestFetchParams = ClaimProcessorBoostParams;
+
+/**
  * Parameters for atomically adding this task's own chunkCount/totalRecords contribution to the
  * run's METADATA record. Every parallel chunker task calls this once (partial or full), replacing
  * the old single-writer S3 rescan - see StatisticsTable.addToMetadataTotals for the DynamoDB
@@ -318,6 +324,13 @@ export interface IMetadataStorage {
    * allowing another task to win it later.
    */
   releaseProcessorBoostClaim(params: ClaimProcessorBoostParams): Promise<void>;
+
+  /**
+   * Attempt to claim the run's one fetch of a single-request source (a person by BUID; see
+   * SingleRequestSource.ts). Returns true if this call won (fetch the source), false if another task
+   * already made the run's one fetch. First writer wins, never released.
+   */
+  claimSingleRequestFetch(params: ClaimSingleRequestFetchParams): Promise<boolean>;
 
   /**
    * Atomically add this task's own chunkCount/totalRecords contribution to the run's METADATA

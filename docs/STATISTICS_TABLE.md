@@ -10,11 +10,14 @@ dashboard's Run history reads through.
 
 - PK: `integrationTimestamp` (syncRunId), SK: `eventType`.
 - Event types: `METADATA`, `FLAGS`, `TERMINAL_ERROR`, `STATISTICS-chunk-*`, `ERROR:*`, `CHUNK_STATUS_*`,
-  `PROCESSOR_BOOST_CLAIM`, `POST_PROCESSOR_TRIGGER_CLAIM`, `RUN`, `RUN_SUMMARY` (no aggregate `STATISTICS` item is
-  ever written: processors always pass a chunkId).
-- `PROCESSOR_BOOST_CLAIM` / `POST_PROCESSOR_TRIGGER_CLAIM` are `OCCFlag`-guarded claim records ensuring exactly one
-  chunker task runs the processor scaling check, and exactly one processor task triggers the post-processor (see
-  [CONCURRENCY_CONTROL.md](CONCURRENCY_CONTROL.md)); the boost claim is written in S3 storage mode too.
+  `PROCESSOR_BOOST_CLAIM`, `POST_PROCESSOR_TRIGGER_CLAIM`, `SINGLE_REQUEST_FETCH_CLAIM`, `RUN`, `RUN_SUMMARY` (no
+  aggregate `STATISTICS` item is ever written: processors always pass a chunkId).
+- `PROCESSOR_BOOST_CLAIM` / `POST_PROCESSOR_TRIGGER_CLAIM` / `SINGLE_REQUEST_FETCH_CLAIM` are `OCCFlag`-guarded claim
+  records ensuring exactly one chunker task runs the processor scaling check, exactly one processor task triggers the
+  post-processor, and exactly one chunker task fetches a single-person run's person
+  ([CHUNKING_END_AND_FAILURE.md](CHUNKING_END_AND_FAILURE.md#a-single-person-run-is-a-full-sync-of-one); see
+  [CONCURRENCY_CONTROL.md](CONCURRENCY_CONTROL.md)); the boost and single-request fetch claims are written in S3
+  storage mode too.
 - In DynamoDB mode, METADATA and FLAGS replace S3 mode's `_metadata.json` and `_flags.json` files.
 
 ## The run list (`run-list-index`)

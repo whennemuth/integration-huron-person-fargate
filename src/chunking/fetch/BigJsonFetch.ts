@@ -12,6 +12,9 @@ import { FileSystemStorageAdapter, IStorageAdapter, S3StorageAdapter } from "../
 import { extractChunkDirectory } from '../filedrop/ChunkPathUtils';
 import { getLocalConfig } from '../../Utils';
 import { SyncPopulation, DEFAULT_MAX_TOTAL_RECORDS } from '../../../docker/chunkTypes';
+import {
+  DepletingSingleRequestDataSource, isSingleRequestSource, localSingleRequestFetchClaim, SingleRequestFetchClaim
+} from './SingleRequestSource';
 
 type SourceApiRetryStrategy = {
   executeWithRetry: <T>(fn: () => Promise<T>, context?: string) => Promise<T>;
@@ -108,6 +111,13 @@ export interface BigJsonFetchConfig {
    * overshot by at most their in-flight records.
    */
   runTotalRecordsAtStart?: number;
+
+  /**
+   * Claims the run's one fetch when the source is a single request (isSingleRequestSource()): true for
+   * exactly one task in the run (default: the first call in this process, for harnesses). See
+   * DepletingSingleRequestDataSource.
+   */
+  claimSingleRequestFetch?: SingleRequestFetchClaim;
 }
 
 export type ChunkOrdinalAllocator = () => Promise<number>;
@@ -180,6 +190,7 @@ export class BigJsonFetch {
   private readonly stopAtFirstPartial: boolean;
   private readonly maxTotalRecords: number;
   private readonly runTotalRecordsAtStart: number;
+  private readonly claimSingleRequestFetch: SingleRequestFetchClaim;
 
   constructor(config: BigJsonFetchConfig) {
     let localNextOrdinal = config.offset || 0;
@@ -198,6 +209,7 @@ export class BigJsonFetch {
     this.stopAtFirstPartial = config.stopAtFirstPartial ?? false;
     this.maxTotalRecords = config.maxTotalRecords ?? DEFAULT_MAX_TOTAL_RECORDS;
     this.runTotalRecordsAtStart = config.runTotalRecordsAtStart ?? 0;
+    this.claimSingleRequestFetch = config.claimSingleRequestFetch ?? localSingleRequestFetchClaim();
     this.chunkOrdinalAllocator = config.chunkOrdinalAllocator || (async () => {
       const nextOrdinal = localNextOrdinal;
       localNextOrdinal++;
@@ -247,12 +259,17 @@ export class BigJsonFetch {
     // Keeping simple counter pattern as secondary defense against memory buildup.
     const chunkKeys: string[] = [];
 
-    // Create data source for API communication
-    const dataSource = new BuCdmPeopleDataSource({ 
-      config: this.config, 
+    // Create data source for API communication. A single-request source (one person by BUID) is fetched
+    // as a population of one that depletes like the real source, so the fetch loop, chaining and end
+    // detection run exactly as in a full sync (DepletingSingleRequestDataSource).
+    const dataSourceParams = {
+      config: this.config,
       responseFilter: this.responseFilter,
       retryStrategy: this.retryStrategy
-    } as any);
+    } as any;
+    const dataSource = isSingleRequestSource(this.config)
+      ? new DepletingSingleRequestDataSource(dataSourceParams, this.claimSingleRequestFetch)
+      : new BuCdmPeopleDataSource(dataSourceParams);
 
     // MEMORY OPTIMIZATION: Refactored to minimize closure capture.
     // Primary fix: ApiClientForApiKey uses streaming to prevent buffering responses in memory.
@@ -263,7 +280,7 @@ export class BigJsonFetch {
       batchSize: this.itemsPerChunk, 
       chunkDirPath: chunkDir, 
       offset: this.offset,
-      iterationLimit: this.isNotBatchable(dataSource) ? -1 : this.iterationLimit,
+      iterationLimit: this.iterationLimit,
       onChunkWritten: (key: string) => chunkKeys.push(key),
       isOffsetPastKnownEnd: this.isOffsetPastKnownEnd,
       stopAtFirstPartial: this.stopAtFirstPartial
@@ -377,28 +394,6 @@ export class BigJsonFetch {
         `(${maxTotalRecords}). Presuming the source is glitched (never returning an empty batch) and ` +
         `terminating chunking early.`
       );
-    }
-  }
-
-  /**
-   * If the fetch URL contains a 'buid' query parameter, we consider it non-batchable because it's 
-   * likely targeting a specific record rather than supporting offset-based pagination.
-   * @param dataSource 
-   * @returns 
-   */
-  private isNotBatchable = (dataSource: BuCdmPeopleDataSource): boolean => {
-    // Person-mode endpoints are single-record oriented and should never receive batch pagination params.
-    if (this.config.executionMode === 'person') {
-      return true;
-    }
-
-    const fetchUrl = dataSource.getFetchUrl();
-    try {
-      const urlObj = new URL(fetchUrl);
-      return urlObj.searchParams.get('buid') !== null;
-    } catch {
-      // Conservative fallback: if URL parsing fails, do not force non-batchable mode.
-      return false;
     }
   }
 

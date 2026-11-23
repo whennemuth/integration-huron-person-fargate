@@ -126,7 +126,7 @@ export class PersonCacheForS3 extends AbstractPersonCache {
       const lockData = {
         taskId: process.env.ECS_TASK_ID || process.env.HOSTNAME || 'unknown',
         timestamp: new Date().toISOString(),
-        expiresAt: Date.now() + 600000, // 10 minutes TTL
+        expiresAt: Date.now() + AbstractPersonCache.CACHE_LOCK_TTL_MS, // 10 minutes TTL
       };
 
       await s3.putObject({

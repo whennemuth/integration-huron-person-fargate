@@ -19,8 +19,8 @@
  * 
  * **Design (Single Person Endpoint):**
  * - Mirrors the real person API: one person, selected by the `buid` query parameter. The `buid`
- *   parameter is also what makes the chunker treat the fetch as a single request rather than
- *   paging through it (see `BigJsonFetch.isNotBatchable()`)
+ *   parameter is also what makes the chunker treat it as a single-request source: fetched without
+ *   paging parameters, once per run, then depleted (see `DepletingSingleRequestDataSource`)
  * - Stateless and idempotent: `U0000042` is the person at index 41, the same payload the people
  *   endpoint produces when its depletion reaches that index. The depletion counter is not touched.
  * - A BUID beyond MOCK_TOTAL_POPULATION returns `{ response: [] }` (not in the source), and a

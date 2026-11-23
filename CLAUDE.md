@@ -55,6 +55,18 @@ All chunking modules use `TestEnvironment` from `integration-core`; harness pref
   `_terminal_error.json` in S3 mode) blocks the post-processor trigger and skips deletion handling in both modes. Read
   and write it only with `StatisticsTable.writeTerminalError()`/`readTerminalError()`.
 
+**How chunker tasks chain** (details and the 2026-11-12 duplicate chunk: [docs/CHUNKING_END_AND_FAILURE.md](docs/CHUNKING_END_AND_FAILURE.md#chaining-and-the-end-of-run-checks)):
+- A task with a non-zero `iterationLimit` sends the next message as soon as it starts, unless the run has reached its
+  end. The real people source depletes (each record handed out once per run, whatever the offset).
+- **A single-person run must run as a full sync of one**, not down a branch of its own. Its source (person mode, or a
+  `buid` in the fetch URL: `isSingleRequestSource()`) returns the same person every time, so `BigJsonFetch` fetches it
+  through `DepletingSingleRequestDataSource`: the run's first fetch, by any task, wins `SINGLE_REQUEST_FETCH_CLAIM`
+  and gets the person; every later fetch gets an empty batch. Chaining and end detection then run unchanged.
+- `docker/chunker.ts` checks whether the run has reached its end at start-up and again just before fetching
+  (`cancelIfAlreadyFinished()`), since the person cache can take minutes.
+- A chunk can exist before the run's person cache (a task that finds the cache lock held skips the build). Processors
+  wait for it in `PersonCacheLookup` and, failing that, look people up in Huron directly; that lookup never throws.
+
 **How a run starts** (paths, grants, refusals, timings and the reasoning: [docs/RUN_START.md](docs/RUN_START.md)):
 - **The schedule** (`ScheduledRun`, `src/schedule/ScheduledRun.ts`) sends a full sync (`person-full`) with stored
   hashes trusted (`bulkReset: false`, `trustPreviousStorage: true`): it fetches everyone, sends only people whose hash

@@ -43,6 +43,8 @@ export abstract class AbstractPersonCache {
 
   public static CACHE_FILE_NAME = '_personCache.txt';
   public static CACHE_LOCK_FILE_NAME = '_personCache.creating';
+  /** How long a cache lock holds before it reads as expired (inactive) */
+  public static CACHE_LOCK_TTL_MS = 10 * 60 * 1000;
 
   constructor(params?: { 
     config?: Config;

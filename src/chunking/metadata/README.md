@@ -135,6 +135,11 @@ statistics table.
 classes) by the one `ProcessorForDynamoDb` task that wins the right to send the post-processor trigger. Never released:
 the post-processor is triggered at most once per run.
 
+**Single-request fetch claim** (SK `SINGLE_REQUEST_FETCH_CLAIM`, attributes `claimedAt`, optional `claimedByChunk`:
+the chunker offset): written by the one chunker task that wins `claimSingleRequestFetch()` in a run whose source is a
+single request (`DepletingSingleRequestDataSource`); that task fetches the person, and every later fetch in the run
+returns an empty batch. Never released. In S3 mode `MetadataForS3` writes the same record to the statistics table.
+
 More on these claims: [docs/CONCURRENCY_CONTROL.md](../../../docs/CONCURRENCY_CONTROL.md).
 
 ## Error records

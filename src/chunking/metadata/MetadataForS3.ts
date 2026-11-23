@@ -8,6 +8,7 @@ import {
   AccumulateMetadataTotalsParams,
   ChunkMetadata,
   ClaimProcessorBoostParams,
+  ClaimSingleRequestFetchParams,
   Flags,
   MarkRunFailedParams,
   ReadFlagsParams,
@@ -491,6 +492,20 @@ export class MetadataForS3 implements IMetadataStorage {
     const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
     const statisticsTable = StatisticsTable.fromTableName(this.statisticsTableName, region);
     await statisticsTable.releaseProcessorBoostClaim(syncRunId);
+  }
+
+  /**
+   * Attempt to claim the run's one fetch of a single-request source. Delegates to the shared DynamoDB
+   * statistics table, like the processor-boost claim (see the statisticsTableName field's doc comment).
+   */
+  public async claimSingleRequestFetch(params: ClaimSingleRequestFetchParams): Promise<boolean> {
+    const { chunkDirectory, region, claimedByChunk } = params;
+    if (!this.statisticsTableName) {
+      throw new Error('statisticsTableName is required for single-request fetch claims');
+    }
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
+    const statisticsTable = StatisticsTable.fromTableName(this.statisticsTableName, region);
+    return statisticsTable.claimSingleRequestFetch(syncRunId, claimedByChunk);
   }
 
   /**

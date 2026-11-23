@@ -5,6 +5,7 @@ import {
   AccumulateMetadataTotalsParams,
   ChunkMetadata,
   ClaimProcessorBoostParams,
+  ClaimSingleRequestFetchParams,
   Flags,
   MarkRunFailedParams,
   ReadFlagsParams,
@@ -25,11 +26,12 @@ import { StandardMetadataUtils, validateMetadata } from './MetadataUtils';
  * - eventType="FLAGS": Sync configuration flags
  * - eventType="TERMINAL_ERROR": Terminal error marker
  * - eventType="PROCESSOR_BOOST_CLAIM": Processor-boost claim (see claimProcessorBoost)
+ * - eventType="SINGLE_REQUEST_FETCH_CLAIM": A single-request run's one fetch (see claimSingleRequestFetch)
  * 
  * ## Record Structure
  * All records use:
  * - PK: syncRunId (ISO timestamp extracted from chunkDirectory)
- * - SK: eventType ("METADATA" | "FLAGS" | "TERMINAL_ERROR" | "PROCESSOR_BOOST_CLAIM")
+ * - SK: eventType ("METADATA" | "FLAGS" | "TERMINAL_ERROR" | "PROCESSOR_BOOST_CLAIM" | "SINGLE_REQUEST_FETCH_CLAIM")
  * - Additional fields: Varies by eventType
  * 
  * ## Design Notes
@@ -372,6 +374,15 @@ export class MetadataForDynamoDb implements IMetadataStorage {
     const { chunkDirectory } = params;
     const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
     await this.statisticsTable.releaseProcessorBoostClaim(syncRunId);
+  }
+
+  /**
+   * Attempt to claim the run's one fetch of a single-request source.
+   */
+  public async claimSingleRequestFetch(params: ClaimSingleRequestFetchParams): Promise<boolean> {
+    const { chunkDirectory, claimedByChunk } = params;
+    const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
+    return this.statisticsTable.claimSingleRequestFetch(syncRunId, claimedByChunk);
   }
 
   /**

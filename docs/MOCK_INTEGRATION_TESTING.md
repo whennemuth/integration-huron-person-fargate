@@ -329,9 +329,11 @@ them. If you see the target comparison line with trust set, check that
    `RUNNER_POPULATION_TYPE` matters: unset, it defaults to `person-full`, and the post-processor
    then treats every other person in PersonCurrentState as removed and deactivates them. With
    `RUNNER_DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT` above `0`, the first chunker task sends one
-   more chunking message before fetching (`Sending message to chunker queue`); the task it starts
-   finds the end of records already reached and ends with `⊘ Cancelling.` - one extra task, not a
-   chain. (`0` would avoid chaining altogether.)
+   more chunking message before fetching (`Sending message to chunker queue`), as a full sync does.
+   One task's first fetch gets the person; every later fetch logs `Single-request source already
+   fetched in this run` and returns an empty batch, so the run writes one chunk. The task the first
+   one chained usually ends with `⊘ Cancelling.` - one extra task, not a chain. (`0` would avoid
+   chaining altogether.)
 2. Wait for the post-processor to finish. Expect a PersonCurrentState item and a `NEW` history
    item for `U0000044` carrying the pipeline run's `syncRunId`, and a `METADATA` record for that
    `syncRunId` in the statistics table.
@@ -625,7 +627,8 @@ the PersonCurrentState and PersonHistory tables - see "Switching to S3 mode".
    As in 1.4, the first chunker task chains one more message, and the task it starts ends with
    `⊘ Cancelling.` - in S3 mode this relies on `_metadata.json` carrying the end-of-records flag
    (`partialOrEmptyChunkEncountered: true`) after the first task finishes. A chunker that keeps
-   chaining tasks for the same person means the deployed image predates that fix.
+   chaining tasks for the same person means the deployed image predates that fix; one that writes
+   the person into two chunks predates `SINGLE_REQUEST_FETCH_CLAIM` (2026-11-23).
 2. After the post-processor finishes, expect a `U0000144` line in
    `delta-storage/previous-input.ndjson`. Note its hash.
 3. Run `SyncPerson.ts` with:
