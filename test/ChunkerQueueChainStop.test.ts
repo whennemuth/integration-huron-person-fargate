@@ -25,8 +25,7 @@ describe('ChunkerQueue.sendNextChunkingMessage partialOrEmptyChunkEncountered sh
     baseUrl: 'https://example.com',
     fetchPath: '/people',
     populationType: SyncPopulation.PersonFull,
-    bulkReset: false,
-    trustPreviousStorage: true
+    previousStateSource: 'storage' as const
   };
 
   it('sends the next message when partialOrEmptyChunkEncountered is not yet known', async () => {
@@ -80,7 +79,7 @@ describe('ChunkerQueue.sendNextChunkingMessage run parameter forwarding', () => 
       iterationLimit: 10, offset: 0, chunkDirectory: 'chunks/person-full/2026-01-01T00:00:00.000Z',
       taskParameters: {
         baseUrl: 'https://sim.example.com', fetchPath: '/', populationType: SyncPopulation.PersonFull,
-        bulkReset: false, trustPreviousStorage: true, termsEndpoint
+        previousStateSource: 'storage' as const, termsEndpoint
       }
     });
 
@@ -94,7 +93,7 @@ describe('ChunkerQueue.sendNextChunkingMessage run parameter forwarding', () => 
       iterationLimit: 10, offset: 0, chunkDirectory: 'chunks/person-full/2026-01-01T00:00:00.000Z',
       taskParameters: {
         baseUrl: 'https://cdm.example.edu', fetchPath: '/people', populationType: SyncPopulation.PersonFull,
-        bulkReset: false, trustPreviousStorage: true, startedBy: { by: 'dashboard', principal: 'jdoe' }
+        previousStateSource: 'storage' as const, startedBy: { by: 'dashboard', principal: 'jdoe' }
       }
     });
 
@@ -108,7 +107,7 @@ describe('ChunkerQueue.sendNextChunkingMessage run parameter forwarding', () => 
       iterationLimit: 10, offset: 0, chunkDirectory: 'chunks/person-full/2026-01-01T00:00:00.000Z',
       taskParameters: {
         baseUrl: 'https://cdm.example.edu', fetchPath: '/people', populationType: SyncPopulation.PersonFull,
-        bulkReset: false, trustPreviousStorage: true, processorScalingCapacity: { maxTasks: 8, overridden: true }
+        previousStateSource: 'storage' as const, processorScalingCapacity: { maxTasks: 8, overridden: true }
       }
     });
 

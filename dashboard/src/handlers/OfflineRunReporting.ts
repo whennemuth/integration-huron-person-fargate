@@ -139,16 +139,14 @@ export class OfflineRunCatalog {
           createdAt: syncRunId,
           chunkDirectory,
           syncPopulation: spec.syncPopulation,
-          bulkReset: spec.bulkReset,
-          trustPreviousStorage: false,
+          previousStateSource: spec.bulkReset ? 'target' : 'storage',
           itemsPerChunk: ITEMS_PER_CHUNK,
           source: OfflineRunCatalog.source(spec),
           // Its chunker found the end of the source records (every chunk is written); only some are processed
           ...(failed ? {} : { chunkCount: OfflineRunCatalog.chunkCount(spec), totalRecords: spec.totalRecords, partialOrEmptyChunkEncountered: true })
         },
         flags: {
-          bulkReset: spec.bulkReset,
-          trustPreviousStorage: false,
+          previousStateSource: spec.bulkReset ? 'target' : 'storage',
           syncPopulation: spec.syncPopulation as any,
           ...(spec.startedBy ? { startedBy: spec.startedBy } : {}),
           ...(spec.processorScalingCapacity ? { processorScalingCapacity: spec.processorScalingCapacity } : {}),
@@ -293,7 +291,7 @@ export class OfflineRunCatalog {
       createdAt: spec.syncRunId,
       completedAt: new Date(Date.parse(spec.syncRunId) + spec.durationMinutes * MINUTE).toISOString(),
       syncPopulation: spec.syncPopulation,
-      bulkReset: spec.bulkReset,
+      previousStateSource: spec.bulkReset ? 'target' : 'storage',
       chunkCount: OfflineRunCatalog.chunkCount(spec),
       totalRecords: spec.totalRecords,
       ...totals,

@@ -12,6 +12,7 @@ import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig, ChunkOrdinalAllocator } from "./BigJsonFetch";
 import { ChunkConfigOverride } from "./ChunkConfigOverride";
+import { PreviousStateSource, requirePreviousStateSource } from '../PreviousStateSource';
 import { ProcessorServiceBooster } from './ProcessorServiceBooster';
 import { SourceSimulatorFunctionURL } from './SourceSimulator';
 import { RunStarter, StartedBy } from '../StartedBy';
@@ -21,8 +22,8 @@ export type TaskParameters = {
   baseUrl: string,
   fetchPath: string,
   populationType: SyncPopulation,
-  bulkReset: boolean,
-  trustPreviousStorage: boolean,
+  /** Where the run's previous state comes from (src/chunking/PreviousStateSource.ts) */
+  previousStateSource: PreviousStateSource,
   offset?: number;
   iterationLimit?: number;
   chunkDirectory?: string;
@@ -170,8 +171,9 @@ export class ChunkFromAPI implements IChunkFromSource {
         baseUrl: baseUrl,
         fetchPath: fetchPath,
         populationType: (populationType as SyncPopulation) || ChunkFromAPI.defaultPopulationType,
-        bulkReset: BULK_RESET?.toLowerCase() === 'true',
-        trustPreviousStorage: TRUST_PREVIOUS_STORAGE?.toLowerCase() === 'true',
+        previousStateSource: requirePreviousStateSource(
+          { bulkReset: BULK_RESET ?? 'false', trustPreviousStorage: TRUST_PREVIOUS_STORAGE }, 'The chunker environment'
+        ),
         offset: offset ? parseInt(offset, 10) : undefined,
         iterationLimit: iterationLimit ? parseInt(iterationLimit, 10) : undefined,
         chunkDirectory: chunkDirectory || undefined
@@ -214,8 +216,9 @@ export class ChunkFromAPI implements IChunkFromSource {
         baseUrl: baseUrl,
         fetchPath: fetchPath,
         populationType: populationType as SyncPopulation,
-        bulkReset: BULK_RESET?.toLowerCase() === 'true',
-        trustPreviousStorage: TRUST_PREVIOUS_STORAGE?.toLowerCase() === 'true',
+        previousStateSource: requirePreviousStateSource(
+          { bulkReset: BULK_RESET ?? 'false', trustPreviousStorage: TRUST_PREVIOUS_STORAGE }, 'The chunker environment'
+        ),
         offset: offset ? parseInt(offset, 10) : undefined,
         iterationLimit: iterationLimit ? parseInt(iterationLimit, 10) : undefined,
         chunkDirectory: chunkDirectory || undefined
@@ -244,8 +247,8 @@ export class ChunkFromAPI implements IChunkFromSource {
     const offset = messageBody.offset !== undefined ? Number(messageBody.offset) : 0;
     const iterationLimit = messageBody.iterationLimit !== undefined ? Number(messageBody.iterationLimit) : 0;
     const chunkDirectory = messageBody.chunkDirectory;
-    const bulkReset = messageBody.bulkReset;
-    const trustPreviousStorage = messageBody.trustPreviousStorage;
+    // A message queued before previousStateSource existed carries the deprecated pair, which this translates
+    const previousStateSource = requirePreviousStateSource(messageBody, 'The chunker queue message');
     const personRecordProcessorAddons = messageBody.personRecordProcessorAddons;
     const termsEndpoint = messageBody.termsEndpoint;
     const startedBy = RunStarter.from(messageBody.startedBy);
@@ -258,10 +261,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       offset,
       iterationLimit,
       chunkDirectory,
-      bulkReset: typeof bulkReset === 'boolean' ? bulkReset : bulkReset === 'true',
-      trustPreviousStorage: typeof trustPreviousStorage === 'boolean'
-        ? trustPreviousStorage
-        : trustPreviousStorage === 'true',
+      previousStateSource,
       personRecordProcessorAddons,
       termsEndpoint,
       ...(startedBy ? { startedBy } : {}),
@@ -391,19 +391,11 @@ export class ChunkFromAPI implements IChunkFromSource {
   }
 
   /**
-   * Get the bulkReset flag from task parameters.
-   * Returns true if bulkReset was specified in SQS message or environment, false otherwise.
+   * Where the run's previous state comes from, as its message (or the environment, locally) asked for. The chunker may
+   * still turn `storage` into `target` when there is no baseline (docker/chunker.ts).
    */
-  public getBulkResetFlag = (): boolean => {
-    return this.taskParameters?.bulkReset || false;
-  }
-
-  /**
-   * Get the trustPreviousStorage flag from task parameters.
-   * Returns true if previous storage should be trusted, false otherwise.
-   */
-  public getTrustPreviousStorageFlag = (): boolean => {
-    return this.taskParameters?.trustPreviousStorage || false;
+  public getPreviousStateSource = (): PreviousStateSource | undefined => {
+    return this.taskParameters?.previousStateSource;
   }
 
   /**
@@ -499,22 +491,21 @@ export class ChunkFromAPI implements IChunkFromSource {
       region,
       itemsPerChunk,
       personIdField,
-      bulkReset: bulkResetOverride = false,
-      trustPreviousStorage: trustPreviousStorageOverride = false,
+      previousStateSource: previousStateSourceOverride,
       dryRun
     } = params;
 
     try {
-      let { bulkReset, trustPreviousStorage, populationType } = this.taskParameters || {
-        bulkReset: false,
-        trustPreviousStorage: false
-      };
-      const { iterationLimit, offset } = this.getIterationLimitAndOffset();
-      if(bulkReset !== bulkResetOverride && bulkResetOverride === true) {
-        console.warn(`Overriding bulkReset flag in task parameters from ${bulkReset} to ${bulkResetOverride} based on message parameters`);
+      const { populationType } = this.taskParameters || {};
+      // The chunker's choice (docker/chunker.ts: the message's, or target when there is no baseline) wins
+      const previousStateSource = previousStateSourceOverride ?? this.taskParameters?.previousStateSource;
+      if (!previousStateSource) {
+        throw new Error('No previousStateSource for the run, from the chunker or its message');
       }
-      bulkReset = bulkReset || bulkResetOverride; // Allow override of bulkReset flag from message parameters if needed
-      trustPreviousStorage = trustPreviousStorage || trustPreviousStorageOverride;
+      if (previousStateSourceOverride && previousStateSourceOverride !== this.taskParameters?.previousStateSource) {
+        console.warn(`Previous state source ${this.taskParameters?.previousStateSource} in the message overridden by the chunker: ${previousStateSourceOverride}`);
+      }
+      const { iterationLimit, offset } = this.getIterationLimitAndOffset();
       
       if( ! populationType) {
         console.warn(`Population type not specified either POPULATION_TYPE environment variable or message parameters, defaulting to ${ChunkFromAPI.defaultPopulationType}`);
@@ -536,8 +527,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       console.log(`Chunks: s3://${chunksBucket}/${chunkDirectory}/`);
       console.log(`Region: ${region || 'default'}`);
       console.log(`Items per chunk: ${itemsPerChunk}`);
-      console.log(`Bulk reset flag: ${bulkReset}`);
-      console.log(`Trust previous storage: ${trustPreviousStorage}`);
+      console.log(`Previous state source: ${previousStateSource}`);
       console.log(`Offset: ${offset}`);
       console.log(`iterationLimit: ${iterationLimit}`);
       console.log(`Person ID field: ${personIdField}`);
@@ -637,8 +627,7 @@ export class ChunkFromAPI implements IChunkFromSource {
           source: sourceUrl,
           target: targetUrl,
           dryRun: fetchConfig.dryRun || false,
-          bulkReset,
-          trustPreviousStorage,
+          previousStateSource,
           syncPopulation: this.taskParameters.populationType as SyncPopulation,
           runFailureMessage,
           runFailureTimestamp
@@ -663,8 +652,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         source: sourceUrl,
         target: targetUrl,
         itemsPerChunk,
-        bulkReset,
-        trustPreviousStorage,
+        previousStateSource,
         syncPopulation: this.taskParameters.populationType as SyncPopulation,
         chunkCountDelta: result.chunkCount,
         totalRecordsDelta: result.totalRecords,

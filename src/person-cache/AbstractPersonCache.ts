@@ -5,7 +5,7 @@ import { AbstractPersonTarget } from "./PersonTargetReal";
  * Abstract base class for person cache implementations.
  * 
  * The person cache stores sourceIdentifiers (BUIDs) of all persons currently in the 
- * target system. This cache is used during bulkReset=true mode to determine whether
+ * target system. This cache is used when previousStateSource=target to determine whether
  * to CREATE or PATCH records without querying the target API for each person individually.
  * 
  * ## Design Pattern: Template Method

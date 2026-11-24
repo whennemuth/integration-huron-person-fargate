@@ -15,7 +15,7 @@ describe('MetadataForS3.writeFlags', () => {
   const flagsKey = `${chunkDirectory}/_flags.json`;
   const params = (overrides: Record<string, any> = {}) => ({
     bucketName, chunkDirectory, region: 'us-east-2',
-    bulkReset: false, trustPreviousStorage: true, syncPopulation: SyncPopulation.PersonFull,
+    previousStateSource: 'storage' as const, syncPopulation: SyncPopulation.PersonFull,
     ...overrides
   });
 
@@ -39,13 +39,13 @@ describe('MetadataForS3.writeFlags', () => {
       expect(storage.writeFile).toHaveBeenCalledTimes(1);
       expect(storage.writeFile.mock.calls[0][0]).toBe(flagsKey);
       expect(JSON.parse(storage.writeFile.mock.calls[0][1])).toEqual({
-        bulkReset: false, trustPreviousStorage: true, syncPopulation: SyncPopulation.PersonFull
+        previousStateSource: 'storage' as const, syncPopulation: SyncPopulation.PersonFull
       });
     });
 
     it('leaves existing flags alone by default', async () => {
       const storage = adapter(true);
-      await new MetadataForS3({ config, storage: storage as any }).writeFlags(params({ bulkReset: true }));
+      await new MetadataForS3({ config, storage: storage as any }).writeFlags(params({ previousStateSource: 'target' }));
 
       expect(storage.writeFile).not.toHaveBeenCalled();
     });

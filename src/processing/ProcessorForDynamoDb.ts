@@ -250,7 +250,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     const { flags } = await new MetadataFactoryForBootstrap()
       .readFlagsForBootstrap({ bucketName, chunkDirectory, region });
 
-    const { bulkReset, trustPreviousStorage, syncPopulation } = resolveCommonFlags(flags, BULK_RESET);
+    const { previousStateSource, syncPopulation } = resolveCommonFlags(flags, BULK_RESET);
 
 
     // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
@@ -313,8 +313,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     const integration = new HuronPersonIntegration({ 
       config,
       staticMapUsage,
-      bulkReset,
-      trustPreviousStorage,
+      previousStateSource,
       cache,
       lookupPersonInTargetSystemCache: (() => {
         // Create PersonCacheLookup instance once for entire chunk processing

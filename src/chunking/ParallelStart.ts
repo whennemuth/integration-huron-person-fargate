@@ -3,6 +3,7 @@ import { MetricsCatchupDelay } from '../runner/MetricsCatchupDelay';
 import { QueueSeeder } from './fetch/QueueSeeder';
 import { isRunStartEvent } from './RunCounters';
 import type { ApiChunkerEvent } from './ChunkerSubscriber';
+import { requirePreviousStateSource } from './PreviousStateSource';
 
 /** What a seeded run start does in AWS, injectable so it can be tested without AWS */
 export type ParallelStartDeps = {
@@ -119,7 +120,7 @@ export class ParallelStart {
     const seed = (n: number) => new QueueSeeder({
       stackId, region, landscape, queueUrl: queueUrl!,
       baseUrl: event.baseUrl, fetchPath: event.fetchPath, populationType: event.populationType,
-      bulkReset: event.bulkReset, trustPreviousStorage: event.trustPreviousStorage,
+      previousStateSource: requirePreviousStateSource(event, 'The run start event'),
       iterationLimit: event.iterationLimit!, messagesToSeed: n,
       personRecordProcessorAddons: event.personRecordProcessorAddons, termsEndpoint: event.termsEndpoint,
       startedBy: event.startedBy, processorScalingCapacity: event.processorScalingCapacity

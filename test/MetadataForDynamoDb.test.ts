@@ -43,8 +43,7 @@ describe('MetadataForDynamoDb', () => {
         itemsPerChunk: 500,
         source: 'BU CDM People API',
         target: 'Huron Target System',
-        bulkReset: false,
-        trustPreviousStorage: true,
+        previousStateSource: 'storage' as const,
         syncPopulation: SyncPopulation.PersonFull,
       };
 
@@ -57,8 +56,7 @@ describe('MetadataForDynamoDb', () => {
           source: 'BU CDM People API',
           target: 'Huron Target System',
           chunkDirectory,
-          bulkReset: false,
-          trustPreviousStorage: true,
+          previousStateSource: 'storage' as const,
           syncPopulation: SyncPopulation.PersonFull,
         })
       );
@@ -69,8 +67,7 @@ describe('MetadataForDynamoDb', () => {
         chunkDirectory,
         itemsPerChunk: 500,
         source: 'BU CDM',
-        bulkReset: false,
-        trustPreviousStorage: true,
+        previousStateSource: 'storage' as const,
         syncPopulation: SyncPopulation.PersonFull,
       };
 
@@ -87,8 +84,7 @@ describe('MetadataForDynamoDb', () => {
         chunkDirectory,
         itemsPerChunk: 500,
         source: 'BU CDM',
-        bulkReset: false,
-        trustPreviousStorage: true,
+        previousStateSource: 'storage' as const,
         syncPopulation: SyncPopulation.PersonFull,
         // target omitted
       };
@@ -104,8 +100,7 @@ describe('MetadataForDynamoDb', () => {
         chunkDirectory,
         itemsPerChunk: 500,
         source: 'BU CDM',
-        bulkReset: false,
-        trustPreviousStorage: true,
+        previousStateSource: 'storage' as const,
         syncPopulation: SyncPopulation.PersonFull,
         runFailed: true,
         runFailureMessage: 'Test failure',
@@ -125,8 +120,7 @@ describe('MetadataForDynamoDb', () => {
     it('should write flags record via writeFlags', async () => {
       const params = {
         chunkDirectory,
-        bulkReset: true,
-        trustPreviousStorage: false,
+        previousStateSource: 'target' as const,
         syncPopulation: SyncPopulation.PersonFull,
       };
 
@@ -135,8 +129,7 @@ describe('MetadataForDynamoDb', () => {
       expect(mockStatisticsTable.writeFlags).toHaveBeenCalledWith(
         syncRunId,
         expect.objectContaining({
-          bulkReset: true,
-          trustPreviousStorage: false,
+          previousStateSource: 'target' as const,
           syncPopulation: SyncPopulation.PersonFull,
         })
       );
@@ -145,24 +138,21 @@ describe('MetadataForDynamoDb', () => {
     it('should include standard flag fields', async () => {
       const params = {
         chunkDirectory,
-        bulkReset: false,
-        trustPreviousStorage: true,
+        previousStateSource: 'storage' as const,
         syncPopulation: SyncPopulation.PersonDelta,
       };
 
       await metadata.writeFlags(params);
 
       const call = mockStatisticsTable.writeFlags.mock.calls[0][1];
-      expect(call.bulkReset).toBe(false);
-      expect(call.trustPreviousStorage).toBe(true);
+      expect(call.previousStateSource).toBe('storage');
       expect(call.syncPopulation).toBe(SyncPopulation.PersonDelta);
     });
 
     it('should include personRecordProcessorAddons when present', async () => {
       const params = {
         chunkDirectory,
-        bulkReset: true,
-        trustPreviousStorage: false,
+        previousStateSource: 'target' as const,
         syncPopulation: SyncPopulation.PersonFull,
         personRecordProcessorAddons: 'ORG_COMPARISON_LOGGING',
       };
@@ -175,7 +165,7 @@ describe('MetadataForDynamoDb', () => {
 
     it('should include termsEndpoint when present, and omit it otherwise', async () => {
       const termsEndpoint = { baseUrl: 'https://sim.example.com', fetchPath: '/terms' };
-      const params = { chunkDirectory, bulkReset: true, trustPreviousStorage: false, syncPopulation: SyncPopulation.PersonFull };
+      const params = { chunkDirectory, previousStateSource: 'target' as const, syncPopulation: SyncPopulation.PersonFull };
 
       await metadata.writeFlags({ ...params, termsEndpoint });
       await metadata.writeFlags({ ...params, replace: true });
@@ -185,7 +175,7 @@ describe('MetadataForDynamoDb', () => {
     });
 
     it('should include who started the run when present, and omit it otherwise', async () => {
-      const params = { chunkDirectory, bulkReset: false, trustPreviousStorage: true, syncPopulation: SyncPopulation.PersonFull };
+      const params = { chunkDirectory, previousStateSource: 'storage' as const, syncPopulation: SyncPopulation.PersonFull };
 
       await metadata.writeFlags({ ...params, startedBy: { by: 'schedule' } });
       await metadata.writeFlags({ ...params, replace: true });
@@ -195,7 +185,7 @@ describe('MetadataForDynamoDb', () => {
     });
 
     it('should include the processor maximum the run started with when present, and omit it otherwise', async () => {
-      const params = { chunkDirectory, bulkReset: false, trustPreviousStorage: true, syncPopulation: SyncPopulation.PersonFull };
+      const params = { chunkDirectory, previousStateSource: 'storage' as const, syncPopulation: SyncPopulation.PersonFull };
 
       await metadata.writeFlags({ ...params, processorScalingCapacity: { maxTasks: 3, overridden: false } });
       await metadata.writeFlags({ ...params, replace: true });
@@ -213,8 +203,7 @@ describe('MetadataForDynamoDb', () => {
         target: 'Huron',
         chunkDirectory,
         deltaStoragePath: 'delta-storage/PersonFull',
-        bulkReset: false,
-        trustPreviousStorage: true,
+        previousStateSource: 'storage' as const,
         syncPopulation: SyncPopulation.PersonFull,
         createdAt: '2026-05-26T15:00:00.000Z',
       };
@@ -245,8 +234,7 @@ describe('MetadataForDynamoDb', () => {
   describe('readFlags', () => {
     it('should read flags record by syncRunId', async () => {
       const mockFlags = {
-        bulkReset: true,
-        trustPreviousStorage: false,
+        previousStateSource: 'target' as const,
         syncPopulation: SyncPopulation.PersonFull,
       };
 
@@ -258,8 +246,7 @@ describe('MetadataForDynamoDb', () => {
         syncRunId
       );
       expect(result).toEqual(expect.objectContaining({
-        bulkReset: true,
-        trustPreviousStorage: false,
+        previousStateSource: 'target' as const,
         syncPopulation: SyncPopulation.PersonFull,
       }));
     });
@@ -341,8 +328,7 @@ describe('MetadataForDynamoDb', () => {
   describe('isRunFailed', () => {
     it('should return true when flags indicate run failed', async () => {
       mockStatisticsTable.readFlags.mockResolvedValue({
-        bulkReset: false,
-        trustPreviousStorage: true,
+        previousStateSource: 'storage' as const,
         syncPopulation: SyncPopulation.PersonFull,
         runFailed: true,
       });
@@ -354,8 +340,7 @@ describe('MetadataForDynamoDb', () => {
 
     it('should return false when flags indicate run succeeded', async () => {
       mockStatisticsTable.readFlags.mockResolvedValue({
-        bulkReset: false,
-        trustPreviousStorage: true,
+        previousStateSource: 'storage' as const,
         syncPopulation: SyncPopulation.PersonFull,
         runFailed: false,
       });
@@ -367,8 +352,7 @@ describe('MetadataForDynamoDb', () => {
 
     it('should return false when runFailed field is undefined', async () => {
       mockStatisticsTable.readFlags.mockResolvedValue({
-        bulkReset: false,
-        trustPreviousStorage: true,
+        previousStateSource: 'storage' as const,
         syncPopulation: SyncPopulation.PersonFull,
       });
 
@@ -412,8 +396,7 @@ describe('MetadataForDynamoDb', () => {
       chunkDirectory,
       itemsPerChunk: 500,
       source: 'BU CDM',
-      bulkReset: false,
-      trustPreviousStorage: true,
+      previousStateSource: 'storage' as const,
       syncPopulation: SyncPopulation.PersonFull,
       runFailureMessage: 'Test failure',
       runFailureTimestamp: '2026-05-26T15:30:00.000Z',
@@ -439,8 +422,7 @@ describe('MetadataForDynamoDb', () => {
     it('should extract syncRunId from chunkDirectory', async () => {
       const params = {
         chunkDirectory: 'chunks/PersonFull/2026-12-25T10:30:45.678Z',
-        bulkReset: false,
-        trustPreviousStorage: true,
+        previousStateSource: 'storage' as const,
         syncPopulation: SyncPopulation.PersonFull,
       };
 
@@ -453,8 +435,7 @@ describe('MetadataForDynamoDb', () => {
     it('should handle different population types', async () => {
       const params = {
         chunkDirectory: 'chunks/PersonDelta/2026-01-01T00:00:00.000Z',
-        bulkReset: true,
-        trustPreviousStorage: false,
+        previousStateSource: 'target' as const,
         syncPopulation: SyncPopulation.PersonDelta,
       };
 

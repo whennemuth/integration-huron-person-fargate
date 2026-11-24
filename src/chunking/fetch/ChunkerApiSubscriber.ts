@@ -3,6 +3,7 @@ import { ApiChunkerEvent } from '../ChunkerSubscriber';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 import { TaskParameters } from './ChunkFromAPI';
 import { CHUNKER_SUBSCRIBER_BASE_NAME } from '../../Utils';
+import { previousStateRefusal, previousStateSourceIn } from '../PreviousStateSource';
 
 export const FUNCTION_BASE_NAME = CHUNKER_SUBSCRIBER_BASE_NAME;
 
@@ -45,7 +46,8 @@ const sqsClient = new SQSClient({ region });
  *   baseUrl: string,              // API base URL (e.g., 'https://api.bu.edu')
  *   fetchPath: string,            // API fetch path (e.g., '/people/v1')
  *   populationType: string,       // 'person-full' or 'person-delta'
- *   bulkReset?: boolean,          // Optional flag for bulk reset (default: false)
+ *   previousStateSource: string,  // 'storage' or 'target' (a bulk reset); or the deprecated bulkReset /
+ *                                 // trustPreviousStorage pair, translated. Refused when neither is given.
  *   processingMetadata?: {
  *     processedAt?: string,
  *     processorVersion?: string
@@ -66,7 +68,7 @@ const sqsClient = new SQSClient({ region });
 export async function handleApiEvent(event: ApiChunkerEvent, chunkerQueueUrl?:string): Promise<any> {
   // Extract API parameters from event
   const { 
-    baseUrl, fetchPath, populationType, bulkReset, trustPreviousStorage = false, iterationLimit = 0, offset = 0,
+    baseUrl, fetchPath, populationType, iterationLimit = 0, offset = 0,
     chunkDirectory, personRecordProcessorAddons, termsEndpoint, startedBy, processorScalingCapacity,
     processingMetadata: { processedAt, processorVersion } = {} 
   } = event;
@@ -99,6 +101,13 @@ export async function handleApiEvent(event: ApiChunkerEvent, chunkerQueueUrl?:st
     return { statusCode: 400, body: errMsg };
   }
 
+  // Where the run's previous state comes from: no default (src/chunking/PreviousStateSource.ts)
+  const previousStateProblem = previousStateRefusal(event);
+  if (previousStateProblem) {
+    const errMsg = `Invalid API event: ${previousStateProblem}`;
+    console.error(errMsg);
+    return { statusCode: 400, body: errMsg };
+  }
 
   // End early if in dry run mode
   if (dryRun) {
@@ -116,8 +125,7 @@ export async function handleApiEvent(event: ApiChunkerEvent, chunkerQueueUrl?:st
     baseUrl,
     fetchPath,
     populationType,
-    bulkReset: `${bulkReset}`.toLowerCase() === 'true',
-    trustPreviousStorage: `${trustPreviousStorage}`.toLowerCase() === 'true',
+    previousStateSource: previousStateSourceIn(event)!,
     iterationLimit,
     offset,
   } as TaskParameters;

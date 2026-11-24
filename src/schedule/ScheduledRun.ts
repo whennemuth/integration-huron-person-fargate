@@ -107,9 +107,10 @@ export type ScheduledRunParms = {
  *
  * The two previous-state flags only ever act together (bulkReset || !trustPreviousStorage: the chunker's person
  * cache, DeltaStrategyFactory.trustsPreviousStorage() in integration-huron-person), so they are set as one choice,
- * bulk reset or not (previousStateFlags()). Consolidating them into one setting is a TODO in integration-huron-person
- * (src/delta-strategy/TODO.md). A missing trustPreviousStorage reads as false in the chunker subscriber, which acts
- * as a reset, so both are always sent. The context's BULK_RESET and TRUST_PREVIOUS_STORAGE play no part here.
+ * bulk reset or not (previousStateFlags()). Consolidating them into one setting is planned in integration-huron-person
+ * (its delta-strategy plan): the chunker subscriber already translates the pair into the run's one previousStateSource
+ * (src/chunking/PreviousStateSource.ts), and refuses an event with neither. The context's BULK_RESET and
+ * TRUST_PREVIOUS_STORAGE play no part here.
  *
  * **Instance** (one landscape's schedule, through EventBridgeSchedule), with the bulk sync rules:
  * - one schedule per landscape: the name is fixed, and a second create is refused (EXISTS);

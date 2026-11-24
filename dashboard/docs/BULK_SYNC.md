@@ -77,8 +77,9 @@ subscriber's), after Parallel start under Custom settings.
 ### Bulk reset
 
 Bulk reset is one choice for both previous-state flags (`ScheduledRun.previousStateFlags()`): checked sends
-`bulkReset: true, trustPreviousStorage: false`, unchecked `false, true`. The pipeline only acts on their combination,
-and a missing `trustPreviousStorage` reads as `false` (a reset), so both are always sent.
+`bulkReset: true, trustPreviousStorage: false`, unchecked `false, true`. The pipeline only acts on their combination: the
+chunker subscriber translates them into the run's one `previousStateSource` (`target` for a reset), and refuses an
+event that has neither it nor the pair.
 
 ### Not offered
 

@@ -24,7 +24,7 @@ import { AbstractPersonTarget, PersonTargetReal } from './PersonTargetReal';
  * 5. **Simplicity**: Newline-delimited text is trivial to read/write
  * 
  * ## Cache Lifecycle:
- * 1. Chunker writes cache at start if bulkReset=true
+ * 1. Chunker writes cache at start if previousStateSource=target
  * 2. Processors read cache for CREATE vs PATCH decisions
  * 3. Cache is sync-scoped (stored under chunkDirectory)
  * 4. No need to persist between syncs
@@ -388,7 +388,7 @@ export class PersonCacheForS3 extends AbstractPersonCache {
     } catch (error: any) {
       if (error.name === 'NoSuchKey') {
         console.warn(`  ⚠️  Cache file not found at s3://${bucketName}/${key}`);
-        console.warn('  💡 This is expected if bulkReset was not enabled or chunker did not complete');
+        console.warn('  💡 This is expected if previousStateSource was not target or chunker did not complete');
         return sourceIdentifiers; // Return empty Set
       }
       

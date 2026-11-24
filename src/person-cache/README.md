@@ -1,6 +1,6 @@
 # Person Cache Module
 
-Person cache stores sourceIdentifiers (BUIDs) of all persons currently in the target system. Used when `bulkReset=true` or `trustPreviousStorage=false` to determine CREATE vs PATCH operations without querying target API for each person.
+Person cache stores sourceIdentifiers (BUIDs) of all persons currently in the target system. Used when the run's `previousStateSource` is `target` (a bulk reset, or a run with no baseline) to determine CREATE vs PATCH operations without querying target API for each person.
 
 ## Architecture
 
@@ -189,7 +189,7 @@ if (await cache.acquireCacheLock({ bucketName, key, region })) {
 
 ## Cache Lifecycle
 
-1. **Chunker Phase**: Ensures cache exists at start if `bulkReset=true` or `trustPreviousStorage=false`
+1. **Chunker Phase**: Ensures cache exists at start if `previousStateSource=target`
    (`<chunkDirectory>/_personCache.txt`)
    - **Concurrent coordination**: 15+ tasks may start simultaneously
    - **One task creates**: Uses `ensureCache()` with marker file locks

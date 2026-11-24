@@ -7,6 +7,7 @@ import { IContext } from '../../context/IContext';
 import { StatisticsItem } from '../ApiErrorTracking';
 import { AbstractDynamoDbTable, DynamoDBTable, QueryPage } from './DynamoDBTable';
 import { OCCFlag } from './OCCFlag';
+import { PreviousStateSource, previousStateSourceIn } from '../chunking/PreviousStateSource';
 
 export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-statistics-${context.TAGS.Landscape.toLowerCase()}`;
 export const DYNAMODB_PARTITION_KEY = 'integrationTimestamp';
@@ -106,8 +107,7 @@ export type MetadataDescriptiveFields = {
   target?: string;
   chunkDirectory: string;
   itemsPerChunk: number;
-  bulkReset: boolean;
-  trustPreviousStorage: boolean;
+  previousStateSource: PreviousStateSource;
   syncPopulation: string;
   deltaStoragePath: string;
 };
@@ -121,6 +121,9 @@ export type RunSummary = {
   createdAt?: string;
   completedAt: string;
   syncPopulation?: string;
+  /** Where the run's previous state came from (from METADATA): `target` for a bulk reset, or a run with no baseline */
+  previousStateSource?: PreviousStateSource;
+  /** @deprecated In summaries written before previousStateSource: true for a bulk reset */
   bulkReset?: boolean;
   /** Chunks written and records fetched by the chunker (from METADATA) */
   chunkCount?: number;
@@ -217,7 +220,7 @@ export class StatisticsTable {
       createdAt: metadata.createdAt,
       completedAt: new Date().toISOString(),
       syncPopulation: metadata.syncPopulation,
-      bulkReset: metadata.bulkReset,
+      previousStateSource: previousStateSourceIn(metadata),
       chunkCount: metadata.chunkCount,
       totalRecords: metadata.totalRecords,
       ...totals,
@@ -371,7 +374,7 @@ export class StatisticsTable {
    * FLAGS record format:
    * - PK: syncRunId (ISO timestamp)
    * - SK: "FLAGS"
-   * - The Flags fields (src/chunking/metadata/IMetadataStorage.ts): bulkReset, trustPreviousStorage, syncPopulation,
+   * - The Flags fields (src/chunking/metadata/IMetadataStorage.ts): previousStateSource, syncPopulation,
    *   and the optional runFailed..., personRecordProcessorAddons, termsEndpoint, startedBy, processorScalingCapacity
    * 
    * @param syncRunId - ISO timestamp identifying the sync run
@@ -601,10 +604,10 @@ export class StatisticsTable {
     setClauses: string[]; names: Record<string, string>; values: Record<string, any>;
   } {
     const {
-      source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation, deltaStoragePath
+      source, target, chunkDirectory, itemsPerChunk, previousStateSource, syncPopulation, deltaStoragePath
     } = params;
     const fields: Record<string, any> = {
-      source, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation, deltaStoragePath,
+      source, chunkDirectory, itemsPerChunk, previousStateSource, syncPopulation, deltaStoragePath,
       createdAt: new Date().toISOString(),
       ...(target !== undefined ? { target } : {})
     };

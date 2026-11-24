@@ -15,14 +15,18 @@
    */
   export function validateMetadata(metadata: Partial<ChunkMetadata>): void {
     const requiredFields: (keyof ChunkMetadata)[] = [
-      'bulkReset', 'deltaStoragePath', 'syncPopulation'
+      'previousStateSource', 'deltaStoragePath', 'syncPopulation'
     ];
 
     for (const field of requiredFields) {
       if (metadata[field] === undefined) {
-        const defaultValue = field === 'syncPopulation' 
-          ? SyncPopulation.PersonFull 
-          : false;
+        // A run recorded before previousStateSource existed has bulkReset / trustPreviousStorage instead
+        if (field === 'previousStateSource' && (metadata.bulkReset !== undefined || metadata.trustPreviousStorage !== undefined)) {
+          continue;
+        }
+        const defaultValue = field === 'syncPopulation'
+          ? SyncPopulation.PersonFull
+          : field === 'previousStateSource' ? 'unknown' : false;
         console.warn(`⚠️ ${field} value not found in metadata, defaulting to ${defaultValue}`);
       }
     }

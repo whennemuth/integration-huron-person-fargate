@@ -13,6 +13,7 @@ import { SyncPopulation } from '../../docker/chunkTypes';
 import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../ApiErrorTracking';
 import { NextChunk, QueueReader } from '../Queue';
 import { Flags } from '../chunking/metadata/IMetadataStorage';
+import { PreviousStateSource, previousStateSourceIn } from '../chunking/PreviousStateSource';
 import { personRecordProcessorFactory } from './addon/PersonRecordProcessorFactory';
 
 export const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
@@ -50,24 +51,26 @@ export async function resolveNextChunk(params: {
 }
 
 /**
- * Derives bulkReset/trustPreviousStorage/syncPopulation from this run's Flags, falling back to
- * environment/defaults, with the console logging both processors report identically.
+ * Derives previousStateSource/syncPopulation from this run's Flags, falling back to environment/defaults, with the
+ * console logging both processors report identically.
+ *
+ * previousStateSource comes from the Flags (for a run recorded before it existed, their bulkReset /
+ * trustPreviousStorage, translated: previousStateSourceIn()). Flags without either fall back to the task definition's
+ * BULK_RESET, as before: `target` if it is true, otherwise `storage`.
  */
 export function resolveCommonFlags(flags: Partial<Flags>, bulkResetEnvVar?: string): {
-  bulkReset: boolean,
-  trustPreviousStorage: boolean,
+  previousStateSource: PreviousStateSource,
   syncPopulation: SyncPopulation
 } {
-  const bulkReset = flags.bulkReset ?? (`${bulkResetEnvVar}`.trim().toLowerCase() === 'true');
-  console.log(`Bulk Reset: ${bulkReset}${flags.bulkReset !== undefined ? ' (from flags)' : ' (from environment)'}`);
-
-  const trustPreviousStorage = flags.trustPreviousStorage ?? true;
-  console.log(`Trust Previous Storage: ${trustPreviousStorage}${flags.trustPreviousStorage !== undefined ? ' (from flags)' : ' (defaulted)'}`);
+  const fromFlags = previousStateSourceIn(flags);
+  const previousStateSource: PreviousStateSource = fromFlags
+    ?? (`${bulkResetEnvVar}`.trim().toLowerCase() === 'true' ? 'target' : 'storage');
+  console.log(`Previous State Source: ${previousStateSource}${fromFlags !== undefined ? ' (from flags)' : ' (from environment)'}`);
 
   const syncPopulation = flags.syncPopulation ?? SyncPopulation.PersonFull;
   console.log(`Sync Population: ${syncPopulation}${flags.syncPopulation !== undefined ? ' (from flags)' : ' (defaulted)'}`);
 
-  return { bulkReset, trustPreviousStorage, syncPopulation };
+  return { previousStateSource, syncPopulation };
 }
 
 /**

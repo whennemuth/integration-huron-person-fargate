@@ -278,10 +278,10 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     // Validate required information
     ChunkFileManager.validateChunk(nextChunk);
 
-    // Read flags file to get per-sync configuration (bulkReset, syncPopulation, trustPreviousStorage)
+    // Read flags file to get per-sync configuration (previousStateSource, syncPopulation, ...)
     const flags = await metadataStorage.readFlagsFromChunkKey(bucketName, s3Key!, region);
 
-    const { bulkReset, trustPreviousStorage, syncPopulation } = resolveCommonFlags(flags, BULK_RESET);
+    const { previousStateSource, syncPopulation } = resolveCommonFlags(flags, BULK_RESET);
 
 
     // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
@@ -350,8 +350,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     const integration = new HuronPersonIntegration({ 
       config,  // Pass pre-built config with S3 or API data source
       staticMapUsage, // Pass through static map usage from environment variable
-      bulkReset, // Pass through bulk reset flag from environment variable
-      trustPreviousStorage, // Pass through trust flag - cache is used when false to force upsert lookup path
+      previousStateSource, // From the run's flags: target looks every person up (through the person cache below)
       cache, // Shared cache for JWT tokens
       lookupPersonInTargetSystemCache: (() => {
         // Create PersonCacheLookup instance once for entire chunk processing (once due to closure)

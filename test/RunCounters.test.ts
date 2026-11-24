@@ -20,7 +20,7 @@ jest.mock('../src/chunking/fetch/ChunkerApiSubscriber', () => ({
   handleApiEvent: jest.fn(async () => ({ statusCode: 200, body: 'Message sent to chunker queue' }))
 }));
 
-const runStart = { baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: 'person-full' } as any;
+const runStart = { baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: 'person-full', previousStateSource: 'storage' } as any;
 const ENV = { STACK_ID: 'huron-person-fargate-processor', LANDSCAPE: 'preview', REGION: 'us-east-2', DRY_RUN: 'false' };
 
 describe('the shared counter reset', () => {

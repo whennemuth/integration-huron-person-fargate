@@ -5,6 +5,7 @@ import { ApiChunkerEvent } from "./ChunkerSubscriber";
 import { handleApiEvent } from "./fetch/ChunkerApiSubscriber";
 import { TaskParameters } from "./fetch/ChunkFromAPI";
 import { SyncPopulation } from "../../docker/chunkTypes";
+import { PreviousStateSource, requirePreviousStateSource } from "./PreviousStateSource";
 
 export type ChunkerQueueParams = {
   isEcsTask: boolean,
@@ -23,8 +24,7 @@ export interface ChunkerMessageBody {
   populationType: string;
   offset: number;
   iterationLimit: number;
-  bulkReset?: boolean;
-  trustPreviousStorage?: boolean;
+  previousStateSource: PreviousStateSource;
   chunkDirectory?: string;
 }
 
@@ -268,8 +268,7 @@ export class ChunkerQueue {
       baseUrl, 
       fetchPath, 
       populationType, 
-      bulkReset, 
-      trustPreviousStorage,
+      previousStateSource,
       personRecordProcessorAddons,
       termsEndpoint,
       startedBy,
@@ -301,8 +300,7 @@ export class ChunkerQueue {
         baseUrl, 
         fetchPath, 
         populationType, 
-        bulkReset, 
-        trustPreviousStorage, 
+        previousStateSource,
         iterationLimit, 
         offset: nextOffset, 
         chunkDirectory,
@@ -413,8 +411,7 @@ async function main() {
       baseUrl,
       fetchPath,
       populationType: normalizedPopulationType,
-      bulkReset: bulkReset?.toLowerCase() === 'true',
-      trustPreviousStorage: trustPreviousStorage?.toLowerCase() === 'true'
+      previousStateSource: requirePreviousStateSource({ bulkReset, trustPreviousStorage }, 'The CHUNKER_QUEUE harness environment')
     };
 
     console.log('📤 Calling sendNextChunkingMessage...\n');

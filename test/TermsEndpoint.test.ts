@@ -41,7 +41,7 @@ describe('termsEndpoint propagation', () => {
 
   it('handleApiEvent puts it on the chunker queue message', async () => {
     await handleApiEvent({
-      baseUrl: 'https://sim.lambda-url.us-east-2.on.aws', fetchPath: '/', populationType: SyncPopulation.PersonFull, termsEndpoint
+      baseUrl: 'https://sim.lambda-url.us-east-2.on.aws', fetchPath: '/', populationType: SyncPopulation.PersonFull, previousStateSource: 'storage' as const, termsEndpoint
     }, 'https://sqs.example.com/queue');
 
     const body = JSON.parse(mockSend.mock.calls[0][0].input.MessageBody);
@@ -50,7 +50,7 @@ describe('termsEndpoint propagation', () => {
 
   it('handleApiEvent leaves it off the message when absent (hybrid and scheduled runs)', async () => {
     await handleApiEvent({
-      baseUrl: 'https://real.example.com', fetchPath: '/people', populationType: SyncPopulation.PersonFull
+      baseUrl: 'https://real.example.com', fetchPath: '/people', populationType: SyncPopulation.PersonFull, previousStateSource: 'storage' as const
     }, 'https://sqs.example.com/queue');
 
     const body = JSON.parse(mockSend.mock.calls[0][0].input.MessageBody);
@@ -60,7 +60,7 @@ describe('termsEndpoint propagation', () => {
   it('the chunker reads it from the queue message', () => {
     const chunker = new ChunkFromAPI(JSON.parse(JSON.stringify(config)));
     chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify({
-      baseUrl: 'https://sim.lambda-url.us-east-2.on.aws', fetchPath: '/', populationType: SyncPopulation.PersonFull, termsEndpoint
+      baseUrl: 'https://sim.lambda-url.us-east-2.on.aws', fetchPath: '/', populationType: SyncPopulation.PersonFull, previousStateSource: 'storage' as const, termsEndpoint
     }) } as Message);
 
     expect(chunker.getTermsEndpoint()).toEqual(termsEndpoint);
@@ -72,7 +72,7 @@ describe('termsEndpoint propagation', () => {
 
     await metadata.writeFlags({
       bucketName: 'bucket', chunkDirectory: 'chunks/person-full/2026-01-01T00:00:00.000Z',
-      bulkReset: false, trustPreviousStorage: true, syncPopulation: SyncPopulation.PersonFull, termsEndpoint
+      previousStateSource: 'storage' as const, syncPopulation: SyncPopulation.PersonFull, termsEndpoint
     });
 
     expect(JSON.parse(writeFile.mock.calls[0][1]).termsEndpoint).toEqual(termsEndpoint);

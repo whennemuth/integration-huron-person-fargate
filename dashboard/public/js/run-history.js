@@ -253,7 +253,7 @@ class RunView {
         this.buid = RunView.buidFrom(metadata.source);
         this.storageMode = summary ? summary.storageMode : undefined;
         this.dryRun = !!(summary && summary.dryRun);
-        this.bulkReset = !!((summary && summary.bulkReset) || metadata.bulkReset || flags.bulkReset);
+        this.bulkReset = RunView.isBulkReset(summary || {}, metadata, flags);
 
         this.chunkCount = first(summary && summary.chunkCount, metadata.chunkCount);
         // The chunker has found the end of the source records, so the records fetched won't grow
@@ -540,6 +540,14 @@ class RunView {
         } catch (error) {
             return undefined;
         }
+    }
+
+    /**
+     * Whether the run looked every person up in Huron: previousStateSource 'target' in any of its records, or, for a
+     * run recorded before previousStateSource existed, bulkReset.
+     */
+    static isBulkReset(...records) {
+        return records.some(record => record && (record.previousStateSource === 'target' || record.bulkReset === true));
     }
 }
 
@@ -1234,6 +1242,9 @@ class RunDetailView {
         if (name === 'syncPopulation') {
             return RunFormat.population(value);
         }
+        if (name === 'previousStateSource') {
+            return value === 'target' ? 'Huron (bulk reset)' : value === 'storage' ? 'Stored hashes' : String(value);
+        }
         if (name === 'startedBy') {
             return RunView.startedByLabel(value) || RunFormat.NONE;
         }
@@ -1260,6 +1271,7 @@ class RunDetailView {
         }
         const labels = {
             syncPopulation: 'Population',
+            previousStateSource: 'Previous state from',
             bulkReset: 'Bulk reset',
             trustPreviousStorage: 'Trust previous storage',
             personRecordProcessorAddons: 'Record processor addons',

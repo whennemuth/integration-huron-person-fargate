@@ -31,7 +31,7 @@ through `ScheduledRun`, never deployed) is `populationType: person-full`, `bulkR
   `ScheduledRun.previousStateFlags(bulkReset)` sets them as one choice, for the schedule and the dashboard alike.
   The context's `BULK_RESET` / `TRUST_PREVIOUS_STORAGE` play no part in either; they remain only as the chunker
   task's environment fallback, which a message carrying both flags never needs. Consolidating the flags into one
-  setting is a TODO in integration-huron-person (`src/delta-strategy/TODO.md`).
+  setting is planned in integration-huron-person (its delta-strategy plan).
 - A landscape gets this at its next pipeline deploy (a `lib/` change).
 
 ### A scheduled start while a run is underway

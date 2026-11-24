@@ -50,7 +50,7 @@ describe('startedBy propagation', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
-  const event = { baseUrl: 'https://cdm.example.edu', fetchPath: '/people', populationType: SyncPopulation.PersonFull };
+  const event = { baseUrl: 'https://cdm.example.edu', fetchPath: '/people', populationType: SyncPopulation.PersonFull, previousStateSource: 'storage' as const };
 
   it('handleApiEvent puts it on the chunker queue message, and leaves it off when absent', async () => {
     await handleApiEvent({ ...event, startedBy: RunStarter.dashboard('jdoe') }, 'https://sqs.example.com/queue');
@@ -77,7 +77,7 @@ describe('startedBy propagation', () => {
 
     await metadata.writeFlags({
       bucketName: 'bucket', chunkDirectory: 'chunks/person-full/2026-01-01T00:00:00.000Z',
-      bulkReset: false, trustPreviousStorage: true, syncPopulation: SyncPopulation.PersonFull, startedBy: RunStarter.RUNNER
+      previousStateSource: 'storage' as const, syncPopulation: SyncPopulation.PersonFull, startedBy: RunStarter.RUNNER
     });
 
     expect(JSON.parse(writeFile.mock.calls[0][1]).startedBy).toEqual({ by: 'runner' });
@@ -91,7 +91,7 @@ describe('processorScalingCapacity propagation (src/chunking/ProcessorCapacityRe
   });
   afterEach(() => jest.restoreAllMocks());
 
-  const event = { baseUrl: 'https://cdm.example.edu', fetchPath: '/people', populationType: SyncPopulation.PersonFull };
+  const event = { baseUrl: 'https://cdm.example.edu', fetchPath: '/people', populationType: SyncPopulation.PersonFull, previousStateSource: 'storage' as const };
   const capacity = { maxTasks: 8, overridden: true };
 
   it('is recorded only for a maximum a run start set, and read back keeping only the known fields', () => {
@@ -130,7 +130,7 @@ describe('processorScalingCapacity propagation (src/chunking/ProcessorCapacityRe
 
     await metadata.writeFlags({
       bucketName: 'bucket', chunkDirectory: 'chunks/person-full/2026-01-01T00:00:00.000Z',
-      bulkReset: false, trustPreviousStorage: true, syncPopulation: SyncPopulation.PersonFull, processorScalingCapacity: capacity
+      previousStateSource: 'storage' as const, syncPopulation: SyncPopulation.PersonFull, processorScalingCapacity: capacity
     });
 
     expect(JSON.parse(writeFile.mock.calls[0][1]).processorScalingCapacity).toEqual(capacity);

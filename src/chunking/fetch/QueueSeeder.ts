@@ -8,6 +8,7 @@ import { AbstractAtomicCounter } from '../../dynamodb/AtomicCounter';
 import { CHUNKER_COUNTER_NAME, CHUNK_ORDINAL_COUNTER_NAME } from '../ChunkerQueue';
 import { RunStarter, StartedBy } from '../StartedBy';
 import type { ProcessorCapacityRecord } from '../ProcessorCapacityRecord';
+import { PreviousStateSource, requirePreviousStateSource } from '../PreviousStateSource';
 
 export type QueueSeederParams = {
   stackId?: string, 
@@ -16,7 +17,11 @@ export type QueueSeederParams = {
   baseUrl: string;
   fetchPath: string;
   populationType: SyncPopulation;
+  /** Where the run's previous state comes from (src/chunking/PreviousStateSource.ts) */
+  previousStateSource?: PreviousStateSource;
+  /** @deprecated Use previousStateSource. Translated, for callers not yet moved over */
   bulkReset?: boolean;
+  /** @deprecated Use previousStateSource. Translated, for callers not yet moved over */
   trustPreviousStorage?: boolean;
   iterationLimit: number;
   messagesToSeed: number;
@@ -164,12 +169,12 @@ export class QueueSeeder {
       baseUrl,
       fetchPath,
       populationType,
-      bulkReset = false,
-      trustPreviousStorage = false,
       iterationLimit,
       messagesToSeed,
       queueUrl,
     } = this.params;
+    // Settled before anything is seeded: refused when the params say neither previousStateSource nor the old pair
+    const previousStateSource = requirePreviousStateSource(this.params, 'The queue seeding');
 
     // Validation
     if (iterationLimit <= 0) {
@@ -187,8 +192,7 @@ export class QueueSeeder {
     console.log(`   - Population Type: ${populationType}`);
     console.log(`   - iterationLimit: ${iterationLimit} records per task`);
     console.log(`   - Chunk Directory: ${chunkDirectory}`);
-    console.log(`   - Bulk Reset: ${bulkReset}`);
-    console.log(`   - Trust Previous Storage: ${trustPreviousStorage}`);
+    console.log(`   - Previous State Source: ${previousStateSource}`);
     console.log(`   - Queue URL: ${queueUrl}`);
     console.log(`   - Using Atomic Counter: ${!!this.offsetCounter}`);
     console.log(`   - Stack ID: ${stackId}`);
@@ -208,8 +212,7 @@ export class QueueSeeder {
         baseUrl,
         fetchPath,
         populationType,
-        bulkReset,
-        trustPreviousStorage,
+        previousStateSource,
         iterationLimit,
         offset,
         chunkDirectory: this.chunkDirectory,

@@ -91,8 +91,7 @@ describe('Chunker Main - Message Deletion', () => {
       setChunkOrdinalAllocator: jest.fn(),
       getIterationLimitAndOffset: jest.fn().mockReturnValue({ offset: 0, iterationLimit: 100 }),
       runChunking: jest.fn().mockResolvedValue(undefined),
-      getBulkResetFlag: jest.fn().mockReturnValue(false),
-      getTrustPreviousStorageFlag: jest.fn().mockReturnValue(true),
+      getPreviousStateSource: jest.fn().mockReturnValue('storage'),
       getSyncPopulation: jest.fn().mockReturnValue('person-full'),
       noMessagesFromQueue: undefined
     } as any;
@@ -104,8 +103,7 @@ describe('Chunker Main - Message Deletion', () => {
       setTaskParametersFromQueueMessage: jest.fn(),
       hasSufficientTaskInfo: jest.fn().mockReturnValue(false),
       runChunking: jest.fn().mockResolvedValue(undefined),
-      getBulkResetFlag: jest.fn().mockReturnValue(false),
-      getTrustPreviousStorageFlag: jest.fn().mockReturnValue(true),
+      getPreviousStateSource: jest.fn().mockReturnValue('storage'),
       getSyncPopulation: jest.fn().mockReturnValue('person-full'),
       noMessagesFromQueue: undefined
     } as any;

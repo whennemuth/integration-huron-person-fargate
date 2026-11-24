@@ -104,7 +104,7 @@ not known until deep inside each `main()`.
 
 Which addon is active is deliberately **not** an `IContext`/task-definition environment variable
 (that would require a full stack redeploy to change). Instead it follows the same
-runtime-configuration precedent as `flags.bulkReset`: a `personRecordProcessorAddons` field
+runtime-configuration precedent as `flags.previousStateSource`: a `personRecordProcessorAddons` field
 (comma-delimited `Addon` keys) flows through `src/chunking/metadata/IMetadataStorage.ts`'s `Flags`
 type, which is written to S3/DynamoDB *before* chunking starts and read back by each processor
 task - so it can be changed per-run without redeploying anything. The full path:
@@ -129,7 +129,7 @@ task - so it can be changed per-run without redeploying anything. The full path:
    processor task starts.
 7. `ProcessorForS3.ts`/`ProcessorForDynamoDb.ts` read it back via
    `flags.personRecordProcessorAddons` (from the same `readFlagsFromChunkKey()` call already used
-   for `flags.bulkReset` etc.) and pass it to `personRecordProcessorFactory()`.
+   for `flags.previousStateSource` etc.) and pass it to `personRecordProcessorFactory()`.
 
 `termsEndpoint` and `startedBy` travel the same way (`docs/SOURCE_SIMULATOR.md`, `docs/RUN_START.md`).
 

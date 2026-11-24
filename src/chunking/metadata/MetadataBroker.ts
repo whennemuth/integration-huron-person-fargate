@@ -2,6 +2,7 @@ import { Config } from 'integration-huron-person';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 import { IMetadataStorage, MarkRunFailedParams, ReadMetadataParams, RecordRunFailureParams, WriteFlagsParams, WriteMetadataParams } from './IMetadataStorage';
 import { MetadataFactory } from './MetadataFactory';
+import type { PreviousStateSource } from '../PreviousStateSource';
 
 export type MetadataBrokerParams = {
   config: Config;
@@ -134,8 +135,7 @@ export class MetadataBroker {
     source: string;
     target?: string;
     itemsPerChunk: number;
-    bulkReset: boolean;
-    trustPreviousStorage: boolean;
+    previousStateSource: PreviousStateSource;
     syncPopulation: SyncPopulation;
     chunkCountDelta: number;
     totalRecordsDelta: number;

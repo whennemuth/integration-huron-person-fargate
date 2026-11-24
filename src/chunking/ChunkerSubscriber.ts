@@ -54,6 +54,7 @@ import { SourceEndpoint, SyncPopulation } from '../../docker/chunkTypes';
 import type { StartedBy } from './StartedBy';
 import { ProcessorCapacity, ProcessorCapacityRecord } from './ProcessorCapacityRecord';
 import { ScheduledStartGuard } from '../schedule/ScheduledStartGuard';
+import { PreviousStateSource, previousStateRefusal, requirePreviousStateSource } from './PreviousStateSource';
 
 /**
  * S3-based event structure
@@ -75,7 +76,14 @@ export interface ApiChunkerEvent {
   baseUrl: string;
   fetchPath: string;
   populationType: SyncPopulation;
+  /**
+   * Where the run's previous state comes from (src/chunking/PreviousStateSource.ts): `storage` or `target` (a bulk
+   * reset). Required, in effect: an event without it, or without the deprecated pair below, is refused.
+   */
+  previousStateSource?: PreviousStateSource;
+  /** @deprecated Use previousStateSource. Accepted, and translated, from senders not yet moved over */
   bulkReset?: boolean;
+  /** @deprecated Use previousStateSource. Accepted, and translated, from senders not yet moved over */
   trustPreviousStorage?: boolean;
   iterationLimit?: number;
   offset?: number;
@@ -260,14 +268,25 @@ export async function handleResetEvent(
 }
 
 /**
- * Why a run's first event can't be started, checked before anything is reset or sent: its reset (resetRefusal()), its
- * parallel start (ParallelStart.refusal()), then its processor scaling capacity override
- * (ProcessorScalingCapacity.refusal()). Undefined when it can be.
+ * Why a run's first event can't be started, checked before anything is reset or sent: where its previous state comes
+ * from (previousStateRefusal(): missing, invalid or contradictory), its reset (resetRefusal()), its parallel start
+ * (ParallelStart.refusal()), then its processor scaling capacity override (ProcessorScalingCapacity.refusal()).
+ * Undefined when it can be.
  */
 export function runStartRefusal(event: ApiChunkerEvent, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  return resetRefusal(event, env)
+  return previousStateRefusal(event)
+    ?? resetRefusal(event, env)
     ?? (ParallelStart.requested(event) > 0 ? ParallelStart.refusal(event, env) : undefined)
     ?? ProcessorScalingCapacity.refusal(event, env);
+}
+
+/**
+ * The event with its previous state source settled (already checked by runStartRefusal()): previousStateSource set,
+ * and the deprecated pair it may have been given as removed, so the seeded and chained messages carry only the one.
+ */
+export function withPreviousStateSource(event: ApiChunkerEvent): ApiChunkerEvent {
+  const { bulkReset, trustPreviousStorage, ...rest } = event;
+  return { ...rest, previousStateSource: requirePreviousStateSource(event, 'The API event') };
 }
 
 /**
@@ -319,6 +338,7 @@ export async function handler(event: S3ChunkerEvent | ApiChunkerEvent | MockLand
       console.error(`Run start refused: ${refusal}`);
       return { statusCode: 400, body: refusal };
     }
+    apiEvent = withPreviousStateSource(apiEvent);
     const skipped = await scheduledStartRefusal(apiEvent);
     if (skipped) {
       console.error(`Scheduled start skipped: ${skipped}`);

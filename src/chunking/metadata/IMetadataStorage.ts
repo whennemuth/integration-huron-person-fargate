@@ -1,16 +1,20 @@
 import { SourceEndpoint, SyncPopulation } from '../../../docker/chunkTypes';
 import type { StartedBy } from '../StartedBy';
 import type { ProcessorCapacityRecord } from '../ProcessorCapacityRecord';
+import type { PreviousStateSource } from '../PreviousStateSource';
 
 /**
  * Flags configuration for chunking pipeline.
  * 
  * These flags control sync behavior and are written early (before chunking starts)
  * so processors can read them immediately.
+ *
+ * Runs recorded before previousStateSource existed have bulkReset and trustPreviousStorage instead: read where a run's
+ * previous state came from with previousStateSourceIn() (src/chunking/PreviousStateSource.ts), never the field alone.
  */
 export type Flags = {
-  bulkReset: boolean;
-  trustPreviousStorage: boolean;
+  /** Where the run's previous state comes from: `storage`, or `target` (a bulk reset, or a run with no baseline) */
+  previousStateSource: PreviousStateSource;
   syncPopulation: SyncPopulation;
   runFailed?: boolean;
   runFailureMessage?: string;
@@ -186,8 +190,7 @@ export interface AccumulateMetadataTotalsParams {
   source: string;
   target?: string;
   itemsPerChunk: number;
-  bulkReset: boolean;
-  trustPreviousStorage: boolean;
+  previousStateSource: PreviousStateSource;
   syncPopulation: SyncPopulation;
   chunkCountDelta: number;
   totalRecordsDelta: number;
@@ -206,8 +209,7 @@ export interface RecordRunFailureParams {
   source: string;
   target?: string;
   itemsPerChunk: number;
-  bulkReset: boolean;
-  trustPreviousStorage: boolean;
+  previousStateSource: PreviousStateSource;
   syncPopulation: SyncPopulation;
   runFailureMessage: string;
   runFailureTimestamp: string;
@@ -249,7 +251,7 @@ export interface IMetadataStorage {
 
   /**
    * Write flags to storage before chunking starts.
-   * This file contains only bulkReset and syncPopulation flags needed by processors.
+   * This file contains the flags processors need (previousStateSource, syncPopulation, ...).
    * Written early so processor tasks can read flags even before chunking completes.
    */
   writeFlags(params: WriteFlagsParams): Promise<void>;
@@ -261,7 +263,7 @@ export interface IMetadataStorage {
 
   /**
    * Read flags from storage.
-   * Flags file contains bulkReset and syncPopulation needed by processors.
+   * Flags file contains the flags processors need (previousStateSource, syncPopulation, ...).
    */
   readFlags(params: ReadFlagsParams): Promise<Partial<Flags>>;
 

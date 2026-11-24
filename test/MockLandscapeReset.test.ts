@@ -26,7 +26,7 @@ jest.mock('../src/chunking/fetch/ChunkerApiSubscriber', () => ({
 }));
 
 const STACK_ID = 'huron-person-fargate-processor';
-const runStart = { baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: 'person-full' } as any;
+const runStart = { baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: 'person-full', previousStateSource: 'storage' } as any;
 const MOCK_ENV = { STACK_ID, LANDSCAPE: 'mock', REGION: 'us-east-2', CHUNKS_BUCKET_NAME: 'huron-person-chunks-mock', DRY_RUN: 'false' };
 
 beforeEach(() => {

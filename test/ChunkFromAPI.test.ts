@@ -231,7 +231,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
     });
 
     it('should use defaults when message fields are missing', () => {
-      const messageBody = {};
+      const messageBody = { previousStateSource: 'storage' };
 
       const chunker = new ChunkFromAPI(mockConfig);
       chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify(messageBody) } as Message);
@@ -239,8 +239,29 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       expect(chunker.hasSufficientConfig()).toBe(true);
     });
 
+    it('refuses a message that does not say where the run\'s previous state comes from (no default)', () => {
+      const chunker = new ChunkFromAPI(mockConfig);
+      expect(() => chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify({}) } as Message))
+        .toThrow('The chunker queue message has no previousStateSource');
+    });
+
+    it.each([
+      [{ previousStateSource: 'storage' }, 'storage'],
+      [{ previousStateSource: 'target' }, 'target'],
+      // A message queued before previousStateSource existed: the deprecated pair, translated
+      [{ bulkReset: false, trustPreviousStorage: true }, 'storage'],
+      [{ bulkReset: 'false', trustPreviousStorage: 'true' }, 'storage'],
+      [{ bulkReset: true, trustPreviousStorage: true }, 'target'],
+      [{ bulkReset: false, trustPreviousStorage: false }, 'target']
+    ])('reads the previous state source of the message %j as %p', (fields, expected) => {
+      const chunker = new ChunkFromAPI(mockConfig);
+      chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify({ populationType: 'person-full', ...fields }) } as Message);
+      expect(chunker.getPreviousStateSource()).toBe(expected);
+    });
+
     it('should handle populationType from message', () => {
       const messageBody = {
+        previousStateSource: 'storage',
         baseUrl: 'https://api.queue.com',
         fetchPath: '/queue/people',
         populationType: SyncPopulation.PersonDelta
@@ -253,6 +274,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
 
     it('should default to person-full when populationType is invalid in message', () => {
       const messageBody = {
+        previousStateSource: 'storage',
         baseUrl: 'https://api.queue.com',
         fetchPath: '/queue/people',
         populationType: 'invalid-type'
@@ -265,6 +287,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
 
     it('should handle from_config placeholder for baseUrl', () => {
       const messageBody = {
+        previousStateSource: 'storage',
         baseUrl: 'from_config',
         fetchPath: '/queue/people',
         populationType: 'person-full'
@@ -278,6 +301,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
 
     it('should handle from_config placeholder for fetchPath', () => {
       const messageBody = {
+        previousStateSource: 'storage',
         baseUrl: 'https://api.queue.com',
         fetchPath: 'from_config',
         populationType: 'person-full'
@@ -306,6 +330,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH = '/env/people';
 
       const messageBody = {
+        previousStateSource: 'storage',
         baseUrl: 'https://api.queue.com',
         fetchPath: '/queue/people',
         populationType: SyncPopulation.PersonDelta
@@ -342,6 +367,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       delete process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH;
 
       const messageBody = {
+        previousStateSource: 'storage',
         baseUrl: 'https://api.queue.com',
         // fetchPath missing, should fall back to config
         populationType: 'person-full'
@@ -435,6 +461,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
 
     it('should extract camelCase offset and iterationLimit from message body', () => {
       const messageBody = {
+        previousStateSource: 'storage',
         baseUrl: 'https://api.queue.com',
         fetchPath: '/queue/people',
         populationType: 'person-full',
@@ -449,6 +476,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
 
     it('should extract offset and iterationLimit as numbers from camelCase message', () => {
       const messageBody = {
+        previousStateSource: 'storage',
         baseUrl: 'https://api.queue.com',
         fetchPath: '/queue/people',
         offset: 5,
@@ -463,6 +491,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
 
     it('should handle offset and iterationLimit with value 0', () => {
       const messageBody = {
+        previousStateSource: 'storage',
         baseUrl: 'https://api.queue.com',
         fetchPath: '/queue/people',
         offset: 0,
@@ -479,6 +508,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       delete process.env.DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT;
 
       const messageBody = {
+        previousStateSource: 'storage',
         baseUrl: 'https://api.queue.com',
         fetchPath: '/queue/people'
       };
@@ -490,6 +520,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
 
     it('should handle numeric offset and iterationLimit values', () => {
       const messageBody = {
+        previousStateSource: 'storage',
         baseUrl: 'https://api.queue.com',
         fetchPath: '/queue/people',
         offset: 25,
@@ -507,6 +538,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       delete process.env.DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT;
 
       const messageBody = {
+        previousStateSource: 'storage',
         baseUrl: 'https://api.queue.com',
         fetchPath: '/queue/people'
       };
