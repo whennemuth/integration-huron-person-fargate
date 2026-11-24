@@ -14,8 +14,8 @@ maximum, then a mock landscape's reset, then the run counters, then the parallel
 
 **The scheduled run is a full sync with stored hashes trusted** (`ScheduledRun`, `src/schedule/ScheduledRun.ts`, since
 2026-11-11): the EventBridge schedule's input (`ScheduledRun.scheduleInput()`; the schedule is managed at run time
-through `ScheduledRun`, never deployed) is `populationType: person-full`, `bulkReset: false`,
-`trustPreviousStorage: true`, with the people endpoint, `iterationLimit` = the context's
+through `ScheduledRun`, never deployed) is `populationType: person-full`, `previousStateSource: storage`, with the
+people endpoint, `iterationLimit` = the context's
 `ECS.chunkerService.chunksPerTask` and `offset: 0`.
 
 - No source endpoint returns only the people who changed yet, so a scheduled run fetches everyone. Trusting the
@@ -27,11 +27,13 @@ through `ScheduledRun`, never deployed) is `populationType: person-full`, `bulkR
   it, until the next good run reactivates them (decided 2026-11-10: no deactivation ceiling). A change made in
   the target outside the integration isn't put right for a person whose source record hasn't changed, until a
   bulk reset (the dashboard's Bulk sync) runs.
-- The two previous-state flags only ever act together (`bulkReset || !trustPreviousStorage`), so
-  `ScheduledRun.previousStateFlags(bulkReset)` sets them as one choice, for the schedule and the dashboard alike.
-  The context's `BULK_RESET` / `TRUST_PREVIOUS_STORAGE` play no part in either; they remain only as the chunker
-  task's environment fallback, which a message carrying both flags never needs. Consolidating the flags into one
-  setting is a TODO in integration-huron-person (`src/delta-strategy/TODO.md`).
+- Where a run's previous state comes from is one setting, `previousStateSource` (`storage`, or `target`: a bulk
+  reset; `src/chunking/PreviousStateSource.ts`), set from the bulk reset choice by
+  `ScheduledRun.previousStateSource(bulkReset)` for the schedule and the dashboard alike, and by
+  `RUNNER_PREVIOUS_STATE_SOURCE` for the Runner. It has no default: the chunker subscriber refuses a start without one.
+  It replaced the `bulkReset` / `trustPreviousStorage` pair, which only ever acted together: the pipeline refuses
+  the pair by name now, and the context's dead `BULK_RESET` / `TRUST_PREVIOUS_STORAGE` are gone. Run history still
+  reads `bulkReset` from runs recorded before, to show them.
 - A landscape gets this at its next pipeline deploy (a `lib/` change).
 
 ### A scheduled start while a run is underway

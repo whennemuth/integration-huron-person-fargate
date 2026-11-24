@@ -15,9 +15,8 @@
 # Parameters:
 #   --populationType   Required. Type of sync: 'person-full' or 'person-delta'
 #   --bulkReset        Required. 'true' ignores stored hashes (a reset); 'false' trusts them (what the schedule runs).
-#                      trustPreviousStorage is always sent as the opposite of bulkReset
-#                      (src/chunking/ScheduledRun.ts, previousStateFlags()): without it the subscriber treats the run
-#                      as a reset.
+#                      Sent as the run's previousStateSource: 'target' for a reset, else 'storage'
+#                      (src/chunking/PreviousStateSource.ts): the subscriber refuses a run without one.
 #   --landscape        Optional. Landscape suffix of the function name (default: TAGS.Landscape in context.json)
 #   --region           Optional. AWS region (default: REGION in context.json, else us-east-2)
 #   --profile          Optional. AWS CLI profile to use (default: none)
@@ -122,11 +121,11 @@ if [[ "$POPULATION_TYPE" != "person-full" && "$POPULATION_TYPE" != "person-delta
   exit 1
 fi
 
-# Validate bulkReset, and derive trustPreviousStorage from it (the two flags only act together)
+# Validate bulkReset, and derive where the run's previous state comes from (src/chunking/PreviousStateSource.ts)
 if [[ "$BULK_RESET" == "true" ]]; then
-  TRUST_PREVIOUS_STORAGE="false"
+  PREVIOUS_STATE_SOURCE="target"
 elif [[ "$BULK_RESET" == "false" ]]; then
-  TRUST_PREVIOUS_STORAGE="true"
+  PREVIOUS_STATE_SOURCE="storage"
 else
   echo "Error: --bulkReset must be 'true' or 'false'"
   exit 1
@@ -143,8 +142,7 @@ PAYLOAD=$(cat <<JSON
   "baseUrl": "from_config",
   "fetchPath": "from_config",
   "populationType": "$POPULATION_TYPE",
-  "bulkReset": $BULK_RESET,
-  "trustPreviousStorage": $TRUST_PREVIOUS_STORAGE,
+  "previousStateSource": "$PREVIOUS_STATE_SOURCE",
   "processingMetadata": {
     "processedAt": "$TIMESTAMP",
     "processorVersion": "1.0.0"
@@ -166,7 +164,7 @@ echo "Starting Off-Schedule Person Sync"
 echo "=========================================="
 echo "Population Type:        $POPULATION_TYPE"
 echo "Bulk Reset:             $BULK_RESET"
-echo "Trust Previous Storage: $TRUST_PREVIOUS_STORAGE"
+echo "Previous State Source:  $PREVIOUS_STATE_SOURCE"
 echo "Landscape:              $LANDSCAPE"
 echo "AWS Profile:            ${PROFILE:-<default>}"
 echo "Function:               $FUNCTION_NAME"

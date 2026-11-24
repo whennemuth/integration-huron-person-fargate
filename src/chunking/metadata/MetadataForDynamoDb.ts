@@ -75,8 +75,7 @@ export class MetadataForDynamoDb implements IMetadataStorage {
       chunkDirectory, itemsPerChunk,
       source,
       target,
-      bulkReset,
-      trustPreviousStorage,
+      previousStateSource,
       syncPopulation,
       runFailed,
       runFailureMessage,
@@ -93,7 +92,7 @@ export class MetadataForDynamoDb implements IMetadataStorage {
 
     const metadata: ChunkMetadata = {
       itemsPerChunk, source, chunkDirectory,
-      deltaStoragePath, bulkReset, trustPreviousStorage, syncPopulation, 
+      deltaStoragePath, previousStateSource, syncPopulation, 
       createdAt: new Date().toISOString()
     };
 
@@ -149,8 +148,7 @@ export class MetadataForDynamoDb implements IMetadataStorage {
   public async writeFlags(params: WriteFlagsParams): Promise<void> {
     const {
       chunkDirectory,
-      bulkReset,
-      trustPreviousStorage,
+      previousStateSource,
       syncPopulation,
       runFailed,
       runFailureMessage,
@@ -166,8 +164,7 @@ export class MetadataForDynamoDb implements IMetadataStorage {
     const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
 
     const flags: Flags = {
-      bulkReset,
-      trustPreviousStorage,
+      previousStateSource,
       syncPopulation
     };
 
@@ -390,13 +387,13 @@ export class MetadataForDynamoDb implements IMetadataStorage {
    */
   public async accumulateMetadataTotals(params: AccumulateMetadataTotalsParams): Promise<{ chunkCount: number; totalRecords: number }> {
     const {
-      chunkDirectory, source, target, itemsPerChunk, bulkReset, trustPreviousStorage,
+      chunkDirectory, source, target, itemsPerChunk, previousStateSource,
       syncPopulation, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
     } = params;
     const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
     const deltaStoragePath = this.metadataUtils.deriveDeltaStoragePath(chunkDirectory);
     return this.statisticsTable.addToMetadataTotals(syncRunId, {
-      source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage,
+      source, target, chunkDirectory, itemsPerChunk, previousStateSource,
       syncPopulation, deltaStoragePath, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
     });
   }
@@ -406,7 +403,7 @@ export class MetadataForDynamoDb implements IMetadataStorage {
    */
   public async recordRunFailure(params: RecordRunFailureParams): Promise<void> {
     const {
-      chunkDirectory, source, target, itemsPerChunk, bulkReset, trustPreviousStorage,
+      chunkDirectory, source, target, itemsPerChunk, previousStateSource,
       syncPopulation, runFailureMessage, runFailureTimestamp, dryRun = false
     } = params;
     const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
@@ -419,7 +416,7 @@ export class MetadataForDynamoDb implements IMetadataStorage {
 
     const deltaStoragePath = this.metadataUtils.deriveDeltaStoragePath(chunkDirectory);
     await this.statisticsTable.mergeRunFailure(syncRunId, {
-      source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage,
+      source, target, chunkDirectory, itemsPerChunk, previousStateSource,
       syncPopulation, deltaStoragePath, runFailureMessage, runFailureTimestamp
     });
     console.log(`✓ Run failure merged into DynamoDB METADATA: syncRunId=${syncRunId}`);

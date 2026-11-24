@@ -23,7 +23,7 @@ const ENV = {
   CHUNKER_QUEUE_URL: 'https://sqs.us-east-2.amazonaws.com/111111111111/chunker', CHUNKER_CLUSTER_NAME: 'huron-person-cluster-preview',
   CHUNKER_SERVICE_NAME: 'Chunker', PROCESSOR_SERVICE_NAME: 'Processor', PROCESSOR_MAX_SCALING_CAPACITY: '3'
 };
-const runStart = { baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: 'person-full', iterationLimit: 10 } as any;
+const runStart = { baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: 'person-full', previousStateSource: 'storage', iterationLimit: 10 } as any;
 
 beforeEach(() => {
   jest.spyOn(console, 'log').mockImplementation(() => undefined);

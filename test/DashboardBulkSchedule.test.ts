@@ -114,7 +114,7 @@ describe('BulkSchedule', () => {
       expect(plan).toMatchObject({ landscape: 'mock', enabled: true, replaces: false, when: { expression: 'cron(0 4 * * ? *)' } });
       expect(plan.run.event).toMatchObject({
         baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: 'person-full', parallelStart: 5,
-        bulkReset: false, trustPreviousStorage: true, startedBy: { by: 'schedule' },
+        previousStateSource: 'storage', startedBy: { by: 'schedule' },
         processingMetadata: { processedAt: ScheduledRun.PROCESSED_AT_PLACEHOLDER },
       });
       expect(await scheduledRun.get()).toBeUndefined();

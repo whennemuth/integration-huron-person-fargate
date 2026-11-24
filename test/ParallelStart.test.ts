@@ -24,7 +24,7 @@ const ENV = {
 
 const event = (overrides: Partial<ApiChunkerEvent> = {}): ApiChunkerEvent => ({
   baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: SyncPopulation.PersonDelta,
-  bulkReset: false, trustPreviousStorage: true, iterationLimit: 10, offset: 0, parallelStart: 3,
+  previousStateSource: 'storage', iterationLimit: 10, offset: 0, parallelStart: 3,
   startedBy: RunStarter.dashboard('wrh'), ...overrides
 });
 
@@ -180,7 +180,7 @@ describe('QueueSeeder', () => {
   const seeder = (startedBy?: any) => new QueueSeeder({
     stackId: ENV.STACK_ID, region: ENV.REGION, landscape: ENV.LANDSCAPE, queueUrl: ENV.CHUNKER_QUEUE_URL,
     baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: SyncPopulation.PersonDelta,
-    iterationLimit: 10, messagesToSeed: 1, ...(startedBy ? { startedBy } : {})
+    previousStateSource: 'storage', iterationLimit: 10, messagesToSeed: 1, ...(startedBy ? { startedBy } : {})
   });
 
   beforeEach(() => (handleApiEvent as jest.Mock).mockClear());
@@ -199,7 +199,7 @@ describe('QueueSeeder', () => {
     await new QueueSeeder({
       stackId: ENV.STACK_ID, region: ENV.REGION, landscape: ENV.LANDSCAPE, queueUrl: ENV.CHUNKER_QUEUE_URL,
       baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: SyncPopulation.PersonDelta,
-      iterationLimit: 10, messagesToSeed: 1, processorScalingCapacity: capacity
+      previousStateSource: 'storage', iterationLimit: 10, messagesToSeed: 1, processorScalingCapacity: capacity
     }).seedQueue();
     expect((handleApiEvent as jest.Mock).mock.calls[0][0].processorScalingCapacity).toEqual(capacity);
     expect((handleApiEvent as jest.Mock).mock.calls[0][0]).not.toHaveProperty('processorScalingCapacityOverride');

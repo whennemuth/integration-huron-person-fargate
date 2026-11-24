@@ -21,7 +21,7 @@ jest.mock('../src/chunking/fetch/ChunkerApiSubscriber', () => ({
 
 const ENV: RunnerEnv = {
   region: 'us-east-2', landscape: 'mock', stackId: 'huron-person-fargate-processor', messagesToPrepopulate: '0', desiredCount: 0,
-  queueUrl: 'https://sqs.us-east-2.amazonaws.com/111111111111/chunker'
+  queueUrl: 'https://sqs.us-east-2.amazonaws.com/111111111111/chunker', previousStateSource: 'storage'
 };
 
 /** A runner whose every step is recorded, with the context's processor maximum given */

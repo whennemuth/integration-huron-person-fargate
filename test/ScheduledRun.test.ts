@@ -10,11 +10,12 @@ import { ScheduledRun } from '../src/schedule/ScheduledRun';
 describe('ScheduledRun', () => {
   it('is a full sync without a bulk reset, stored hashes trusted', () => {
     expect(ScheduledRun.POPULATION).toBe('person-full');
-    expect(ScheduledRun.previousStateFlags(ScheduledRun.BULK_RESET)).toEqual({ bulkReset: false, trustPreviousStorage: true });
+    expect(ScheduledRun.previousStateSource(ScheduledRun.BULK_RESET)).toBe('storage');
   });
 
-  it('sets the two previous-state flags as one choice', () => {
-    expect(ScheduledRun.previousStateFlags(true)).toEqual({ bulkReset: true, trustPreviousStorage: false });
+  it("makes a bulk reset the run's one previousStateSource", () => {
+    expect(ScheduledRun.previousStateSource(true)).toBe('target');
+    expect(ScheduledRun.previousStateSource(false)).toBe('storage');
   });
 
   describe('scheduleInput', () => {
@@ -23,7 +24,7 @@ describe('ScheduledRun', () => {
       fetchPath: '/api/1/rest/feed/run/task/BUProd/Admin-Integration-Services/GenericGets/huronIRBgetPersonByPopulation'
     };
 
-    it('is the payload the schedule sends: populationType and trustPreviousStorage changed, startedBy added', () => {
+    it('is the payload the schedule sends: populationType and previousStateSource, startedBy added', () => {
       // As the EventBridge schedule's input is stored: JSON, so an undefined field is left out
       const payload = JSON.parse(JSON.stringify(ScheduledRun.scheduleInput({ ...people, iterationLimit: 0, personRecordProcessorAddons: undefined })));
       expect(payload).toEqual({
@@ -31,8 +32,7 @@ describe('ScheduledRun', () => {
         populationType: 'person-full',
         iterationLimit: 0,
         offset: 0,
-        bulkReset: false,
-        trustPreviousStorage: true,
+        previousStateSource: 'storage',
         startedBy: { by: 'schedule' },
         processingMetadata: { processedAt: 'Placeholder. Override at runtime with ISO timestamp', processorVersion: '1.0.0' }
       });

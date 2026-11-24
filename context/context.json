@@ -119,9 +119,7 @@
   "SCHEDULE": {
     "cronExpression": "cron(0 0 * * ? *)"
   },
-  "BULK_RESET": true,
   "PREVIOUS_STORAGE_TYPE": "dynamodb",
-  "TRUST_PREVIOUS_STORAGE": false,
   "DRY_RUN": {
     "lambda": {
       "chunker": false,

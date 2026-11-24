@@ -126,6 +126,17 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       expect([run.changeCount('NEW'), run.changeCount('UPDATED'), run.changeCount('DELETED')]).toEqual([130, 240, 12]);
     });
 
+    it('tags a bulk reset from previousStateSource, or from bulkReset in a run recorded before it existed', () => {
+      const run = (summary: object, metadata: object = {}, flags: object = {}) =>
+        new RunView({ syncRunId: '2026-11-24T02:00:00.000Z', status: 'SUCCEEDED', summary, metadata, flags });
+      expect(run({ previousStateSource: 'target' }).bulkReset).toBe(true);
+      expect(run({}, { previousStateSource: 'target' }).bulkReset).toBe(true);
+      expect(run({}, {}, { previousStateSource: 'target' }).bulkReset).toBe(true);
+      expect(run({ bulkReset: true }).bulkReset).toBe(true);
+      expect(run({ previousStateSource: 'storage' }, { previousStateSource: 'storage' }).bulkReset).toBe(false);
+      expect(run({ bulkReset: false }, { trustPreviousStorage: true }).bulkReset).toBe(false);
+    });
+
     it('reads a run that failed before post-processing from its metadata, flags and terminal error', () => {
       const run = new RunView({
         syncRunId: '2026-10-30T02:00:00.000Z',
@@ -584,6 +595,8 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       expect(RunDetailView.flagValue('startedBy', { by: 'schedule' })).toBe('Schedule');
       expect(RunDetailView.flagValue('startedBy', { by: 'nobody-knows' })).toBe(RunFormat.NONE);
       expect(RunDetailView.flagValue('anything', null)).toBe(RunFormat.NONE);
+      expect(RunDetailView.flagValue('previousStateSource', 'target')).toBe('Huron (bulk reset)');
+      expect(RunDetailView.flagValue('previousStateSource', 'storage')).toBe('Stored hashes');
     });
 
     it('counts the people removed from the source first, then those deactivated and failed, and says what they are', () => {

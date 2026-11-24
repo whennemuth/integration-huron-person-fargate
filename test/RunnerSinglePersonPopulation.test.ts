@@ -22,7 +22,8 @@ jest.mock('../src/chunking/fetch/ChunkerApiSubscriber', () => ({
 
 const ENV: RunnerEnv = {
   region: 'us-east-2', landscape: 'preview', stackId: 'huron-person-fargate-processor', messagesToPrepopulate: '0',
-  desiredCount: 0, queueUrl: 'https://sqs.us-east-2.amazonaws.com/111111111111/chunker', buid: 'U15364542'
+  desiredCount: 0, queueUrl: 'https://sqs.us-east-2.amazonaws.com/111111111111/chunker', buid: 'U15364542',
+  previousStateSource: 'storage'
 };
 
 /** A single-person runner with its AWS and configuration steps stubbed, so start() runs through to execute() */
@@ -86,6 +87,30 @@ describe('a single-person run is always person-delta', () => {
 
       expect(start).toHaveBeenCalledTimes(1);
       expect(console.error).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Runner.ts: where the run's previous state comes from (RUNNER_PREVIOUS_STATE_SOURCE)", () => {
+    it.each([
+      ['unset', undefined, 'No previousStateSource'],
+      ['the old pair\'s value', 'true', 'Invalid previousStateSource']
+    ])('refuses a run with it %s, before building a runner', async (_label, previousStateSource, reason) => {
+      const start = jest.spyOn(ChunkingServiceRunner.prototype, 'start');
+
+      await startChunkingService({ ...ENV, buid: undefined, populationType: 'person-full', previousStateSource });
+
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('RUNNER_PREVIOUS_STATE_SOURCE'));
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining(reason));
+      expect(start).not.toHaveBeenCalled();
+    });
+
+    it.each(['storage', 'target'])('sends previousStateSource %p and never the old pair', async previousStateSource => {
+      await new StubbedSinglePersonRunner({ ...ENV, previousStateSource }).start();
+
+      const event = (handleApiEvent as jest.Mock).mock.calls[0][0];
+      expect(event.previousStateSource).toBe(previousStateSource);
+      expect(event).not.toHaveProperty('bulkReset');
+      expect(event).not.toHaveProperty('trustPreviousStorage');
     });
   });
 

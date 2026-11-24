@@ -164,7 +164,7 @@ export class MetadataFactoryForBootstrap {
   /**
    * Create bootstrap metadata storage and read this run's FLAGS record from it in one step - the
    * entry point for consumers (processor, post-processor) that only know a chunk directory and must learn
-   * the run's flags (syncPopulation, bulkReset, etc.) before doing anything else.
+   * the run's flags (syncPopulation, previousStateSource, etc.) before doing anything else.
    */
   public readFlagsForBootstrap = async (params: {
     bucketName?: string;

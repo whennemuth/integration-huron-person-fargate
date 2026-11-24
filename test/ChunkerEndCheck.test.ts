@@ -8,6 +8,10 @@
 const mockCalls: string[] = [];
 // isAlreadyFinished() answers, in order (start-up, then before fetching)
 let mockFinishedAnswers: boolean[] = [];
+// The message's previous state source, whether a baseline exists, and the Flags main() wrote
+let mockPreviousStateSource: 'storage' | 'target' | undefined = 'target';
+let mockBaselineExists = true;
+let mockWrittenFlags: any;
 
 jest.mock('../src/TaskProtection', () => ({
   TaskProtection: class {
@@ -19,7 +23,7 @@ jest.mock('../src/TaskProtection', () => ({
 jest.mock('../src/Utils', () => ({
   getConfig: jest.fn().mockResolvedValue({}),
   getLocalConfig: jest.fn(),
-  objectExistsInS3: jest.fn().mockResolvedValue(true)
+  objectExistsInS3: jest.fn().mockImplementation(async () => mockBaselineExists)
 }));
 
 jest.mock('../src/chunking/ChunkerQueue', () => ({
@@ -46,8 +50,7 @@ jest.mock('../src/chunking/fetch/ChunkFromAPI', () => ({
     getChunkDirectory = () => 'chunks/person-full/2026-11-12T17:04:00.376Z';
     getIterationLimitAndOffset = () => ({ offset: 0, iterationLimit: 10 });
     getMessage = () => ({ ReceiptHandle: 'receipt' });
-    getBulkResetFlag = () => true;
-    getTrustPreviousStorageFlag = () => false;
+    getPreviousStateSource = () => mockPreviousStateSource;
     getSyncPopulation = () => 'person-full';
     getPersonRecordProcessorAddons = () => undefined;
     getTermsEndpoint = () => undefined;
@@ -66,7 +69,7 @@ jest.mock('../src/chunking/metadata', () => ({
       return mockFinishedAnswers.shift() ?? false;
     });
     hasAnyTaskEncounteredPartial = jest.fn().mockResolvedValue(false);
-    writeFlags = jest.fn().mockImplementation(async () => { mockCalls.push('writeFlags'); });
+    writeFlags = jest.fn().mockImplementation(async (params: any) => { mockCalls.push('writeFlags'); mockWrittenFlags = params; });
     markRunFailed = jest.fn().mockResolvedValue(undefined);
   }
 }));
@@ -98,6 +101,9 @@ describe('chunker main(): the end-of-run check before fetching', () => {
     delete process.env.IS_ECS_TASK;
     delete process.env.ITEMS_PER_CHUNK;
     mockCalls.length = 0;
+    mockPreviousStateSource = 'target';
+    mockBaselineExists = true;
+    mockWrittenFlags = undefined;
     exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as any);
     logSpy = jest.spyOn(console, 'log').mockImplementation();
     jest.spyOn(console, 'warn').mockImplementation();
@@ -142,6 +148,60 @@ describe('chunker main(): the end-of-run check before fetching', () => {
     expect(mockCalls).toEqual(['isAlreadyFinished']);
     expect(logged('created before the service "realized" it had reached the end')).toBe(true);
     expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+});
+
+describe('chunker main(): where the run\'s previous state comes from', () => {
+  let originalEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    originalEnv = { ...process.env };
+    process.env.CHUNKS_BUCKET = 'chunks-bucket';
+    process.env.REGION = 'us-east-2';
+    process.env.PREVIOUS_STORAGE_TYPE = 's3';
+    process.env.SQS_QUEUE_URL = 'https://sqs.example.com/queue';
+    delete process.env.IS_ECS_TASK;
+    mockCalls.length = 0;
+    mockFinishedAnswers = [false, false];
+    mockWrittenFlags = undefined;
+    jest.spyOn(process, 'exit').mockImplementation((() => undefined) as any);
+    jest.spyOn(console, 'log').mockImplementation();
+    jest.spyOn(console, 'warn').mockImplementation();
+    jest.spyOn(console, 'error').mockImplementation();
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    jest.restoreAllMocks();
+  });
+
+  it.each([
+    ['storage', true, 'storage', false],
+    ['storage', false, 'target', true],
+    ['target', true, 'target', true],
+    ['target', false, 'target', true]
+  ] as const)('a message asking for %p with a baseline %p records %p, building the person cache: %p',
+    async (fromMessage, baselineExists, recorded, buildsCache) => {
+      mockPreviousStateSource = fromMessage;
+      mockBaselineExists = baselineExists;
+
+      await main();
+
+      expect(mockWrittenFlags.previousStateSource).toBe(recorded);
+      expect(mockWrittenFlags).not.toHaveProperty('bulkReset');
+      expect(mockWrittenFlags).not.toHaveProperty('trustPreviousStorage');
+      expect(mockCalls.includes('ensureCache')).toBe(buildsCache);
+      expect(mockCalls).toContain('runChunking');
+    });
+
+  it('writes no Flags and fetches nothing for a message without one (when a baseline exists)', async () => {
+    mockPreviousStateSource = undefined;
+    mockBaselineExists = true;
+
+    await main();
+
+    expect(mockCalls).not.toContain('writeFlags');
+    expect(mockCalls).not.toContain('runChunking');
   });
 });
 

@@ -46,14 +46,14 @@ describe('BulkSyncRequest', () => {
   it('takes omitted options from the scheduled run, 10 chunks per task, and one message', () => {
     const request = BulkSyncRequest.parse({ runType: 'full' });
     expect(request.choices()).toEqual({
-      runType: 'full', population: 'person-full', bulkReset: false, trustPreviousStorage: true, iterationLimit: 10,
+      runType: 'full', population: 'person-full', bulkReset: false, previousStateSource: 'storage', iterationLimit: 10,
       parallelStart: 0, overrideStalled: false
     });
   });
 
-  it('makes a full sync without deactivations and a test person-delta, and sets trustPreviousStorage from bulk reset', () => {
+  it('makes a full sync without deactivations and a test person-delta, and sets previousStateSource from bulk reset', () => {
     expect(BulkSyncRequest.parse({ runType: 'full-no-deactivations', bulkReset: true, iterationLimit: 5, overrideStalled: true }).choices())
-      .toMatchObject({ population: 'person-delta', bulkReset: true, trustPreviousStorage: false, iterationLimit: 5, overrideStalled: true });
+      .toMatchObject({ population: 'person-delta', bulkReset: true, previousStateSource: 'target', iterationLimit: 5, overrideStalled: true });
     expect(BulkSyncRequest.parse({ runType: 'full', iterationLimit: 0 }).iterationLimit).toBe(0);
     expect(BulkSyncRequest.parse({ runType: 'full', iterationLimit: 50 }).iterationLimit).toBe(50);
     expect(BulkSyncRequest.parse({ runType: 'test', buid: ' u12345678 ' }).choices())
@@ -354,13 +354,13 @@ describe('BulkSync', () => {
 
     expect(functions.invokeAsync).toHaveBeenCalledWith('chunker-subscriber-preview', {
       baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: 'person-full',
-      bulkReset: false, trustPreviousStorage: true, iterationLimit: 10, offset: 0,
+      previousStateSource: 'storage', iterationLimit: 10, offset: 0,
       processingMetadata: { processedAt: '2026-11-10T12:00:00.000Z', processorVersion: '1.0.0' }
     });
     expect(result).toEqual({
       status: 'started', startedAt: '2026-11-10T12:00:00.000Z', landscape: 'preview',
       run: {
-        runType: 'full', population: 'person-full', bulkReset: false, trustPreviousStorage: true, iterationLimit: 10,
+        runType: 'full', population: 'person-full', bulkReset: false, previousStateSource: 'storage', iterationLimit: 10,
         parallelStart: 0, overrideStalled: false
       }
     });
@@ -371,7 +371,7 @@ describe('BulkSync', () => {
     const result = await bulkSync.start({ runType: 'test', buid: 'U12345678', bulkReset: true, iterationLimit: 4 });
     // A next chunker task would fetch the same person again (the person endpoint ignores offsets), so none is chained
     expect(functions.invokeAsync).toHaveBeenCalledWith('chunker-subscriber-preview', expect.objectContaining({
-      fetchPath: '/api/person?buid=U12345678', populationType: 'person-delta', bulkReset: true, trustPreviousStorage: false,
+      fetchPath: '/api/person?buid=U12345678', populationType: 'person-delta', previousStateSource: 'target',
       iterationLimit: 0
     }));
     expect(result.run.buid).toBe('U12345678');
@@ -449,10 +449,10 @@ describe('BulkSync', () => {
       const plan = await bulkSync.plan({ runType: 'test', buid: 'U0000042', bulkReset: true });
       expect(functions.invokeAsync).not.toHaveBeenCalled();
       expect(plan.landscape).toBe('preview');
-      expect(plan.choices).toMatchObject({ runType: 'test', buid: 'U0000042', bulkReset: true, trustPreviousStorage: false });
+      expect(plan.choices).toMatchObject({ runType: 'test', buid: 'U0000042', bulkReset: true, previousStateSource: 'target' });
       expect(plan.event).toEqual({
         baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/person?buid=U0000042', populationType: 'person-delta',
-        bulkReset: true, trustPreviousStorage: false, iterationLimit: 0, offset: 0,
+        previousStateSource: 'target', iterationLimit: 0, offset: 0,
         processingMetadata: { processedAt: 'set when the run is started', processorVersion: '1.0.0' }
       });
       // The review says why a test is one task
@@ -465,14 +465,14 @@ describe('BulkSync', () => {
       const byName = Object.fromEntries(rows.map(row => [row.name, row]));
       expect(rows.map(row => row.name)).toEqual([
         'secretArn', 'configPath', 'queueUrl', 'populationType', 'populationScope', 'iterationLimit', 'buid', 'region',
-        'stackId', 'landscape', 'bulkReset', 'trustPreviousStorage', 'skipAtomicCounterReset', 'messagesToPrepopulate',
+        'stackId', 'landscape', 'previousStateSource', 'skipAtomicCounterReset', 'messagesToPrepopulate',
         'desiredCount', 'clusterName', 'serviceName', 'messagingOnly', 'chunkingOnly', 'sourceSimulator',
         'sourceSimulatorMockTotalPopulation', 'sourceSimulatorMockSimulatedDelaySeconds', 'sourceSimulatorMockErrorRate',
         'sourceSimulatorMockNonCurrentTermRate', 'mockTargetResetState', 'personRecordProcessorAddons',
         'processorScalingCapacityOverride', 'itemsPerChunk', 'processorMaxScalingCapacity', 'chunkerFunction'
       ]);
       expect(byName.populationType).toMatchObject({ value: 'person-full', source: 'form' });
-      expect(byName.trustPreviousStorage).toMatchObject({ value: true, source: 'form' });
+      expect(byName.previousStateSource).toMatchObject({ value: 'storage', source: 'form' });
       expect(byName.secretArn).toMatchObject({ value: 'huron-person-config-preview', source: 'landscape' });
       expect(byName.stackId).toMatchObject({ value: 'huron-person', source: 'landscape' });
       expect(byName.messagesToPrepopulate).toMatchObject({ value: '0', source: 'form' });
@@ -733,7 +733,9 @@ describe('BulkSync', () => {
       process.env.SOURCE_SIMULATOR_FUNCTION_NAME = 'source-simulator-mock';
       expect((BulkSync.fromEnvironment(OFFLINE_SOURCE_CONFIG, runsEndingWith(finishedRun)) as any).deps.simulator).toBeInstanceOf(AwsSourceSimulatorService);
       const request = BulkSyncRequest.parse({ runType: 'full' });
-      expect(bulkSync.event(request)).toMatchObject({ iterationLimit: 10, bulkReset: false, trustPreviousStorage: true });
+      expect(bulkSync.event(request)).toMatchObject({ iterationLimit: 10, previousStateSource: 'storage' });
+      expect(bulkSync.event(request)).not.toHaveProperty('bulkReset');
+      expect(bulkSync.event(request)).not.toHaveProperty('trustPreviousStorage');
       const byName = Object.fromEntries(bulkSync.runSettings(request).map(row => [row.name, row.value]));
       expect(byName).toMatchObject({
         stackId: 'huron-person', secretArn: 'huron-person-config-preview', region: 'us-east-2', itemsPerChunk: 150

@@ -12,8 +12,8 @@ processor. The phases as a whole: the project [CLAUDE.md](../../CLAUDE.md).
 - **`ProcessorForDynamoDb.ts`** (harness `DOCKER_PROCESSOR_DYNAMODB`): DynamoDB mode; writes straight to the person
   current-state and history tables, so no mini-deltas; the last processor of a run triggers the post-processor (once,
   by the `POST_PROCESSOR_TRIGGER_CLAIM` `OCCFlag`; never for a run with a terminal error).
-- **`ProcessorCommon.ts`**: shared by both: `resolveNextChunk()`, `resolveCommonFlags()` (the run's Flags: bulk reset,
-  trust previous storage, addons, ...), `applyTermsEndpoint()` (a simulated run's terms), `buildErrorTracker()`
+- **`ProcessorCommon.ts`**: shared by both: `resolveNextChunk()`, `resolveCommonFlags()` (the run's Flags: previousStateSource,
+  addons, ...), `applyTermsEndpoint()` (a simulated run's terms), `buildErrorTracker()`
   (`src/ApiErrorTracking.ts`), `resolveAddonPersonProcessor()`, `pushedChangeCounts()` (added / updated / removed
   counted from the successful pushes), `logIntegrationResult()`, `writeTrackerStatistics()` (the chunk's
   `STATISTICS-chunk-*` item), `computeExitCode()`, `isEcsTask()`.
@@ -27,7 +27,9 @@ processor. The phases as a whole: the project [CLAUDE.md](../../CLAUDE.md).
 ## Rules and pitfalls
 
 - **Per-run settings come from the run's Flags**, read from the chunk's run (`readFlagsFromChunkKey()`), never from the
-  task definition: bulk reset, trust previous storage, addons, the terms endpoint. Values in the task definition
+  task definition: previousStateSource, addons, the terms endpoint. (Flags without previousStateSource fall back to
+  `PREVIOUS_STATE_SOURCE` in a local run's environment, and are otherwise refused, as are Flags carrying the
+  `bulkReset` / `trustPreviousStorage` pair it replaced: no task definition sets it.) Values in the task definition
   (`STATIC_MAP_USAGE`, from the config's `preLoadedMaps`, table names, `PREVIOUS_STORAGE_TYPE`) are fixed at deploy.
 - **The processor has no mock awareness**: in a mock landscape the config secret points it at the target simulator.
 - **Chunk statistics count only changed people**: a chunk's `totalRecords` is its delta's size, and added / updated /

@@ -71,8 +71,7 @@ export class MetadataForS3 implements IMetadataStorage {
       bucketName, chunkDirectory, itemsPerChunk,
       source,
       target,
-      bulkReset,
-      trustPreviousStorage,
+      previousStateSource,
       syncPopulation,
       runFailed,
       runFailureMessage,
@@ -94,7 +93,7 @@ export class MetadataForS3 implements IMetadataStorage {
 
     const metadata: ChunkMetadata = {
       itemsPerChunk, source, chunkDirectory,
-      deltaStoragePath, bulkReset, trustPreviousStorage, syncPopulation, createdAt: new Date().toISOString()
+      deltaStoragePath, previousStateSource, syncPopulation, createdAt: new Date().toISOString()
     };
 
     // Add optional target field
@@ -164,7 +163,7 @@ export class MetadataForS3 implements IMetadataStorage {
 
   /**
    * Write flags file to S3 before chunking starts.
-   * This file contains only bulkReset and syncPopulation flags needed by processors.
+   * This file contains the flags processors need (previousStateSource, syncPopulation, ...).
    * Written early so processor tasks can read flags even before chunking completes.
    * Every chunker task of a run calls this; unless replace is true, the first task's flags stand and later calls
    * skip the write, as MetadataForDynamoDb.writeFlags() does with the FLAGS record.
@@ -173,8 +172,7 @@ export class MetadataForS3 implements IMetadataStorage {
     const {
       bucketName,
       chunkDirectory,
-      bulkReset,
-      trustPreviousStorage,
+      previousStateSource,
       syncPopulation,
       runFailed,
       runFailureMessage,
@@ -194,8 +192,7 @@ export class MetadataForS3 implements IMetadataStorage {
 
     const flagsKey = this.metadataUtils.getFlagsKey(chunkDirectory);
     const flags: Flags = {
-      bulkReset,
-      trustPreviousStorage,
+      previousStateSource,
       syncPopulation
     };
 
@@ -302,7 +299,7 @@ export class MetadataForS3 implements IMetadataStorage {
 
   /**
    * Read flags file from S3.
-   * Flags file contains bulkReset and syncPopulation needed by processors.
+   * Flags file contains the flags processors need (previousStateSource, syncPopulation, ...).
    */
   public async readFlags(params: ReadFlagsParams): Promise<Partial<Flags>> {
     const { bucketName, chunkDirectory, region } = params;
@@ -530,7 +527,7 @@ export class MetadataForS3 implements IMetadataStorage {
    */
   public async accumulateMetadataTotals(params: AccumulateMetadataTotalsParams): Promise<{ chunkCount: number; totalRecords: number }> {
     const {
-      bucketName, chunkDirectory, region, source, target, itemsPerChunk, bulkReset, trustPreviousStorage,
+      bucketName, chunkDirectory, region, source, target, itemsPerChunk, previousStateSource,
       syncPopulation, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
     } = params;
     if (!bucketName) {
@@ -542,7 +539,7 @@ export class MetadataForS3 implements IMetadataStorage {
       bucketName, chunkDirectory, region, what: 'run totals',
       update: existing => {
         const updated: ChunkMetadata = {
-          ...this.newMetadataFields({ chunkDirectory, source, target, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation }),
+          ...this.newMetadataFields({ chunkDirectory, source, target, itemsPerChunk, previousStateSource, syncPopulation }),
           ...existing, // Fields already in the file win - they were set by whichever task wrote first
           chunkCount: (existing?.chunkCount ?? 0) + chunkCountDelta,
           totalRecords: (existing?.totalRecords ?? 0) + totalRecordsDelta
@@ -567,7 +564,7 @@ export class MetadataForS3 implements IMetadataStorage {
    */
   public async recordRunFailure(params: RecordRunFailureParams): Promise<void> {
     const {
-      bucketName, chunkDirectory, region, source, target, itemsPerChunk, bulkReset, trustPreviousStorage,
+      bucketName, chunkDirectory, region, source, target, itemsPerChunk, previousStateSource,
       syncPopulation, runFailureMessage, runFailureTimestamp, dryRun = false
     } = params;
     if (!bucketName) {
@@ -585,7 +582,7 @@ export class MetadataForS3 implements IMetadataStorage {
     const { attempt, metadataLog } = await this.updateMetadataConditionally({
       bucketName, chunkDirectory, region, what: 'run failure',
       update: existing => ({
-        ...this.newMetadataFields({ chunkDirectory, source, target, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation }),
+        ...this.newMetadataFields({ chunkDirectory, source, target, itemsPerChunk, previousStateSource, syncPopulation }),
         ...existing,
         ...failure
       } as ChunkMetadata)
@@ -597,11 +594,11 @@ export class MetadataForS3 implements IMetadataStorage {
    * The descriptive fields a new _metadata.json starts with; a merge spreads the existing file over them.
    */
   private newMetadataFields = (params: Pick<ChunkMetadata,
-    'chunkDirectory' | 'source' | 'target' | 'itemsPerChunk' | 'bulkReset' | 'trustPreviousStorage' | 'syncPopulation'>
+    'chunkDirectory' | 'source' | 'target' | 'itemsPerChunk' | 'previousStateSource' | 'syncPopulation'>
   ): ChunkMetadata => {
-    const { chunkDirectory, source, target, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation } = params;
+    const { chunkDirectory, source, target, itemsPerChunk, previousStateSource, syncPopulation } = params;
     return {
-      source, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation,
+      source, chunkDirectory, itemsPerChunk, previousStateSource, syncPopulation,
       deltaStoragePath: this.metadataUtils.deriveDeltaStoragePath(chunkDirectory),
       createdAt: new Date().toISOString(),
       ...(target !== undefined ? { target } : {})
@@ -681,13 +678,13 @@ export class MetadataForS3 implements IMetadataStorage {
       return;
     }
     const {
-      chunkDirectory, region, source, target, itemsPerChunk, bulkReset, trustPreviousStorage,
+      chunkDirectory, region, source, target, itemsPerChunk, previousStateSource,
       syncPopulation, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
     } = params;
     try {
       const syncRunId = this.metadataUtils.extractSyncRunId(chunkDirectory);
       await StatisticsTable.fromTableName(this.statisticsTableName, region).addToMetadataTotals(syncRunId, {
-        source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage,
+        source, target, chunkDirectory, itemsPerChunk, previousStateSource,
         syncPopulation, deltaStoragePath, chunkCountDelta, totalRecordsDelta, partialOrEmptyChunkEncountered
       });
     }

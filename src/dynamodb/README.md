@@ -90,14 +90,16 @@ Tracks integration run statistics, error events, and sync run metadata.
 
 **4. FLAGS**
 - SK: "FLAGS"
-- Contains: bulkReset, trustPreviousStorage, syncPopulation, and optionally personRecordProcessorAddons, termsEndpoint,
-  startedBy, processorScalingCapacity (and runFailed* fields, which nothing writes)
+- Contains: previousStateSource, syncPopulation, and optionally personRecordProcessorAddons, termsEndpoint,
+  startedBy, processorScalingCapacity (and runFailed* fields, which nothing writes). Runs recorded before
+  previousStateSource existed have bulkReset and trustPreviousStorage in its place (only Run history reads them)
 - Written by: Chunker tasks
 - Read by: Processor and Post-processor phases
 
 **5. METADATA**
 - SK: "METADATA"
-- Contains: source, target, chunkDirectory, itemsPerChunk, bulkReset, trustPreviousStorage, syncPopulation,
+- Contains: source, target, chunkDirectory, itemsPerChunk, previousStateSource (bulkReset and trustPreviousStorage
+  before it existed), syncPopulation,
   deltaStoragePath, createdAt; the run totals chunkCount and totalRecords (accumulated by `addToMetadataTotals()`) and
   partialOrEmptyChunkEncountered; postProcessorTriggered / postProcessorTriggeredAt / postProcessorTriggeredBy
 - Written by: Chunker tasks (`MetadataBroker.write`, `addToMetadataTotals`) and the processor that triggers the
@@ -162,8 +164,7 @@ const chunkStats = await statsTable.getChunkStatistics('2026-03-03T19:58:41.277Z
 
 // Write flags for sync run
 await statsTable.writeFlags('2026-03-03T19:58:41.277Z', {
-  bulkReset: true,
-  trustPreviousStorage: false,
+  previousStateSource: 'target',
   syncPopulation: 'person-full'
 });
 

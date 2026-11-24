@@ -2,6 +2,7 @@
 import { Message } from '@aws-sdk/client-sqs';
 import type { StartedBy } from '../src/chunking/StartedBy';
 import type { ProcessorCapacityRecord } from '../src/chunking/ProcessorCapacityRecord';
+import type { PreviousStateSource } from '../src/chunking/PreviousStateSource';
 
 /** The source of person data either is all people, or only those that have changed */
 export enum SyncPopulation {
@@ -30,8 +31,7 @@ export type IChunkFromSource = {
   noMessagesFromQueue?: boolean
   getMessage: () => Message | undefined
   getChunkDirectory: () => string
-  getBulkResetFlag?: () => boolean  // Optional getter for bulkReset flag from task parameters
-  getTrustPreviousStorageFlag?: () => boolean  // Optional getter for trustPreviousStorage flag from task parameters
+  getPreviousStateSource: () => PreviousStateSource | undefined  // Where the run's previous state comes from, per its message
   getSyncPopulation?: () => SyncPopulation  // Optional getter for syncPopulation from task parameters
   getPersonRecordProcessorAddons?: () => string | undefined  // Optional getter for personRecordProcessorAddons from task parameters
   getTermsEndpoint?: () => SourceEndpoint | undefined  // Optional getter for termsEndpoint from task parameters
@@ -44,7 +44,6 @@ export type ChunkFromParams = {
   region: string | undefined,
   itemsPerChunk: number,
   personIdField: string,
-  bulkReset?: boolean, // To override the bulkReset flag set in the TaskParameters of the chunker instance.
-  trustPreviousStorage?: boolean, // Controls whether previous delta storage is trusted for create-vs-patch decisions.
+  previousStateSource?: PreviousStateSource, // The chunker's choice, overriding the message's (target when there is no baseline)
   dryRun: string
 }

@@ -47,7 +47,7 @@ describe('StatisticsTable', () => {
     const mockRun = (chunks: StatisticsItem[]) => {
       dynamoMock.on(GetCommand).resolves({ Item: {
         integrationTimestamp, eventType: 'METADATA',
-        createdAt: '2026-05-14T11:59:00.000Z', syncPopulation: 'person-full', bulkReset: false,
+        createdAt: '2026-05-14T11:59:00.000Z', syncPopulation: 'person-full', previousStateSource: 'storage' as const,
         chunkCount: 3, totalRecords: 600
       } });
       dynamoMock.on(QueryCommand).resolves({ Items: chunks });
@@ -72,6 +72,7 @@ describe('StatisticsTable', () => {
         storageMode: 'dynamodb',
         createdAt: '2026-05-14T11:59:00.000Z',
         syncPopulation: 'person-full',
+        previousStateSource: 'storage' as const,
         chunkCount: 3,
         totalRecords: 600,
         chunksReported: 2,
@@ -81,6 +82,16 @@ describe('StatisticsTable', () => {
         errorsByStatus: { '500': 9, '429': 2 },
         deletion
       });
+    });
+
+    it('leaves previousStateSource out of the summary of a run recorded before it existed (bulkReset / trustPreviousStorage)', async () => {
+      dynamoMock.on(GetCommand).resolves({ Item: {
+        integrationTimestamp, eventType: 'METADATA', syncPopulation: 'person-full', bulkReset: true, trustPreviousStorage: false
+      } });
+      dynamoMock.on(QueryCommand).resolves({ Items: [] });
+      const summary = await statisticsTable.buildRunSummary(integrationTimestamp, { postProcessingSucceeded: true, dryRun: false });
+      expect(summary).not.toHaveProperty('previousStateSource');
+      expect(summary).not.toHaveProperty('bulkReset');
     });
 
     it('is FAILED when deletions were skipped because the run was marked failed', async () => {
@@ -414,7 +425,7 @@ describe('StatisticsTable', () => {
     });
 
     it('is written by writeFlags', async () => {
-      await statisticsTable.writeFlags(integrationTimestamp, { bulkReset: false });
+      await statisticsTable.writeFlags(integrationTimestamp, { previousStateSource: 'storage' });
       expect(putItems()).toContainEqual(runMarker);
     });
 
@@ -426,7 +437,7 @@ describe('StatisticsTable', () => {
     it('is written by addToMetadataTotals', async () => {
       dynamoMock.on(UpdateCommand).resolves({});
       await statisticsTable.addToMetadataTotals(integrationTimestamp, {
-        source: 's', chunkDirectory: 'c', itemsPerChunk: 1, bulkReset: false, trustPreviousStorage: false,
+        source: 's', chunkDirectory: 'c', itemsPerChunk: 1, previousStateSource: 'target' as const,
         syncPopulation: 'p', deltaStoragePath: 'd', chunkCountDelta: 1, totalRecordsDelta: 1
       });
       expect(putItems()).toContainEqual(runMarker);
@@ -435,7 +446,7 @@ describe('StatisticsTable', () => {
     it('is written by mergeRunFailure', async () => {
       dynamoMock.on(UpdateCommand).resolves({});
       await statisticsTable.mergeRunFailure(integrationTimestamp, {
-        source: 's', chunkDirectory: 'c', itemsPerChunk: 1, bulkReset: false, trustPreviousStorage: false,
+        source: 's', chunkDirectory: 'c', itemsPerChunk: 1, previousStateSource: 'target' as const,
         syncPopulation: 'p', deltaStoragePath: 'd', runFailureMessage: 'm', runFailureTimestamp: 't'
       });
       expect(putItems()).toContainEqual(runMarker);
@@ -604,8 +615,7 @@ describe('StatisticsTable', () => {
       source: 'https://api.example.com/people',
       chunkDirectory: 'chunks/person-full/2026-05-14T12:00:00.000Z',
       itemsPerChunk: 200,
-      bulkReset: false,
-      trustPreviousStorage: true,
+      previousStateSource: 'storage' as const,
       syncPopulation: 'person-full',
       deltaStoragePath: 'deltas/person-full/2026-05-14T12:00:00.000Z',
       chunkCountDelta: 3,
@@ -676,8 +686,7 @@ describe('StatisticsTable', () => {
       source: 'https://api.example.com/people',
       chunkDirectory: 'chunks/person-full/2026-05-14T12:00:00.000Z',
       itemsPerChunk: 200,
-      bulkReset: false,
-      trustPreviousStorage: true,
+      previousStateSource: 'storage' as const,
       syncPopulation: 'person-full',
       deltaStoragePath: 'deltas/person-full/2026-05-14T12:00:00.000Z',
       runFailureMessage: 'retries exhausted',

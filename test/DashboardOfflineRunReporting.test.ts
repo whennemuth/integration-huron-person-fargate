@@ -54,7 +54,7 @@ describe('OfflineRunReportingService', () => {
     expect(reports.some(report => report.status === 'FAILED' && !report.summary && report.terminalError)).toBe(true);
     const summaries = reports.flatMap(report => report.summary ? [report.summary] : []);
     expect(summaries.some(summary => summary.dryRun)).toBe(true);
-    expect(summaries.some(summary => summary.bulkReset)).toBe(true);
+    expect(summaries.some(summary => summary.previousStateSource === 'target')).toBe(true);
     expect(summaries.some(summary => summary.totalRecords === 1)).toBe(true);
     expect(new Set(summaries.map(summary => summary.syncPopulation))).toEqual(new Set(['person-full', 'person-delta']));
     expect(new Set(summaries.map(summary => summary.deletion?.status))).toEqual(new Set(['COMPLETED', 'SKIPPED', 'FAILED']));

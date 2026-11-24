@@ -12,6 +12,7 @@ import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { extractChunkDirectory } from "../filedrop/ChunkPathUtils";
 import { BigJsonFetch, BigJsonFetchConfig, ChunkOrdinalAllocator } from "./BigJsonFetch";
 import { ChunkConfigOverride } from "./ChunkConfigOverride";
+import { PreviousStateSource, requirePreviousStateSource } from '../PreviousStateSource';
 import { ProcessorServiceBooster } from './ProcessorServiceBooster';
 import { SourceSimulatorFunctionURL } from './SourceSimulator';
 import { RunStarter, StartedBy } from '../StartedBy';
@@ -21,8 +22,8 @@ export type TaskParameters = {
   baseUrl: string,
   fetchPath: string,
   populationType: SyncPopulation,
-  bulkReset: boolean,
-  trustPreviousStorage: boolean,
+  /** Where the run's previous state comes from (src/chunking/PreviousStateSource.ts) */
+  previousStateSource: PreviousStateSource,
   offset?: number;
   iterationLimit?: number;
   chunkDirectory?: string;
@@ -94,7 +95,7 @@ export function findMissingChunkOrdinals(chunkKeys: string[]): number[] {
  * - REGION: AWS region (e.g., 'us-east-2')
  * - ITEMS_PER_CHUNK: Number of persons per chunk (default: 200)
  * - PERSON_ID_FIELD: Field name for person IDs (default: 'personid')
- * - BULK_RESET: Used to tag the chunk files (will be referenced by processor.ts when processing the chunk files)
+ * - PREVIOUS_STATE_SOURCE: storage or target (a bulk reset), recorded in the run's Flags for the processors
  * - DRY_RUN: If 'true', performs a dry run without writing chunks (default: 'false')
  * 
  * Output:
@@ -104,7 +105,7 @@ export function findMissingChunkOrdinals(chunkKeys: string[]): number[] {
  * 
  * Example Local Usage:
  * ```bash
- * INPUT_BUCKET=input-bucket INPUT_KEY=data.json CHUNKS_BUCKET=chunks-bucket BULK_RESET=false node dist/docker/chunker.js
+ * INPUT_BUCKET=input-bucket INPUT_KEY=data.json CHUNKS_BUCKET=chunks-bucket PREVIOUS_STATE_SOURCE=storage node dist/docker/chunker.js
  * ```
  */
 export class ChunkFromAPI implements IChunkFromSource {
@@ -147,8 +148,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH: fetchPath,
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET: offset = '0',
       DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT: iterationLimit = '0',
-      TRUST_PREVIOUS_STORAGE = 'false',
-      BULK_RESET
+      PREVIOUS_STATE_SOURCE
     } = process.env;
 
     scope = (scope ?? 'standard').toLowerCase();
@@ -170,8 +170,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         baseUrl: baseUrl,
         fetchPath: fetchPath,
         populationType: (populationType as SyncPopulation) || ChunkFromAPI.defaultPopulationType,
-        bulkReset: BULK_RESET?.toLowerCase() === 'true',
-        trustPreviousStorage: TRUST_PREVIOUS_STORAGE?.toLowerCase() === 'true',
+        previousStateSource: requirePreviousStateSource({ previousStateSource: PREVIOUS_STATE_SOURCE }, 'The chunker environment'),
         offset: offset ? parseInt(offset, 10) : undefined,
         iterationLimit: iterationLimit ? parseInt(iterationLimit, 10) : undefined,
         chunkDirectory: chunkDirectory || undefined
@@ -197,8 +196,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       DATASOURCE_ENDPOINTCONFIG_PEOPLE_OFFSET: offset = '0',
       DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT: iterationLimit = '0',
       SINGLE_PERSON_BUID: buid,
-      TRUST_PREVIOUS_STORAGE = 'false',
-      BULK_RESET
+      PREVIOUS_STATE_SOURCE
     } = process.env;
 
     if(!buid) {
@@ -214,8 +212,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         baseUrl: baseUrl,
         fetchPath: fetchPath,
         populationType: populationType as SyncPopulation,
-        bulkReset: BULK_RESET?.toLowerCase() === 'true',
-        trustPreviousStorage: TRUST_PREVIOUS_STORAGE?.toLowerCase() === 'true',
+        previousStateSource: requirePreviousStateSource({ previousStateSource: PREVIOUS_STATE_SOURCE }, 'The chunker environment'),
         offset: offset ? parseInt(offset, 10) : undefined,
         iterationLimit: iterationLimit ? parseInt(iterationLimit, 10) : undefined,
         chunkDirectory: chunkDirectory || undefined
@@ -244,8 +241,8 @@ export class ChunkFromAPI implements IChunkFromSource {
     const offset = messageBody.offset !== undefined ? Number(messageBody.offset) : 0;
     const iterationLimit = messageBody.iterationLimit !== undefined ? Number(messageBody.iterationLimit) : 0;
     const chunkDirectory = messageBody.chunkDirectory;
-    const bulkReset = messageBody.bulkReset;
-    const trustPreviousStorage = messageBody.trustPreviousStorage;
+    // A message queued before previousStateSource existed carries the deprecated pair, which this translates
+    const previousStateSource = requirePreviousStateSource(messageBody, 'The chunker queue message');
     const personRecordProcessorAddons = messageBody.personRecordProcessorAddons;
     const termsEndpoint = messageBody.termsEndpoint;
     const startedBy = RunStarter.from(messageBody.startedBy);
@@ -258,10 +255,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       offset,
       iterationLimit,
       chunkDirectory,
-      bulkReset: typeof bulkReset === 'boolean' ? bulkReset : bulkReset === 'true',
-      trustPreviousStorage: typeof trustPreviousStorage === 'boolean'
-        ? trustPreviousStorage
-        : trustPreviousStorage === 'true',
+      previousStateSource,
       personRecordProcessorAddons,
       termsEndpoint,
       ...(startedBy ? { startedBy } : {}),
@@ -391,19 +385,11 @@ export class ChunkFromAPI implements IChunkFromSource {
   }
 
   /**
-   * Get the bulkReset flag from task parameters.
-   * Returns true if bulkReset was specified in SQS message or environment, false otherwise.
+   * Where the run's previous state comes from, as its message (or the environment, locally) asked for. The chunker may
+   * still turn `storage` into `target` when there is no baseline (docker/chunker.ts).
    */
-  public getBulkResetFlag = (): boolean => {
-    return this.taskParameters?.bulkReset || false;
-  }
-
-  /**
-   * Get the trustPreviousStorage flag from task parameters.
-   * Returns true if previous storage should be trusted, false otherwise.
-   */
-  public getTrustPreviousStorageFlag = (): boolean => {
-    return this.taskParameters?.trustPreviousStorage || false;
+  public getPreviousStateSource = (): PreviousStateSource | undefined => {
+    return this.taskParameters?.previousStateSource;
   }
 
   /**
@@ -499,22 +485,21 @@ export class ChunkFromAPI implements IChunkFromSource {
       region,
       itemsPerChunk,
       personIdField,
-      bulkReset: bulkResetOverride = false,
-      trustPreviousStorage: trustPreviousStorageOverride = false,
+      previousStateSource: previousStateSourceOverride,
       dryRun
     } = params;
 
     try {
-      let { bulkReset, trustPreviousStorage, populationType } = this.taskParameters || {
-        bulkReset: false,
-        trustPreviousStorage: false
-      };
-      const { iterationLimit, offset } = this.getIterationLimitAndOffset();
-      if(bulkReset !== bulkResetOverride && bulkResetOverride === true) {
-        console.warn(`Overriding bulkReset flag in task parameters from ${bulkReset} to ${bulkResetOverride} based on message parameters`);
+      const { populationType } = this.taskParameters || {};
+      // The chunker's choice (docker/chunker.ts: the message's, or target when there is no baseline) wins
+      const previousStateSource = previousStateSourceOverride ?? this.taskParameters?.previousStateSource;
+      if (!previousStateSource) {
+        throw new Error('No previousStateSource for the run, from the chunker or its message');
       }
-      bulkReset = bulkReset || bulkResetOverride; // Allow override of bulkReset flag from message parameters if needed
-      trustPreviousStorage = trustPreviousStorage || trustPreviousStorageOverride;
+      if (previousStateSourceOverride && previousStateSourceOverride !== this.taskParameters?.previousStateSource) {
+        console.warn(`Previous state source ${this.taskParameters?.previousStateSource} in the message overridden by the chunker: ${previousStateSourceOverride}`);
+      }
+      const { iterationLimit, offset } = this.getIterationLimitAndOffset();
       
       if( ! populationType) {
         console.warn(`Population type not specified either POPULATION_TYPE environment variable or message parameters, defaulting to ${ChunkFromAPI.defaultPopulationType}`);
@@ -536,8 +521,7 @@ export class ChunkFromAPI implements IChunkFromSource {
       console.log(`Chunks: s3://${chunksBucket}/${chunkDirectory}/`);
       console.log(`Region: ${region || 'default'}`);
       console.log(`Items per chunk: ${itemsPerChunk}`);
-      console.log(`Bulk reset flag: ${bulkReset}`);
-      console.log(`Trust previous storage: ${trustPreviousStorage}`);
+      console.log(`Previous state source: ${previousStateSource}`);
       console.log(`Offset: ${offset}`);
       console.log(`iterationLimit: ${iterationLimit}`);
       console.log(`Person ID field: ${personIdField}`);
@@ -637,8 +621,7 @@ export class ChunkFromAPI implements IChunkFromSource {
           source: sourceUrl,
           target: targetUrl,
           dryRun: fetchConfig.dryRun || false,
-          bulkReset,
-          trustPreviousStorage,
+          previousStateSource,
           syncPopulation: this.taskParameters.populationType as SyncPopulation,
           runFailureMessage,
           runFailureTimestamp
@@ -663,8 +646,7 @@ export class ChunkFromAPI implements IChunkFromSource {
         source: sourceUrl,
         target: targetUrl,
         itemsPerChunk,
-        bulkReset,
-        trustPreviousStorage,
+        previousStateSource,
         syncPopulation: this.taskParameters.populationType as SyncPopulation,
         chunkCountDelta: result.chunkCount,
         totalRecordsDelta: result.totalRecords,
@@ -712,6 +694,8 @@ if(require.main === module) {
   const landscape = testEnvironment.getVar('LANDSCAPE');
   testEnvironment.getVar('STOP_AT_FIRST_PARTIAL');
   testEnvironment.getVar('MAX_TOTAL_RECORDS');
+  // Where the run's previous state comes from, for a run from the environment rather than a queue message
+  testEnvironment.getVar('PREVIOUS_STATE_SOURCE');
 
   // Validate bucket name required for output is provided.
   if (!chunksBucket) {

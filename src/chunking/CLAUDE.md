@@ -17,8 +17,11 @@ the processor maximum, a mock reset, the counter reset and a parallel start, in 
 
 **Run start** (shared by the subscriber and the Runner):
 - `ScheduledRun` (in `src/schedule/`, [schedule/CLAUDE.md](../schedule/CLAUDE.md)): the schedule's input, and
-  `previousStateFlags(bulkReset)`.
+  `previousStateSource(bulkReset)`.
 - `StartedBy.ts`: `StartedBy` / `RunStarter`, who started a run.
+- `PreviousStateSource.ts`: where a run's previous state comes from (`storage`, or `target`: a bulk reset), carried as
+  `previousStateSource` (it replaced the `bulkReset` / `trustPreviousStorage` pair, now refused);
+  `previousStateSourceIn()`, `previousStateRefusal()`, `requirePreviousStateSource()`.
 - `RunCounters.ts`: `resetRunCounters()`, `runCounterNames()`, `isRunStartEvent()`.
 - `ParallelStart.ts`: seed N messages, wait for the scale-in alarm, set the desired count.
 - `ProcessorScalingCapacity.ts`, `ProcessorCapacityRecord.ts`: a run's processor maximum, and its record in Flags.
@@ -59,6 +62,10 @@ writes and status checks, including the run's running `totalRecords`), `ChunkFil
 - **A per-run value travels the messages**: `ApiChunkerEvent` -> queue message -> `TaskParameters` ->
   `sendNextChunkingMessage()` -> Flags (`docker/chunker.ts`). A new per-run field must be added at every step, or
   chained tasks lose it. The Runner's `Config` never reaches the tasks.
+- **A run's previous state source has no default**: an event or queue message without `previousStateSource`, or
+  carrying the `bulkReset` / `trustPreviousStorage` pair it replaced, is refused (`runStartRefusal()`,
+  `handleApiEvent()`'s 400, a thrown error in the chunker). Read it with `previousStateSourceIn()`. A run with no
+  baseline is `target` whatever it asked for (`docker/chunker.ts`).
 - **Never reset the run counters in `handleApiEvent()`**: queue seeding calls it once per seeded message.
 - **Subscriber refusals are returned** (a 400 result), not thrown, and the subscriber Lambda has no automatic retry.
 - **`partialOrEmptyChunkEncountered`** is persisted metadata: never rename it, though it means "end of records".

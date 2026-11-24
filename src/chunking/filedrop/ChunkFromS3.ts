@@ -9,12 +9,13 @@ import { PersonArrayWrapper } from "../PersonArrayWrapper";
 import { BigJsonFile, BigJsonFileConfig } from "./BigJsonFile";
 import { extractChunkDirectory } from './ChunkPathUtils';
 import { ProcessorServiceBooster } from '../fetch/ProcessorServiceBooster';
+import { PreviousStateSource, requirePreviousStateSource } from '../PreviousStateSource';
 
 export type TaskParameters = {
   inputBucket: string,
   inputKey: string,
-  bulkReset: boolean,
-  trustPreviousStorage: boolean,
+  /** Where the run's previous state comes from (src/chunking/PreviousStateSource.ts) */
+  previousStateSource: PreviousStateSource,
   populationType?: SyncPopulation
 }
 
@@ -46,7 +47,7 @@ export type TaskParameters = {
  *   - REGION: AWS region (e.g., 'us-east-2')
  *   - ITEMS_PER_CHUNK: Number of persons per chunk (default: 200)
  *   - PERSON_ID_FIELD: Field name for person IDs (default: 'personid')
- *   - BULK_RESET: Used to tag the chunk files (will be referenced by processor.ts when processing the chunk files)
+ *   - PREVIOUS_STATE_SOURCE: storage or target (a bulk reset), recorded in the run's Flags for the processors
  *   - DRY_RUN: If 'true', performs a dry run without writing chunks (default: 'false')
  * 
  * Output:
@@ -71,14 +72,13 @@ export class ChunkFromS3 implements IChunkFromSource {
    * (local dev/docker-compose mode)
    */
   constructor() {
-    const { INPUT_BUCKET, INPUT_KEY, BULK_RESET, TRUST_PREVIOUS_STORAGE = 'false' } = process.env;
+    const { INPUT_BUCKET, INPUT_KEY, PREVIOUS_STATE_SOURCE } = process.env;
     if (INPUT_BUCKET && INPUT_KEY) {
       console.log('Running in local context - task parameters come from environment variables');
       this.taskParameters = {
         inputBucket: INPUT_BUCKET,
         inputKey: INPUT_KEY,
-        bulkReset: BULK_RESET?.toLowerCase() === 'true',
-        trustPreviousStorage: TRUST_PREVIOUS_STORAGE?.toLowerCase() === 'true'
+        previousStateSource: requirePreviousStateSource({ previousStateSource: PREVIOUS_STATE_SOURCE }, 'The chunker environment')
       };
     }
   }
@@ -102,10 +102,8 @@ export class ChunkFromS3 implements IChunkFromSource {
     this.taskParameters = {
       inputBucket: messageBody.inputBucket,
       inputKey: messageBody.inputKey,
-      bulkReset: typeof messageBody.bulkReset === 'boolean' ? messageBody.bulkReset : messageBody.bulkReset === 'true',
-      trustPreviousStorage: typeof messageBody.trustPreviousStorage === 'boolean'
-        ? messageBody.trustPreviousStorage
-        : messageBody.trustPreviousStorage === 'true'
+      // The chunker subscriber sends previousStateSource: 'target' for every dropped file
+      previousStateSource: requirePreviousStateSource(messageBody, 'The chunker queue message')
     };
   }
 
@@ -129,19 +127,11 @@ export class ChunkFromS3 implements IChunkFromSource {
   }
 
   /**
-   * Get the bulkReset flag from task parameters.
-   * Returns true if bulkReset was specified in SQS message or environment, false otherwise.
+   * Where the run's previous state comes from, as its message (or the environment, locally) asked for. The chunker may
+   * still turn `storage` into `target` when there is no baseline (docker/chunker.ts).
    */
-  public getBulkResetFlag = (): boolean => {
-    return this.taskParameters?.bulkReset || false;
-  }
-
-  /**
-   * Get the trustPreviousStorage flag from task parameters.
-   * Returns true if previous storage should be trusted, false otherwise.
-   */
-  public getTrustPreviousStorageFlag = (): boolean => {
-    return this.taskParameters?.trustPreviousStorage || false;
+  public getPreviousStateSource = (): PreviousStateSource | undefined => {
+    return this.taskParameters?.previousStateSource;
   }
 
   /**
@@ -166,17 +156,13 @@ export class ChunkFromS3 implements IChunkFromSource {
       region,
       itemsPerChunk,
       personIdField,
-      bulkReset: bulkResetOverride = false,
-      trustPreviousStorage: trustPreviousStorageOverride = false,
+      previousStateSource: previousStateSourceOverride,
       dryRun
     } = params;
 
-    let { inputBucket, inputKey, bulkReset, trustPreviousStorage, populationType } = this.taskParameters!;
-    if(bulkReset !== bulkResetOverride && bulkResetOverride === true) {
-      console.warn(`Overriding bulkReset flag in task parameters from ${bulkReset} to ${bulkResetOverride} based on message parameters`);
-    }
-    bulkReset = bulkReset || bulkResetOverride; // Allow override of bulkReset flag from message parameters if needed
-    trustPreviousStorage = trustPreviousStorage || trustPreviousStorageOverride;
+    const { inputBucket, inputKey, populationType } = this.taskParameters!;
+    // The chunker's choice (docker/chunker.ts: the message's, or target when there is no baseline) wins
+    const previousStateSource = previousStateSourceOverride ?? this.taskParameters!.previousStateSource;
     
     if( ! populationType) {
       console.warn(`Population type not specified either POPULATION_TYPE environment variable or message parameters, defaulting to ${ChunkFromS3.defaultPopulationType}`);
@@ -247,8 +233,7 @@ export class ChunkFromS3 implements IChunkFromSource {
         source: sourceUrl,
         target: undefined,
         dryRun: config.dryRun || false,
-        bulkReset,
-        trustPreviousStorage,
+        previousStateSource,
         syncPopulation: this.taskParameters.populationType as SyncPopulation,
         region,
         chunkKeys: result.chunkKeys
@@ -277,8 +262,7 @@ if (require.main === module) {
     'DRY_RUN',
     'INPUT_BUCKET',
     'INPUT_KEY',
-    'BULK_RESET',
-    'TRUST_PREVIOUS_STORAGE',
+    'PREVIOUS_STATE_SOURCE',
     'SQS_QUEUE_URL'
   ].forEach(testEnvironment.getVar);
 

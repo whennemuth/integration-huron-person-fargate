@@ -5,6 +5,7 @@ import { ApiChunkerEvent } from "./ChunkerSubscriber";
 import { handleApiEvent } from "./fetch/ChunkerApiSubscriber";
 import { TaskParameters } from "./fetch/ChunkFromAPI";
 import { SyncPopulation } from "../../docker/chunkTypes";
+import { PreviousStateSource, requirePreviousStateSource } from "./PreviousStateSource";
 
 export type ChunkerQueueParams = {
   isEcsTask: boolean,
@@ -23,8 +24,7 @@ export interface ChunkerMessageBody {
   populationType: string;
   offset: number;
   iterationLimit: number;
-  bulkReset?: boolean;
-  trustPreviousStorage?: boolean;
+  previousStateSource: PreviousStateSource;
   chunkDirectory?: string;
 }
 
@@ -268,8 +268,7 @@ export class ChunkerQueue {
       baseUrl, 
       fetchPath, 
       populationType, 
-      bulkReset, 
-      trustPreviousStorage,
+      previousStateSource,
       personRecordProcessorAddons,
       termsEndpoint,
       startedBy,
@@ -301,8 +300,7 @@ export class ChunkerQueue {
         baseUrl, 
         fetchPath, 
         populationType, 
-        bulkReset, 
-        trustPreviousStorage, 
+        previousStateSource,
         iterationLimit, 
         offset: nextOffset, 
         chunkDirectory,
@@ -346,8 +344,7 @@ async function main() {
     DATASOURCE_ENDPOINTCONFIG_ITERATION_ITERATION_LIMIT: iterationLimitStr,
     OFFSET: offsetStr,
     CHUNK_DIRECTORY: chunkDirectory,
-    BULK_RESET: bulkReset,
-    TRUST_PREVIOUS_STORAGE: trustPreviousStorage,
+    PREVIOUS_STATE_SOURCE: previousStateSource,
     DRY_RUN: dryRun
   } = process.env;
 
@@ -413,8 +410,7 @@ async function main() {
       baseUrl,
       fetchPath,
       populationType: normalizedPopulationType,
-      bulkReset: bulkReset?.toLowerCase() === 'true',
-      trustPreviousStorage: trustPreviousStorage?.toLowerCase() === 'true'
+      previousStateSource: requirePreviousStateSource({ previousStateSource }, 'CHUNKER_QUEUE_PREVIOUS_STATE_SOURCE')
     };
 
     console.log('📤 Calling sendNextChunkingMessage...\n');
@@ -457,8 +453,7 @@ if (require.main === module) {
     'POPULATION_TYPE',
     'DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT',
     'OFFSET',
-    'BULK_RESET',
-    'TRUST_PREVIOUS_STORAGE',
+    'PREVIOUS_STATE_SOURCE',
     'CHUNK_DIRECTORY'
   ].forEach(testEnvironment.getVar);
   

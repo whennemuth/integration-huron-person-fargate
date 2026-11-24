@@ -4,9 +4,11 @@ Each run (a "sync run", identified by its syncRunId, the ISO timestamp in its ch
 `chunks/<population>/<syncRunId>/`) keeps a small amount of state beside its chunk files. This folder reads and
 writes it, in either storage mode:
 
-- **FLAGS**: the run's settings, written before chunking so processors can read them: `bulkReset`,
-  `trustPreviousStorage`, `syncPopulation`, and per run `personRecordProcessorAddons`, `termsEndpoint`, `startedBy`,
-  `processorScalingCapacity`.
+- **FLAGS**: the run's settings, written before chunking so processors can read them: `previousStateSource`
+  (`storage` or `target`, `src/chunking/PreviousStateSource.ts`), `syncPopulation`, and per run
+  `personRecordProcessorAddons`, `termsEndpoint`, `startedBy`, `processorScalingCapacity`. Runs recorded before
+  `previousStateSource` existed have `bulkReset` and `trustPreviousStorage` instead, which the pipeline refuses and
+  only Run history reads.
 - **METADATA**: the run's manifest (`source`, `target`, `chunkDirectory`, `itemsPerChunk`, `createdAt`, ...) and its
   running totals: `chunkCount`, `totalRecords` and `partialOrEmptyChunkEncountered` ("end of source records
   detected"; the name is persisted, so it stays). These totals are how completion is judged.
@@ -162,8 +164,7 @@ exit code comes from `computeExitCode()` (`src/processing/ProcessorCommon.ts`).
 
 ```json
 {
-  "bulkReset": false,
-  "trustPreviousStorage": true,
+  "previousStateSource": "storage",
   "syncPopulation": "person-full",
   "startedBy": { "by": "schedule" },
   "processorScalingCapacity": { "maxTasks": 8, "overridden": false }

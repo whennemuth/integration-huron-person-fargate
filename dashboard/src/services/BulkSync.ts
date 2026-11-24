@@ -9,6 +9,7 @@ import { MockLandscapeReset, MockLandscapeResetRecord } from '../../../src/chunk
 import { ProcessorScalingCapacity } from '../../../src/chunking/ProcessorScalingCapacity';
 import { ScheduledRun, UpcomingStart } from '../../../src/schedule/ScheduledRun';
 import { RunStarter, StartedBy } from '../../../src/chunking/StartedBy';
+import type { PreviousStateSource } from '../../../src/chunking/PreviousStateSource';
 import { RunActivity } from '../../../src/reporting/RunActivity';
 import type { RunnerEnv } from '../../../src/runner/RunnerTypes';
 import { DesiredCount } from '../../../src/DesiredCount';
@@ -56,8 +57,8 @@ export class BulkSyncError extends Error {
  * the chunker hands on to a next task at the next offset, which the person endpoint ignores, so the next task fetches
  * the same person again. Without bulk reset the first task's chunk usually marks the end before the next task starts,
  * and it cancels; with bulk reset the first task builds the person cache first, the next task gets ahead, and the
- * person is chunked twice (preview, 2026-11-12). Bulk reset is one choice that sets both previous-state flags
- * (ScheduledRun.previousStateFlags()).
+ * person is chunked twice (preview, 2026-11-12). Bulk reset is the run's previousStateSource: `target` when checked,
+ * `storage` when not (ScheduledRun.previousStateSource()).
  */
 export class BulkSyncRequest {
   private constructor(
@@ -228,17 +229,18 @@ export class BulkSyncRequest {
     return this.runType === 'full' ? SyncPopulation.PersonFull : SyncPopulation.PersonDelta;
   }
 
-  get trustPreviousStorage(): boolean {
-    return ScheduledRun.previousStateFlags(this.bulkReset).trustPreviousStorage;
+  /** Where the run's previous state comes from: the bulk reset choice, as the pipeline names it */
+  get previousStateSource(): PreviousStateSource {
+    return ScheduledRun.previousStateSource(this.bulkReset);
   }
 
   choices(): BulkSyncChoices {
     const {
-      runType, population, buid, bulkReset, trustPreviousStorage, iterationLimit, parallelStart, overrideStalled, mockLandscape,
+      runType, population, buid, bulkReset, previousStateSource, iterationLimit, parallelStart, overrideStalled, mockLandscape,
       source, simulator, resetState, processorScalingCapacityOverride
     } = this;
     return {
-      runType, population, ...(buid ? { buid } : {}), bulkReset, trustPreviousStorage, iterationLimit, parallelStart, overrideStalled,
+      runType, population, ...(buid ? { buid } : {}), bulkReset, previousStateSource, iterationLimit, parallelStart, overrideStalled,
       ...(processorScalingCapacityOverride !== undefined ? { processorScalingCapacityOverride } : {}),
       // A mock landscape's own options, only there
       ...(mockLandscape ? { source, ...(source === 'simulator' ? { simulator } : {}), resetState } : {})
@@ -808,7 +810,7 @@ export class BulkSync implements BulkSyncService {
       fetchPath,
       ...(termsEndpoint ? { termsEndpoint } : {}),
       populationType: request.population as ApiChunkerEvent['populationType'],
-      ...ScheduledRun.previousStateFlags(request.bulkReset),
+      previousStateSource: request.previousStateSource,
       iterationLimit: request.iterationLimit,
       offset: 0,
       // The chunker subscriber seeds this many messages, waits for the scale-in alarm, and sets the desired count
@@ -892,8 +894,9 @@ export class BulkSync implements BulkSyncService {
       region: landscape(settings.region),
       stackId: landscape(settings.stackId, 'The pipeline stack'),
       landscape: landscape(settings.landscape),
-      bulkReset: form(request.bulkReset),
-      trustPreviousStorage: form(request.trustPreviousStorage, 'The opposite of bulk reset: the two are one choice'),
+      previousStateSource: form(request.previousStateSource, request.bulkReset
+        ? 'Bulk reset: every person is looked up in Huron'
+        : 'People whose stored hash matches are skipped'),
       skipAtomicCounterReset: fixed(false, "The chunker subscriber resets the chunker's counters at every run's start"),
       messagesToPrepopulate: form(String(request.parallelStart), parallel),
       desiredCount: form(request.parallelStart, parallel),

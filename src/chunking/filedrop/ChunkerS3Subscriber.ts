@@ -100,9 +100,12 @@ export async function handleS3Event(event: S3ChunkerEvent, beforeStart?: () => P
   // Send message to SQS queue to trigger chunker task
   // The QueueProcessingFargateService will detect the message and auto-scale to process it
   // Message format uses camelCase (standardized across all message bodies)
+  // A dropped file's run looks every person up in the target, as it always has: nothing has ever told it to trust the
+  // stored hashes (src/chunking/PreviousStateSource.ts)
   const message = {
     inputBucket: bucket,
     inputKey: key,
+    previousStateSource: 'target',
   };
 
   try {

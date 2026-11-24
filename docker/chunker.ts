@@ -29,7 +29,7 @@
  *   - REGION: AWS region (e.g., 'us-east-2')
  *   - ITEMS_PER_CHUNK: Number of persons per chunk (default: 200)
  *   - PERSON_ID_FIELD: Field name for person IDs (default: 'personid')
- *   - BULK_RESET: Used to tag the chunk files (will be referenced by processor.ts when processing the chunk files)
+ *   - PREVIOUS_STATE_SOURCE: storage or target (a bulk reset), for a local run without a queue message
  *   - DRY_RUN: If 'true', performs a dry run without writing chunks (default: 'false')
  * 
  * Output:
@@ -39,7 +39,7 @@
  * 
  * Example Local Usage:
  * ```bash
- * INPUT_BUCKET=input-bucket INPUT_KEY=data.json CHUNKS_BUCKET=chunks-bucket BULK_RESET=false node dist/docker/chunker.js
+ * INPUT_BUCKET=input-bucket INPUT_KEY=data.json CHUNKS_BUCKET=chunks-bucket PREVIOUS_STATE_SOURCE=storage node dist/docker/chunker.js
  * ```
  */
 
@@ -55,6 +55,7 @@ import { AbstractPersonCache } from '../src/person-cache/AbstractPersonCache';
 import { TaskProtection } from '../src/TaskProtection';
 import { getConfig, getLocalConfig, objectExistsInS3 } from '../src/Utils';
 import { ChunkFromParams, IChunkFromSource, SyncPopulation } from './chunkTypes';
+import { PreviousStateSource } from '../src/chunking/PreviousStateSource';
 
 const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
 
@@ -101,6 +102,7 @@ const getChunkerInstance = async (config: Config, chunkerQueue: ChunkerQueue): P
         getMessage = () => undefined
         getChunkDirectory = () => ''
         getSyncPopulation = () => SyncPopulation.PersonFull
+        getPreviousStateSource = () => undefined
         acquiredCacheLock = false
       }();
     }
@@ -161,14 +163,14 @@ const getChunkerInstance = async (config: Config, chunkerQueue: ChunkerQueue): P
 
 /**
  * Check if there is any previous delta storage (baseline person data) to use for delta processing.
- * The existence or absence of previous data determines whether bulkReset should be enabled.
+ * Without previous data, the run's previous state must come from the target (previousStateSource=target).
  * 
  * Storage Mode Detection:
  * - S3 mode: Checks for previous-input.ndjson file in SHARED_DELTA_STORAGE_DIR
  * - DynamoDB mode: Queries PersonCurrentStateTable for any existing records
  * 
- * If no baseline exists, the chunker must set bulkReset=true to force target system lookups
- * for each person (to determine CREATE vs UPDATE operations).
+ * If no baseline exists, the chunker must set previousStateSource=target to force target system
+ * lookups for each person (to determine CREATE vs UPDATE operations).
  * @param bucket 
  * @param region 
  */
@@ -190,10 +192,9 @@ const sharedDeltaStorageExists = async (bucket: string, region?: string): Promis
         console.log(`✓ Found existing delta storage file at s3://${bucket}/${deltaStorageKey} (S3 mode)`);
       } else {
         console.warn(`✗ No existing delta storage file found at s3://${bucket}/${deltaStorageKey} (S3 mode) - ` +
-          `setting/overriding bulkReset=true to force target system lookups to determine create vs ` +
-          `update for each person record (this may cause the sync to run slower than usual, or this ` +
-          `may be the first time a sync has been run and you forgot to set the BULK_RESET ` +
-          `environment variable to true)`);
+          `setting/overriding previousStateSource=target to force target system lookups to determine ` +
+          `create vs update for each person record (this may cause the sync to run slower than usual, ` +
+          `or this may be the first time a sync has been run)`);
       }
       return s3Exists;
       
@@ -219,9 +220,9 @@ const sharedDeltaStorageExists = async (bucket: string, region?: string): Promis
         console.log(`✓ Found existing baseline data in PersonCurrentStateTable (DynamoDB mode)`);
       } else {
         console.warn(`✗ No baseline data found in PersonCurrentStateTable (DynamoDB mode) - ` +
-          `setting/overriding bulkReset=true to force target system lookups to determine create vs ` +
-          `update for each person record (this may cause the sync to run slower than usual, or this ` +
-          `may be the first time a sync has been run)`);
+          `setting/overriding previousStateSource=target to force target system lookups to determine ` +
+          `create vs update for each person record (this may cause the sync to run slower than usual, ` +
+          `or this may be the first time a sync has been run)`);
       }
       return dynamoDbHasRecords;
       
@@ -371,7 +372,7 @@ export async function main() {
       // Send next chunking message BEFORE starting this task's processing.
       // This enables true parallelism: the next task can start before the current one finishes.
       //
-      // NOTE: Run flags (e.g. bulkReset, personRecordProcessorAddons) are propagated through
+      // NOTE: Run flags (e.g. previousStateSource, personRecordProcessorAddons) are propagated through
       // subsequent messages for consistency, even though only the first chunker task needs them
       // (to write FLAGS to storage). Subsequent chunker tasks skip the write (conditional write 
       // pattern), so they don't use these flags. Processor tasks read FLAGS from storage, not 
@@ -382,26 +383,24 @@ export async function main() {
       await chunker.sendNextChunkingMessage(chunkerQueue, dryRun.toLowerCase() === 'true', partialOrEmptyChunkEncountered);
     }
 
-    // Check if shared delta storage file exists (S3 or DynamoDB) to determine if we have a baseline 
-    // for doing lookups during chunk processing, or if we need to set the bulkReset flag to true to 
-    // force lookups for every record.
-    // Priority: SQS message bulkReset > No historical data check
+    // Where the run's previous state comes from: the message's previousStateSource, except that a run with no baseline
+    // (S3 or DynamoDB) must look every person up in the target, whatever it asked for.
     const hasHistoricalData = await sharedDeltaStorageExists(chunksBucket, region);
-    const bulkResetFromMessage = chunker.getBulkResetFlag?.() || false;
-    
-    if (bulkResetFromMessage) {
-      console.log('✓ bulkReset=true from SQS message - will create person cache for lookups (if not already created).');
-      chunkFromParams.bulkReset = true;
+    const previousStateSourceFromMessage = chunker.getPreviousStateSource();
+    let previousStateSource: PreviousStateSource;
+    if (previousStateSourceFromMessage === 'target') {
+      console.log('✓ previousStateSource=target from the message - will create person cache for lookups (if not already created).');
+      previousStateSource = 'target';
     } else if (!hasHistoricalData) {
-      console.log(`✓ No historical data found (checked ${storageMode} storage) - setting bulkReset=true to force target system lookups`);
-      chunkFromParams.bulkReset = true;
+      console.log(`✓ No historical data found (checked ${storageMode} storage) - setting previousStateSource=target to force target system lookups`);
+      previousStateSource = 'target';
+    } else if (previousStateSourceFromMessage === 'storage') {
+      console.log(`✓ Historical data exists in ${storageMode} storage and previousStateSource=storage - using delta comparison`);
+      previousStateSource = 'storage';
     } else {
-      console.log(`✓ Historical data exists in ${storageMode} storage and bulkReset not requested - using delta comparison`);
-      chunkFromParams.bulkReset = false;
+      throw new Error('The run has no previousStateSource: its message must say where its previous state comes from');
     }
-
-    chunkFromParams.trustPreviousStorage = chunker.getTrustPreviousStorageFlag?.() || false;
-    console.log(`Trust previous storage flag: ${chunkFromParams.trustPreviousStorage}`);
+    chunkFromParams.previousStateSource = previousStateSource;
 
     // Get syncPopulation from chunker
     const syncPopulation = chunker.getSyncPopulation?.() || SyncPopulation.PersonFull;
@@ -429,8 +428,7 @@ export async function main() {
     await metadataBroker.writeFlags({
       bucketName: chunksBucket,
       chunkDirectory: chunker.getChunkDirectory(),
-      bulkReset: chunkFromParams.bulkReset,
-      trustPreviousStorage: chunkFromParams.trustPreviousStorage,
+      previousStateSource,
       syncPopulation,
       personRecordProcessorAddons,
       termsEndpoint,
@@ -444,7 +442,7 @@ export async function main() {
      * Ensure population cache exists for processor lookup.
      * Cache creation is thread-safe; concurrent tasks will coordinate using marker file locks.
      */
-    if(chunkFromParams.bulkReset || !chunkFromParams.trustPreviousStorage) {
+    if(previousStateSource === 'target') {
       const config = await getConfig();
       const { CACHE_FILE_NAME } = AbstractPersonCache;
       const cache = PersonCacheFactory.create(config);
@@ -531,8 +529,7 @@ if (require.main === module) {
     'SINGLE_PERSON_BUID',
     'INPUT_BUCKET',
     'INPUT_KEY',
-    'BULK_RESET',
-    'TRUST_PREVIOUS_STORAGE',
+    'PREVIOUS_STATE_SOURCE',
     'MAX_SCALING_CAPACITY',
     'ECS_CLUSTER_NAME',
     'PROCESSOR_ECS_SERVICE_NAME',
