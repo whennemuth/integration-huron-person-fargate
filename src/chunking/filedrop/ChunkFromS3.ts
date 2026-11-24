@@ -102,13 +102,8 @@ export class ChunkFromS3 implements IChunkFromSource {
     this.taskParameters = {
       inputBucket: messageBody.inputBucket,
       inputKey: messageBody.inputKey,
-      // The chunker subscriber sends previousStateSource. A dropped file's message queued before it did carries neither
-      // it nor the pair, and such a run was always a bulk reset (an unset trustPreviousStorage meant false).
-      previousStateSource: requirePreviousStateSource(
-        messageBody.previousStateSource === undefined && messageBody.bulkReset === undefined
-          && messageBody.trustPreviousStorage === undefined ? { previousStateSource: 'target' } : messageBody,
-        'The chunker queue message'
-      )
+      // The chunker subscriber sends previousStateSource: 'target' for every dropped file
+      previousStateSource: requirePreviousStateSource(messageBody, 'The chunker queue message')
     };
   }
 

@@ -92,7 +92,7 @@ Tracks integration run statistics, error events, and sync run metadata.
 - SK: "FLAGS"
 - Contains: previousStateSource, syncPopulation, and optionally personRecordProcessorAddons, termsEndpoint,
   startedBy, processorScalingCapacity (and runFailed* fields, which nothing writes). Runs recorded before
-  previousStateSource existed have bulkReset and trustPreviousStorage in its place (previousStateSourceIn() reads both)
+  previousStateSource existed have bulkReset and trustPreviousStorage in its place (only Run history reads them)
 - Written by: Chunker tasks
 - Read by: Processor and Post-processor phases
 

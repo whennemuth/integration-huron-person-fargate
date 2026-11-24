@@ -6,54 +6,44 @@ export type { PreviousStateSource } from 'integration-huron-person';
  * A run's previous state source (integration-huron-person's PreviousStateSource): `storage`, the hashes stored at
  * earlier syncs decide what changed; `target`, every person is looked up in the target (a bulk reset). It travels the
  * run's messages as `previousStateSource` (ApiChunkerEvent -> the chunker queue message -> TaskParameters -> each
- * chained message -> Flags -> the processors), replacing the bulkReset / trustPreviousStorage pair.
+ * chained message -> Flags -> the processors).
  *
- * The pipeline has no default: every run start says which it wants, and anything that doesn't is refused.
- *
- * The pair is still read, and translated, from what was sent or written before previousStateSource existed: events
- * from senders not yet moved over, a message queued or a run underway when this was deployed. In the pipeline an
- * unset trustPreviousStorage beside a set bulkReset meant false (the chunker subscriber's default), unlike in
- * integration-huron-person, where it means true; messages always carried both, but the pipeline's meaning is kept.
+ * The pipeline has no default: every run start says which it wants, and anything that doesn't is refused. It replaced
+ * the bulkReset / trustPreviousStorage pair, which is refused too, by name: a message, event or record carrying it is
+ * from before previousStateSource (only Run history still reads such records, to show old runs).
  */
 export type PreviousStateFields = {
   previousStateSource?: unknown;
-  /** @deprecated Read only, from what was sent or written before previousStateSource */
+  /** Refused: the pair previousStateSource replaced */
   bulkReset?: unknown;
-  /** @deprecated Read only, from what was sent or written before previousStateSource */
+  /** Refused: the pair previousStateSource replaced */
   trustPreviousStorage?: unknown;
 };
 
-/** A message's boolean, which may have travelled as a string; undefined when absent */
-const flag = (value: unknown): boolean | undefined => {
-  if (value === undefined || value === null || `${value}`.trim() === '') {
-    return undefined;
-  }
-  return typeof value === 'boolean' ? value : `${value}`.trim().toLowerCase() === 'true';
-};
+/** Absent, or as good as: undefined, null or blank (a value that travelled as a string) */
+const blank = (value: unknown): boolean => value === undefined || value === null || `${value}`.trim() === '';
 
 /**
- * The previous state source the fields ask for: previousStateSource, or else the deprecated pair translated (`target`
- * if bulkReset is true or trustPreviousStorage is false). Undefined when they carry neither.
+ * The previous state source the fields ask for, or undefined when they carry nothing about it.
  *
- * @throws if previousStateSource is not `storage` or `target`, or the pair is also given and means something else
+ * @throws if previousStateSource is not `storage` or `target`, or the fields carry the removed bulkReset /
+ *   trustPreviousStorage (integration-huron-person's previousStateSourceOf() names them)
  */
 export const previousStateSourceIn = (fields: PreviousStateFields): PreviousStateSource | undefined => {
-  const previousStateSource = `${fields.previousStateSource ?? ''}`.trim() === '' ? undefined : fields.previousStateSource;
-  const bulkReset = flag(fields.bulkReset);
-  const trustPreviousStorage = flag(fields.trustPreviousStorage);
-  if (previousStateSource === undefined && bulkReset === undefined && trustPreviousStorage === undefined) {
+  const { previousStateSource, bulkReset, trustPreviousStorage } = fields;
+  if (blank(previousStateSource) && blank(bulkReset) && blank(trustPreviousStorage)) {
     return undefined;
   }
-  const pairGiven = bulkReset !== undefined || trustPreviousStorage !== undefined;
   return previousStateSourceOf({
-    previousStateSource: previousStateSource as PreviousStateSource | undefined,
-    ...(pairGiven ? { bulkReset: bulkReset ?? false, trustPreviousStorage: trustPreviousStorage ?? false } : {})
-  });
+    ...(blank(previousStateSource) ? {} : { previousStateSource: previousStateSource as PreviousStateSource }),
+    ...(blank(bulkReset) ? {} : { bulkReset }),
+    ...(blank(trustPreviousStorage) ? {} : { trustPreviousStorage })
+  } as Parameters<typeof previousStateSourceOf>[0]);
 };
 
 /**
- * Why the fields can't start or carry a run: they don't say where its previous state comes from, or say something
- * invalid or contradictory. Undefined when they can.
+ * Why the fields can't start or carry a run: they don't say where its previous state comes from, say something
+ * invalid, or carry the removed pair. Undefined when they can.
  */
 export const previousStateRefusal = (fields: PreviousStateFields): string | undefined => {
   try {
@@ -66,7 +56,7 @@ export const previousStateRefusal = (fields: PreviousStateFields): string | unde
 };
 
 /**
- * previousStateSourceIn(), refusing fields that carry neither the setting nor the deprecated pair.
+ * previousStateSourceIn(), refusing fields that carry nothing about it.
  *
  * @param what Names the fields' source in the error, e.g. 'The chunker queue message'
  * @throws as previousStateSourceIn() does, and when the fields carry nothing

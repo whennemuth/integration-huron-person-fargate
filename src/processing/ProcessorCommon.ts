@@ -54,10 +54,9 @@ export async function resolveNextChunk(params: {
  * Derives previousStateSource/syncPopulation from this run's Flags, falling back to environment/defaults, with the
  * console logging both processors report identically.
  *
- * previousStateSource comes from the Flags (for a run recorded before it existed, their bulkReset /
- * trustPreviousStorage, translated: previousStateSourceIn()), or else from PREVIOUS_STATE_SOURCE in the environment
- * (a local run over a chunk whose run has no Flags). No task definition sets it, and there is no default: with
- * neither, the processor refuses the chunk rather than guess.
+ * previousStateSource comes from the Flags, or else from PREVIOUS_STATE_SOURCE in the environment (a local run over a
+ * chunk whose run has no Flags). No task definition sets it, and there is no default: with neither, the processor
+ * refuses the chunk rather than guess, as it does Flags carrying the bulkReset / trustPreviousStorage pair it replaced.
  *
  * @throws when neither the Flags nor the environment say where the run's previous state comes from
  */

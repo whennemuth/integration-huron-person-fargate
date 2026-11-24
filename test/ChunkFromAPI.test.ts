@@ -234,7 +234,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
         baseUrl: 'https://api.queue.com',
         fetchPath: '/queue/people',
         populationType: 'person-full',
-        bulkReset: true
+        previousStateSource: 'target'
       };
 
       const chunker = new ChunkFromAPI(mockConfig);
@@ -251,6 +251,13 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       expect(chunker.hasSufficientConfig()).toBe(true);
     });
 
+    it.each([{ bulkReset: false, trustPreviousStorage: true }, { bulkReset: 'true' }, { previousStateSource: 'storage', trustPreviousStorage: true }])(
+      'refuses a message carrying the replaced pair: %j', fields => {
+        const chunker = new ChunkFromAPI(mockConfig);
+        expect(() => chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify({ populationType: 'person-full', ...fields }) } as Message))
+          .toThrow('no longer accepted');
+      });
+
     it('refuses a message that does not say where the run\'s previous state comes from (no default)', () => {
       const chunker = new ChunkFromAPI(mockConfig);
       expect(() => chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify({}) } as Message))
@@ -260,11 +267,6 @@ describe('ChunkFromAPI Parameter Gathering', () => {
     it.each([
       [{ previousStateSource: 'storage' }, 'storage'],
       [{ previousStateSource: 'target' }, 'target'],
-      // A message queued before previousStateSource existed: the deprecated pair, translated
-      [{ bulkReset: false, trustPreviousStorage: true }, 'storage'],
-      [{ bulkReset: 'false', trustPreviousStorage: 'true' }, 'storage'],
-      [{ bulkReset: true, trustPreviousStorage: true }, 'target'],
-      [{ bulkReset: false, trustPreviousStorage: false }, 'target']
     ])('reads the previous state source of the message %j as %p', (fields, expected) => {
       const chunker = new ChunkFromAPI(mockConfig);
       chunker.setTaskParametersFromQueueMessage({ Body: JSON.stringify({ populationType: 'person-full', ...fields }) } as Message);

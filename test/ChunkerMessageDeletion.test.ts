@@ -60,8 +60,7 @@ describe('Chunker Main - Message Deletion', () => {
         baseUrl: 'https://api.test.com',
         fetchPath: '/people',
         populationType: 'person-full',
-        bulkReset: false,
-        trustPreviousStorage: true,
+        previousStateSource: 'storage',
         iterationLimit: 100,
         offset: 0,
         chunkDirectory: 'test-chunk-dir'

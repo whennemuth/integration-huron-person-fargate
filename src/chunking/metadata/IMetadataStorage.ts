@@ -9,8 +9,8 @@ import type { PreviousStateSource } from '../PreviousStateSource';
  * These flags control sync behavior and are written early (before chunking starts)
  * so processors can read them immediately.
  *
- * Runs recorded before previousStateSource existed have bulkReset and trustPreviousStorage instead: read where a run's
- * previous state came from with previousStateSourceIn() (src/chunking/PreviousStateSource.ts), never the field alone.
+ * Runs recorded before previousStateSource existed have bulkReset and trustPreviousStorage instead. The pipeline no
+ * longer reads them (src/chunking/PreviousStateSource.ts refuses them); only Run history does, to show old runs.
  */
 export type Flags = {
   /** Where the run's previous state comes from: `storage`, or `target` (a bulk reset, or a run with no baseline) */

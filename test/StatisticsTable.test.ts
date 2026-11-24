@@ -84,13 +84,13 @@ describe('StatisticsTable', () => {
       });
     });
 
-    it('translates the previous state of a run recorded before previousStateSource (bulkReset / trustPreviousStorage)', async () => {
+    it('leaves previousStateSource out of the summary of a run recorded before it existed (bulkReset / trustPreviousStorage)', async () => {
       dynamoMock.on(GetCommand).resolves({ Item: {
         integrationTimestamp, eventType: 'METADATA', syncPopulation: 'person-full', bulkReset: true, trustPreviousStorage: false
       } });
       dynamoMock.on(QueryCommand).resolves({ Items: [] });
       const summary = await statisticsTable.buildRunSummary(integrationTimestamp, { postProcessingSucceeded: true, dryRun: false });
-      expect(summary.previousStateSource).toBe('target');
+      expect(summary).not.toHaveProperty('previousStateSource');
       expect(summary).not.toHaveProperty('bulkReset');
     });
 

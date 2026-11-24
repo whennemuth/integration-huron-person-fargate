@@ -24,7 +24,7 @@ const ENV = {
 
 const event = (overrides: Partial<ApiChunkerEvent> = {}): ApiChunkerEvent => ({
   baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: SyncPopulation.PersonDelta,
-  bulkReset: false, trustPreviousStorage: true, iterationLimit: 10, offset: 0, parallelStart: 3,
+  previousStateSource: 'storage', iterationLimit: 10, offset: 0, parallelStart: 3,
   startedBy: RunStarter.dashboard('wrh'), ...overrides
 });
 

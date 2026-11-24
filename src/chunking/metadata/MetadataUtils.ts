@@ -20,10 +20,6 @@
 
     for (const field of requiredFields) {
       if (metadata[field] === undefined) {
-        // A run recorded before previousStateSource existed has bulkReset / trustPreviousStorage instead
-        if (field === 'previousStateSource' && (metadata.bulkReset !== undefined || metadata.trustPreviousStorage !== undefined)) {
-          continue;
-        }
         const defaultValue = field === 'syncPopulation'
           ? SyncPopulation.PersonFull
           : field === 'previousStateSource' ? 'unknown' : false;

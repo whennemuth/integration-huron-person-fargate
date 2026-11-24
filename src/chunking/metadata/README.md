@@ -7,8 +7,8 @@ writes it, in either storage mode:
 - **FLAGS**: the run's settings, written before chunking so processors can read them: `previousStateSource`
   (`storage` or `target`, `src/chunking/PreviousStateSource.ts`), `syncPopulation`, and per run
   `personRecordProcessorAddons`, `termsEndpoint`, `startedBy`, `processorScalingCapacity`. Runs recorded before
-  `previousStateSource` existed have `bulkReset` and `trustPreviousStorage` instead: read either with
-  `previousStateSourceIn()`.
+  `previousStateSource` existed have `bulkReset` and `trustPreviousStorage` instead, which the pipeline refuses and
+  only Run history reads.
 - **METADATA**: the run's manifest (`source`, `target`, `chunkDirectory`, `itemsPerChunk`, `createdAt`, ...) and its
   running totals: `chunkCount`, `totalRecords` and `partialOrEmptyChunkEncountered` ("end of source records
   detected"; the name is persisted, so it stays). These totals are how completion is judged.

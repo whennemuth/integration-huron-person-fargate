@@ -78,13 +78,10 @@ export interface ApiChunkerEvent {
   populationType: SyncPopulation;
   /**
    * Where the run's previous state comes from (src/chunking/PreviousStateSource.ts): `storage` or `target` (a bulk
-   * reset). Required, in effect: an event without it, or without the deprecated pair below, is refused.
+   * reset). Required, in effect: an event without it is refused, as is one carrying the bulkReset /
+   * trustPreviousStorage pair it replaced.
    */
   previousStateSource?: PreviousStateSource;
-  /** @deprecated Use previousStateSource. Accepted, and translated, from senders not yet moved over */
-  bulkReset?: boolean;
-  /** @deprecated Use previousStateSource. Accepted, and translated, from senders not yet moved over */
-  trustPreviousStorage?: boolean;
   iterationLimit?: number;
   offset?: number;
   chunkDirectory?: string;
@@ -281,12 +278,11 @@ export function runStartRefusal(event: ApiChunkerEvent, env: NodeJS.ProcessEnv =
 }
 
 /**
- * The event with its previous state source settled (already checked by runStartRefusal()): previousStateSource set,
- * and the deprecated pair it may have been given as removed, so the seeded and chained messages carry only the one.
+ * The event with its previous state source settled (already checked by runStartRefusal()), trimmed and typed, for the
+ * seeded and chained messages.
  */
 export function withPreviousStateSource(event: ApiChunkerEvent): ApiChunkerEvent {
-  const { bulkReset, trustPreviousStorage, ...rest } = event;
-  return { ...rest, previousStateSource: requirePreviousStateSource(event, 'The API event') };
+  return { ...event, previousStateSource: requirePreviousStateSource(event, 'The API event') };
 }
 
 /**

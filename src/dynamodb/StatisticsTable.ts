@@ -7,7 +7,8 @@ import { IContext } from '../../context/IContext';
 import { StatisticsItem } from '../ApiErrorTracking';
 import { AbstractDynamoDbTable, DynamoDBTable, QueryPage } from './DynamoDBTable';
 import { OCCFlag } from './OCCFlag';
-import { PreviousStateSource, previousStateSourceIn } from '../chunking/PreviousStateSource';
+import { isPreviousStateSource } from 'integration-huron-person';
+import type { PreviousStateSource } from '../chunking/PreviousStateSource';
 
 export const DYNAMODB_TABLE_NAME = (context: IContext) => `${context.STACK_ID}-statistics-${context.TAGS.Landscape.toLowerCase()}`;
 export const DYNAMODB_PARTITION_KEY = 'integrationTimestamp';
@@ -123,7 +124,7 @@ export type RunSummary = {
   syncPopulation?: string;
   /** Where the run's previous state came from (from METADATA): `target` for a bulk reset, or a run with no baseline */
   previousStateSource?: PreviousStateSource;
-  /** @deprecated In summaries written before previousStateSource: true for a bulk reset */
+  /** In summaries written before previousStateSource (never written now): true for a bulk reset. Run history reads it */
   bulkReset?: boolean;
   /** Chunks written and records fetched by the chunker (from METADATA) */
   chunkCount?: number;
@@ -220,7 +221,8 @@ export class StatisticsTable {
       createdAt: metadata.createdAt,
       completedAt: new Date().toISOString(),
       syncPopulation: metadata.syncPopulation,
-      previousStateSource: previousStateSourceIn(metadata),
+      // Absent for a run recorded before previousStateSource existed, whose METADATA has the replaced pair instead
+      ...(isPreviousStateSource(metadata.previousStateSource) ? { previousStateSource: metadata.previousStateSource } : {}),
       chunkCount: metadata.chunkCount,
       totalRecords: metadata.totalRecords,
       ...totals,

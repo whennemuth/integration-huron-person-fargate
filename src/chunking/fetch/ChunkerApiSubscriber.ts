@@ -46,8 +46,8 @@ const sqsClient = new SQSClient({ region });
  *   baseUrl: string,              // API base URL (e.g., 'https://api.bu.edu')
  *   fetchPath: string,            // API fetch path (e.g., '/people/v1')
  *   populationType: string,       // 'person-full' or 'person-delta'
- *   previousStateSource: string,  // 'storage' or 'target' (a bulk reset); or the deprecated bulkReset /
- *                                 // trustPreviousStorage pair, translated. Refused when neither is given.
+ *   previousStateSource: string,  // 'storage' or 'target' (a bulk reset). Refused when missing, and when the event
+ *                                 // carries the bulkReset / trustPreviousStorage pair it replaced.
  *   processingMetadata?: {
  *     processedAt?: string,
  *     processorVersion?: string

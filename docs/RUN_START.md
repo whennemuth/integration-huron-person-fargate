@@ -31,8 +31,9 @@ people endpoint, `iterationLimit` = the context's
   reset; `src/chunking/PreviousStateSource.ts`), set from the bulk reset choice by
   `ScheduledRun.previousStateSource(bulkReset)` for the schedule and the dashboard alike, and by
   `RUNNER_PREVIOUS_STATE_SOURCE` for the Runner. It has no default: the chunker subscriber refuses a start without one.
-  It replaced the `bulkReset` / `trustPreviousStorage` pair, which only ever acted together (the subscriber still
-  translates the pair from an old sender), and the context's dead `BULK_RESET` / `TRUST_PREVIOUS_STORAGE` are gone.
+  It replaced the `bulkReset` / `trustPreviousStorage` pair, which only ever acted together: the pipeline refuses
+  the pair by name now, and the context's dead `BULK_RESET` / `TRUST_PREVIOUS_STORAGE` are gone. Run history still
+  reads `bulkReset` from runs recorded before, to show them.
 - A landscape gets this at its next pipeline deploy (a `lib/` change).
 
 ### A scheduled start while a run is underway
