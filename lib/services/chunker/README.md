@@ -84,8 +84,7 @@ made in the dashboard carries the run settings reviewed there):
   "populationType": "person-full",
   "iterationLimit": "<ECS.chunkerService.chunksPerTask>",
   "offset": 0,
-  "bulkReset": false,
-  "trustPreviousStorage": true,
+  "previousStateSource": "storage",
   "startedBy": { "by": "schedule" },
   "processingMetadata": {
     "processedAt": "Placeholder. Override at runtime with ISO timestamp",
@@ -106,9 +105,9 @@ whether people missing from the source are deactivated:
 - **`person-full`**: full fetch, with deactivations. The default: the schedule and the dashboard's Bulk sync use it.
 - **`person-delta`**: full fetch, no deactivations.
 
-People whose record hasn't changed are skipped by trusting the stored hashes (`trustPreviousStorage: true`), not by the
-population type. `bulkReset` and `trustPreviousStorage` only act together: `bulkReset || !trustPreviousStorage` means a
-reset, so send both.
+People whose record hasn't changed are skipped by trusting the stored hashes (`previousStateSource: storage`), not by
+the population type. `previousStateSource: target` is a bulk reset: every person is looked up in Huron. Every event must
+say which; one that doesn't is refused.
 
 ---
 
@@ -135,8 +134,7 @@ aws lambda invoke \
     "baseUrl": "https://prod-budev-fm.snaplogic.io",
     "fetchPath": "/api/1/rest/feed/run/task/BUTest/Admin-Integration-Services/GenericGets/huronIRBgetPersonByPopulation",
     "populationType": "person-full",
-    "bulkReset": true,
-    "trustPreviousStorage": false,
+    "previousStateSource": "target",
     "processingMetadata": {
       "processedAt": "'$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)'",
       "processorVersion": "1.0.0"
@@ -156,8 +154,7 @@ aws lambda invoke \
     "baseUrl": "from_config",
     "fetchPath": "from_config",
     "populationType": "person-full",
-    "bulkReset": true,
-    "trustPreviousStorage": false,
+    "previousStateSource": "target",
     "processingMetadata": {
       "processedAt": "'$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)'",
       "processorVersion": "1.0.0"
@@ -169,7 +166,7 @@ aws lambda invoke \
 `npm run start-full-sync` / `start-full-reset` / `start-delta-sync` / `start-delta-reset`
 (`bin/start-off-schedule-sync.sh`) invoke the Lambda the same way: the function is `chunker-subscriber-<landscape>`,
 with the landscape and region read from `context/context.json` (override with `--landscape` / `--region`), and
-`trustPreviousStorage` is always sent as the opposite of `bulkReset`. Add `--dry-run` (after `--`, e.g.
+`--bulkReset` sent as `previousStateSource` (`true`: `target`, `false`: `storage`). Add `--dry-run` (after `--`, e.g.
 `npm run start-full-sync -- --dry-run`) to print the invocation without running it. AWS CLI v2 reads `--payload` as base64
 unless given `--cli-binary-format raw-in-base64-out`, as in the examples above.
 
@@ -184,8 +181,7 @@ aws lambda invoke \
     "baseUrl": "from_config",
     "fetchPath": "from_config",
     "populationType": "person-full",
-    "bulkReset": false,
-    "trustPreviousStorage": true,
+    "previousStateSource": "storage",
     "processingMetadata": {
       "processedAt": "'$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)'",
       "processorVersion": "1.0.0"

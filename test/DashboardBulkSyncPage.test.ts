@@ -87,10 +87,10 @@ const state = (overrides: Record<string, any> = {}) => ({
 /** What POST /api/bulk-sync/plan answers: the choices, the event and a few settings */
 const plan = (choices: Record<string, any>) => ({
   landscape: 'preview',
-  choices: { bulkReset: false, trustPreviousStorage: true, iterationLimit: 10, parallelStart: 0, overrideStalled: false, ...choices },
+  choices: { bulkReset: false, previousStateSource: 'storage', iterationLimit: 10, parallelStart: 0, overrideStalled: false, ...choices },
   event: {
-    baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: 'person-full', bulkReset: false,
-    trustPreviousStorage: true, iterationLimit: 0, offset: 0, processingMetadata: { processedAt: 'set when the run is started', processorVersion: '1.0.0' }
+    baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: 'person-full', previousStateSource: 'storage',
+    iterationLimit: 0, offset: 0, processingMetadata: { processedAt: 'set when the run is started', processorVersion: '1.0.0' }
   },
   settings: [
     { name: 'populationType', value: 'person-full', source: 'form', note: 'Full sync' },
@@ -525,7 +525,7 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
     it('warns in the review when the run asks for more processor tasks than the landscape\'s, and says how many it uses', () => {
       const planWith = (override?: number) => ({
         landscape: 'preview',
-        choices: { runType: 'full', population: 'person-full', bulkReset: false, trustPreviousStorage: true, iterationLimit: 10, parallelStart: 0, overrideStalled: false,
+        choices: { runType: 'full', population: 'person-full', bulkReset: false, previousStateSource: 'storage', iterationLimit: 10, parallelStart: 0, overrideStalled: false,
           ...(override !== undefined ? { processorScalingCapacityOverride: override } : {}) },
         event: { baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people' },
         settings: [{ name: 'processorMaxScalingCapacity', value: 3, source: 'landscape' }]
@@ -817,7 +817,7 @@ describe('bulk-sync.js against the dashboard routes and offline services', () =>
     expect(await bulkPage.review({ runType: 'test', buid: 'U0000042', bulkReset: true, custom: false })).toBe(true);
     const review = form.parts['[data-bulk-confirm]'].innerHTML;
     expect(review).toContain('<code>/api/person?buid=U0000042</code>');
-    expect(review).toContain('<code>trustPreviousStorage</code>');
+    expect(review).toContain('<code>previousStateSource</code>');
     expect(await bulkPage.confirm()).toBe(true);
     // The offline launch flag, raised by the start: the page shows the run launching, and another start is refused
     expect(parts['[data-bulk-status]'].innerHTML).toContain('A run is starting: Test of U0000042, launched just now');

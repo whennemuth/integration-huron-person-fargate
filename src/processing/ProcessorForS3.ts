@@ -21,7 +21,7 @@
  * - CHUNK_KEY: Key of the NDJSON chunk file to process (or from SQS message when running in ECS)
  * - SQS_QUEUE_URL: URL of the SQS queue to read chunk messages from (if not using env vars for CHUNKS_BUCKET and CHUNK_KEY)
  * - STATIC_MAP_USAGE: JSON string specifying which static maps to load (e.g., '{ "orgMap": true, "stateMap": true, "countryMap": true }')
- * - BULK_RESET: If "true", will "upsert" all persons in the chunk, ignoring previous delta state. SEE: src\UpsertDeltaStrategy.ts
+ * - PREVIOUS_STATE_SOURCE: storage or target (a bulk reset), only for a chunk whose run has no Flags (a local run)
  * - DRY_RUN: If "true", runs the sync without making API calls (default: false)
  * - All huron-person config env vars (HURON_API_ENDPOINT, JWT credentials, storage config, etc.)
  * 
@@ -237,7 +237,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     HURON_PERSON_CONFIG_JSON,
     STATIC_MAP_USAGE,
     DRY_RUN,
-    BULK_RESET,
+    PREVIOUS_STATE_SOURCE,
     DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbStatisticsTableName,
     RETRY_STRATEGY,
     SHARED_DELTA_STORAGE_DIR='delta-storage'
@@ -281,7 +281,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     // Read flags file to get per-sync configuration (previousStateSource, syncPopulation, ...)
     const flags = await metadataStorage.readFlagsFromChunkKey(bucketName, s3Key!, region);
 
-    const { previousStateSource, syncPopulation } = resolveCommonFlags(flags, BULK_RESET);
+    const { previousStateSource, syncPopulation } = resolveCommonFlags(flags, PREVIOUS_STATE_SOURCE);
 
 
     // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
@@ -455,7 +455,7 @@ if (require.main === module) {
     'HURON_PERSON_CONFIG_JSON',
     'STATIC_MAP_USAGE',
     'DRY_RUN',
-    'BULK_RESET',
+    'PREVIOUS_STATE_SOURCE',
     'DYNAMODB_STATISTICS_TABLE_NAME',
     'RETRY_STRATEGY',
     'SHARED_DELTA_STORAGE_DIR',

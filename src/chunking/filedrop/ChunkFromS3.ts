@@ -47,7 +47,7 @@ export type TaskParameters = {
  *   - REGION: AWS region (e.g., 'us-east-2')
  *   - ITEMS_PER_CHUNK: Number of persons per chunk (default: 200)
  *   - PERSON_ID_FIELD: Field name for person IDs (default: 'personid')
- *   - BULK_RESET: Used to tag the chunk files (will be referenced by processor.ts when processing the chunk files)
+ *   - PREVIOUS_STATE_SOURCE: storage or target (a bulk reset), recorded in the run's Flags for the processors
  *   - DRY_RUN: If 'true', performs a dry run without writing chunks (default: 'false')
  * 
  * Output:
@@ -72,15 +72,13 @@ export class ChunkFromS3 implements IChunkFromSource {
    * (local dev/docker-compose mode)
    */
   constructor() {
-    const { INPUT_BUCKET, INPUT_KEY, BULK_RESET = 'false', TRUST_PREVIOUS_STORAGE = 'false' } = process.env;
+    const { INPUT_BUCKET, INPUT_KEY, PREVIOUS_STATE_SOURCE } = process.env;
     if (INPUT_BUCKET && INPUT_KEY) {
       console.log('Running in local context - task parameters come from environment variables');
       this.taskParameters = {
         inputBucket: INPUT_BUCKET,
         inputKey: INPUT_KEY,
-        previousStateSource: requirePreviousStateSource(
-          { bulkReset: BULK_RESET, trustPreviousStorage: TRUST_PREVIOUS_STORAGE }, 'The chunker environment'
-        )
+        previousStateSource: requirePreviousStateSource({ previousStateSource: PREVIOUS_STATE_SOURCE }, 'The chunker environment')
       };
     }
   }
@@ -269,8 +267,7 @@ if (require.main === module) {
     'DRY_RUN',
     'INPUT_BUCKET',
     'INPUT_KEY',
-    'BULK_RESET',
-    'TRUST_PREVIOUS_STORAGE',
+    'PREVIOUS_STATE_SOURCE',
     'SQS_QUEUE_URL'
   ].forEach(testEnvironment.getVar);
 

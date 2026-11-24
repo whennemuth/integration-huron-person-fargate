@@ -344,8 +344,7 @@ async function main() {
     DATASOURCE_ENDPOINTCONFIG_ITERATION_ITERATION_LIMIT: iterationLimitStr,
     OFFSET: offsetStr,
     CHUNK_DIRECTORY: chunkDirectory,
-    BULK_RESET: bulkReset,
-    TRUST_PREVIOUS_STORAGE: trustPreviousStorage,
+    PREVIOUS_STATE_SOURCE: previousStateSource,
     DRY_RUN: dryRun
   } = process.env;
 
@@ -411,7 +410,7 @@ async function main() {
       baseUrl,
       fetchPath,
       populationType: normalizedPopulationType,
-      previousStateSource: requirePreviousStateSource({ bulkReset, trustPreviousStorage }, 'The CHUNKER_QUEUE harness environment')
+      previousStateSource: requirePreviousStateSource({ previousStateSource }, 'CHUNKER_QUEUE_PREVIOUS_STATE_SOURCE')
     };
 
     console.log('📤 Calling sendNextChunkingMessage...\n');
@@ -454,8 +453,7 @@ if (require.main === module) {
     'POPULATION_TYPE',
     'DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT',
     'OFFSET',
-    'BULK_RESET',
-    'TRUST_PREVIOUS_STORAGE',
+    'PREVIOUS_STATE_SOURCE',
     'CHUNK_DIRECTORY'
   ].forEach(testEnvironment.getVar);
   

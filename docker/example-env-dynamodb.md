@@ -107,8 +107,8 @@ CACHE_ENABLED=true                                 # Enable/disable person cache
 # ============================================================================
 # Sync Flags
 # ============================================================================
-# BULK_RESET=false                                 # Force target system lookups
-# TRUST_PREVIOUS_STORAGE=true                      # Skip validation of baseline delta files
+# PREVIOUS_STATE_SOURCE=storage                    # storage or target (a bulk reset): a run without a queue message
+#                                                  # (chunker), or a chunk whose run has no Flags (processor). No default
 
 # ============================================================================
 # Execution Context

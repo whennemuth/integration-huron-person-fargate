@@ -177,9 +177,6 @@ export interface IContext {
     cronExpression: string;
   };
 
-  /** Bulk reset configuration - controls whether to perform a bulk reset (delete all existing records in source system) before syncing */
-  BULK_RESET?: boolean;
-
   /**
    * Storage mode for delta state and metadata tracking.
    * 
@@ -200,19 +197,7 @@ export interface IContext {
    */
   PREVIOUS_STORAGE_TYPE?: HuronPersonConfig['storage']['type'];
 
-  /** 
-   * Trust previous storage configuration - controls whether to trust previously stored 
-   * data (e.g., previous-input.ndjson) as the source of truth for existing records insofar
-   * as they already exist in the target system or not), or pre-load all of the sourceIdentifier
-   * values of every person in the target system before syncing and compare against those to
-   * supplement the previous storage data. This is comprises a backup method of choosing 
-   * between create vs patch when syncing person records to the target system.
-   * .
-   */
-  TRUST_PREVIOUS_STORAGE?: boolean;
-
-
-  /** 
+  /**
    * Dry-run mode configuration - controls whether operations actually modify data
    * or just simulate the operations without making changes.
    */

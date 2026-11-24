@@ -2,7 +2,7 @@ import { Config, DataSourceConfig } from 'integration-huron-person';
 import { ApiChunkerEvent } from '../chunking/ChunkerSubscriber';
 import { handleApiEvent } from '../chunking/fetch/ChunkerApiSubscriber';
 import { ChunkingServiceRunner } from './AbstractRunner';
-import { Endpoint, NormalizedPopulationType, TargetConfig } from './RunnerTypes';
+import { Endpoint, NormalizedPopulationType, runnerPreviousStateSource, TargetConfig } from './RunnerTypes';
 import { RunStarter } from '../chunking/StartedBy';
 
 /**
@@ -60,13 +60,12 @@ export class SingleMessageRunner extends ChunkingServiceRunner {
     config: Config,
     populationType: NormalizedPopulationType
   ): Promise<void> {
-    const { bulkReset, trustPreviousStorage, iterationLimit, queueUrl, personRecordProcessorAddons } = this.env;
+    const { iterationLimit, queueUrl, personRecordProcessorAddons } = this.env;
     const apiChunkerEvent: ApiChunkerEvent = {
       baseUrl: sourceEndpoint.baseUrl,
       fetchPath: sourceEndpoint.fetchPath,
       populationType,
-      bulkReset,
-      trustPreviousStorage,
+      previousStateSource: runnerPreviousStateSource(this.env),
       iterationLimit: iterationLimit ? iterationLimit : 0,
       offset: 0,
       personRecordProcessorAddons,

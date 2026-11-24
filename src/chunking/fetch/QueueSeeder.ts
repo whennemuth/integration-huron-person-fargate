@@ -18,11 +18,7 @@ export type QueueSeederParams = {
   fetchPath: string;
   populationType: SyncPopulation;
   /** Where the run's previous state comes from (src/chunking/PreviousStateSource.ts) */
-  previousStateSource?: PreviousStateSource;
-  /** @deprecated Use previousStateSource. Translated, for callers not yet moved over */
-  bulkReset?: boolean;
-  /** @deprecated Use previousStateSource. Translated, for callers not yet moved over */
-  trustPreviousStorage?: boolean;
+  previousStateSource: PreviousStateSource;
   iterationLimit: number;
   messagesToSeed: number;
   queueUrl: string;
@@ -173,7 +169,7 @@ export class QueueSeeder {
       messagesToSeed,
       queueUrl,
     } = this.params;
-    // Settled before anything is seeded: refused when the params say neither previousStateSource nor the old pair
+    // Checked before anything is seeded
     const previousStateSource = requirePreviousStateSource(this.params, 'The queue seeding');
 
     // Validation
@@ -277,8 +273,7 @@ async function main() {
     DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT: iterationLimitStr,
     MESSAGES_TO_SEED: messagesToSeedStr,
     SQS_QUEUE_URL: queueUrl,
-    BULK_RESET: bulkReset,
-    TRUST_PREVIOUS_STORAGE: trustPreviousStorage,
+    PREVIOUS_STATE_SOURCE: previousStateSource,
   } = process.env;
 
   // Validate required parameters
@@ -337,8 +332,7 @@ async function main() {
         baseUrl,
         fetchPath,
         populationType: normalizedPopulationType,
-        bulkReset: bulkReset?.toLowerCase() === 'true',
-        trustPreviousStorage: trustPreviousStorage?.toLowerCase() === 'true',
+        previousStateSource: requirePreviousStateSource({ previousStateSource }, 'QUEUE_SEEDER_PREVIOUS_STATE_SOURCE'),
         iterationLimit,
         messagesToSeed,
         queueUrl        
@@ -365,8 +359,7 @@ async function main() {
  * QUEUE_SEEDER_DATASOURCE_ENDPOINTCONFIG_ITERATION_LIMIT=100 \
  * QUEUE_SEEDER_MESSAGES_TO_SEED=15 \
  * QUEUE_SEEDER_SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/123456789/chunker-queue \
- * QUEUE_SEEDER_BULK_RESET=false \
- * QUEUE_SEEDER_TRUST_PREVIOUS_STORAGE=false \
+ * QUEUE_SEEDER_PREVIOUS_STATE_SOURCE=storage \
  * QUEUE_SEEDER_STACK_ID=huron-person-fargate-processor \
  * REGION=us-east-1 \
  * npx ts-node src/chunking/fetch/QueueSeeder.ts
@@ -387,13 +380,12 @@ if (require.main === module) {
     'SQS_QUEUE_URL',
     'STACK_ID',
     'REGION',
-    'CHUNK_DIRECTORY'
+    'CHUNK_DIRECTORY',
+    'PREVIOUS_STATE_SOURCE'
   ].forEach(testEnvironment.getVar);
 
   // Optional environment variables
   [
-    'BULK_RESET',
-    'TRUST_PREVIOUS_STORAGE',
     'DRY_RUN'
   ].forEach(testEnvironment.getVarOrEmptyString);
 

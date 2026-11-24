@@ -1,6 +1,7 @@
 import { Config } from 'integration-huron-person';
 import type { RequestAuthorizer } from '../authorization/Authorizer';
 import type { ApiChunkerEvent } from '../../../src/chunking/ChunkerSubscriber';
+import { previousStateSourceIn } from '../../../src/chunking/PreviousStateSource';
 import { SyncPopulation } from '../../../docker/chunkTypes';
 import { CronExpressionBuilder } from '../../../src/schedule/CronExpressionBuilder';
 import { ScheduleChoices } from '../../../src/schedule/ScheduleChoices';
@@ -223,7 +224,7 @@ export class BulkSchedule implements BulkScheduleService {
     }
     return {
       runType: event.populationType === SyncPopulation.PersonFull ? 'full' : 'full-no-deactivations',
-      bulkReset: !!event.bulkReset,
+      bulkReset: previousStateSourceIn(event) === 'target',
       iterationLimit: event.iterationLimit ?? 0,
       parallelStart: event.parallelStart ?? 0,
       ...(event.processorScalingCapacityOverride !== undefined ? { processorScalingCapacityOverride: event.processorScalingCapacityOverride } : {}),

@@ -28,7 +28,8 @@ processor. The phases as a whole: the project [CLAUDE.md](../../CLAUDE.md).
 
 - **Per-run settings come from the run's Flags**, read from the chunk's run (`readFlagsFromChunkKey()`), never from the
   task definition: previousStateSource, addons, the terms endpoint. (Flags without previousStateSource, or the older
-  bulkReset / trustPreviousStorage, fall back to the task definition's `BULK_RESET`.) Values in the task definition
+  bulkReset / trustPreviousStorage, fall back to `PREVIOUS_STATE_SOURCE` in a local run's environment, and are
+  otherwise refused: no task definition sets it.) Values in the task definition
   (`STATIC_MAP_USAGE`, from the config's `preLoadedMaps`, table names, `PREVIOUS_STORAGE_TYPE`) are fixed at deploy.
 - **The processor has no mock awareness**: in a mock landscape the config secret points it at the target simulator.
 - **Chunk statistics count only changed people**: a chunk's `totalRecords` is its delta's size, and added / updated /

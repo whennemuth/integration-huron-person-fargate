@@ -17,7 +17,7 @@ the processor maximum, a mock reset, the counter reset and a parallel start, in 
 
 **Run start** (shared by the subscriber and the Runner):
 - `ScheduledRun` (in `src/schedule/`, [schedule/CLAUDE.md](../schedule/CLAUDE.md)): the schedule's input, and
-  `previousStateFlags(bulkReset)`.
+  `previousStateSource(bulkReset)`.
 - `StartedBy.ts`: `StartedBy` / `RunStarter`, who started a run.
 - `PreviousStateSource.ts`: where a run's previous state comes from (`storage`, or `target`: a bulk reset), carried as
   `previousStateSource` in place of the `bulkReset` / `trustPreviousStorage` pair; `previousStateSourceIn()` (which

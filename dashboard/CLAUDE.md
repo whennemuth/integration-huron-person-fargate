@@ -199,8 +199,8 @@ history and Overview: [docs/PAGES.md](docs/PAGES.md). Bulk sync and the launch f
   Post-processing, Stalled), figures marked "so far", and percent done counted in **chunks** (`chunksReported` ÷
   `chunkCount`), never in records, which count only changed people.
 - **Bulk sync** (`src/services/BulkSync.ts`, `public/js/bulk-sync.js`): what is started is what was reviewed (Review
-  run locks the fields). Bulk reset always sends both previous-state flags. The run's `startedBy` comes from the
-  signed-in user. A started run is guarded by the launch flag (`/hp-dashboard/launch-flags/<landscape>`) until it is
+  run locks the fields). Bulk reset is sent as the run's `previousStateSource` (`target`, else `storage`). The run's
+  `startedBy` comes from the signed-in user. A started run is guarded by the launch flag (`/hp-dashboard/launch-flags/<landscape>`) until it is
   listed. A mock landscape adds Source (real or simulator) and Start from scratch.
 - **The bulk sync schedule** (`src/services/BulkSchedule.ts` over fargate's `src/schedule/ScheduledRun.ts`): the
   schedule in EventBridge Scheduler is the record, read by name. The page sends when as `ScheduleChoices` and never

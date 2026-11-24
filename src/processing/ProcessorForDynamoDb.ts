@@ -26,7 +26,7 @@
  * - DYNAMODB_PERSON_CURRENT_STATE_TABLE_NAME: DynamoDB table for current person hash state
  * - DYNAMODB_PERSON_HISTORY_TABLE_NAME: DynamoDB table for person history audit trail
  * - STATIC_MAP_USAGE: JSON string specifying which static maps to load
- * - BULK_RESET: If "true", will upsert all persons (ignore previous state)
+ * - PREVIOUS_STATE_SOURCE: storage or target (a bulk reset), only for a chunk whose run has no Flags (a local run)
  * - DRY_RUN: If "true", runs without making API calls
  * - DYNAMODB_STATISTICS_TABLE_NAME: Table for error tracking and statistics
  * - All huron-person config env vars (HURON_API_ENDPOINT, JWT credentials, etc.)
@@ -200,7 +200,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     SQS_QUEUE_URL: queueUrl,
     STATIC_MAP_USAGE,
     DRY_RUN,
-    BULK_RESET,
+    PREVIOUS_STATE_SOURCE,
     DYNAMODB_STATISTICS_TABLE_NAME: dynamoDbStatisticsTableName,
     RETRY_STRATEGY,
     POST_PROCESSOR_QUEUE_URL: postProcessorQueueUrl,
@@ -250,7 +250,7 @@ export async function main(queueReader: QueueReader, personRecordProcessor?: Per
     const { flags } = await new MetadataFactoryForBootstrap()
       .readFlagsForBootstrap({ bucketName, chunkDirectory, region });
 
-    const { previousStateSource, syncPopulation } = resolveCommonFlags(flags, BULK_RESET);
+    const { previousStateSource, syncPopulation } = resolveCommonFlags(flags, PREVIOUS_STATE_SOURCE);
 
 
     // Extract chunk ID from S3 key (e.g., "chunks/person-full/2026-03-03T19:58:41.277Z/chunk-0029.ndjson" -> "0029")
@@ -470,7 +470,7 @@ if (require.main === module) {
     'HURON_PERSON_CONFIG_JSON',
     'STATIC_MAP_USAGE',
     'DRY_RUN',
-    'BULK_RESET',
+    'PREVIOUS_STATE_SOURCE',
     'DYNAMODB_STATISTICS_TABLE_NAME',
     'RETRY_STRATEGY',
     'POST_PROCESSOR_QUEUE_URL',

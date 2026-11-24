@@ -13,7 +13,7 @@ import { SyncPopulation } from '../../docker/chunkTypes';
 import { LoggingTargetApiErrorProcessor, TrackingTargetApiErrorProcessor } from '../ApiErrorTracking';
 import { NextChunk, QueueReader } from '../Queue';
 import { Flags } from '../chunking/metadata/IMetadataStorage';
-import { PreviousStateSource, previousStateSourceIn } from '../chunking/PreviousStateSource';
+import { PreviousStateSource, previousStateSourceIn, requirePreviousStateSource } from '../chunking/PreviousStateSource';
 import { personRecordProcessorFactory } from './addon/PersonRecordProcessorFactory';
 
 export const isEcsTask = () => process.env.IS_ECS_TASK === 'true';
@@ -55,16 +55,19 @@ export async function resolveNextChunk(params: {
  * console logging both processors report identically.
  *
  * previousStateSource comes from the Flags (for a run recorded before it existed, their bulkReset /
- * trustPreviousStorage, translated: previousStateSourceIn()). Flags without either fall back to the task definition's
- * BULK_RESET, as before: `target` if it is true, otherwise `storage`.
+ * trustPreviousStorage, translated: previousStateSourceIn()), or else from PREVIOUS_STATE_SOURCE in the environment
+ * (a local run over a chunk whose run has no Flags). No task definition sets it, and there is no default: with
+ * neither, the processor refuses the chunk rather than guess.
+ *
+ * @throws when neither the Flags nor the environment say where the run's previous state comes from
  */
-export function resolveCommonFlags(flags: Partial<Flags>, bulkResetEnvVar?: string): {
+export function resolveCommonFlags(flags: Partial<Flags>, previousStateSourceEnvVar?: string): {
   previousStateSource: PreviousStateSource,
   syncPopulation: SyncPopulation
 } {
   const fromFlags = previousStateSourceIn(flags);
   const previousStateSource: PreviousStateSource = fromFlags
-    ?? (`${bulkResetEnvVar}`.trim().toLowerCase() === 'true' ? 'target' : 'storage');
+    ?? requirePreviousStateSource({ previousStateSource: previousStateSourceEnvVar }, "The run's Flags and PREVIOUS_STATE_SOURCE");
   console.log(`Previous State Source: ${previousStateSource}${fromFlags !== undefined ? ' (from flags)' : ' (from environment)'}`);
 
   const syncPopulation = flags.syncPopulation ?? SyncPopulation.PersonFull;

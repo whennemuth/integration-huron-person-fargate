@@ -41,7 +41,7 @@
  * - CHUNKS_BUCKET: S3 bucket with chunk files
  * - CHUNK_KEY or SQS_QUEUE_URL: Chunk location
  * - STATIC_MAP_USAGE: Static map configuration
- * - BULK_RESET: Full upsert flag
+ * - PREVIOUS_STATE_SOURCE: storage or target, for a chunk whose run has no Flags (a local run)
  * - DRY_RUN: No-op mode
  * 
  * S3 Mode Specific:
@@ -117,7 +117,7 @@ if (require.main === module) {
     'STATIC_MAP_USAGE',
     'PREVIOUS_STORAGE_TYPE',
     'DRY_RUN',
-    'BULK_RESET',
+    'PREVIOUS_STATE_SOURCE',
     'RETRY_STRATEGY',
     'IS_ECS_TASK',
     'ECS_AGENT_URI',

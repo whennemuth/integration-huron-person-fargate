@@ -1,6 +1,7 @@
 import type { Launch } from './LaunchFlag';
 import type { RequestAuthorizer } from '../authorization/Authorizer';
 import type { StartedBy } from '../../../src/chunking/StartedBy';
+import type { PreviousStateSource } from '../../../src/chunking/PreviousStateSource';
 import type { MockLandscapeResetRecord } from '../../../src/chunking/MockLandscapeReset';
 import { CrudOperation } from 'integration-core';
 import { PersonPushRequest } from "integration-huron-person";
@@ -321,7 +322,8 @@ export type BulkSyncChoices = {
   /** Set for a test */
   buid?: string;
   bulkReset: boolean;
-  trustPreviousStorage: boolean;
+  /** Where the run's previous state comes from: `target` for a bulk reset, else `storage` */
+  previousStateSource: PreviousStateSource;
   /** Chunks each chunker task fetches before it hands the rest on to a new task (0: a single task fetches them all) */
   iterationLimit: number;
   /** Chunker messages sent at the start (0: one, and auto-scaling adds tasks) */

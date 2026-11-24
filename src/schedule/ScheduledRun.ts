@@ -3,6 +3,7 @@ import { TestEnvironment } from 'integration-core';
 import { SyncPopulation } from '../../docker/chunkTypes';
 import type { ApiChunkerEvent } from '../chunking/ChunkerSubscriber';
 import { RunStarter } from '../chunking/StartedBy';
+import type { PreviousStateSource } from '../chunking/PreviousStateSource';
 import { CHUNKER_SUBSCRIBER_BASE_NAME } from '../Utils';
 import { CronExpressionBuilder } from './CronExpressionBuilder';
 import { CronSchedule } from './CronSchedule';
@@ -105,12 +106,9 @@ export type ScheduledRunParms = {
  * fetches everyone; trusting the stored hashes keeps people whose hash matches from reaching the target, which is
  * the effect a delta run would have, and the full sync deactivates people missing from the source.
  *
- * The two previous-state flags only ever act together (bulkReset || !trustPreviousStorage: the chunker's person
- * cache, DeltaStrategyFactory.trustsPreviousStorage() in integration-huron-person), so they are set as one choice,
- * bulk reset or not (previousStateFlags()). Consolidating them into one setting is planned in integration-huron-person
- * (its delta-strategy plan): the chunker subscriber already translates the pair into the run's one previousStateSource
- * (src/chunking/PreviousStateSource.ts), and refuses an event with neither. The context's BULK_RESET and
- * TRUST_PREVIOUS_STORAGE play no part here.
+ * Where a run's previous state comes from is one choice, bulk reset or not (previousStateSource(): `target` or
+ * `storage`, src/chunking/PreviousStateSource.ts), sent as the event's previousStateSource. It replaced the
+ * bulkReset / trustPreviousStorage pair, which only ever acted together.
  *
  * **Instance** (one landscape's schedule, through EventBridgeSchedule), with the bulk sync rules:
  * - one schedule per landscape: the name is fixed, and a second create is refused (EXISTS);
@@ -136,11 +134,11 @@ export class ScheduledRun {
   static readonly NEXT_RUNS = 3;
 
   /**
-   * The flag pair for a run that does or doesn't bulk reset: a bulk reset looks each person up in the target; without
-   * one, people whose stored hash matches are skipped.
+   * Where the previous state of a run that does or doesn't bulk reset comes from: a bulk reset looks each person up in
+   * the target (`target`); without one, people whose stored hash matches are skipped (`storage`).
    */
-  static previousStateFlags(bulkReset: boolean): { bulkReset: boolean; trustPreviousStorage: boolean } {
-    return { bulkReset, trustPreviousStorage: !bulkReset };
+  static previousStateSource(bulkReset: boolean): PreviousStateSource {
+    return bulkReset ? 'target' : 'storage';
   }
 
   /**
@@ -164,7 +162,7 @@ export class ScheduledRun {
       populationType: ScheduledRun.POPULATION,
       iterationLimit,
       offset: 0,
-      ...ScheduledRun.previousStateFlags(ScheduledRun.BULK_RESET),
+      previousStateSource: ScheduledRun.previousStateSource(ScheduledRun.BULK_RESET),
       ...(personRecordProcessorAddons !== undefined ? { personRecordProcessorAddons } : {}),
       startedBy: RunStarter.SCHEDULE,
       processingMetadata: {

@@ -30,6 +30,8 @@ describe('ChunkFromS3 Parameter Gathering', () => {
   beforeEach(() => {
     // Save original environment
     originalEnv = { ...process.env };
+    // A run from the environment must say where its previous state comes from
+    process.env.PREVIOUS_STATE_SOURCE = 'storage';
 
     // Reset all mocks
     jest.clearAllMocks();
@@ -44,37 +46,28 @@ describe('ChunkFromS3 Parameter Gathering', () => {
     it('should read task parameters from environment when all are provided', () => {
       process.env.INPUT_BUCKET = 'env-input-bucket';
       process.env.INPUT_KEY = 'person-full/2026-04-13T10:00:00.000Z-people.json';
-      process.env.BULK_RESET = 'true';
+      process.env.PREVIOUS_STATE_SOURCE = 'target';
 
       const chunker = new ChunkFromS3();
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
-    it('should parse BULK_RESET as boolean true', () => {
+    it.each(['storage', 'target'])('reads PREVIOUS_STATE_SOURCE=%s', previousStateSource => {
       process.env.INPUT_BUCKET = 'env-input-bucket';
       process.env.INPUT_KEY = 'person-delta/people.json';
-      process.env.BULK_RESET = 'true';
+      process.env.PREVIOUS_STATE_SOURCE = previousStateSource;
 
       const chunker = new ChunkFromS3();
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
+      expect(chunker.getPreviousStateSource()).toBe(previousStateSource);
     });
 
-    it('should parse BULK_RESET as boolean false', () => {
-      process.env.INPUT_BUCKET = 'env-input-bucket';
-      process.env.INPUT_KEY = 'person-delta/people.json';
-      process.env.BULK_RESET = 'false';
-
-      const chunker = new ChunkFromS3();
-      expect(chunker.hasSufficientTaskInfo()).toBe(true);
-    });
-
-    it('should handle missing BULK_RESET (defaults to false)', () => {
+    it('refuses a run from the environment without PREVIOUS_STATE_SOURCE (no default)', () => {
       process.env.INPUT_BUCKET = 'env-input-bucket';
       process.env.INPUT_KEY = 'person-full/people.json';
-      delete process.env.BULK_RESET;
+      delete process.env.PREVIOUS_STATE_SOURCE;
 
-      const chunker = new ChunkFromS3();
-      expect(chunker.hasSufficientTaskInfo()).toBe(true);
+      expect(() => new ChunkFromS3()).toThrow('The chunker environment has no previousStateSource');
     });
 
     it('should handle missing INPUT_BUCKET', () => {

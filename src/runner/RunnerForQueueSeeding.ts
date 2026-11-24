@@ -2,7 +2,7 @@ import { DataSourceConfig, Config } from 'integration-huron-person';
 import { QueueSeeder } from '../chunking/fetch/QueueSeeder';
 import { ParallelStart } from '../chunking/ParallelStart';
 import { ChunkingServiceRunner } from './AbstractRunner';
-import { Endpoint, NormalizedPopulationType, TargetConfig } from './RunnerTypes';
+import { Endpoint, NormalizedPopulationType, runnerPreviousStateSource, TargetConfig } from './RunnerTypes';
 import { AbstractAtomicCounter } from '../dynamodb/AtomicCounter';
 import { CHUNKER_COUNTER_NAME } from '../chunking/ChunkerQueue';
 
@@ -158,8 +158,7 @@ export class QueueSeedingRunner extends ChunkingServiceRunner {
         baseUrl: endpoint.baseUrl,
         fetchPath: endpoint.fetchPath,
         populationType,
-        bulkReset: env.bulkReset,
-        trustPreviousStorage: env.trustPreviousStorage,
+        previousStateSource: runnerPreviousStateSource(env),
         iterationLimit: env.iterationLimit ? env.iterationLimit : 0,
         messagesToSeed,
         queueUrl: env.queueUrl!,

@@ -9,6 +9,7 @@ import { QueueSeedingRunner } from './RunnerForQueueSeeding';
 import { SingleMessageRunner } from './RunnerForSingleMessage';
 import { SinglePersonRunner, singlePersonPopulationRefusal } from './RunnerForSinglePerson';
 import { extractEnvironment, RunnerEnv, setTestEnvironment } from './RunnerTypes';
+import { previousStateRefusal } from '../chunking/PreviousStateSource';
 
 /**
  * FOR MANUAL INVOCATION ONLY:
@@ -66,6 +67,13 @@ export async function startChunkingService(env?: RunnerEnv) {
       console.error(populationRefusal);
       return;
     }
+  }
+
+  // Where the run's previous state comes from has no default: storage (stored hashes) or target (a bulk reset)
+  const previousStateProblem = previousStateRefusal({ previousStateSource: env.previousStateSource });
+  if (previousStateProblem) {
+    console.error(`✗ RUNNER_PREVIOUS_STATE_SOURCE must be 'storage' or 'target' (a bulk reset): ${previousStateProblem}. Aborting.`);
+    return;
   }
 
   const seedNumber = parseInt(env.messagesToPrepopulate);

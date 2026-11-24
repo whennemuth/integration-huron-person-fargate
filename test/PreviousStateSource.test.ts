@@ -127,9 +127,10 @@ describe("the processors' resolveCommonFlags()", () => {
     expect(resolveCommonFlags({ bulkReset: true, trustPreviousStorage: true } as any).previousStateSource).toBe('target');
   });
 
-  it("falls back to the task definition's BULK_RESET for Flags without either, as before", () => {
-    expect(resolveCommonFlags({}, 'true').previousStateSource).toBe('target');
-    expect(resolveCommonFlags({}, 'false').previousStateSource).toBe('storage');
-    expect(resolveCommonFlags({}).previousStateSource).toBe('storage');
+  it('falls back to PREVIOUS_STATE_SOURCE for Flags without either (a local run), and refuses rather than guess', () => {
+    expect(resolveCommonFlags({}, 'target').previousStateSource).toBe('target');
+    expect(resolveCommonFlags({}, 'storage').previousStateSource).toBe('storage');
+    expect(() => resolveCommonFlags({})).toThrow('no previousStateSource');
+    expect(() => resolveCommonFlags({}, 'true')).toThrow('Invalid previousStateSource');
   });
 });

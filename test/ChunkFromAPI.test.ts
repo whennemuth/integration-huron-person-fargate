@@ -36,6 +36,8 @@ describe('ChunkFromAPI Parameter Gathering', () => {
   beforeEach(() => {
     // Save original environment
     originalEnv = { ...process.env };
+    // A run from the environment must say where its previous state comes from
+    process.env.PREVIOUS_STATE_SOURCE = 'storage';
 
     // Mock console.log to avoid noise in tests
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation();
@@ -71,7 +73,7 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL = 'https://api.env.com';
       process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH = '/env/people';
       process.env.POPULATION_TYPE = 'person-full';
-      process.env.BULK_RESET = 'true';
+      process.env.PREVIOUS_STATE_SOURCE = 'target';
 
       const chunker = new ChunkFromAPI(mockConfig);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
@@ -96,14 +98,24 @@ describe('ChunkFromAPI Parameter Gathering', () => {
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
     });
 
-    it('should parse BULK_RESET as boolean', () => {
+    it.each(['storage', 'target'])('reads PREVIOUS_STATE_SOURCE=%s', previousStateSource => {
       process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL = 'https://api.env.com';
       process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH = '/env/people';
       process.env.POPULATION_TYPE = 'person-delta';
-      process.env.BULK_RESET = 'false';
+      process.env.PREVIOUS_STATE_SOURCE = previousStateSource;
 
       const chunker = new ChunkFromAPI(mockConfig);
       expect(chunker.hasSufficientTaskInfo()).toBe(true);
+      expect(chunker.getPreviousStateSource()).toBe(previousStateSource);
+    });
+
+    it('refuses a run from the environment without PREVIOUS_STATE_SOURCE (no default)', () => {
+      process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL = 'https://api.env.com';
+      process.env.DATASOURCE_ENDPOINTCONFIG_PEOPLE_PATH = '/env/people';
+      delete process.env.PREVIOUS_STATE_SOURCE;
+      process.env.BULK_RESET = 'false';
+
+      expect(() => new ChunkFromAPI(mockConfig)).toThrow('The chunker environment has no previousStateSource');
     });
 
     it('should handle missing DATASOURCE_ENDPOINTCONFIG_PEOPLE_BASE_URL', () => {

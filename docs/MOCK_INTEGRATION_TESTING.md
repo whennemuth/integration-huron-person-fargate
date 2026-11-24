@@ -321,8 +321,7 @@ them. If you see the target comparison line with trust set, check that
    | **fargate `.env`** | **`RUNNER_MOCK_TARGET_RESET_STATE`** | **`false`** |
    | **fargate `.env`** | **`RUNNER_MESSAGING_ONLY`** | **`false`** |
    | **fargate `.env`** | **`RUNNER_CHUNKING_ONLY`** | **`false`** |
-   | **fargate `.env`** | **`RUNNER_BULK_RESET`** | **`false`** |
-   | **fargate `.env`** | **`RUNNER_TRUST_PREVIOUS_STORAGE`** | **`false`** |
+   | **fargate `.env`** | **`RUNNER_PREVIOUS_STATE_SOURCE`** | **`target`** |
    | **fargate `.env`** | **`SKIP_ATOMIC_COUNTER_RESET` (unprefixed)** | **`false`** |
    | **simulator Lambda env** | **`MOCK_TOTAL_POPULATION`** | **deployed value, at least `150` (default `10000`)** |
 
@@ -592,7 +591,7 @@ mode manual syncs don't consult `previous-input.ndjson` to decide whether a pers
 because reading one person's hash means reading the whole baseline. (The hash storage step does
 read it afterwards, to decide whether to rewrite it.)
 
-Pipeline runs are different: with `trustPreviousStorage` on (and bulk reset off), S3-mode
+Pipeline runs are different: with `previousStateSource: storage` (no bulk reset), S3-mode
 processors do compare against the hashes in `previous-input.ndjson`, reading it once per chunk
 rather than once per person.
 
@@ -619,8 +618,7 @@ the PersonCurrentState and PersonHistory tables - see "Switching to S3 mode".
    | <span style="color:gray">fargate `.env`</span> | <span style="color:gray">`RUNNER_MOCK_TARGET_RESET_STATE`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">fargate `.env`</span> | <span style="color:gray">`RUNNER_MESSAGING_ONLY`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">fargate `.env`</span> | <span style="color:gray">`RUNNER_CHUNKING_ONLY`</span> | <span style="color:gray">`false`</span> |
-   | <span style="color:gray">fargate `.env`</span> | <span style="color:gray">`RUNNER_BULK_RESET`</span> | <span style="color:gray">`false`</span> |
-   | <span style="color:gray">fargate `.env`</span> | <span style="color:gray">`RUNNER_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`false`</span> |
+   | <span style="color:gray">fargate `.env`</span> | <span style="color:gray">`RUNNER_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`target`</span> |
    | <span style="color:gray">fargate `.env`</span> | <span style="color:gray">`SKIP_ATOMIC_COUNTER_RESET` (unprefixed)</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">simulator Lambda env</span> | <span style="color:gray">`MOCK_TOTAL_POPULATION`</span> | <span style="color:gray">deployed value, at least `150` (default `10000`)</span> |
 

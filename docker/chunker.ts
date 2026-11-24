@@ -29,7 +29,7 @@
  *   - REGION: AWS region (e.g., 'us-east-2')
  *   - ITEMS_PER_CHUNK: Number of persons per chunk (default: 200)
  *   - PERSON_ID_FIELD: Field name for person IDs (default: 'personid')
- *   - BULK_RESET: Used to tag the chunk files (will be referenced by processor.ts when processing the chunk files)
+ *   - PREVIOUS_STATE_SOURCE: storage or target (a bulk reset), for a local run without a queue message
  *   - DRY_RUN: If 'true', performs a dry run without writing chunks (default: 'false')
  * 
  * Output:
@@ -39,7 +39,7 @@
  * 
  * Example Local Usage:
  * ```bash
- * INPUT_BUCKET=input-bucket INPUT_KEY=data.json CHUNKS_BUCKET=chunks-bucket BULK_RESET=false node dist/docker/chunker.js
+ * INPUT_BUCKET=input-bucket INPUT_KEY=data.json CHUNKS_BUCKET=chunks-bucket PREVIOUS_STATE_SOURCE=storage node dist/docker/chunker.js
  * ```
  */
 
@@ -529,8 +529,7 @@ if (require.main === module) {
     'SINGLE_PERSON_BUID',
     'INPUT_BUCKET',
     'INPUT_KEY',
-    'BULK_RESET',
-    'TRUST_PREVIOUS_STORAGE',
+    'PREVIOUS_STATE_SOURCE',
     'MAX_SCALING_CAPACITY',
     'ECS_CLUSTER_NAME',
     'PROCESSOR_ECS_SERVICE_NAME',

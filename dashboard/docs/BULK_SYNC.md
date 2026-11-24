@@ -76,10 +76,10 @@ subscriber's), after Parallel start under Custom settings.
 
 ### Bulk reset
 
-Bulk reset is one choice for both previous-state flags (`ScheduledRun.previousStateFlags()`): checked sends
-`bulkReset: true, trustPreviousStorage: false`, unchecked `false, true`. The pipeline only acts on their combination: the
-chunker subscriber translates them into the run's one `previousStateSource` (`target` for a reset), and refuses an
-event that has neither it nor the pair.
+Bulk reset is the run's `previousStateSource` (`ScheduledRun.previousStateSource()`): checked sends `target` (every
+person is looked up in Huron), unchecked `storage` (people whose stored hash matches are skipped). The request and the
+page's choices keep `bulkReset`; the event the run starts with carries only `previousStateSource`, which the chunker
+subscriber requires.
 
 ### Not offered
 

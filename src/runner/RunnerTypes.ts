@@ -1,6 +1,7 @@
 import { TestEnvironment } from "integration-core";
 import { SyncPopulation } from "../../docker/chunkTypes";
 import type { ProcessorCapacityRecord } from "../chunking/ProcessorCapacityRecord";
+import { PreviousStateSource, requirePreviousStateSource } from "../chunking/PreviousStateSource";
 
 /**
  * Environment configuration extracted from process.env for runner operations
@@ -16,8 +17,11 @@ export interface RunnerEnv {
   region?: string;
   stackId?: string;
   landscape?: string;
-  bulkReset?: boolean;
-  trustPreviousStorage?: boolean;
+  /**
+   * Where the run's previous state comes from, as RUNNER_PREVIOUS_STATE_SOURCE gives it: `storage`, or `target` (a bulk
+   * reset). No default: Runner.ts refuses a run without a valid one (runnerPreviousStateSource())
+   */
+  previousStateSource?: string;
   skipAtomicCounterReset?: boolean;
   messagesToPrepopulate: string;
   desiredCount: number;
@@ -103,8 +107,7 @@ export const extractEnvironment = (): RunnerEnv => {
     REGION: region,
     STACK_ID: stackId,
     LANDSCAPE: landscape,
-    BULK_RESET: bulkReset,
-    TRUST_PREVIOUS_STORAGE: trustPreviousStorage,
+    PREVIOUS_STATE_SOURCE: previousStateSource,
     SKIP_ATOMIC_COUNTER_RESET: skipAtomicCounterReset,
     MESSAGES_TO_PREPOPULATE: messagesToPrepopulate = '0',
     DESIRED_COUNT,
@@ -136,8 +139,7 @@ export const extractEnvironment = (): RunnerEnv => {
     serviceName,
     iterationLimit: iterationLimit ? parseInt(iterationLimit) : undefined,
     desiredCount: DESIRED_COUNT ? parseInt(DESIRED_COUNT) : 0,
-    bulkReset: `${bulkReset}`.toLowerCase().trim() === 'true',
-    trustPreviousStorage: `${trustPreviousStorage}`.toLowerCase().trim() === 'true',
+    previousStateSource: previousStateSource?.trim() || undefined,
     skipAtomicCounterReset: `${skipAtomicCounterReset}`.toLowerCase().trim() === 'true',
     messagingOnly: `${messagingOnly}`.toLowerCase().trim() === 'true',
     chunkingOnly: `${chunkingOnly}`.toLowerCase().trim() === 'true',
@@ -183,8 +185,15 @@ export const setTestEnvironment = (): void => {
     'PROCESSOR_SCALING_CAPACITY_OVERRIDE'
   ].forEach(testEnvironment.getVar);
 
+  // Optional here so that Runner.ts, not the harness, says what is wrong when it is missing
   [
-    'BULK_RESET',
-    'TRUST_PREVIOUS_STORAGE'
+    'PREVIOUS_STATE_SOURCE'
   ].forEach(testEnvironment.getVarOrEmptyString);
 }
+
+/**
+ * The run's previous state source, from RUNNER_PREVIOUS_STATE_SOURCE. Runner.ts has already refused a run without a
+ * valid one, so this throws only for a runner built directly with none.
+ */
+export const runnerPreviousStateSource = (env: Pick<RunnerEnv, 'previousStateSource'>): PreviousStateSource =>
+  requirePreviousStateSource({ previousStateSource: env.previousStateSource }, 'RUNNER_PREVIOUS_STATE_SOURCE');
