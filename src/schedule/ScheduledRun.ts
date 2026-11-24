@@ -106,9 +106,10 @@ export type ScheduledRunParms = {
  * fetches everyone; trusting the stored hashes keeps people whose hash matches from reaching the target, which is
  * the effect a delta run would have, and the full sync deactivates people missing from the source.
  *
- * Where a run's previous state comes from is one choice, bulk reset or not (previousStateSource(): `target` or
- * `storage`, src/chunking/PreviousStateSource.ts), sent as the event's previousStateSource. It replaced the
- * bulkReset / trustPreviousStorage pair, which only ever acted together.
+ * Where a run's previous state comes from is the event's previousStateSource (src/chunking/PreviousStateSource.ts):
+ * the schedule's is PREVIOUS_STATE_SOURCE, `storage-then-target` (the stored hashes decide, and the people with no
+ * stored hash are looked up in the target, so one already there is updated rather than created). The dashboard
+ * offers `storage` and `target` (a bulk reset) too.
  *
  * **Instance** (one landscape's schedule, through EventBridgeSchedule), with the bulk sync rules:
  * - one schedule per landscape: the name is fixed, and a second create is refused (EXISTS);
@@ -121,7 +122,8 @@ export type ScheduledRunParms = {
  */
 export class ScheduledRun {
   static readonly POPULATION = SyncPopulation.PersonFull;
-  static readonly BULK_RESET = false;
+  /** What a scheduled run, and the dashboard's Bulk sync by default, sends as previousStateSource */
+  static readonly PREVIOUS_STATE_SOURCE: PreviousStateSource = 'storage-then-target';
   /** What the schedule's static input says in place of the time a run is started */
   static readonly PROCESSED_AT_PLACEHOLDER = 'Placeholder. Override at runtime with ISO timestamp';
   /** Every landscape's schedule is read in this zone, so their times can be compared */
@@ -132,14 +134,6 @@ export class ScheduledRun {
   static readonly NAME_PREFIX = 'chunker-api-schedule-';
   /** How many next runs get() and preview() give */
   static readonly NEXT_RUNS = 3;
-
-  /**
-   * Where the previous state of a run that does or doesn't bulk reset comes from: a bulk reset looks each person up in
-   * the target (`target`); without one, people whose stored hash matches are skipped (`storage`).
-   */
-  static previousStateSource(bulkReset: boolean): PreviousStateSource {
-    return bulkReset ? 'target' : 'storage';
-  }
 
   /**
    * The scheduled run's event, for the landscape's configured endpoint: what CDK's schedule sent, and what the harness
@@ -162,7 +156,7 @@ export class ScheduledRun {
       populationType: ScheduledRun.POPULATION,
       iterationLimit,
       offset: 0,
-      previousStateSource: ScheduledRun.previousStateSource(ScheduledRun.BULK_RESET),
+      previousStateSource: ScheduledRun.PREVIOUS_STATE_SOURCE,
       ...(personRecordProcessorAddons !== undefined ? { personRecordProcessorAddons } : {}),
       startedBy: RunStarter.SCHEDULE,
       processingMetadata: {

@@ -8,14 +8,9 @@ import { isRunStartEvent } from '../src/chunking/RunCounters';
 import { ScheduledRun } from '../src/schedule/ScheduledRun';
 
 describe('ScheduledRun', () => {
-  it('is a full sync without a bulk reset, stored hashes trusted', () => {
+  it('is a full sync without a bulk reset: stored hashes, then the target for people with none', () => {
     expect(ScheduledRun.POPULATION).toBe('person-full');
-    expect(ScheduledRun.previousStateSource(ScheduledRun.BULK_RESET)).toBe('storage');
-  });
-
-  it("makes a bulk reset the run's one previousStateSource", () => {
-    expect(ScheduledRun.previousStateSource(true)).toBe('target');
-    expect(ScheduledRun.previousStateSource(false)).toBe('storage');
+    expect(ScheduledRun.PREVIOUS_STATE_SOURCE).toBe('storage-then-target');
   });
 
   describe('scheduleInput', () => {
@@ -32,7 +27,7 @@ describe('ScheduledRun', () => {
         populationType: 'person-full',
         iterationLimit: 0,
         offset: 0,
-        previousStateSource: 'storage',
+        previousStateSource: 'storage-then-target',
         startedBy: { by: 'schedule' },
         processingMetadata: { processedAt: 'Placeholder. Override at runtime with ISO timestamp', processorVersion: '1.0.0' }
       });

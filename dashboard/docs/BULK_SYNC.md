@@ -74,12 +74,17 @@ subscriber's), after Parallel start under Custom settings.
   settings list both.
 - Above the landscape's maximum it needs the `bulk:processors` action ([AUTHORIZATION.md](AUTHORIZATION.md)).
 
-### Bulk reset
+### Checking against Huron
 
-Bulk reset is the run's `previousStateSource` (`ScheduledRun.previousStateSource()`): checked sends `target` (every
-person is looked up in Huron), unchecked `storage` (people whose stored hash matches are skipped). The request and the
-page's choices keep `bulkReset`; the event the run starts with carries only `previousStateSource`, which the chunker
-subscriber requires.
+The run's `previousStateSource` is one of three choices (`BulkSyncView.PREVIOUS_STATE_CHOICES`), in the request, the
+page's choices and the event alike:
+- `storage-then-target` (the default, `ScheduledRun.PREVIOUS_STATE_SOURCE`, as the schedule runs): people whose stored
+  hash matches are skipped, and people with no stored hash are looked up in Huron first, so one already there is
+  updated rather than created;
+- `storage`: the same, but people with no stored hash are created without a lookup;
+- `target`: Bulk reset, every person is looked up in Huron.
+
+The chunker subscriber requires it, and refuses `bulkReset`.
 
 ### Not offered
 

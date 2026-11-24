@@ -261,7 +261,7 @@ if (require.main === module) {
         const launchedAt = new Date().toISOString();
         const launch: Launch = {
           ...LaunchFlag.launch(launchedAt, {
-            runType: 'full', population: 'person-full', bulkReset: false, previousStateSource: 'storage',
+            runType: 'full', population: 'person-full', previousStateSource: 'storage-then-target',
             iterationLimit: 10, parallelStart: 0, overrideStalled: false
           }, { by: 'runner' }),
           expiresAt: new Date(Date.parse(launchedAt) + minutes * 60_000).toISOString()

@@ -591,7 +591,7 @@ mode manual syncs don't consult `previous-input.ndjson` to decide whether a pers
 because reading one person's hash means reading the whole baseline. (The hash storage step does
 read it afterwards, to decide whether to rewrite it.)
 
-Pipeline runs are different: with `previousStateSource: storage` (no bulk reset), S3-mode
+Pipeline runs are different: with `previousStateSource` `storage` or `storage-then-target` (no bulk reset), S3-mode
 processors do compare against the hashes in `previous-input.ndjson`, reading it once per chunk
 rather than once per person.
 

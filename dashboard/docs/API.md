@@ -31,7 +31,8 @@ answer it doesn't expect.
   source: `form`, `landscape`, `fixed` or `unused`; the page shows the choices and the event, not the settings); `200`,
   nothing is started.
 - `POST /api/bulk-sync` - start a sync run, as the EventBridge schedule does (`BulkSync`, `src/services/BulkSync.ts`):
-  `{ runType: 'full' | 'full-no-deactivations' | 'test', buid? (a test's, and only a test's), bulkReset?,
+  `{ runType: 'full' | 'full-no-deactivations' | 'test', buid? (a test's, and only a test's), previousStateSource? ('storage-then-target', the default, 'storage', or
+  'target' for a bulk reset; bulkReset is refused),
   iterationLimit? (0-50, 0 a single task; default 10; always 0 for a test), parallelStart? (0 to the chunker service's
   most tasks, at most 20; refused for a test or a single task), processorScalingCapacityOverride? (1-20, the processor
   service's maximum for this run; refused for a test), overrideStalled?, and in a mock landscape only: source? ('real'

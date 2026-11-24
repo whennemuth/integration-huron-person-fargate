@@ -69,12 +69,12 @@ All chunking modules use `TestEnvironment` from `integration-core`; harness pref
 
 **How a run starts** (paths, grants, refusals, timings and the reasoning: [docs/RUN_START.md](docs/RUN_START.md)):
 - **The schedule** (`ScheduledRun`, `src/schedule/ScheduledRun.ts`) sends a full sync (`person-full`) with stored
-  hashes trusted (`previousStateSource: storage`): it fetches everyone, sends only people whose hash changed, and
-  deactivates people missing from the source. A bulk reset is `previousStateSource: target`
-  (`ScheduledRun.previousStateSource(bulkReset)`); every run start must send one (no default,
-  `src/chunking/PreviousStateSource.ts`). **The schedule is never deployed**: it is managed at run time through
-  `ScheduledRun` (one per landscape, at most once a day, an hour from other landscapes'; CDK creates only its role),
-  so never add it back to CDK. A scheduled start is skipped (and recorded) while a run is underway in the landscape
+  hashes trusted (`previousStateSource: storage-then-target`, `ScheduledRun.PREVIOUS_STATE_SOURCE`): it fetches
+  everyone, sends only people whose hash changed, looks up in Huron only the people with no stored hash (so one already
+  there is updated, not created), and deactivates people missing from the source. `storage` skips that lookup; a bulk
+  reset is `target`. Every run start must send one (no default, `src/chunking/PreviousStateSource.ts`). **The
+  schedule is never deployed**: it is managed at run time through `ScheduledRun` (one per landscape, at most once a
+  day, an hour from other landscapes'; CDK creates only its role), so never add it back to CDK. A scheduled start is skipped (and recorded) while a run is underway in the landscape
   (`ScheduledStartGuard`). Rules: [src/schedule/CLAUDE.md](src/schedule/CLAUDE.md).
 - **Who started it** (`startedBy`, `src/chunking/StartedBy.ts`): `{ by: 'dashboard', principal? }`, `{ by: 'schedule' }`
   or `{ by: 'runner' }`, carried along the run's messages into Flags and the run summary.

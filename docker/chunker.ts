@@ -394,9 +394,10 @@ export async function main() {
     } else if (!hasHistoricalData) {
       console.log(`✓ No historical data found (checked ${storageMode} storage) - setting previousStateSource=target to force target system lookups`);
       previousStateSource = 'target';
-    } else if (previousStateSourceFromMessage === 'storage') {
-      console.log(`✓ Historical data exists in ${storageMode} storage and previousStateSource=storage - using delta comparison`);
-      previousStateSource = 'storage';
+    } else if (previousStateSourceFromMessage === 'storage' || previousStateSourceFromMessage === 'storage-then-target') {
+      // storage-then-target looks up only the people with no stored hash, directly: no person cache
+      console.log(`✓ Historical data exists in ${storageMode} storage and previousStateSource=${previousStateSourceFromMessage} - using delta comparison`);
+      previousStateSource = previousStateSourceFromMessage;
     } else {
       throw new Error('The run has no previousStateSource: its message must say where its previous state comes from');
     }

@@ -76,7 +76,7 @@ const finished = { kind: 'finished', syncRunId: '2026-11-09T02:00:00.000Z' };
 const stalled = { kind: 'stalled', syncRunId: '2026-11-06T17:12:48.824Z', lastChunkAt: '2026-11-07T04:59:44.820Z' };
 const state = (overrides: Record<string, any> = {}) => ({
   landscape: 'preview',
-  defaults: { runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 0 },
+  defaults: { runType: 'full', previousStateSource: 'storage-then-target', iterationLimit: 10, parallelStart: 0 },
   iterationLimit: { max: 50 },
   parallelStart: { max: 20, enabled: false },
   latestRun: finished,
@@ -87,7 +87,7 @@ const state = (overrides: Record<string, any> = {}) => ({
 /** What POST /api/bulk-sync/plan answers: the choices, the event and a few settings */
 const plan = (choices: Record<string, any>) => ({
   landscape: 'preview',
-  choices: { bulkReset: false, previousStateSource: 'storage', iterationLimit: 10, parallelStart: 0, overrideStalled: false, ...choices },
+  choices: { previousStateSource: 'storage-then-target', iterationLimit: 10, parallelStart: 0, overrideStalled: false, ...choices },
   event: {
     baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: 'person-full', previousStateSource: 'storage',
     iterationLimit: 0, offset: 0, processingMetadata: { processedAt: 'set when the run is started', processorVersion: '1.0.0' }
@@ -135,7 +135,7 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       expect(html.match(/>Custom settings</g)).toHaveLength(1);
       expect(html).toContain('<legend class="form-label">Chunker tasks</legend>');
       expect(html).toContain('One task reads every chunk itself. With no other task to share the work, reading the source takes much longer.');
-      expect(html).not.toMatch(/name="bulkReset" id="bulk-bulkReset" checked/);
+      expect(html).toMatch(/id="bulk-previousStateSource-storage-then-target" value="storage-then-target" checked/);
       expect(html).not.toContain('trustPreviousStorage');
       expect(html).toMatch(/data-bulk-test hidden/);
       expect(html).toMatch(/data-bulk-custom aria-label="Custom settings" hidden/);
@@ -195,12 +195,12 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
     });
 
     it('keeps what was entered, showing the BUID box for a test and the custom fields when chosen', () => {
-      const html = BulkSyncView.formHtml(state(), { runType: 'test', buid: 'U1<2', bulkReset: true, custom: true, iterationLimit: 7 });
+      const html = BulkSyncView.formHtml(state(), { runType: 'test', buid: 'U1<2', previousStateSource: 'target', custom: true, iterationLimit: 7 });
       expect(html).toMatch(/value="test" checked/);
       expect(html).toContain('value="U1&lt;2"');
       expect(html).not.toMatch(/data-bulk-test hidden/);
       expect(html).toContain('A test puts a single person through the whole sync');
-      expect(html).toMatch(/name="bulkReset" id="bulk-bulkReset" checked/);
+      expect(html).toMatch(/id="bulk-previousStateSource-target" value="target" checked/);
       expect(html).not.toMatch(/data-bulk-custom aria-label="Custom settings" hidden/);
       expect(html).toMatch(/name="custom" id="bulk-custom" checked/);
       expect(html).toContain('<option value="7" selected>7</option>');
@@ -253,24 +253,27 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
 
     it('spells out what a run will do', () => {
       const lines = (choices: any, latestRun: any = finished) => BulkSyncView.summaryLines(choices, 'preview', latestRun);
-      expect(lines({ runType: 'full', bulkReset: true, iterationLimit: 10 })).toEqual([
+      expect(lines({ runType: 'full', previousStateSource: 'target', iterationLimit: 10 })).toEqual([
         "Full sync of everyone in the source, into preview's Huron. People no longer in the source are deactivated afterward.",
         'Bulk reset: everyone is looked up in Huron and created or updated as needed.',
         'Each chunker task reads 10 chunks, then hands the rest on to a new task.'
       ]);
-      expect(lines({ runType: 'full-no-deactivations', bulkReset: false, iterationLimit: 0 })).toEqual([
+      expect(lines({ runType: 'full-no-deactivations', previousStateSource: 'storage', iterationLimit: 0 })).toEqual([
         "Full sync of everyone in the source, into preview's Huron. No one is deactivated.",
         'People whose record has not changed since their last sync are skipped, and Huron is not contacted for them.',
+        'People with no fingerprint yet are created in Huron without being looked up first.',
         'A single chunker task reads the whole source.'
       ]);
-      expect(lines({ runType: 'test', buid: 'U12345678', bulkReset: false, iterationLimit: 10, overrideStalled: true }, stalled)).toEqual([
+      expect(lines({ runType: 'test', buid: 'U12345678', previousStateSource: 'storage-then-target', iterationLimit: 10, overrideStalled: true }, stalled)).toEqual([
         "Test of U12345678 alone, into preview's Huron. No one is deactivated.",
         'People whose record has not changed since their last sync are skipped, and Huron is not contacted for them.',
+        'People with no fingerprint yet are looked up in Huron first, so anyone already there is updated rather than created.',
         `The stalled run of ${RunFormat.dateTime(stalled.syncRunId)} is left as it is.`
       ]);
-      expect(lines({ runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 6 })).toEqual([
+      expect(lines({ runType: 'full', previousStateSource: 'storage-then-target', iterationLimit: 10, parallelStart: 6 })).toEqual([
         "Full sync of everyone in the source, into preview's Huron. People no longer in the source are deactivated afterward.",
         'People whose record has not changed since their last sync are skipped, and Huron is not contacted for them.',
+        'People with no fingerprint yet are looked up in Huron first, so anyone already there is updated rather than created.',
         'Each chunker task reads 10 chunks, then hands the rest on to a new task.',
         "It starts with 6 chunker tasks at once. The start takes up to a few minutes while the chunker's scaling catches up."
       ]);
@@ -355,22 +358,22 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
 
     it("spells out a mock landscape's run: its target, its source, and a start from scratch", () => {
       const lines = (choices: any, itemsPerChunk?: number) => BulkSyncView.summaryLines(choices, 'mock', finished, itemsPerChunk);
-      expect(lines({ runType: 'full', bulkReset: false, iterationLimit: 10, source: 'simulator', resetState: true,
+      expect(lines({ runType: 'full', previousStateSource: 'storage-then-target', iterationLimit: 10, source: 'simulator', resetState: true,
         simulator: { totalPopulation: 1950, simulatedDelaySeconds: 3, errorRate: 0.05, nonCurrentTermRate: 0 } })).toEqual([
         "Full sync of everyone in the source, into mock's target simulator. People no longer in the source are deactivated afterward.",
         'The source is the source simulator: 1,950 made-up people, each response taking 3 s, 5% of responses failing.',
         "It starts from scratch: the target simulator, Run history and every person's fingerprint are emptied first, so everyone is created again.",
         'Each chunker task reads 10 chunks, then hands the rest on to a new task.'
       ]);
-      const hybrid = lines({ runType: 'full-no-deactivations', bulkReset: false, iterationLimit: 0, source: 'real', resetState: false });
+      const hybrid = lines({ runType: 'full-no-deactivations', previousStateSource: 'storage-then-target', iterationLimit: 0, source: 'real', resetState: false });
       expect(hybrid[1]).toBe('The source is the real source API, read as any landscape reads it.');
       expect(hybrid[2]).toBe('People whose record has not changed since their last sync are skipped, and the target simulator is not contacted for them.');
-      expect(lines({ runType: 'full', bulkReset: true, iterationLimit: 10, source: 'real', resetState: true })[3])
+      expect(lines({ runType: 'full', previousStateSource: 'target', iterationLimit: 10, source: 'real', resetState: true })[3])
         .toBe('Bulk reset: everyone is looked up in the target simulator and created or updated as needed.');
       // A parallel start seeded past the simulator's people: 6 tasks x 10 chunks x 200 = 12,000 people for 1,950
-      const seeded = lines({ runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 6, source: 'simulator', simulator: { totalPopulation: 1950 } }, 200);
+      const seeded = lines({ runType: 'full', previousStateSource: 'storage-then-target', iterationLimit: 10, parallelStart: 6, source: 'simulator', simulator: { totalPopulation: 1950 } }, 200);
       expect(seeded[seeded.length - 1]).toBe("Its 6 tasks are set to read 12,000 people, more than the simulator's 1,950: the tasks past the end find no one and stop.");
-      const enough = lines({ runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 2, source: 'simulator', simulator: { totalPopulation: 3000 } }, 200);
+      const enough = lines({ runType: 'full', previousStateSource: 'storage-then-target', iterationLimit: 10, parallelStart: 2, source: 'simulator', simulator: { totalPopulation: 3000 } }, 200);
       expect(enough.join(' ')).not.toContain('find no one');
     });
 
@@ -432,9 +435,9 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       expect(form.parts['[data-bulk-form-error]']).toMatchObject({ hidden: false, textContent: 'A test needs the BUID of the person to sync.' });
       expect(postJson).not.toHaveBeenCalled();
 
-      expect(await bulkPage.review({ runType: 'test', buid: 'U1', bulkReset: true, custom: false })).toBe(true);
+      expect(await bulkPage.review({ runType: 'test', buid: 'U1', previousStateSource: 'target', custom: false })).toBe(true);
       // custom only redraws the form: it isn't sent
-      expect(postJson).toHaveBeenCalledWith('/api/bulk-sync/plan', { runType: 'test', buid: 'U1', bulkReset: true });
+      expect(postJson).toHaveBeenCalledWith('/api/bulk-sync/plan', { runType: 'test', buid: 'U1', previousStateSource: 'target' });
       expect(form.parts['[data-bulk-form-error]'].hidden).toBe(true);
       expect(form.parts['[data-bulk-confirm]'].innerHTML).toContain('Test of U1 alone, into preview&#39;s Huron. No one is deactivated.');
       // What is started is what was reviewed: the fields are locked meanwhile
@@ -445,7 +448,7 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       const refusal = Object.assign(new Error('The run of x is still underway: wait for it to finish'), { status: 409, code: 'RUN_UNDERWAY' });
       const { bulkPage, form } = page({ postJson: jest.fn(async () => { throw refusal; }) });
       await bulkPage.load();
-      expect(await bulkPage.review({ runType: 'full', bulkReset: false })).toBe(false);
+      expect(await bulkPage.review({ runType: 'full', previousStateSource: 'storage-then-target' })).toBe(false);
       expect(form.parts['[data-bulk-form-error]']).toMatchObject({
         hidden: false, textContent: "The run can't be started: The run of x is still underway: wait for it to finish"
       });
@@ -462,10 +465,10 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
         .mockResolvedValue(state({ latestRun: { kind: 'finished', syncRunId: '2026-11-10T11:58:20.000Z' } }));
       const { bulkPage, parts, postJson } = page({ getJson });
       await bulkPage.load();
-      await bulkPage.review({ runType: 'test', buid: 'U1', bulkReset: true, iterationLimit: 2, parallelStart: 0, custom: true });
+      await bulkPage.review({ runType: 'test', buid: 'U1', previousStateSource: 'target', iterationLimit: 2, parallelStart: 0, custom: true });
 
       expect(await bulkPage.confirm()).toBe(true);
-      expect(postJson).toHaveBeenLastCalledWith('/api/bulk-sync', { runType: 'test', buid: 'U1', bulkReset: true, iterationLimit: 2, parallelStart: 0 });
+      expect(postJson).toHaveBeenLastCalledWith('/api/bulk-sync', { runType: 'test', buid: 'U1', previousStateSource: 'target', iterationLimit: 2, parallelStart: 0 });
       // The server's state after the start: the run is launching, and another start is refused
       expect(parts['[data-bulk-status]'].innerHTML).toContain('A run is starting: Test of U1');
 
@@ -485,7 +488,7 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       });
       const { bulkPage, form } = page({ postJson });
       await bulkPage.load();
-      await bulkPage.review({ runType: 'full', bulkReset: false });
+      await bulkPage.review({ runType: 'full', previousStateSource: 'storage-then-target' });
       expect(await bulkPage.confirm()).toBe(false);
       expect(form.parts['[data-bulk-start-error]']).toMatchObject({
         hidden: false, textContent: "The run wasn't started: The run of x is still underway: wait for it to finish"
@@ -499,20 +502,20 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
         dataset: params.dataset ?? { defaultParallel: '15', defaultProcessors: '3' },
         elements: {
           runType: ['full', 'full-no-deactivations', 'delta', 'test'].map(type => radio(type, type === (params.runType ?? 'full'))),
-          buid: { value: 'U1' }, bulkReset: { checked: false }, custom: { checked: !! params.custom },
+          buid: { value: 'U1' }, previousStateSource: ['storage-then-target', 'storage', 'target'].map(value => radio(value, value === 'storage-then-target')), custom: { checked: !! params.custom },
           chunkMode: ['perTask', 'single'].map(mode => radio(mode, mode === 'perTask')),
           chunksPerTask: { value: '10' }, parallelStart: { value: '6' }, processorTasks: { value: params.processorTasks ?? '3' }
         }
       });
       // Custom settings closed: the form's default Parallel start, no override
-      expect(BulkSyncPage.readRequest(fields({}))).toEqual({ runType: 'full', bulkReset: false, parallelStart: 15, custom: false });
+      expect(BulkSyncPage.readRequest(fields({}))).toEqual({ runType: 'full', previousStateSource: 'storage-then-target', parallelStart: 15, custom: false });
       expect(BulkSyncPage.readRequest(fields({ processorTasks: '8' }))).not.toHaveProperty('processorScalingCapacityOverride');
       // A test sends neither
-      expect(BulkSyncPage.readRequest(fields({ runType: 'test' }))).toEqual({ runType: 'test', buid: 'U1', bulkReset: false, custom: false });
+      expect(BulkSyncPage.readRequest(fields({ runType: 'test' }))).toEqual({ runType: 'test', buid: 'U1', previousStateSource: 'storage-then-target', custom: false });
       expect(BulkSyncPage.readRequest(fields({ runType: 'test', custom: true, processorTasks: '8' }))).not.toHaveProperty('processorScalingCapacityOverride');
       // Custom settings open: the dropdowns, and an override only when it isn't the landscape's
       expect(BulkSyncPage.readRequest(fields({ custom: true, processorTasks: '8' }))).toEqual({
-        runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 6, processorScalingCapacityOverride: 8, custom: true
+        runType: 'full', previousStateSource: 'storage-then-target', iterationLimit: 10, parallelStart: 6, processorScalingCapacityOverride: 8, custom: true
       });
       expect(BulkSyncPage.readRequest(fields({ custom: true, processorTasks: '3' }))).not.toHaveProperty('processorScalingCapacityOverride');
       // No landscape maximum known: any choice but the landscape's own is an override
@@ -525,7 +528,7 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
     it('warns in the review when the run asks for more processor tasks than the landscape\'s, and says how many it uses', () => {
       const planWith = (override?: number) => ({
         landscape: 'preview',
-        choices: { runType: 'full', population: 'person-full', bulkReset: false, previousStateSource: 'storage', iterationLimit: 10, parallelStart: 0, overrideStalled: false,
+        choices: { runType: 'full', population: 'person-full', previousStateSource: 'storage-then-target', iterationLimit: 10, parallelStart: 0, overrideStalled: false,
           ...(override !== undefined ? { processorScalingCapacityOverride: override } : {}) },
         event: { baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people' },
         settings: [{ name: 'processorMaxScalingCapacity', value: 3, source: 'landscape' }]
@@ -556,7 +559,7 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       const fields = (mock?: { source: string; values?: string[]; resetState?: boolean }) => ({
         elements: {
           runType: ['full', 'full-no-deactivations', 'delta', 'test'].map(type => radio(type, type === 'full')),
-          buid: { value: '' }, bulkReset: { checked: false }, custom: { checked: false },
+          buid: { value: '' }, previousStateSource: ['storage-then-target', 'storage', 'target'].map(value => radio(value, value === 'storage-then-target')), custom: { checked: false },
           chunkMode: ['perTask', 'single'].map(mode => radio(mode, mode === 'perTask')),
           chunksPerTask: { value: '10' }, parallelStart: { value: '0' },
           ...(mock ? {
@@ -567,12 +570,12 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
           } : {})
         }
       });
-      expect(BulkSyncPage.readRequest(fields())).toEqual({ runType: 'full', bulkReset: false, custom: false });
+      expect(BulkSyncPage.readRequest(fields())).toEqual({ runType: 'full', previousStateSource: 'storage-then-target', custom: false });
       expect(BulkSyncPage.readRequest(fields({ source: 'real', resetState: true }))).toEqual({
-        runType: 'full', bulkReset: false, source: 'real', resetState: true, custom: false
+        runType: 'full', previousStateSource: 'storage-then-target', source: 'real', resetState: true, custom: false
       });
       expect(BulkSyncPage.readRequest(fields({ source: 'simulator', values: ['40', ' 0 ', '0.1', ''] }))).toEqual({
-        runType: 'full', bulkReset: false, source: 'simulator', resetState: false, custom: false,
+        runType: 'full', previousStateSource: 'storage-then-target', source: 'simulator', resetState: false, custom: false,
         simulator: { totalPopulation: 40, simulatedDelaySeconds: 0, errorRate: 0.1, nonCurrentTermRate: NaN }
       });
     });
@@ -601,7 +604,7 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
 
     it("spells out a test with the simulator as one made-up person, and one past its people as missing from the source", () => {
       const lines = (choices: any) => BulkSyncView.summaryLines(choices, 'mock', finished, undefined, 1950);
-      const choices = (buid: string, simulator: any = {}) => ({ runType: 'test', buid, bulkReset: false, iterationLimit: 0, source: 'simulator', resetState: false, simulator });
+      const choices = (buid: string, simulator: any = {}) => ({ runType: 'test', buid, previousStateSource: 'storage-then-target', iterationLimit: 0, source: 'simulator', resetState: false, simulator });
       expect(lines(choices('U0000042', { simulatedDelaySeconds: 2, errorRate: 0.1 }))[1])
         .toBe('The source is the source simulator: one made-up person, U0000042, its response taking 2 s, a 10% chance its response fails.');
       expect(lines(choices('U0001950'))[1]).toBe('The source is the source simulator: one made-up person, U0001950.');
@@ -622,7 +625,7 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       const radio = (value: string, checked: boolean) => ({ value, checked });
       const elements = (runType: string, source: string) => ({
         runType: ['full', 'full-no-deactivations', 'delta', 'test'].map(type => radio(type, type === runType)),
-        buid: { value: 'u0000042', placeholder: 'U12345678' }, bulkReset: { checked: false }, custom: { checked: false },
+        buid: { value: 'u0000042', placeholder: 'U12345678' }, previousStateSource: ['storage-then-target', 'storage', 'target'].map(value => radio(value, value === 'storage-then-target')), custom: { checked: false },
         chunkMode: ['perTask', 'single'].map(mode => radio(mode, mode === 'perTask')),
         chunksPerTask: { value: '10' }, parallelStart: { value: '0' },
         source: ['real', 'simulator'].map(name => radio(name, name === source)),
@@ -630,7 +633,7 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
         resetState: { checked: false }
       });
       expect(BulkSyncPage.readRequest({ elements: elements('test', 'simulator') })).toEqual({
-        runType: 'test', buid: 'U0000042', bulkReset: false, source: 'simulator', resetState: false, custom: false,
+        runType: 'test', buid: 'U0000042', previousStateSource: 'storage-then-target', source: 'simulator', resetState: false, custom: false,
         simulator: { simulatedDelaySeconds: 0, errorRate: 0, nonCurrentTermRate: 0 }
       });
       const toggles: [string, boolean][] = [];
@@ -662,23 +665,23 @@ describe.each([false, true])('bulk-sync.js (minified: %s)', minified => {
       const fields = (params: { runType: string; buid?: string; custom?: boolean; chunkMode?: string; chunksPerTask?: string; parallelStart?: string; overrideStalled?: boolean }) => ({
         elements: {
           runType: ['full', 'full-no-deactivations', 'delta', 'test'].map(type => radio(type, type === params.runType)),
-          buid: { value: params.buid ?? '' }, bulkReset: { checked: true }, custom: { checked: !! params.custom },
+          buid: { value: params.buid ?? '' }, previousStateSource: ['storage-then-target', 'storage', 'target'].map(value => radio(value, value === 'target')), custom: { checked: !! params.custom },
           chunkMode: ['perTask', 'single'].map(mode => radio(mode, mode === (params.chunkMode ?? 'perTask'))),
           chunksPerTask: { value: params.chunksPerTask ?? '10' }, parallelStart: { value: params.parallelStart ?? '0' },
           ...(params.overrideStalled === undefined ? {} : { overrideStalled: { checked: params.overrideStalled } })
         }
       });
-      expect(BulkSyncPage.readRequest(fields({ runType: 'full', buid: 'U9' }))).toEqual({ runType: 'full', bulkReset: true, custom: false });
+      expect(BulkSyncPage.readRequest(fields({ runType: 'full', buid: 'U9' }))).toEqual({ runType: 'full', previousStateSource: 'target', custom: false });
       // A test is always a single task (iterationLimit 0), whatever the chunk mode and dropdown say
       expect(BulkSyncPage.readRequest(fields({ runType: 'test', buid: ' u123 ', custom: true, chunksPerTask: '3', overrideStalled: true }))).toEqual({
-        runType: 'test', buid: 'U123', bulkReset: true, iterationLimit: 0, parallelStart: 0, overrideStalled: true, custom: true
+        runType: 'test', buid: 'U123', previousStateSource: 'target', iterationLimit: 0, parallelStart: 0, overrideStalled: true, custom: true
       });
       // A single task is iterationLimit 0, whatever the dropdown says
       expect(BulkSyncPage.readRequest(fields({ runType: 'full-no-deactivations', custom: true, chunkMode: 'single', chunksPerTask: '25' })))
-        .toEqual({ runType: 'full-no-deactivations', bulkReset: true, iterationLimit: 0, parallelStart: 0, custom: true });
+        .toEqual({ runType: 'full-no-deactivations', previousStateSource: 'target', iterationLimit: 0, parallelStart: 0, custom: true });
       // Parallel start is sent for chunks per task, and is 0 for a single task or a test whatever the dropdown says
       expect(BulkSyncPage.readRequest(fields({ runType: 'full', custom: true, chunksPerTask: '10', parallelStart: '6' })))
-        .toEqual({ runType: 'full', bulkReset: true, iterationLimit: 10, parallelStart: 6, custom: true });
+        .toEqual({ runType: 'full', previousStateSource: 'target', iterationLimit: 10, parallelStart: 6, custom: true });
       expect(BulkSyncPage.readRequest(fields({ runType: 'full', custom: true, chunkMode: 'single', parallelStart: '6' })).parallelStart).toBe(0);
       expect(BulkSyncPage.readRequest(fields({ runType: 'test', buid: 'U1', custom: true, parallelStart: '6' })).parallelStart).toBe(0);
     });
@@ -814,7 +817,7 @@ describe('bulk-sync.js against the dashboard routes and offline services', () =>
     });
     expect(await bulkPage.load()).toBe(true);
     expect(parts['[data-bulk-status]'].innerHTML).toContain('finished.');
-    expect(await bulkPage.review({ runType: 'test', buid: 'U0000042', bulkReset: true, custom: false })).toBe(true);
+    expect(await bulkPage.review({ runType: 'test', buid: 'U0000042', previousStateSource: 'target', custom: false })).toBe(true);
     const review = form.parts['[data-bulk-confirm]'].innerHTML;
     expect(review).toContain('<code>/api/person?buid=U0000042</code>');
     expect(review).toContain('<code>previousStateSource</code>');
@@ -836,7 +839,7 @@ describe('bulk-sync.js against the dashboard routes and offline services', () =>
       expect(bulkPage.state.mock.simulator).toMatchObject({ available: true, defaults: { totalPopulation: 1950 } });
       expect(form.innerHTML).toContain('data-bulk-mock');
       const request = {
-        runType: 'full', bulkReset: false, source: 'simulator', resetState: true, custom: false,
+        runType: 'full', previousStateSource: 'storage-then-target', source: 'simulator', resetState: true, custom: false,
         simulator: { totalPopulation: 30, simulatedDelaySeconds: 0, errorRate: 0, nonCurrentTermRate: 0 }
       };
       expect(await bulkPage.review(request)).toBe(true);

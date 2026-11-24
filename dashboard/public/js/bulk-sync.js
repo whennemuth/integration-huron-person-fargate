@@ -16,6 +16,27 @@
 /** The page's words and markup */
 class BulkSyncView {
 
+    /**
+     * Where a run's previous state comes from (the request's previousStateSource): the page's three choices, the default
+     * first (ScheduledRun.PREVIOUS_STATE_SOURCE on the server)
+     */
+    static get PREVIOUS_STATE_CHOICES() {
+        return [
+            {
+                value: 'storage-then-target', label: 'Skip unchanged people, look up new ones in Huron',
+                hint: "Each time someone is synced, the integration keeps a fingerprint of their record as it came from the source. Anyone whose record has not changed since then (the same fingerprint) is skipped, and Huron is not contacted for them. Anyone with no fingerprint yet, such as someone new, is looked up in Huron first, so a person who is already there is updated rather than created again."
+            },
+            {
+                value: 'storage', label: 'Skip unchanged people only',
+                hint: "As above, but anyone with no fingerprint yet is created in Huron without being looked up first. A person who is already in Huron then can't be created, and is tried again by every run until a bulk reset."
+            },
+            {
+                value: 'target', label: 'Bulk reset',
+                hint: 'Check every person against Huron: everyone is looked up and created or updated as needed. Slower, but it also puts right records that were changed in Huron directly.'
+            }
+        ];
+    }
+
     /** A BUID: U followed by digits (BulkSyncRequest.BUID on the server) */
     static get BUID() {
         return /^U\d+$/;
@@ -116,7 +137,7 @@ class BulkSyncView {
             simulator: Object.assign({}, simulatorDefaults, entered.simulator || {}),
             resetState: !! entered.resetState,
             buid: entered.buid || '',
-            bulkReset: pick('bulkReset'),
+            previousStateSource: pick('previousStateSource') || BulkSyncView.PREVIOUS_STATE_CHOICES[0].value,
             custom: !! entered.custom,
             singleTask: iterationLimit === 0,
             chunksPerTask: iterationLimit === 0 ? defaults.iterationLimit : iterationLimit,
@@ -203,10 +224,13 @@ class BulkSyncView {
                            placeholder="${simulatorTest ? BulkSyncView.SIMULATOR_BUID_PLACEHOLDER : BulkSyncView.BUID_PLACEHOLDER}" autocomplete="off" spellcheck="false">
                     ${simulator ? `<div class="form-text bulk-buid-simulator">${Html.escape(BulkSyncView.simulatorBuidHint(simulator.defaults.totalPopulation))}</div>` : ''}
                 </div>`}
-                ${BulkSyncView.checkboxHtml({
-                    name: 'bulkReset', label: 'Bulk reset', checked: form.bulkReset,
-                    hint: 'Check every person against Huron. Each time someone is synced, the integration keeps a fingerprint of their record as it came from the source. Normally, anyone whose record has not changed since then (the same fingerprint) is skipped, and Huron is not contacted for them. With a bulk reset, everyone is looked up in Huron and created or updated as needed: slower, but it also puts right records that were changed in Huron directly.'
-                })}
+                <fieldset class="mb-3" data-bulk-previous-state>
+                    <legend class="form-label">Checking against Huron</legend>
+                    ${BulkSyncView.PREVIOUS_STATE_CHOICES.map(choice => BulkSyncView.radioHtml({
+                        name: 'previousStateSource', value: choice.value, label: choice.label, hint: choice.hint,
+                        checked: form.previousStateSource === choice.value
+                    })).join('')}
+                </fieldset>
                 ${BulkSyncView.checkboxHtml({
                     name: 'custom', label: 'Custom settings', checked: form.custom,
                     hint: `How the run's work is divided up and started. Unchecked, the defaults are used: ${BulkSyncView.defaultsText(state.defaults)}.`
@@ -376,10 +400,13 @@ class BulkSyncView {
         }
         // A mock landscape's target is its target simulator; after a start from scratch no one has a fingerprint to skip by
         const huron = choices.source ? 'the target simulator' : 'Huron';
-        if (choices.bulkReset) {
+        if (choices.previousStateSource === 'target') {
             lines.push(`Bulk reset: everyone is looked up in ${huron} and created or updated as needed.`);
         } else if ( ! choices.resetState) {
             lines.push(`People whose record has not changed since their last sync are skipped, and ${huron} is not contacted for them.`);
+            lines.push(choices.previousStateSource === 'storage'
+                ? `People with no fingerprint yet are created in ${huron} without being looked up first.`
+                : `People with no fingerprint yet are looked up in ${huron} first, so anyone already there is updated rather than created.`);
         }
         if (choices.runType !== 'test') {
             lines.push(choices.iterationLimit === 0
@@ -668,7 +695,7 @@ class BulkSyncPage {
         return {
             runType,
             ...(runType === 'test' ? { buid } : {}),
-            bulkReset: !! fields.bulkReset.checked,
+            previousStateSource: checked('previousStateSource'),
             ...(custom ? {
                 iterationLimit: single ? 0 : Number(fields.chunksPerTask.value),
                 parallelStart: single ? 0 : Number(fields.parallelStart.value)
