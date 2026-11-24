@@ -155,7 +155,7 @@ npx ts-node src/runner/Runner.ts
 | Variable | Effect |
 |---|---|
 | `SYNC_UPDATE_HASH` | `true`: compute hashes, check whether a person is already in sync, and record their hash (and deactivations) in hash storage. `false`: push without an in-sync check and leave hash storage alone |
-| `SYNC_TRUST_PREVIOUS_STORAGE` | `true`: decide whether a person is in sync from their stored hash, falling back to comparing with the target. DynamoDB mode only; requires `SYNC_UPDATE_HASH=true` (a warning is logged otherwise) |
+| `SYNC_PREVIOUS_STATE_SOURCE` | `storage`: decide whether a person is in sync from their stored hash, falling back to comparing with the target (`target`, the default, always compares with the target). DynamoDB mode only; requires `SYNC_UPDATE_HASH=true` (a warning is logged otherwise) |
 | `SYNC_PREVIEW` | `true`: no pushes or deactivations, and no hash storage writes |
 | `DRY_RUN` | `true`: log pushes and hash storage writes instead of performing them |
 | `SYNC_CRUD` | supplies the CRUD operation instead of deriving it from the target lookup; leave unset |
@@ -193,7 +193,7 @@ Run `SyncPerson.ts` with:
 | **huron-person `.env`** | **`SYNC_PERSON_SYNC_BUID`** | **`U0000042`** |
 | **huron-person `.env`** | **`SYNC_PERSON_SYNC_PREVIEW`** | **`true`** |
 | **huron-person `.env`** | **`SYNC_PERSON_SYNC_UPDATE_HASH`** | **`false`** |
-| **huron-person `.env`** | **`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`** | **`false`** |
+| **huron-person `.env`** | **`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`** | **`target`** |
 | **huron-person `.env`** | **`SYNC_PERSON_DRY_RUN`** | **`false`** |
 | **huron-person `.env`** | **`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`** | **unset** |
 | **simulator Lambda env** | **`MOCK_TOTAL_POPULATION`** | **deployed value, at least `150` (default `10000`)** |
@@ -212,7 +212,7 @@ Run `SyncPerson.ts` with:
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_BUID`</span> | <span style="color:gray">`U0000042`</span> |
 | **huron-person `.env`** | **`SYNC_PERSON_SYNC_PREVIEW`** | **`false`** |
 | **huron-person `.env`** | **`SYNC_PERSON_SYNC_UPDATE_HASH`** | **`true`** |
-| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`false`</span> |
+| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`target`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_DRY_RUN`</span> | <span style="color:gray">`false`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">unset</span> |
 | <span style="color:gray">simulator Lambda env</span> | <span style="color:gray">`MOCK_TOTAL_POPULATION`</span> | <span style="color:gray">deployed value, at least `150` (default `10000`)</span> |
@@ -246,7 +246,7 @@ The stored hash is only consulted when the run uses hash storage (`SYNC_UPDATE_H
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_BUID`</span> | <span style="color:gray">`U0000042`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_UPDATE_HASH`</span> | <span style="color:gray">`true`</span> |
-| **huron-person `.env`** | **`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`** | **`true`** |
+| **huron-person `.env`** | **`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`** | **`storage`** |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_DRY_RUN`</span> | <span style="color:gray">`false`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">unset</span> |
 | <span style="color:gray">simulator Lambda env</span> | <span style="color:gray">`MOCK_TOTAL_POPULATION`</span> | <span style="color:gray">deployed value, at least `150` (default `10000`)</span> |
@@ -266,8 +266,8 @@ The two ways of deciding "in sync" are told apart by their first line:
 | Target comparison (anything else) | `Source and target are already in sync for BUID: ...` | `DynamoDBDeltaStorage: ... 1 UNCHANGED ...` |
 
 `Checking if source and target are already in sync...` precedes both, so it doesn't distinguish
-them. If you see the target comparison line with trust set, check that
-`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE` really is `true` in `.env`.
+them. If you see the target comparison line with storage set, check that
+`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE` really is `storage` in `.env`.
 
 **No stored hash.**
 
@@ -279,13 +279,13 @@ them. If you see the target comparison line with trust set, check that
    | **huron-person `.env`** | **`SYNC_PERSON_SYNC_BUID`** | **`U0000043`** |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
    | **huron-person `.env`** | **`SYNC_PERSON_SYNC_UPDATE_HASH`** | **`false`** |
-   | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`true`</span> |
+   | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`storage`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_DRY_RUN`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">unset</span> |
    | <span style="color:gray">simulator Lambda env</span> | <span style="color:gray">`MOCK_TOTAL_POPULATION`</span> | <span style="color:gray">deployed value, at least `150` (default `10000`)</span> |
 
    Expect the warning
-   `SYNC_TRUST_PREVIOUS_STORAGE=true has no effect without SYNC_UPDATE_HASH=true...`, a create in
+   `SYNC_PREVIOUS_STATE_SOURCE=storage has no effect without SYNC_UPDATE_HASH=true...`, a create in
    the target, and no items for `U0000043`.
 2. Run `SyncPerson.ts` with:
 
@@ -295,7 +295,7 @@ them. If you see the target comparison line with trust set, check that
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_BUID`</span> | <span style="color:gray">`U0000043`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
    | **huron-person `.env`** | **`SYNC_PERSON_SYNC_UPDATE_HASH`** | **`true`** |
-   | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`true`</span> |
+   | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`storage`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_DRY_RUN`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">unset</span> |
    | <span style="color:gray">simulator Lambda env</span> | <span style="color:gray">`MOCK_TOTAL_POPULATION`</span> | <span style="color:gray">deployed value, at least `150` (default `10000`)</span> |
@@ -344,7 +344,7 @@ them. If you see the target comparison line with trust set, check that
    | **huron-person `.env`** | **`SYNC_PERSON_SYNC_BUID`** | **`U0000044`** |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_UPDATE_HASH`</span> | <span style="color:gray">`true`</span> |
-   | **huron-person `.env`** | **`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`** | **`false`** |
+   | **huron-person `.env`** | **`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`** | **`target`** |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_DRY_RUN`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">unset</span> |
    | <span style="color:gray">simulator Lambda env</span> | <span style="color:gray">`MOCK_TOTAL_POPULATION`</span> | <span style="color:gray">deployed value, at least `150` (default `10000`)</span> |
@@ -370,7 +370,7 @@ table; only pipeline runs write those. (Error event records use their own timest
    | **huron-person `.env`** | **`SYNC_PERSON_SYNC_BUID`** | **`U0000042`** |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_UPDATE_HASH`</span> | <span style="color:gray">`true`</span> |
-   | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`false`</span> |
+   | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`target`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_DRY_RUN`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">unset</span> |
    | **simulator Lambda env** | **`MOCK_TOTAL_POPULATION`** | **`40` (below `U0000042`'s index, 41)** |
@@ -394,7 +394,7 @@ table; only pipeline runs write those. (Error event records use their own timest
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_BUID`</span> | <span style="color:gray">`U0000042`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_UPDATE_HASH`</span> | <span style="color:gray">`true`</span> |
-   | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`false`</span> |
+   | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`target`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_DRY_RUN`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">unset</span> |
    | **simulator Lambda env** | **`MOCK_TOTAL_POPULATION`** | **deployed value, at least `150` (default `10000`)** |
@@ -418,7 +418,7 @@ Run `SyncPerson.ts` with:
 | **huron-person `.env`** | **`SYNC_PERSON_SYNC_BUID`** | **`U0999999`** |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_UPDATE_HASH`</span> | <span style="color:gray">`true`</span> |
-| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`false`</span> |
+| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`target`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_DRY_RUN`</span> | <span style="color:gray">`false`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">unset</span> |
 | <span style="color:gray">simulator Lambda env</span> | <span style="color:gray">`MOCK_TOTAL_POPULATION`</span> | <span style="color:gray">deployed value, at least `150` (default `10000`)</span> |
@@ -437,7 +437,7 @@ Run `SyncPersonBatch.ts` with:
 | **huron-person `.env`** | **`SYNC_PERSON_BATCH_SYNC_BUIDS_FILE_PATH`** | **unset (it would take precedence over `SYNC_BUIDS`)** |
 | **huron-person `.env`** | **`SYNC_PERSON_BATCH_SYNC_PREVIEW`** | **`false`** |
 | **huron-person `.env`** | **`SYNC_PERSON_BATCH_SYNC_UPDATE_HASH`** | **`true`** |
-| **huron-person `.env`** | **`SYNC_PERSON_BATCH_SYNC_TRUST_PREVIOUS_STORAGE`** | **`false`** |
+| **huron-person `.env`** | **`SYNC_PERSON_BATCH_SYNC_PREVIOUS_STATE_SOURCE`** | **`target`** |
 | **huron-person `.env`** | **`DRY_RUN` (unprefixed: the batch harness has no prefixed version)** | **`false`** |
 | **huron-person `.env`** | **`SYNC_PERSON_BATCH_PREVIOUS_STORAGE_TYPE`** | **unset** |
 | **huron-person `.env`** | **`SYNC_PERSON_BATCH_OUTPUT_FILE_PATH`** | **unset (logs to `data/sync_person_batch_output.json`)** |
@@ -460,7 +460,7 @@ Run `SyncPerson.ts` with:
 | **huron-person `.env`** | **`SYNC_PERSON_SYNC_BUID`** | **`U0000048`** |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_UPDATE_HASH`</span> | <span style="color:gray">`true`</span> |
-| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`false`</span> |
+| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`target`</span> |
 | **huron-person `.env`** | **`SYNC_PERSON_DRY_RUN`** | **`true`** |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">unset</span> |
 | <span style="color:gray">simulator Lambda env</span> | <span style="color:gray">`MOCK_TOTAL_POPULATION`</span> | <span style="color:gray">deployed value, at least `150` (default `10000`)</span> |
@@ -526,7 +526,7 @@ Run `SyncPerson.ts` with:
 | **huron-person `.env`** | **`SYNC_PERSON_SYNC_BUID`** | **`U0000142`** |
 | **huron-person `.env`** | **`SYNC_PERSON_SYNC_PREVIEW`** | **`true`** |
 | **huron-person `.env`** | **`SYNC_PERSON_SYNC_UPDATE_HASH`** | **`false`** |
-| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`false`</span> |
+| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`target`</span> |
 | **huron-person `.env`** | **`SYNC_PERSON_DRY_RUN`** | **`false`** |
 | **huron-person `.env`** | **`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`** | **`s3`** |
 | **huron-person `.env`** | **`SYNC_PERSON_INTEGRATED_DELTA_CLIENT_ID`** | **`delta-storage`** |
@@ -546,7 +546,7 @@ Run `SyncPerson.ts` with:
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_BUID`</span> | <span style="color:gray">`U0000142`</span> |
 | **huron-person `.env`** | **`SYNC_PERSON_SYNC_PREVIEW`** | **`false`** |
 | **huron-person `.env`** | **`SYNC_PERSON_SYNC_UPDATE_HASH`** | **`true`** |
-| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`false`</span> |
+| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`target`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_DRY_RUN`</span> | <span style="color:gray">`false`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">`s3`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_INTEGRATED_DELTA_CLIENT_ID`</span> | <span style="color:gray">`delta-storage`</span> |
@@ -578,7 +578,7 @@ Run `SyncPerson.ts` with:
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_BUID`</span> | <span style="color:gray">`U0000142`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_UPDATE_HASH`</span> | <span style="color:gray">`true`</span> |
-| **huron-person `.env`** | **`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`** | **`true`** |
+| **huron-person `.env`** | **`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`** | **`storage`** |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_DRY_RUN`</span> | <span style="color:gray">`false`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">`s3`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_INTEGRATED_DELTA_CLIENT_ID`</span> | <span style="color:gray">`delta-storage`</span> |
@@ -637,7 +637,7 @@ the PersonCurrentState and PersonHistory tables - see "Switching to S3 mode".
    | **huron-person `.env`** | **`SYNC_PERSON_SYNC_BUID`** | **`U0000144`** |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_UPDATE_HASH`</span> | <span style="color:gray">`true`</span> |
-   | **huron-person `.env`** | **`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`** | **`false`** |
+   | **huron-person `.env`** | **`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`** | **`target`** |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_DRY_RUN`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">`s3`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_INTEGRATED_DELTA_CLIENT_ID`</span> | <span style="color:gray">`delta-storage`</span> |
@@ -659,7 +659,7 @@ the PersonCurrentState and PersonHistory tables - see "Switching to S3 mode".
    | **huron-person `.env`** | **`SYNC_PERSON_SYNC_BUID`** | **`U0000142`** |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_UPDATE_HASH`</span> | <span style="color:gray">`true`</span> |
-   | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`false`</span> |
+   | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`target`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_DRY_RUN`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">`s3`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_INTEGRATED_DELTA_CLIENT_ID`</span> | <span style="color:gray">`delta-storage`</span> |
@@ -679,7 +679,7 @@ the PersonCurrentState and PersonHistory tables - see "Switching to S3 mode".
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_BUID`</span> | <span style="color:gray">`U0000142`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_UPDATE_HASH`</span> | <span style="color:gray">`true`</span> |
-   | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`false`</span> |
+   | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`target`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_DRY_RUN`</span> | <span style="color:gray">`false`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">`s3`</span> |
    | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_INTEGRATED_DELTA_CLIENT_ID`</span> | <span style="color:gray">`delta-storage`</span> |
@@ -698,7 +698,7 @@ file - e.g. `{"fieldValues":[{"sourceIdentifier":"U0999998"}],"hash":"abc"}` - t
 | **huron-person `.env`** | **`SYNC_PERSON_SYNC_BUID`** | **`U0999998`** |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_UPDATE_HASH`</span> | <span style="color:gray">`true`</span> |
-| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`false`</span> |
+| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`target`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_DRY_RUN`</span> | <span style="color:gray">`false`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">`s3`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_INTEGRATED_DELTA_CLIENT_ID`</span> | <span style="color:gray">`delta-storage`</span> |
@@ -718,7 +718,7 @@ Run `SyncPersonBatch.ts` with:
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_BATCH_SYNC_BUIDS_FILE_PATH`</span> | <span style="color:gray">unset (it would take precedence over `SYNC_BUIDS`)</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_BATCH_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_BATCH_SYNC_UPDATE_HASH`</span> | <span style="color:gray">`true`</span> |
-| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_BATCH_SYNC_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`false`</span> |
+| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_BATCH_SYNC_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`target`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`DRY_RUN` (unprefixed: the batch harness has no prefixed version)</span> | <span style="color:gray">`false`</span> |
 | **huron-person `.env`** | **`SYNC_PERSON_BATCH_PREVIOUS_STORAGE_TYPE`** | **`s3`** |
 | **huron-person `.env`** | **`SYNC_PERSON_BATCH_INTEGRATED_DELTA_CLIENT_ID`** | **`delta-storage`** |
@@ -743,7 +743,7 @@ Run `SyncPerson.ts` with:
 | **huron-person `.env`** | **`SYNC_PERSON_SYNC_BUID`** | **`U0000148`** |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIEW`</span> | <span style="color:gray">`false`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_UPDATE_HASH`</span> | <span style="color:gray">`true`</span> |
-| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_TRUST_PREVIOUS_STORAGE`</span> | <span style="color:gray">`false`</span> |
+| <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_SYNC_PREVIOUS_STATE_SOURCE`</span> | <span style="color:gray">`target`</span> |
 | **huron-person `.env`** | **`SYNC_PERSON_DRY_RUN`** | **`true`** |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_PREVIOUS_STORAGE_TYPE`</span> | <span style="color:gray">`s3`</span> |
 | <span style="color:gray">huron-person `.env`</span> | <span style="color:gray">`SYNC_PERSON_INTEGRATED_DELTA_CLIENT_ID`</span> | <span style="color:gray">`delta-storage`</span> |
