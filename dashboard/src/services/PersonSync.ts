@@ -11,7 +11,12 @@ export class PersonSync implements PersonSyncService {
 
   constructor(private config: Config) {  }
 
-  private getSyncInstance = async (personId: string, hrn?: string): Promise<SinglePersonSync> => {
+  /**
+   * A sync instance. With recordHash, a successful push records the person's hash in hash storage, as a manual
+   * SyncPerson with SYNC_UPDATE_HASH=true does: DynamoDB storage only (every landscape's; a baseline file would be
+   * rewritten whole), and never read here (previousStateSource target, and sync() is always forced).
+   */
+  private getSyncInstance = async (personId: string, hrn?: string, recordHash = false): Promise<SinglePersonSync> => {
     const { config, config: { preLoadedMaps: { orgMap = false, stateMap = true, countryMap = true } = {} } = {} } = this;
 
     if (config.dataSource.person) {
@@ -26,7 +31,10 @@ export class PersonSync implements PersonSyncService {
     }
     const dataMapper = PersonSync.cachedDataMapper;
     
-    return new SinglePersonSync({ config, buid:personId, dataMapper, hrn });
+    const hashStorage = recordHash && config.storage?.type === 'dynamodb'
+      ? { enabled: true, previousStateSource: 'target' as const }
+      : undefined;
+    return new SinglePersonSync({ config, buid:personId, dataMapper, hrn, hashStorage });
   }
 
   /**
@@ -87,10 +95,11 @@ export class PersonSync implements PersonSyncService {
         throw new Error(`Multiple source records found for personId: ${personId}`);
       }
 
-      // Get a sync instance and run it.
-      const syncOp = await this.getSyncInstance(personId, hrn);
+      // Get a sync instance and run it. Always pushed (forceUpdate: no in-sync check), whatever any stored hash
+      // says, and the hash recorded after a successful push.
+      const syncOp = await this.getSyncInstance(personId, hrn, true);
       syncOp.clearMappingMessages();
-      await syncOp.sync({ crudOperation, rawData: sourceData });
+      await syncOp.sync({ crudOperation, rawData: sourceData, forceUpdate: true });
 
       // Check the response first for mapping errors.
       const mappingError = syncOp.getMappingError();

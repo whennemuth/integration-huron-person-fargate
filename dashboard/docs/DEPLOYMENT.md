@@ -34,6 +34,9 @@ stack:
 - No secret of its own: it reads the landscape's integration config secret (`integrationSecretName()` in fargate
   `lib/Secrets.ts`), and has read-only grants on the statistics table, the person history table (DynamoDB mode) and
   the chunks bucket (`lib/LandscapeResources.ts`).
+- In DynamoDB mode, Sync now records the synced person's hash (`src/services/PersonSync.ts`), so the Lambda may
+  batch read and write the person current state table and batch write the person history table (the tables only,
+  not their indexes).
 - To start a run (Bulk sync) it may invoke the chunker subscriber (`chunker-subscriber-<landscape>`, which resets the
   chunker's counters for a run's start) and read its and the processor subscriber's configuration (their `DRY_RUN`),
   and read the chunker service's most tasks (its scalable target, for Parallel start:

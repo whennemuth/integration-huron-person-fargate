@@ -30,13 +30,14 @@ const makeLandscape = (storage: 's3' | 'dynamodb', withDashboard = true): Landsc
 } as any);
 
 describe('landscapeResources', () => {
-  it('names the DynamoDB-mode resources, including the person history table', () => {
+  it('names the DynamoDB-mode resources, including the person history and current state tables', () => {
     expect(landscapeResources(makeLandscape('dynamodb'))).toEqual({
       landscape: 'mock',
       storageMode: 'dynamodb',
       integrationSecretName: 'huron-person-fargate-processor/integration/_config/mock',
       statisticsTableName: 'huron-person-fargate-processor-statistics-mock',
       personHistoryTableName: 'huron-person-fargate-processor-person-history-mock',
+      personCurrentStateTableName: 'huron-person-fargate-processor-person-current-state-mock',
       chunksBucketName: 'huron-person-chunks-mock',
       chunkerFunctionName: 'chunker-subscriber-mock',
       processorSubscriberFunctionName: 'processor-subscriber-mock',
@@ -83,6 +84,7 @@ describe('landscapeResources', () => {
     const resources = landscapeResources(makeLandscape('s3'));
     expect(resources.storageMode).toBe('s3');
     expect(resources.personHistoryTableName).toBeUndefined();
+    expect(resources.personCurrentStateTableName).toBeUndefined();
     expect(resources.statisticsTableName).toBe('huron-person-fargate-processor-statistics-mock');
   });
 });
@@ -137,7 +139,7 @@ describe('FunctionUrlOrigin', () => {
     expect(fn.Properties.Environment.Variables.PREVIOUS_STORAGE_TYPE).toBe('s3');
   });
 
-  it('grants read-only access to the secret, tables and chunks bucket', () => {
+  it('grants read-only access to the secret, tables and chunks bucket, but for Sync now\'s hash storage', () => {
     const template = synth('dynamodb');
     const statements = Object.values(template.findResources('AWS::IAM::Policy'))
       .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
@@ -147,9 +149,15 @@ describe('FunctionUrlOrigin', () => {
       'secretsmanager:GetSecretValue', 'dynamodb:Query', 'dynamodb:GetItem', 's3:GetObject', 's3:ListBucket'
     ]));
     // No writes to the landscape's resources: starting a run invokes the chunker subscriber, which resets the
-    // chunker's counters itself. The dashboard writes only its own tables (tested below).
+    // chunker's counters itself. The dashboard writes only its own tables, and the person tables for Sync now's
+    // hash storage (both tested below).
     const ownTables = (s: any) => JSON.stringify(s.Resource).includes('accesstables');
-    const landscapeActions = statements.filter((s: any) => !ownTables(s)).flatMap((s: any) => [s.Action].flat());
+    const personTableWrites = (s: any) => {
+      const resource = JSON.stringify(s.Resource);
+      return [s.Action].flat().every((a: string) => ['dynamodb:BatchGetItem', 'dynamodb:BatchWriteItem'].includes(a))
+        && /person-(current-state|history)-mock/.test(resource) && !resource.includes('index');
+    };
+    const landscapeActions = statements.filter((s: any) => !ownTables(s) && !personTableWrites(s)).flatMap((s: any) => [s.Action].flat());
     expect(landscapeActions.some((a: string) => /^(dynamodb:(Put|Update|Delete|BatchWrite|TransactWrite)|s3:(Put|Delete))/.test(a))).toBe(false);
 
     const resources = JSON.stringify(statements.map((s: any) => s.Resource));
@@ -159,6 +167,30 @@ describe('FunctionUrlOrigin', () => {
     // The atomic counter table only to read a mock landscape's reset record (GetItem: tested below)
     const counterActions = statements.filter((s: any) => JSON.stringify(s.Resource).includes('atomic-counter')).flatMap((s: any) => [s.Action].flat());
     expect(counterActions).toEqual(['dynamodb:GetItem']);
+  });
+
+  it("may record a synced person's hash (Sync now): batch reads and writes of their stored hash, batch writes of history", () => {
+    const statements = Object.values(synth('dynamodb').findResources('AWS::IAM::Policy'))
+      .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+    const on = (table: string) => statements.filter((s: any) => JSON.stringify(s.Resource).includes(table));
+    const actionsOn = (table: string) => on(table).flatMap((s: any) => [s.Action].flat()).sort();
+
+    expect(actionsOn('person-current-state-mock')).toEqual(['dynamodb:BatchGetItem', 'dynamodb:BatchWriteItem']);
+    // History: the reads every table gets (Run history's changes), and batch writes of new records only
+    expect(actionsOn('person-history-mock')).toEqual(expect.arrayContaining(['dynamodb:BatchWriteItem']));
+    expect(actionsOn('person-history-mock').some((a: string) => /^dynamodb:(Put|Update|Delete)Item/.test(a))).toBe(false);
+    // Only the tables themselves, not their indexes
+    expect(on('person-current-state-mock').every((s: any) => !JSON.stringify(s.Resource).includes('index'))).toBe(true);
+  });
+
+  it('may write no person table in S3 mode', () => {
+    const statements = Object.values(synth('s3').findResources('AWS::IAM::Policy'))
+      .flatMap((policy: any) => policy.Properties.PolicyDocument.Statement);
+    expect(JSON.stringify(statements)).not.toContain('person-current-state');
+    // The dashboard's own access and audit tables aside
+    const landscapeActions = statements.filter((s: any) => !JSON.stringify(s.Resource).includes('accesstables'))
+      .flatMap((s: any) => [s.Action].flat());
+    expect(landscapeActions).not.toContain('dynamodb:BatchWriteItem');
   });
 
   it('may start a run as the schedule does: invoke the chunker subscriber, read both subscribers, nothing else', () => {

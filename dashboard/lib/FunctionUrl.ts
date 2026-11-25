@@ -40,7 +40,8 @@ export class FunctionUrlOrigin {
       LANDSCAPE_TONE,
     } } = this.params;
     const {
-      landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, chunksBucketName,
+      landscape, storageMode, integrationSecretName, statisticsTableName, personHistoryTableName, personCurrentStateTableName,
+      chunksBucketName,
       chunkerFunctionName, processorSubscriberFunctionName, pipelineStackId, itemsPerChunk, chunkerClusterName,
       sourceSimulatorFunctionName, atomicCounterTableName,
       chunkerServiceName, processorMaxScalingCapacity, scheduleName, scheduleRoleName, scheduleDefaultCron
@@ -161,6 +162,21 @@ export class FunctionUrlOrigin {
       actions: ['dynamodb:GetItem', 'dynamodb:BatchGetItem', 'dynamodb:Query', 'dynamodb:Scan', 'dynamodb:DescribeTable'],
       resources: tableArns,
     }));
+
+    // Lookup and sync's Sync now records the pushed person's hash, as a manual SyncPerson does (DynamoDBDeltaStorage:
+    // their stored hash read and written by key, and a history record; also marking them deleted on a deactivation)
+    if (personCurrentStateTableName && personHistoryTableName) {
+      this.lambda.addToRolePolicy(new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['dynamodb:BatchGetItem', 'dynamodb:BatchWriteItem'],
+        resources: [tableArn(personCurrentStateTableName)],
+      }));
+      this.lambda.addToRolePolicy(new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['dynamodb:BatchWriteItem'],
+        resources: [tableArn(personHistoryTableName)],
+      }));
+    }
 
     this.lambda.addToRolePolicy(new PolicyStatement({
       effect: Effect.ALLOW,

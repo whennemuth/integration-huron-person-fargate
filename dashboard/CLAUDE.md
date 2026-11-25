@@ -51,7 +51,7 @@ Every route, with request and response shapes and refusal codes: [docs/API.md](d
 | `GET /api/me` | sign-in | who is asking and what they may do |
 | `POST /api/person-lookup` | `person:lookup` | one person, by BUID or HRN |
 | `POST /api/person-sync/preview`, `/preview-experiment` | `person:preview` | what a sync would send |
-| `POST /api/person-sync` | `person:sync` | sync one person |
+| `POST /api/person-sync` | `person:sync` | sync one person: always pushed, then their hash recorded (DynamoDB mode) |
 | `GET /api/bulk-sync` | `runs:read` | what starting a run would do, and whether it may start now |
 | `POST /api/bulk-sync/plan`, `POST /api/bulk-sync` | `bulk:start` | review a run; start one |
 | `GET` / `POST /api/mock-landscape/reset` | `runs:read` / `mock:reset` | a mock landscape's last reset; start one |
@@ -150,7 +150,8 @@ One stack per landscape, `${DASHBOARD.STACK_ID}-${landscape}` (e.g. `hp-dashboar
 of the landscape's fargate context (`../context/context.json`; types in `context/IContext.ts`, `DashboardSettings`).
 It takes nothing from the pipeline stack's outputs: it reaches the landscape's config secret, tables, chunks bucket,
 chunker subscriber and services by deterministic name (`lib/LandscapeResources.ts`), with read-only grants except its
-own access and audit tables (`lib/AccessTables.ts`) and its launch flag. Resources, grants and the reasoning:
+own access and audit tables (`lib/AccessTables.ts`), its launch flag, and (DynamoDB mode) batch writes to the person
+current state and history tables, for Sync now's hash. Resources, grants and the reasoning:
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). DNS, certificates and context for a new landscape: fargate `README.md`,
 "Dashboard DNS and Certificates".
 

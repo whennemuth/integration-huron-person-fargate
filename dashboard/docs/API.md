@@ -21,7 +21,11 @@ answer it doesn't expect.
 ## Person and bulk operations
 
 - `POST /api/person-lookup` - look up an individual person by BUID or HRN.
-- `POST /api/person-sync` - sync an individual person record.
+- `POST /api/person-sync` - sync an individual person record (Lookup and sync's Sync now): `{ personId, operation, hrn? }`.
+  The person is always pushed, with no in-sync check. In DynamoDB mode a successful push then records their hash in
+  the person current state table, as a manual SyncPerson with `SYNC_UPDATE_HASH=true` does (a new or changed hash
+  only, with a person history record stamped with the time of the sync, which belongs to no run). A person in the
+  source who can't be mapped is reported and left as they are; one the data mapper finds ineligible is deactivated.
 - `GET /api/bulk-sync` - what starting a run would do and whether it's allowed now (`BulkSyncState`: the form's
   defaults, the latest run, `launch` while a run launched moments ago isn't listed yet (see
   [BULK_SYNC.md](BULK_SYNC.md#the-launch-flag)), and `blocked` with the refusal a start would get, `NOT_CONFIGURED`

@@ -1,6 +1,7 @@
 import { IContext as LandscapeContext } from '../../context/IContext';
 import { integrationSecretName, readConfiguredStorage, resolveSecretStorage } from '../../lib/Secrets';
 import { FUNCTION_BASE_NAME as chunkerSubscriberBaseName } from '../../src/chunking/fetch/ChunkerApiSubscriber';
+import { DYNAMODB_TABLE_NAME as personCurrentStateTableName } from '../../src/dynamodb/PersonCurrentStateTable';
 import { DYNAMODB_TABLE_NAME as personHistoryTableName } from '../../src/dynamodb/PersonHistoryTable';
 import { DYNAMODB_TABLE_NAME as statisticsTableName } from '../../src/dynamodb/StatisticsTable';
 import { FUNCTION_BASE_NAME as processorSubscriberBaseName } from '../../src/processing/ProcessorSubscriber';
@@ -22,6 +23,11 @@ export type LandscapeResources = {
   statisticsTableName: string;
   /** Only in DynamoDB storage mode */
   personHistoryTableName?: string;
+  /**
+   * Only in DynamoDB storage mode: the table of each person's stored hash, which Lookup and sync's Sync now writes
+   * after a successful push (dashboard/src/services/PersonSync.ts), as does a manual SyncPerson
+   */
+  personCurrentStateTableName?: string;
   chunksBucketName: string;
   /** Starting a run (BulkSync): the chunker subscriber it invokes, as the EventBridge schedule does */
   chunkerFunctionName: string;
@@ -69,6 +75,7 @@ export const landscapeResources = (context: LandscapeContext): LandscapeResource
     integrationSecretName: integrationSecretName(context),
     statisticsTableName: statisticsTableName(context),
     personHistoryTableName: storageMode === 'dynamodb' ? personHistoryTableName(context) : undefined,
+    personCurrentStateTableName: storageMode === 'dynamodb' ? personCurrentStateTableName(context) : undefined,
     chunksBucketName: `${chunksBucket}-${landscape}`,
     chunkerFunctionName: `${chunkerSubscriberBaseName}-${landscape}`,
     processorSubscriberFunctionName: `${processorSubscriberBaseName}-${landscape}`,
