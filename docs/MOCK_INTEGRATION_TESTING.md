@@ -400,7 +400,8 @@ table; only pipeline runs write those. (Error event records use their own timest
    | **simulator Lambda env** | **`MOCK_TOTAL_POPULATION`** | **deployed value, at least `150` (default `10000`)** |
 
    Expect the person to be reactivated in the target, PersonCurrentState to hold the unmarked hash
-   again, and an `UPDATED` history item whose `previousHash` is `DELETED:<hash>`.
+   again, and a `REACTIVATED` history item whose `previousHash` is the unmarked `<hash>` (before 2026-11-25, an
+   `UPDATED` item whose `previousHash` was `DELETED:<hash>`).
 
 **Storage-only variant** (no simulator change): put a PersonCurrentState item for a BUID beyond the
 population, then sync it. The person is absent from both source and target, so only the storage

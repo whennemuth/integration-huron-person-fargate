@@ -61,7 +61,7 @@ describe('OfflineRunReportingService', () => {
   });
 
   it('records chunk statistics, errors and changes that agree with each run\'s summary', async () => {
-    for (const { syncRunId, summary } of await allReports()) {
+    for (const { syncRunId, summary, reactivated } of await allReports()) {
       if (!summary) continue;
       const chunks = await service.getRunChunkStatistics(syncRunId);
       expect(chunks).toHaveLength(summary.chunksReported);
@@ -80,10 +80,22 @@ describe('OfflineRunReportingService', () => {
 
       const changes = async (changeType: ChangeType) =>
         (await drain(cursor => service.getRunChanges(syncRunId, changeType, { cursor, limit: 500 }))).items.length;
+      // A reactivation is an update in the summary, and REACTIVATED in person history, counted in the report
+      expect(reactivated).toBe(await changes('REACTIVATED'));
       const expected = summary.dryRun ? [0, 0, 0] : [summary.results.added, summary.results.updated,
         summary.deletion?.status === 'COMPLETED' ? summary.deletion.deletedCount : 0];
-      expect([await changes('NEW'), await changes('UPDATED'), await changes('DELETED')]).toEqual(expected);
+      expect([await changes('NEW'), await changes('UPDATED') + await changes('REACTIVATED'), await changes('DELETED')]).toEqual(expected);
     }
+  });
+
+  it('has runs that reactivated people, with their own change list', async () => {
+    const reports = await allReports();
+    const reactivating = reports.filter(report => (report.reactivated ?? 0) > 0);
+    expect(reactivating.length).toBeGreaterThan(0);
+    const [{ syncRunId, reactivated }] = reactivating;
+    const { items } = await service.getRunChanges(syncRunId, 'REACTIVATED', { limit: 500 });
+    expect(items).toHaveLength(reactivated!);
+    expect(items.every(item => item.changeType === 'REACTIVATED' && !item.previousHash?.startsWith('DELETED:'))).toBe(true);
   });
 
   it('gives each run without a summary its progress from the chunks reported so far, and summarized runs none', async () => {
@@ -147,6 +159,7 @@ describe('OfflineRunReportingService', () => {
     it('reports S3 mode, without change lists', async () => {
       expect(s3.getCapabilities()).toEqual({ landscape: 'local', storageMode: 's3', changesSupported: false });
       expect((await s3.getRunReport(NEWEST_OFFLINE_RUN))?.summary?.storageMode).toBe('s3');
+      expect(await s3.getRunReport(NEWEST_OFFLINE_RUN)).not.toHaveProperty('reactivated');
       await expectReportingError(s3.getRunChanges(NEWEST_OFFLINE_RUN, 'NEW'), 'UNSUPPORTED_IN_STORAGE_MODE');
     });
 

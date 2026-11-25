@@ -664,7 +664,7 @@ async function getSystemStatus(): Promise<LambdaFunctionUrlResult> {
 const RUN_ROUTE = /^\/api\/runs\/([^/]+)\/(summary|chunks|errors|changes)$/;
 /** A syncRunId is the ISO timestamp the run's chunker started it with */
 const SYNC_RUN_ID = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
-const CHANGE_TYPES: ChangeType[] = ['NEW', 'UPDATED', 'DELETED'];
+const CHANGE_TYPES: ChangeType[] = ['NEW', 'UPDATED', 'REACTIVATED', 'DELETED'];
 
 /**
  * List this landscape's sync runs. Without `include`: { runs }, every syncRunId, oldest first. With

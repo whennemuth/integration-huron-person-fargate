@@ -1,3 +1,4 @@
+import { PersonHistoryChangeType } from 'integration-core';
 import { Config } from 'integration-huron-person';
 import { MetadataForS3 } from '../chunking/metadata/MetadataForS3';
 import { Flags, TerminalError } from '../chunking/metadata/IMetadataStorage';
@@ -8,7 +9,11 @@ import { StatisticsItem } from '../ApiErrorTracking';
 export const DEFAULT_PAGE_LIMIT = 100;
 export const MAX_PAGE_LIMIT = 500;
 
-export type ChangeType = 'NEW' | 'UPDATED' | 'DELETED';
+/**
+ * What a person history record says a run did to a person (integration-core's PersonHistoryChangeType). A
+ * reactivation (REACTIVATED) is pushed as an update, so the run summary counts it among the updated.
+ */
+export type ChangeType = PersonHistoryChangeType;
 
 export type Page<T> = { items: T[]; cursor?: string };
 
@@ -42,6 +47,13 @@ export type RunReport = {
   flags?: Partial<Flags>;
   terminalError?: TerminalError | Record<string, any>;
   progress?: RunProgress;
+  /**
+   * How many people the run reactivated (returned after being marked deleted), counted from its REACTIVATED person
+   * history records: the summary has no such figure, and counts them among the updated. DynamoDB mode only (no
+   * history otherwise), and absent if the count couldn't be read. Runs before 2026-11-25 recorded reactivations as
+   * updates, so show none.
+   */
+  reactivated?: number;
 };
 
 export type { RunIdPage };
@@ -157,7 +169,7 @@ export class RunReporting {
   public getRunReport = async (syncRunId: string): Promise<RunReport | undefined> => {
     const summary = await this.statisticsTable.readRunSummary(syncRunId);
     if (summary) {
-      return { syncRunId, status: summary.status, summary };
+      return { syncRunId, status: summary.status, summary, ...await this.reactivatedCount(syncRunId) };
     }
 
     const metadata = await this.statisticsTable.readMetadata(syncRunId);
@@ -170,8 +182,24 @@ export class RunReporting {
     }
     return {
       syncRunId, status: terminalError ? 'FAILED' : 'INCOMPLETE', metadata, flags, terminalError,
-      progress: sumChunkStatistics(chunks)
+      progress: sumChunkStatistics(chunks), ...await this.reactivatedCount(syncRunId)
     };
+  }
+
+  /**
+   * The run's reactivation count (RunReport.reactivated), or nothing outside DynamoDB mode or when it can't be read:
+   * a report without it still shows the run.
+   */
+  private reactivatedCount = async (syncRunId: string): Promise<{ reactivated?: number }> => {
+    if (!this.isDynamoDbMode || !this.personHistoryTable) {
+      return {};
+    }
+    try {
+      return { reactivated: await this.personHistoryTable.countChangesInSyncRun(syncRunId, 'REACTIVATED') };
+    } catch (error) {
+      console.warn(`Could not count the reactivations of run ${syncRunId}:`, error);
+      return {};
+    }
   }
 
   public getRunChunkStatistics = async (syncRunId: string): Promise<StatisticsItem[]> => {

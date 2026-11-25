@@ -74,6 +74,7 @@ class RunFormat {
         return [
             { type: 'NEW', label: 'Added' },
             { type: 'UPDATED', label: 'Updated' },
+            { type: 'REACTIVATED', label: 'Reactivated' },
             { type: 'DELETED', label: 'Deactivated' }
         ];
     }
@@ -266,6 +267,8 @@ class RunView {
         this.skipped = results.skipped;
         this.added = results.added;
         this.updated = results.updated;
+        /* Of the updated, the people who returned after being marked deleted, counted from person history (DynamoDB mode) */
+        this.reactivated = item.reactivated;
 
         this.deletion = summary ? summary.deletion : undefined;
         const deactivatedByDeletion = this.deletion && this.deletion.status === 'COMPLETED' ? (this.deletion.deletedCount || 0) : 0;
@@ -521,9 +524,20 @@ class RunView {
         return tags;
     }
 
-    /** How many people the run changed in one way (a change type: NEW, UPDATED or DELETED) */
+    /**
+     * How many people the run changed in one way (a change type: NEW, UPDATED, REACTIVATED or DELETED). A reactivation
+     * is pushed as an update, so the summary counts it among the updated, but person history lists it apart: the
+     * Updated list is the updated less the reactivated.
+     */
     changeCount(type) {
-        return { NEW: this.added, UPDATED: this.updated, DELETED: this.deactivated }[type];
+        const reactivated = RunFormat.isNumber(this.reactivated) ? Number(this.reactivated) : 0;
+        const updated = RunFormat.isNumber(this.updated) ? Math.max(Number(this.updated) - reactivated, 0) : this.updated;
+        return { NEW: this.added, UPDATED: updated, REACTIVATED: this.reactivated, DELETED: this.deactivated }[type];
+    }
+
+    /** Whether the run's reactivations are known (person history counts them, in DynamoDB mode) */
+    get hasReactivationCount() {
+        return RunFormat.isNumber(this.reactivated);
     }
 
     static first(...values) {
@@ -970,6 +984,7 @@ class RunDetailView {
             ['Processed', run.processed, undefined, RunDetailView.completionHtml(run)],
             ['Added', run.added],
             ['Updated', run.updated],
+            ...(run.hasReactivationCount ? [['Reactivated', run.reactivated, 'Counted among Updated']] : []),
             ['Deactivated', run.deactivated, run.deactivationNote],
             ['Errors', run.errors]
         ];
@@ -1469,7 +1484,9 @@ class RunDetailView {
                 `This landscape keeps its delta state in ${mode} files, which hold each person's latest state but no record of which people a run changed. The counts above come from the run's summary.`);
             return;
         }
-        const filters = RunFormat.CHANGE_TYPES.map(({ type, label }) => ({ value: type, label, count: run.changeCount(type) }));
+        const filters = RunFormat.CHANGE_TYPES
+            .filter(({ type }) => type !== 'REACTIVATED' || run.hasReactivationCount)
+            .map(({ type, label }) => ({ value: type, label, count: run.changeCount(type) }));
         const first = filters.find(({ count }) => count > 0) || filters[0];
         this.renderFilteredList(panel, {
             filters,

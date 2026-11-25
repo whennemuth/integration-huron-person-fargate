@@ -1,3 +1,4 @@
+import { PersonHistoryChangeType } from 'integration-core';
 import { IContext } from '../../context/IContext';
 import { AbstractDynamoDbTable, DynamoDBTable, QueryPage } from './DynamoDBTable';
 
@@ -13,12 +14,14 @@ import { AbstractDynamoDbTable, DynamoDBTable, QueryPage } from './DynamoDBTable
  * - personId: string (PK) - Unique identifier (e.g., "U12345678")
  * - syncRunId: string (SK) - ISO timestamp of sync run
  * - hash: string - Hash value at this point in time
- * - changeType: 'NEW' | 'UPDATED' | 'DELETED' - Type of change
- * - previousHash?: string - Previous hash value (for UPDATED only)
+ * - changeType: PersonHistoryChangeType (integration-core): 'NEW' | 'UPDATED' | 'REACTIVATED' | 'DELETED'
+ * - previousHash?: string - Previous hash value (UPDATED, REACTIVATED and DELETED). Written since 2026-11-25 without
+ *   the DELETED: marker; an UPDATED record written before then may carry it (a reactivation, recorded as an update)
  * 
  * Write Policy:
  * - NEW: First time person appears in source
  * - UPDATED: Hash changed from previous sync
+ * - REACTIVATED: Person returned after being marked deleted (their stored hash was DELETED:-marked)
  * - DELETED: Person removed from source (detected by post-processor)
  * - UNCHANGED: DO NOT WRITE (skipped entirely)
  * 
@@ -83,7 +86,7 @@ export interface PersonHistoryRecord {
   personId: string;
   syncRunId: string;
   hash: string;
-  changeType: 'NEW' | 'UPDATED' | 'DELETED';
+  changeType: PersonHistoryChangeType;
   previousHash?: string;
 }
 
@@ -186,12 +189,12 @@ export class PersonHistoryTable {
    * Uses GSI1 (syncRunId-changeType-index).
    * 
    * @param syncRunId - ISO timestamp of sync run
-   * @param changeType - Optional filter for 'NEW', 'UPDATED', or 'DELETED'
+   * @param changeType - Optional filter for one PersonHistoryChangeType
    * @returns Array of PersonHistoryRecord matching criteria
    */
   public async getChangesInSyncRun(
     syncRunId: string, 
-    changeType?: 'NEW' | 'UPDATED' | 'DELETED'
+    changeType?: PersonHistoryChangeType
   ): Promise<PersonHistoryRecord[]> {
     const items = await this.table.queryGSI({
       indexName: DYNAMODB_GSI1_INDEX_NAME,
@@ -210,7 +213,7 @@ export class PersonHistoryTable {
    */
   public async getChangesInSyncRunPage(
     syncRunId: string,
-    changeType: 'NEW' | 'UPDATED' | 'DELETED',
+    changeType: PersonHistoryChangeType,
     page: { limit: number; startKey?: Record<string, any> }
   ): Promise<QueryPage> {
     return this.table.queryGSIPage({
@@ -225,16 +228,29 @@ export class PersonHistoryTable {
   }
 
   /**
+   * How many changes of one type a sync run made. Uses GSI1 (syncRunId-changeType-index), counting only.
+   */
+  public async countChangesInSyncRun(syncRunId: string, changeType: PersonHistoryChangeType): Promise<number> {
+    return this.table.countGSI({
+      indexName: DYNAMODB_GSI1_INDEX_NAME,
+      gsiPartitionKey: DYNAMODB_GSI1_PARTITION_KEY,
+      partitionKeyValue: syncRunId,
+      gsiSortKey: DYNAMODB_GSI1_SORT_KEY,
+      sortKeyValue: changeType
+    });
+  }
+
+  /**
    * Get all changes of a specific type across all sync runs.
    * Optionally filter by sync run time range using sort key conditions.
    * Uses GSI2 (changeType-syncRunId-index).
    * 
-   * @param changeType - 'NEW', 'UPDATED', or 'DELETED'
+   * @param changeType - One PersonHistoryChangeType
    * @param syncRunIdStart - Optional: earliest sync run to include (uses >=)
    * @returns Array of PersonHistoryRecord matching criteria
    */
   public async getChangesByType(
-    changeType: 'NEW' | 'UPDATED' | 'DELETED',
+    changeType: PersonHistoryChangeType,
     syncRunIdStart?: string
   ): Promise<PersonHistoryRecord[]> {
     const items = await this.table.queryGSI({

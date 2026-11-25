@@ -154,6 +154,26 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       expect(run.failedAt).toBe('2026-10-30T02:04:00.000Z');
     });
 
+    it('lists reactivations apart from updates, counted among the updated in the figures', () => {
+      const summary = {
+        syncRunId: '2026-11-25T02:00:00.000Z', status: 'SUCCEEDED', storageMode: 'dynamodb',
+        results: { processed: 300, succeeded: 300, failed: 0, skipped: 0, added: 10, updated: 240, removed: 0 }
+      };
+      const run = new RunView({ syncRunId: summary.syncRunId, status: 'SUCCEEDED', summary, reactivated: 3 });
+      expect(run.hasReactivationCount).toBe(true);
+      // Person history lists the reactivated apart, so the Updated list is the updated less them
+      expect(['NEW', 'UPDATED', 'REACTIVATED', 'DELETED'].map((type: string) => run.changeCount(type))).toEqual([10, 237, 3, 0]);
+      const tiles = RunDetailView.tilesHtml(run, NOW);
+      expect(tiles).toContain('>Reactivated<');
+      expect(tiles).toContain('<div class="stat-note">Counted among Updated</div>');
+
+      // No count (S3 mode keeps no person history, or it couldn't be read): no tile, and Updated is the summary's
+      const uncounted = new RunView({ syncRunId: summary.syncRunId, status: 'SUCCEEDED', summary });
+      expect(uncounted.hasReactivationCount).toBe(false);
+      expect(uncounted.changeCount('UPDATED')).toBe(240);
+      expect(RunDetailView.tilesHtml(uncounted, NOW)).not.toContain('Reactivated');
+    });
+
     it("reads an unfinished run's figures so far from its progress, its duration to the last chunk", () => {
       const run = new RunView(incomplete);
       expect(run.hasSummary).toBe(false);
@@ -707,7 +727,7 @@ describe('run-history.js against the dashboard routes and mock run history', () 
   it("pages through a run's changes of one type, as many as the summary counts", async () => {
     const api = new RunsApi(getJson);
     const run = await api.run(NEWEST_OFFLINE_RUN);
-    for (const changeType of ['NEW', 'UPDATED', 'DELETED']) {
+    for (const changeType of ['NEW', 'UPDATED', 'REACTIVATED', 'DELETED']) {
       const pager = new CursorPager((cursor?: string) => api.changes(NEWEST_OFFLINE_RUN, { changeType, cursor, limit: 50 }));
       while (pager.hasMore) {
         await pager.next();

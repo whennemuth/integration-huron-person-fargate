@@ -121,9 +121,11 @@ delete rewrites the person's baseline hash with a `DELETED:` prefix (DynamoDB mo
 detection skips them and a returning person is classified UPDATED and reactivated. How it works, and the DynamoDB
 matching bug fixed 2026-11-17: [docs/STORAGE_MODES.md](docs/STORAGE_MODES.md#soft-deleted-persons-in-the-baseline).
 
-**Taking a new integration-core build**: update `node_modules/integration-core`'s `integrity` in `package-lock.json`
-and run a plain `npm install`, which changes nothing else (see "Publishing the package" in integration-core's
-`CLAUDE.md`). The task image installs it from the lockfile, so push the image to each landscape afterwards.
+**Taking new integration-core and integration-huron-person builds**: `npm install && npm run reinstall-tgz-clean`
+(cleans npm's cache, then uninstalls and reinstalls integration-huron-person, which brings integration-core with it).
+Both keep their version and address, so updating a lockfile `integrity` and running `npm install` is not enough: npm
+records the new integrity but keeps the old files. Check `git diff package-lock.json` changes only the two
+`integrity` lines. The task image installs them from the lockfile, so push the image to each landscape afterwards.
 
 ## Storage Modes
 

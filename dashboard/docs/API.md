@@ -107,7 +107,9 @@ This landscape's sync runs, read in-process from its tables and chunks bucket th
 - `GET /api/runs/{syncRunId}/chunks` - `{ items }`, per-chunk statistics.
 - `GET /api/runs/{syncRunId}/errors?cursor&limit&statusCode` - a page `{ items, cursor? }`.
 - `GET /api/runs/{syncRunId}/changes?changeType&cursor&limit` - a page of person changes (`NEW` | `UPDATED` |
-  `DELETED`; DynamoDB storage mode only).
+  `REACTIVATED` | `DELETED`; DynamoDB storage mode only). A run's report (`/summary`, and each run's with
+  `include=report`) carries `reactivated`, the count of its `REACTIVATED` records, in DynamoDB mode: the summary
+  counts a reactivation among the updated.
 - `GET /api/capabilities` - landscape, storage mode, whether change lists are supported.
 
 `syncRunId` must be an ISO timestamp (URL-encoded or not); `limit` 1-500 (default 100). A `ReportingError` maps to

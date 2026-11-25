@@ -296,6 +296,8 @@ Append-only audit trail of person state changes.
 ### Change Types
 - **NEW**: First time person appears in source
 - **UPDATED**: Hash changed from previous sync
+- **REACTIVATED**: Person returned after being marked deleted (their stored hash was `DELETED:`-marked); `previousHash`
+  is their unmarked last hash. Before 2026-11-25 this was an `UPDATED` record whose `previousHash` carried the marker.
 - **DELETED**: Person removed from source (detected by post-processor)
 - **UNCHANGED**: NOT WRITTEN (skipped entirely to reduce costs)
 

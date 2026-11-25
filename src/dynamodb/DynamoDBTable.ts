@@ -23,6 +23,9 @@ export type QueryGSIPageParams = {
   limit: number, exclusiveStartKey?: Record<string, any>
 };
 
+/** DynamoDBTable.countGSI(): a GSI's partition key, and optionally its sort key, matched exactly */
+export type CountGSIParams = Pick<QueryGSIPageParams, 'indexName' | 'gsiPartitionKey' | 'partitionKeyValue' | 'gsiSortKey' | 'sortKeyValue'>;
+
 /** How a truncation spreads its work (DynamoDBTable.truncateTable()) */
 export type TruncateOptions = {
   /** Segments of the parallel scan (default TRUNCATE_SEGMENTS) */
@@ -66,6 +69,7 @@ export type AbstractDynamoDbTable = {
     partitionKeyValue: string, sortKeyPrefix?: string, limit: number, exclusiveStartKey?: Record<string, any>
   }) => Promise<QueryPage>;
   queryGSIPage: (parms: QueryGSIPageParams) => Promise<QueryPage>;
+  countGSI: (parms: CountGSIParams) => Promise<number>;
   batchWrite: ({ items, operation }: { items: any[], operation?: 'put' | 'delete' }) => Promise<void>;
   putItem: (item: any) => Promise<void>;
 }
@@ -518,6 +522,32 @@ export class DynamoDBTable implements AbstractDynamoDbTable {
       ExclusiveStartKey: exclusiveStartKey
     }));
     return { items: result.Items ?? [], lastEvaluatedKey: result.LastEvaluatedKey };
+  }
+
+  /**
+   * How many items of a GSI match a partition key, and optionally a sort key (equal to sortKeyValue): a query
+   * that returns only counts (Select COUNT), followed page by page.
+   */
+  public async countGSI(parms: CountGSIParams): Promise<number> {
+    const { client, params: { tableName } } = this;
+    const { indexName, gsiPartitionKey, partitionKeyValue, gsiSortKey, sortKeyValue } = parms;
+    const useSortKey = !!(gsiSortKey && sortKeyValue);
+    let count = 0;
+    let exclusiveStartKey: Record<string, any> | undefined;
+    do {
+      const result: QueryCommandOutput = await client.send(new QueryCommand({
+        TableName: tableName,
+        IndexName: indexName,
+        Select: 'COUNT',
+        KeyConditionExpression: useSortKey ? '#pk = :pkValue AND #sk = :skValue' : '#pk = :pkValue',
+        ExpressionAttributeNames: { '#pk': gsiPartitionKey, ...(useSortKey && { '#sk': gsiSortKey }) },
+        ExpressionAttributeValues: { ':pkValue': partitionKeyValue, ...(useSortKey && { ':skValue': sortKeyValue }) },
+        ExclusiveStartKey: exclusiveStartKey
+      }));
+      count += result.Count ?? 0;
+      exclusiveStartKey = result.LastEvaluatedKey;
+    } while (exclusiveStartKey);
+    return count;
   }
 
   /**

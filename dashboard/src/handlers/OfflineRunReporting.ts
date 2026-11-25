@@ -50,6 +50,8 @@ type OfflineRunSpec = {
   totalRecords: number;
   added: number;
   updated: number;
+  /** Of the updated, the people who returned after being marked deleted (their history records are REACTIVATED) */
+  reactivated?: number;
   /** People deactivated by the post-processor's deferred deletes */
   deactivated: number;
   errorsByStatus: Partial<Record<typeof ERROR_STATUS_CODES[number], number>>;
@@ -165,11 +167,17 @@ export class OfflineRunCatalog {
           }
         } : {}),
         // What its processors reported before it stopped, summed as RunReporting sums it
-        progress: sumChunkStatistics(this.chunkStatistics(syncRunId))
+        progress: sumChunkStatistics(this.chunkStatistics(syncRunId)),
+        ...this.reactivatedCount(syncRunId)
       };
     }
     const summary = this.summary(spec);
-    return { syncRunId, status: summary.status, summary };
+    return { syncRunId, status: summary.status, summary, ...this.reactivatedCount(syncRunId) };
+  }
+
+  /** RunReport.reactivated: the run's REACTIVATED history records, as RunReporting counts them (DynamoDB mode only) */
+  private reactivatedCount(syncRunId: string): { reactivated?: number } {
+    return this.storageMode === 'dynamodb' ? { reactivated: this.changes(syncRunId, 'REACTIVATED').length } : {};
   }
 
   /** Per-chunk statistics, summing to the run's summary. An incomplete run has only some of its chunks */
@@ -267,7 +275,12 @@ export class OfflineRunCatalog {
       return [];
     }
     const recordedFraction = spec.outcome === 'INCOMPLETE' ? 0.6 : 1;
-    const count = Math.floor({ NEW: spec.added, UPDATED: spec.updated, DELETED: spec.deactivated }[changeType] * recordedFraction);
+    // A reactivation is pushed as an update, so the summary's updated count includes the reactivated
+    const reactivated = Math.min(spec.reactivated ?? 0, spec.updated);
+    const counts: Record<ChangeType, number> = {
+      NEW: spec.added, UPDATED: spec.updated - reactivated, REACTIVATED: reactivated, DELETED: spec.deactivated
+    };
+    const count = Math.floor(counts[changeType] * recordedFraction);
     return Array.from({ length: count }, (_, n): PersonHistoryRecord => ({
       personId: spec.buid ?? buidFor(syncRunId, changeType, n),
       syncRunId,
@@ -342,6 +355,8 @@ export class OfflineRunCatalog {
       totalRecords: full ? FULL_POPULATION : 300 + seed % 600,
       added: 2 + seed % 9,
       updated: 20 + seed % 80,
+      // A full sync now and then brings back someone deactivated earlier
+      reactivated: full ? seed % 3 : 0,
       deactivated: full ? 1 + seed % 6 : 0,
       errorsByStatus: { 400: seed % 3, 429: (seed >> 3) % 4, 500: (seed >> 5) % 2 },
       dryRun: false,

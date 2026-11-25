@@ -19,7 +19,8 @@ describe('RunReporting', () => {
     getRunErrorsPage: jest.fn().mockResolvedValue({ items: [] })
   });
   const historyTable = () => ({
-    getChangesInSyncRunPage: jest.fn().mockResolvedValue({ items: [] })
+    getChangesInSyncRunPage: jest.fn().mockResolvedValue({ items: [] }),
+    countChangesInSyncRun: jest.fn().mockResolvedValue(0)
   });
 
   const reporting = (storageMode: string, stats = statisticsTable(), history: any = historyTable()) => ({
@@ -110,8 +111,39 @@ describe('RunReporting', () => {
       const summary = { syncRunId, status: 'SUCCEEDED' };
       stats.readRunSummary.mockResolvedValue(summary);
 
-      expect(await r.getRunReport(syncRunId)).toEqual({ syncRunId, status: 'SUCCEEDED', summary });
+      expect(await r.getRunReport(syncRunId)).toEqual({ syncRunId, status: 'SUCCEEDED', summary, reactivated: 0 });
       expect(stats.readMetadata).not.toHaveBeenCalled();
+    });
+
+    it("counts the run's reactivations from person history, for a summarized run and one without a summary", async () => {
+      const { reporting: r, stats, history } = reporting('dynamodb');
+      history.countChangesInSyncRun.mockResolvedValue(3);
+      stats.readRunSummary.mockResolvedValueOnce({ syncRunId, status: 'SUCCEEDED' });
+      expect(await r.getRunReport(syncRunId)).toMatchObject({ status: 'SUCCEEDED', reactivated: 3 });
+
+      stats.readMetadata.mockResolvedValue({ chunkDirectory });
+      expect(await r.getRunReport(syncRunId)).toMatchObject({ status: 'INCOMPLETE', reactivated: 3 });
+      expect(history.countChangesInSyncRun).toHaveBeenCalledWith(syncRunId, 'REACTIVATED');
+    });
+
+    it("still reports the run, without a reactivation count, when person history can't be counted", async () => {
+      const { reporting: r, stats, history } = reporting('dynamodb');
+      const warn = jest.spyOn(console, 'warn').mockImplementation();
+      history.countChangesInSyncRun.mockRejectedValue(new Error('throttled'));
+      stats.readRunSummary.mockResolvedValue({ syncRunId, status: 'SUCCEEDED' });
+
+      const report = await r.getRunReport(syncRunId);
+      expect(report).toMatchObject({ status: 'SUCCEEDED' });
+      expect(report).not.toHaveProperty('reactivated');
+      warn.mockRestore();
+    });
+
+    it('counts no reactivations in S3 mode, which keeps no person history', async () => {
+      const { reporting: r, stats, history } = reporting('s3');
+      stats.readRunSummary.mockResolvedValue({ syncRunId, status: 'SUCCEEDED' });
+
+      expect(await r.getRunReport(syncRunId)).not.toHaveProperty('reactivated');
+      expect(history.countChangesInSyncRun).not.toHaveBeenCalled();
     });
 
     it('is FAILED in DynamoDB mode when the table holds a TERMINAL_ERROR', async () => {
@@ -122,7 +154,7 @@ describe('RunReporting', () => {
 
       expect(await r.getRunReport(syncRunId)).toEqual({
         syncRunId, status: 'FAILED', metadata: { chunkDirectory }, flags: { bulkReset: false }, terminalError: { errorMessage: 'boom' },
-        progress: sumChunkStatistics([])
+        progress: sumChunkStatistics([]), reactivated: 0
       });
     });
 

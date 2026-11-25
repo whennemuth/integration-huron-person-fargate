@@ -35,6 +35,25 @@ describe('PersonHistoryTable', () => {
     });
   });
 
+  describe('countChangesInSyncRun', () => {
+    it('counts a run\x27s changes of one type on the syncRunId-changeType index, following every page, reading no items', async () => {
+      dynamoMock.on(QueryCommand)
+        .resolvesOnce({ Count: 2, LastEvaluatedKey: { personId: 'U0000002' } })
+        .resolvesOnce({ Count: 1 });
+
+      const table = PersonHistoryTable.fromTableName('history', 'us-east-2');
+      expect(await table.countChangesInSyncRun('run1', 'REACTIVATED')).toBe(3);
+
+      const calls = dynamoMock.commandCalls(QueryCommand).map(call => call.args[0].input);
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toMatchObject({
+        TableName: 'history', IndexName: 'syncRunId-changeType-index', Select: 'COUNT',
+        ExpressionAttributeValues: { ':pkValue': 'run1', ':skValue': 'REACTIVATED' }
+      });
+      expect(calls[1].ExclusiveStartKey).toEqual({ personId: 'U0000002' });
+    });
+  });
+
   describe('getChangesInSyncRunPage', () => {
     it('queries one page of a run\'s changes of one type on the syncRunId-changeType index', async () => {
       const items = [{ personId: 'U0000001', syncRunId: 'run1', hash: 'h1', changeType: 'NEW' }];

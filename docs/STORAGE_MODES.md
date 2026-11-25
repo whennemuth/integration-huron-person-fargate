@@ -46,7 +46,8 @@ What's stored in DynamoDB:
    - GSI: `syncRunId-personId` (for querying all persons in a sync run)
 2. **PersonHistoryTable** - historical change audit trail
    - PK: `personId`, SK: `syncRunId` (composite key for versioning)
-   - Attributes: `changeType` (CREATED | UPDATED | DELETED), `hash`, `timestamp`
+   - Attributes: `changeType` (NEW | UPDATED | REACTIVATED | DELETED, integration-core's `PersonHistoryChangeType`),
+     `hash`, `previousHash` (never `DELETED:`-marked since 2026-11-25)
    - GSI1: `syncRunId-changeType` (query all changes in a run by type)
    - GSI2: `changeType-syncRunId` (query changes across runs by type)
 3. **StatisticsTable** - metadata, flags and error events, replacing `_metadata.json` and `_flags.json`; see

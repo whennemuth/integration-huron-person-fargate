@@ -158,7 +158,10 @@ the run reporting routes ([API.md](API.md#run-reporting)). Its classes each do o
     other object as `name: value` pairs, and a value longer than `WIDE_FLAG_LENGTH` under its name across the card.
   - **Chunks**: per-chunk statistics with totals.
   - **Errors**: filtered by status code, with counts from the summary or else the chunk statistics.
-  - **Changes**: by type; in S3 mode, where `changesSupported` is false, it says why there are none.
+  - **Changes**: by type; in S3 mode, where `changesSupported` is false, it says why there are none. Reactivated
+    (people back after being marked deleted) is its own type and stat tile, counted from person history
+    (`RunReport.reactivated`) and noted as counted among Updated: the Updated list is the summary's updated less
+    them. Runs before 2026-11-25 recorded reactivations as updates, so show none.
 - Tests: `test/DashboardRunHistory.test.ts` runs the script in a vm (as written and minified) and drives `RunsApi`
   through the handler with the offline run history.
 
