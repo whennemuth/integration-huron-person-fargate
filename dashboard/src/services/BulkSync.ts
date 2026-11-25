@@ -9,6 +9,7 @@ import { MockLandscapeReset, MockLandscapeResetRecord } from '../../../src/chunk
 import { ProcessorScalingCapacity } from '../../../src/chunking/ProcessorScalingCapacity';
 import { ScheduledRun, UpcomingStart } from '../../../src/schedule/ScheduledRun';
 import { RunStarter, StartedBy } from '../../../src/chunking/StartedBy';
+import { isPreviousStateSource, PREVIOUS_STATE_SOURCES } from 'integration-huron-person';
 import type { PreviousStateSource } from '../../../src/chunking/PreviousStateSource';
 import { RunActivity } from '../../../src/reporting/RunActivity';
 import type { RunnerEnv } from '../../../src/runner/RunnerTypes';
@@ -57,14 +58,15 @@ export class BulkSyncError extends Error {
  * the chunker hands on to a next task at the next offset, which the person endpoint ignores, so the next task fetches
  * the same person again. Without bulk reset the first task's chunk usually marks the end before the next task starts,
  * and it cancels; with bulk reset the first task builds the person cache first, the next task gets ahead, and the
- * person is chunked twice (preview, 2026-11-12). Bulk reset is the run's previousStateSource: `target` when checked,
- * `storage` when not (ScheduledRun.previousStateSource()).
+ * person is chunked twice (preview, 2026-11-12). Where the run's previous state comes from is the page's choice of
+ * previousStateSource, `storage-then-target` unless it says otherwise (ScheduledRun.PREVIOUS_STATE_SOURCE); a bulk
+ * reset is `target`.
  */
 export class BulkSyncRequest {
   private constructor(
     readonly runType: BulkSyncRunType,
     readonly buid: string | undefined,
-    readonly bulkReset: boolean,
+    readonly previousStateSource: PreviousStateSource,
     readonly iterationLimit: number,
     readonly parallelStart: number,
     readonly overrideStalled: boolean,
@@ -128,16 +130,20 @@ export class BulkSyncRequest {
     const invalid = (message: string) => new BulkSyncError('INVALID_REQUEST', message);
     const mockLandscape = !!options.mockLandscape;
     const {
-      runType, buid, bulkReset = ScheduledRun.BULK_RESET, iterationLimit = BulkSyncRequest.CHUNKS_PER_TASK_DEFAULT, parallelStart = 0,
+      runType, buid, previousStateSource = ScheduledRun.PREVIOUS_STATE_SOURCE, iterationLimit = BulkSyncRequest.CHUNKS_PER_TASK_DEFAULT, parallelStart = 0,
       overrideStalled = false, source = 'real', simulator, resetState = false, processorScalingCapacityOverride
     } = body || {};
     if (!BulkSyncRequest.RUN_TYPES.includes(runType as BulkSyncRunType)) {
       throw invalid(`runType must be one of ${BulkSyncRequest.RUN_TYPES.map(type => `'${type}'`).join(', ')}`);
     }
-    for (const [name, value] of Object.entries({ bulkReset, overrideStalled })) {
-      if (typeof value !== 'boolean') {
-        throw invalid(`${name} must be true or false`);
-      }
+    if ((body as Record<string, unknown> | undefined)?.bulkReset !== undefined) {
+      throw invalid(`bulkReset is no longer accepted: send previousStateSource ('target' for a bulk reset)`);
+    }
+    if (!isPreviousStateSource(previousStateSource)) {
+      throw invalid(`previousStateSource must be one of ${PREVIOUS_STATE_SOURCES.map(value => `'${value}'`).join(', ')}`);
+    }
+    if (typeof overrideStalled !== 'boolean') {
+      throw invalid('overrideStalled must be true or false');
     }
     if (buid !== undefined && buid !== null && typeof buid !== 'string') {
       throw invalid('buid must be a string');
@@ -196,7 +202,7 @@ export class BulkSyncRequest {
     // A test is a single chunker task, whatever chunks per task the form sent (see the class's comment)
     const chunksPerTask = runType === 'test' ? 0 : iterationLimit as number;
     return new BulkSyncRequest(
-      runType as BulkSyncRunType, person, bulkReset as boolean, chunksPerTask, parallelStart as number,
+      runType as BulkSyncRunType, person, previousStateSource, chunksPerTask, parallelStart as number,
       overrideStalled as boolean, mockLandscape, source as BulkSyncSource, settings, resetState,
       processorTasks as number | undefined
     );
@@ -229,18 +235,13 @@ export class BulkSyncRequest {
     return this.runType === 'full' ? SyncPopulation.PersonFull : SyncPopulation.PersonDelta;
   }
 
-  /** Where the run's previous state comes from: the bulk reset choice, as the pipeline names it */
-  get previousStateSource(): PreviousStateSource {
-    return ScheduledRun.previousStateSource(this.bulkReset);
-  }
-
   choices(): BulkSyncChoices {
     const {
-      runType, population, buid, bulkReset, previousStateSource, iterationLimit, parallelStart, overrideStalled, mockLandscape,
+      runType, population, buid, previousStateSource, iterationLimit, parallelStart, overrideStalled, mockLandscape,
       source, simulator, resetState, processorScalingCapacityOverride
     } = this;
     return {
-      runType, population, ...(buid ? { buid } : {}), bulkReset, previousStateSource, iterationLimit, parallelStart, overrideStalled,
+      runType, population, ...(buid ? { buid } : {}), previousStateSource, iterationLimit, parallelStart, overrideStalled,
       ...(processorScalingCapacityOverride !== undefined ? { processorScalingCapacityOverride } : {}),
       // A mock landscape's own options, only there
       ...(mockLandscape ? { source, ...(source === 'simulator' ? { simulator } : {}), resetState } : {})
@@ -539,7 +540,7 @@ export class BulkSync implements BulkSyncService {
       landscape: settings.landscape,
       defaults: {
         runType: ScheduledRun.POPULATION === SyncPopulation.PersonFull ? 'full' : 'full-no-deactivations',
-        bulkReset: ScheduledRun.BULK_RESET,
+        previousStateSource: ScheduledRun.PREVIOUS_STATE_SOURCE,
         iterationLimit: BulkSyncRequest.CHUNKS_PER_TASK_DEFAULT,
         parallelStart: Math.min(BulkSyncRequest.PARALLEL_START_DEFAULT, parallelMax),
         // The landscape's processor maximum, where Processor tasks starts (unknown to a dashboard deployed before it)
@@ -894,9 +895,11 @@ export class BulkSync implements BulkSyncService {
       region: landscape(settings.region),
       stackId: landscape(settings.stackId, 'The pipeline stack'),
       landscape: landscape(settings.landscape),
-      previousStateSource: form(request.previousStateSource, request.bulkReset
-        ? 'Bulk reset: every person is looked up in Huron'
-        : 'People whose stored hash matches are skipped'),
+      previousStateSource: form(request.previousStateSource, {
+        'target': 'Bulk reset: every person is looked up in Huron',
+        'storage-then-target': 'People whose stored hash matches are skipped; people with no stored hash are looked up in Huron',
+        'storage': 'People whose stored hash matches are skipped; people with no stored hash are created without a lookup'
+      }[request.previousStateSource]),
       skipAtomicCounterReset: fixed(false, "The chunker subscriber resets the chunker's counters at every run's start"),
       messagesToPrepopulate: form(String(request.parallelStart), parallel),
       desiredCount: form(request.parallelStart, parallel),

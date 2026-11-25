@@ -224,7 +224,7 @@ export class BulkSchedule implements BulkScheduleService {
     }
     return {
       runType: event.populationType === SyncPopulation.PersonFull ? 'full' : 'full-no-deactivations',
-      bulkReset: previousStateSourceIn(event) === 'target',
+      previousStateSource: previousStateSourceIn(event) ?? ScheduledRun.PREVIOUS_STATE_SOURCE,
       iterationLimit: event.iterationLimit ?? 0,
       parallelStart: event.parallelStart ?? 0,
       ...(event.processorScalingCapacityOverride !== undefined ? { processorScalingCapacityOverride: event.processorScalingCapacityOverride } : {}),

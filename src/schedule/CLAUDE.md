@@ -9,7 +9,7 @@ than a library: the plan doc `bulk-sync-schedule-plan.md` at the repo root while
 ## Files
 
 - `ScheduledRun.ts` (harness `SCHEDULED_RUN`): the landscape's bulk sync schedule. Static: what a scheduled run is
-  (`scheduleInput()`, `previousStateSource()`, `scheduleName()`, `roleName()`, `usesRealSource()`, `TIMEZONE`,
+  (`scheduleInput()`, `PREVIOUS_STATE_SOURCE`, `scheduleName()`, `roleName()`, `usesRealSource()`, `TIMEZONE`,
   `MIN_SPACING_MINUTES`). Instance: `get()`, `preview(choices)`, `create()`, `replace()` (when, run and on/off in one
   update), `save()` (create or replace), `setEnabled()`, `setCron()`, `replaceInput()`, `delete()`,
   `otherSchedules()`, `upcomingStarts()` (real-source schedules starting within the hour, for Bulk sync's warning),

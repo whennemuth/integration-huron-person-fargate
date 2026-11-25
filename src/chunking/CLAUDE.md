@@ -17,7 +17,7 @@ the processor maximum, a mock reset, the counter reset and a parallel start, in 
 
 **Run start** (shared by the subscriber and the Runner):
 - `ScheduledRun` (in `src/schedule/`, [schedule/CLAUDE.md](../schedule/CLAUDE.md)): the schedule's input, and
-  `previousStateSource(bulkReset)`.
+  `PREVIOUS_STATE_SOURCE` (`storage-then-target`).
 - `StartedBy.ts`: `StartedBy` / `RunStarter`, who started a run.
 - `PreviousStateSource.ts`: where a run's previous state comes from (`storage`, or `target`: a bulk reset), carried as
   `previousStateSource` (it replaced the `bulkReset` / `trustPreviousStorage` pair, now refused);
@@ -65,7 +65,8 @@ writes and status checks, including the run's running `totalRecords`), `ChunkFil
 - **A run's previous state source has no default**: an event or queue message without `previousStateSource`, or
   carrying the `bulkReset` / `trustPreviousStorage` pair it replaced, is refused (`runStartRefusal()`,
   `handleApiEvent()`'s 400, a thrown error in the chunker). Read it with `previousStateSourceIn()`. A run with no
-  baseline is `target` whatever it asked for (`docker/chunker.ts`).
+  baseline is `target` whatever it asked for, and only `target` builds the person cache (`docker/chunker.ts`;
+  `storage-then-target` looks people up directly).
 - **Never reset the run counters in `handleApiEvent()`**: queue seeding calls it once per seeded message.
 - **Subscriber refusals are returned** (a 400 result), not thrown, and the subscriber Lambda has no automatic retry.
 - **`partialOrEmptyChunkEncountered`** is persisted metadata: never rename it, though it means "end of records".

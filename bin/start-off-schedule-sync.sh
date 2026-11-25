@@ -14,8 +14,9 @@
 #
 # Parameters:
 #   --populationType   Required. Type of sync: 'person-full' or 'person-delta'
-#   --bulkReset        Required. 'true' ignores stored hashes (a reset); 'false' trusts them (what the schedule runs).
-#                      Sent as the run's previousStateSource: 'target' for a reset, else 'storage'
+#   --bulkReset        Required. 'true' ignores stored hashes (a reset); 'false' trusts them, looking up in Huron only
+#                      the people with no stored hash (what the schedule runs). Sent as the run's previousStateSource:
+#                      'target' for a reset, else 'storage-then-target'
 #                      (src/chunking/PreviousStateSource.ts): the subscriber refuses a run without one.
 #   --landscape        Optional. Landscape suffix of the function name (default: TAGS.Landscape in context.json)
 #   --region           Optional. AWS region (default: REGION in context.json, else us-east-2)
@@ -125,7 +126,7 @@ fi
 if [[ "$BULK_RESET" == "true" ]]; then
   PREVIOUS_STATE_SOURCE="target"
 elif [[ "$BULK_RESET" == "false" ]]; then
-  PREVIOUS_STATE_SOURCE="storage"
+  PREVIOUS_STATE_SOURCE="storage-then-target"
 else
   echo "Error: --bulkReset must be 'true' or 'false'"
   exit 1

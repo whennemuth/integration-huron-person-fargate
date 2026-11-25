@@ -1243,7 +1243,8 @@ class RunDetailView {
             return RunFormat.population(value);
         }
         if (name === 'previousStateSource') {
-            return value === 'target' ? 'Huron (bulk reset)' : value === 'storage' ? 'Stored hashes' : String(value);
+            const sources = { 'target': 'Huron (bulk reset)', 'storage': 'Stored hashes', 'storage-then-target': 'Stored hashes, then Huron for people with none' };
+            return sources[value] || String(value);
         }
         if (name === 'startedBy') {
             return RunView.startedByLabel(value) || RunFormat.NONE;

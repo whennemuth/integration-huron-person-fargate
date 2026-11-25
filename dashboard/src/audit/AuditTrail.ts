@@ -52,7 +52,7 @@ export const describeRequest = (path: string, body: string | null): { target?: s
       };
     case '/api/bulk-sync': {
       // A start's choices, the ones that say what kind of run it was (bulk:processors among them)
-      const choices = ['runType', 'bulkReset', 'resetState', 'source', 'processorScalingCapacityOverride', 'parallelStart', 'iterationLimit']
+      const choices = ['runType', 'previousStateSource', 'resetState', 'source', 'processorScalingCapacityOverride', 'parallelStart', 'iterationLimit']
         .filter(name => fields[name] !== undefined)
         .map(name => `${name}=${typeof fields[name] === 'object' ? JSON.stringify(fields[name]) : fields[name]}`);
       return { target: text(fields.buid), detail: choices.join(', ') || undefined };

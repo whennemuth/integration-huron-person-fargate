@@ -194,7 +194,8 @@ export interface PersonSyncResult {
 export type BulkSyncRequestBody = {
   runType?: unknown;
   buid?: unknown;
-  bulkReset?: unknown;
+  /** `storage-then-target` (the default), `storage`, or `target` (a bulk reset) */
+  previousStateSource?: unknown;
   iterationLimit?: unknown;
   parallelStart?: unknown;
   overrideStalled?: unknown;
@@ -259,7 +260,7 @@ export type BulkSyncState = {
   landscape: string;
   /** The form's starting values: the scheduled run's choices (src/schedule/ScheduledRun.ts), 10 chunks per task, and one message */
   defaults: {
-    runType: BulkSyncRunType; bulkReset: boolean; iterationLimit: number; parallelStart: number;
+    runType: BulkSyncRunType; previousStateSource: PreviousStateSource; iterationLimit: number; parallelStart: number;
     /** The landscape's processor maximum (maxScalingCapacity), where Processor tasks starts; unknown to an older deploy */
     processorScalingCapacity?: number;
   };
@@ -321,8 +322,7 @@ export type BulkSyncChoices = {
   population: BulkSyncPopulation;
   /** Set for a test */
   buid?: string;
-  bulkReset: boolean;
-  /** Where the run's previous state comes from: `target` for a bulk reset, else `storage` */
+  /** Where the run's previous state comes from: `storage-then-target`, `storage`, or `target` (a bulk reset) */
   previousStateSource: PreviousStateSource;
   /** Chunks each chunker task fetches before it hands the rest on to a new task (0: a single task fetches them all) */
   iterationLimit: number;

@@ -49,7 +49,7 @@ const loadScripts = (minified = false): Record<string, any> => {
 /** Bulk sync's form state (BulkScheduleState.form), a mock landscape's when mock is true */
 const formState = (mock = false) => ({
   landscape: mock ? 'mock' : 'preview',
-  defaults: { runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 15, processorScalingCapacity: 3 },
+  defaults: { runType: 'full', previousStateSource: 'storage-then-target', iterationLimit: 10, parallelStart: 15, processorScalingCapacity: 3 },
   iterationLimit: { max: 50 },
   parallelStart: { max: 15, enabled: true },
   processorScalingCapacity: { max: 20 },
@@ -72,7 +72,7 @@ const schedule = (overrides: Record<string, any> = {}) => ({
   description: 'At 04:00 AM, Monday through Friday (America/New_York)',
   nextRuns: ['Fri, Nov 20, 2026, 4:00 AM', 'Mon, Nov 23, 2026, 4:00 AM', 'Tue, Nov 24, 2026, 4:00 AM'],
   choices: { mode: 'simple', time: '04:00', days: 'weekdays' }, realSource: true,
-  run: { runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 5 },
+  run: { runType: 'full', previousStateSource: 'storage-then-target', iterationLimit: 10, parallelStart: 5 },
   changedBy: 'jdoe', changedAt: '2026-11-18T15:00:00.000Z',
   ...overrides
 });
@@ -159,18 +159,18 @@ describe.each([false, true])('bulk-schedule.js (minified: %s)', minified => {
 
     it('reads a schedule form without a BUID box or Start from scratch', () => {
       const fields: Record<string, any> = {
-        runType: group(['full', 'full-no-deactivations'], ['full']), bulkReset: { checked: true }, custom: { checked: false },
+        runType: group(['full', 'full-no-deactivations'], ['full']), previousStateSource: group(['storage-then-target', 'storage', 'target'], ['target']), custom: { checked: false },
         chunkMode: group(['perTask', 'single'], ['perTask']), source: group(['real', 'simulator'], ['real'])
       };
       expect(BulkSyncPage.readRequest({ elements: fields, dataset: { defaultParallel: '15' } }))
-        .toEqual({ runType: 'full', bulkReset: true, parallelStart: 15, source: 'real', custom: false });
+        .toEqual({ runType: 'full', previousStateSource: 'target', parallelStart: 15, source: 'real', custom: false });
     });
   });
 
   describe('the review', () => {
     const plan = {
       landscape: 'preview',
-      choices: { runType: 'full', bulkReset: false, trustPreviousStorage: true, iterationLimit: 10, parallelStart: 5, processorScalingCapacityOverride: 4 },
+      choices: { runType: 'full', previousStateSource: 'storage-then-target', trustPreviousStorage: true, iterationLimit: 10, parallelStart: 5, processorScalingCapacityOverride: 4 },
       event: { baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', startedBy: { by: 'schedule' } },
       settings: []
     };
@@ -338,7 +338,7 @@ describe.each([false, true])('bulk-schedule.js (minified: %s)', minified => {
       const plan = {
         landscape: 'preview', enabled: true, replaces: false,
         when: { expression: 'cron(0 4 ? * MON-FRI *)', description: 'At 04:00 AM, Monday through Friday (America/New_York)', nextRuns: ['Fri, Nov 20, 2026, 4:00 AM'] },
-        run: { choices: { runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 15 }, event: { startedBy: { by: 'schedule' } }, settings: [] }
+        run: { choices: { runType: 'full', previousStateSource: 'storage-then-target', iterationLimit: 10, parallelStart: 15 }, event: { startedBy: { by: 'schedule' } }, settings: [] }
       };
       const { instance, main, confirm, calls } = page({ state: state(false), plan });
       await instance.load();
@@ -348,13 +348,13 @@ describe.each([false, true])('bulk-schedule.js (minified: %s)', minified => {
       const form = {
         dataset: { defaultParallel: '15' },
         elements: {
-          runType: group(['full', 'full-no-deactivations'], ['full']), bulkReset: { checked: false }, custom: { checked: false },
+          runType: group(['full', 'full-no-deactivations'], ['full']), previousStateSource: group(['storage-then-target', 'storage', 'target'], ['storage-then-target']), custom: { checked: false },
           chunkMode: group(['perTask', 'single'], ['perTask']), scheduleEnabled: { checked: true },
           whenMode: group(['simple', 'cron'], ['simple']), whenTime: { value: '04:00' }, whenDays: { value: 'weekdays' }, whenDay: [], whenExpression: { value: '' }
         }
       };
       expect(await instance.review(form)).toBe(true);
-      const body = { when: { mode: 'simple', time: '04:00', days: 'weekdays' }, run: { runType: 'full', bulkReset: false, parallelStart: 15 }, enabled: true };
+      const body = { when: { mode: 'simple', time: '04:00', days: 'weekdays' }, run: { runType: 'full', previousStateSource: 'storage-then-target', parallelStart: 15 }, enabled: true };
       expect(calls).toContainEqual(['POST', '/api/bulk-schedule/plan', body]);
       expect(confirm.innerHTML).toMatch(/Schedule this run\?/);
       expect(confirm.innerHTML).toMatch(/<\/i>Schedule run/);
@@ -372,7 +372,7 @@ describe.each([false, true])('bulk-schedule.js (minified: %s)', minified => {
       });
       const form = {
         dataset: {}, elements: {
-          runType: group(['full'], ['full']), bulkReset: { checked: false }, custom: { checked: false }, chunkMode: group(['perTask'], ['perTask']),
+          runType: group(['full'], ['full']), previousStateSource: group(['storage-then-target', 'storage', 'target'], ['storage-then-target']), custom: { checked: false }, chunkMode: group(['perTask'], ['perTask']),
           scheduleEnabled: { checked: true }, whenMode: group(['simple'], ['simple']), whenTime: { value: '03:30' }, whenDays: { value: 'every-day' }
         }
       };

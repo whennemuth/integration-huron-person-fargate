@@ -597,6 +597,7 @@ describe.each([false, true])('run-history.js (minified: %s)', minified => {
       expect(RunDetailView.flagValue('anything', null)).toBe(RunFormat.NONE);
       expect(RunDetailView.flagValue('previousStateSource', 'target')).toBe('Huron (bulk reset)');
       expect(RunDetailView.flagValue('previousStateSource', 'storage')).toBe('Stored hashes');
+      expect(RunDetailView.flagValue('previousStateSource', 'storage-then-target')).toBe('Stored hashes, then Huron for people with none');
     });
 
     it('counts the people removed from the source first, then those deactivated and failed, and says what they are', () => {

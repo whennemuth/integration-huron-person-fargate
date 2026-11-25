@@ -114,7 +114,7 @@ describe('BulkSchedule', () => {
       expect(plan).toMatchObject({ landscape: 'mock', enabled: true, replaces: false, when: { expression: 'cron(0 4 * * ? *)' } });
       expect(plan.run.event).toMatchObject({
         baseUrl: 'https://cdm.example.bu.edu', fetchPath: '/api/people', populationType: 'person-full', parallelStart: 5,
-        previousStateSource: 'storage', startedBy: { by: 'schedule' },
+        previousStateSource: 'storage-then-target', startedBy: { by: 'schedule' },
         processingMetadata: { processedAt: ScheduledRun.PROCESSED_AT_PLACEHOLDER },
       });
       expect(await scheduledRun.get()).toBeUndefined();
@@ -155,12 +155,12 @@ describe('BulkSchedule', () => {
       expect(created.schedule).toMatchObject({
         name: 'chunker-api-schedule-mock', enabled: true, expression: 'cron(0 4 ? * MON-FRI *)',
         choices: { mode: 'simple', time: '04:00', days: 'weekdays' }, changedBy: 'jdoe', realSource: true,
-        run: { runType: 'full', bulkReset: false, iterationLimit: 10, parallelStart: 0 },
+        run: { runType: 'full', previousStateSource: 'storage-then-target', iterationLimit: 10, parallelStart: 0 },
       });
-      const replaced = await service.save({ when: everyDayAt('04:15'), run: { runType: 'full-no-deactivations', bulkReset: true }, enabled: false }, 'amy');
+      const replaced = await service.save({ when: everyDayAt('04:15'), run: { runType: 'full-no-deactivations', previousStateSource: 'target' }, enabled: false }, 'amy');
       expect(replaced.status).toBe('replaced');
       expect(replaced.schedule).toMatchObject({
-        enabled: false, expression: 'cron(15 4 * * ? *)', changedBy: 'amy', run: { runType: 'full-no-deactivations', bulkReset: true },
+        enabled: false, expression: 'cron(15 4 * * ? *)', changedBy: 'amy', run: { runType: 'full-no-deactivations', previousStateSource: 'target' },
       });
     });
 

@@ -161,7 +161,7 @@ class BulkScheduleView {
      * landscape a run without a source reads the real one
      */
     static runChoices(run, mockLandscape) {
-        const choices = Object.assign({ iterationLimit: 0, parallelStart: 0, bulkReset: false }, run || {});
+        const choices = Object.assign({ iterationLimit: 0, parallelStart: 0, previousStateSource: BulkSyncView.PREVIOUS_STATE_CHOICES[0].value }, run || {});
         if (mockLandscape && ! choices.source) {
             choices.source = 'real';
         }

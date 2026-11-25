@@ -9,7 +9,7 @@ const mockCalls: string[] = [];
 // isAlreadyFinished() answers, in order (start-up, then before fetching)
 let mockFinishedAnswers: boolean[] = [];
 // The message's previous state source, whether a baseline exists, and the Flags main() wrote
-let mockPreviousStateSource: 'storage' | 'target' | undefined = 'target';
+let mockPreviousStateSource: 'storage' | 'target' | 'storage-then-target' | undefined = 'target';
 let mockBaselineExists = true;
 let mockWrittenFlags: any;
 
@@ -179,7 +179,10 @@ describe('chunker main(): where the run\'s previous state comes from', () => {
     ['storage', true, 'storage', false],
     ['storage', false, 'target', true],
     ['target', true, 'target', true],
-    ['target', false, 'target', true]
+    ['target', false, 'target', true],
+    // Only the people with no stored hash are looked up, directly: no person cache
+    ['storage-then-target', true, 'storage-then-target', false],
+    ['storage-then-target', false, 'target', true]
   ] as const)('a message asking for %p with a baseline %p records %p, building the person cache: %p',
     async (fromMessage, baselineExists, recorded, buildsCache) => {
       mockPreviousStateSource = fromMessage;
