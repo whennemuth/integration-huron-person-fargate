@@ -26,25 +26,22 @@ export interface PostProcessorSubscribingLambdaProps {
 }
 
 /**
- * Creates a Lambda function that triggers the post-processor Fargate task by sending messages to SQS.
- * 
- * Sequence of events:
- * - 1) The chunker Fargate task creates delta chunk files in the chunks S3 bucket.
- * - 2) An S3 event notification for the chunks bucket, responding to the creation of delta chunk 
- *      files, triggers this PostProcessorSubscribingLambda (once per file).
- * - 3) This PostProcessorSubscribingLambda uses the event parameters to identify and inspect the S3 
- *      chunks bucket.
- * - 4) If all expected delta chunks are present in the chunks bucket, as per a metadata file it 
- *      reads from the same bucket, this Lambda sends a message to the post-processor SQS queue with the 
- *      S3 key of the uploaded chunk file - thus "passing on" the subscription to Fargate as follows: 
- * - 5) The desiredCount of the post-processor Fargate service is then adjusted upward by the
- *      QueueProcessingFargateService construct internals responding to the temporarily heightened
- *      depth of the SQS queue, which in turn causes a new Fargate task for post-processing to be created.
- * - 6) The post-processor task polls for a message in the queue that it expects to find with the S3
- *      bucket details for inspecting content as follows:.
- * - 7) If all expected delta chunks are present in the chunks bucket, it sends a message to the 
- *      post-processor SQS queue to trigger the post-processor Fargate task.
- * - 8) The post-processor task concatenates all NDJSON chunk files into a single "previous-input.ndjson" file, which overwrites the prior version in the same bucket, and then deletes the chunk files.
+ * Creates the Lambda function that, in S3 storage mode, triggers the post-processor Fargate task by
+ * sending a message to the post-processor queue.
+ *
+ * Sequence of events (S3 mode):
+ * - 1) Each S3-mode processor task writes its chunk's mini-delta under deltas/{population}/{timestamp}/
+ *      in the chunks bucket, then a chunk-NNNN_processing_complete.json marker (success or failure).
+ * - 2) The marker's S3 event notification invokes this Lambda (once per marker).
+ * - 3) The Lambda does nothing for a run with a terminal error. Otherwise it reads the run's metadata
+ *      (chunkCount) and lists the run's markers.
+ * - 4) Once the markers' ordinals run 0..N with no gaps and number chunkCount, it sends
+ *      { chunksBucket, chunkDirectory, createdAt } to the post-processor queue (unless DRY_RUN).
+ * - 5) The QueueProcessingFargateService scales up on the queue depth and starts the post-processor
+ *      task, which reads that message (see PostProcessorTaskDefinition).
+ *
+ * In DynamoDB mode the Lambda is deployed but never invoked: processors write no markers, and the
+ * processor that completes a run's last chunk queues the post-processor itself.
  */
 export class PostProcessorSubscribingLambda extends Construct {
   public readonly function: NodejsFunction;
@@ -72,9 +69,10 @@ export class PostProcessorSubscribingLambda extends Construct {
     // Create Lambda function
     this.function = new NodejsFunction(this, 'Function', {
       functionName: `${FUNCTION_BASE_NAME}-${props.landscape}`,
-      description: 
-        `Subscribes to S3 event where a "chunk" file comprising hashed person delta data lands in 
-        ${props.chunksBucketName}. (SEE DESCRIPTION environment variable(s) for task performed)`,      runtime: Runtime.NODEJS_20_X,
+      description:
+        `S3 mode: queues the post-processor once every chunk's processing-complete marker is in ` +
+        `${props.chunksBucketName}. (SEE DESCRIPTION environment variable)`,
+      runtime: Runtime.NODEJS_20_X,
       handler: 'handler',
       entry: 'src/post-processing/PostProcessorSubscriber.ts',
       timeout: Duration.seconds(props.timeoutSeconds),
@@ -91,16 +89,16 @@ export class PostProcessorSubscribingLambda extends Construct {
         ...(props.context.PREVIOUS_STORAGE_TYPE === 'dynamodb' && {
           DYNAMODB_STATISTICS_TABLE_NAME: STATISTICS_TABLE_NAME(props.context),
         }),
-        DESCRIPTION1:
-          `Sends SQS message to post-processor queue to trigger Fargate task that checks completeness 
-          of the delta chunks by referencing a metadata file created by the chunker.`,
-        DESCRIPTION2:
-          `If all expected delta chunks are present in the ${props.chunksBucketName} bucket, 
-          it triggers the post-processor task to concatenate all NDJSON chunk files into a single 
-          "previous-input.ndjson" file.`,
-        DESCRIPTION3:
-          `This "previous-input.ndjson" file will overwrite the prior version in the same bucket, 
-          and then the chunk files are deleted.`
+        // What this Lambda does. Lambda allows 4 KB for all environment variables together.
+        DESCRIPTION:
+          `S3 mode only. Invoked for each chunk-NNNN_processing_complete.json marker that an S3-mode ` +
+          `processor writes (success or failure) under deltas/{population}/{timestamp}/ in ${props.chunksBucketName}. ` +
+          `Does nothing for a run with a terminal error. Otherwise reads the run's metadata (chunkCount) and ` +
+          `lists the run's markers; once they run 0..N with no gaps and number chunkCount, it queues the post-processor. ` +
+          `The message (chunksBucket, chunkDirectory, createdAt) scales up the post-processor service, which ` +
+          `starts its task (see its task definition's DESCRIPTION variable). DRY_RUN=true checks but sends nothing. ` +
+          `DynamoDB mode: never invoked, since processors write no markers. The processor that completes a run's ` +
+          `last chunk and wins its POST_PROCESSOR_TRIGGER_CLAIM (statistics table) queues the post-processor itself.`,
       },
       bundling: {
         externalModules: [

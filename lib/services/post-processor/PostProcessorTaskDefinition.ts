@@ -28,8 +28,9 @@ export interface PostProcessorTaskDefinitionProps {
 }
 
 /**
- * Creates a Fargate task definition for the post-processor (Phase 3)
- * Concatenates all NDJSON chunks into previous-input.ndjson
+ * Creates a Fargate task definition for the post-processor (Phase 3), run once per run after every
+ * chunk is processed: deletions for a full sync in both storage modes, plus, in S3 mode, merging the
+ * run's delta files into the delta-storage/previous-input.ndjson baseline. See the DESCRIPTION environment variable.
  */
 export class PostProcessorTaskDefinition extends Construct {
   public readonly taskDefinition: FargateTaskDefinition;
@@ -81,16 +82,20 @@ export class PostProcessorTaskDefinition extends Construct {
       DYNAMODB_STATISTICS_TABLE_NAME: dynamodb!.statisticsTable.tableName,
       PREVIOUS_STORAGE_TYPE: previousStorageType!,
       SECRET_ARN: secretArn!, // ARN of the Secrets Manager secret to read config from
-      DESCRIPTION1: 
-        `Container run by lambda function responding to S3 events when a new "chunk" 
-        file comprising person delta (hashes) data is deposited into the ${chunksBucketName} 
-        bucket.`,
-      DESCRIPTION2: 
-        `It checks the completeness of the delta chunks by referencing a metadata file created 
-        by the chunker. If all expected delta chunks are present in the ${chunksBucketName}`,
-      DESCRIPTION3:
-        `bucket, it triggers the post-processor task to concatenate all NDJSON chunk files into a single file named previous-input.ndjson 
-        in the same bucket, and then deletes the chunk files.`
+      // What this task does.
+      DESCRIPTION:
+        `Phase 3, once per run: started when the post-processor service scales up on a message ` +
+        `(chunksBucket, chunkDirectory, createdAt) queued after every chunk of a run in ${chunksBucketName} is processed. ` +
+        `DynamoDB mode: the processor completing the run's last chunk queues it, once (by claim). Nothing to ` +
+        `merge: the processors already wrote each changed person's hash to the current-state and history tables. ` +
+        `Deletions, for a full sync (person-full) only and never for a run with a terminal error: people in ` +
+        `the current-state table but not in the run's raw chunk files (chunks/...) are deleted in Huron. ` +
+        `PERSON_DELETE_TYPE (default soft: PATCH active=false) sets how. Each soft delete adds a DELETED history ` +
+        `record and a DELETED:-prefixed hash with deletedAt, so later runs skip the person and reactivate a returning one. ` +
+        `S3 mode: queued by the post-processor subscriber Lambda. Concatenates the run's delta files under ` +
+        `deltas/{population}/{timestamp}/, merges them into delta-storage/previous-input.ndjson, then deletes them. ` +
+        `Both modes: chunk files under chunks/ are left in place, and the run's RUN_SUMMARY is written to the ` +
+        `statistics table at the end, whatever the outcome.`,
     };
 
     switch(previousStorageType) {
