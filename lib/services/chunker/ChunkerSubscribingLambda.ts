@@ -15,6 +15,7 @@ import { MockLandscapeReset } from '../../../src/chunking/MockLandscapeReset';
 import { isMockLandscape } from '../../../src/Utils';
 import { ScheduledStartGuard } from '../../../src/schedule/ScheduledStartGuard';
 import { IContext } from '../../../context/IContext';
+import { DEFAULT_STORAGE_TYPE } from '../../Secrets';
 
 export interface ChunkerSubscribingLambdaProps {
   vpc: IVpc;
@@ -42,7 +43,7 @@ export interface ChunkerSubscribingLambdaProps {
   /** Long enough for a parallel start's wait for the scale-in alarm (up to 6 minutes): see the context's LAMBDA */
   timeoutSeconds: number;
   memorySizeMb: number;
-  /** The context's PREVIOUS_STORAGE_TYPE: how the scheduled start guard reads the latest run (default dynamodb) */
+  /** The context's PREVIOUS_STORAGE_TYPE: how the scheduled start guard reads the latest run (default DEFAULT_STORAGE_TYPE) */
   storageType?: string;
   dryRun?: boolean;
   tags?: { [key: string]: string };
@@ -126,7 +127,7 @@ export class ChunkerSubscribingLambda extends Construct {
         // A start the bulk sync schedule makes is skipped while a run is underway (ScheduledStartGuard): the run list
         // it reads
         DYNAMODB_STATISTICS_TABLE_NAME: statisticsTableName({ STACK_ID: props.stackId, TAGS: { Landscape: props.landscape } } as IContext),
-        PREVIOUS_STORAGE_TYPE: props.storageType ?? 'dynamodb',
+        PREVIOUS_STORAGE_TYPE: props.storageType || DEFAULT_STORAGE_TYPE,
         DESCRIPTION1:
           `Analyzes incoming event (S3 or API) and delegates to appropriate handler (ChunkerS3Subscriber 
           or ChunkerApiSubscriber). Both handlers send SQS messages to trigger Fargate tasks that create 

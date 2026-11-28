@@ -43,7 +43,7 @@ describe('resolveSecretStorage', () => {
     });
 
     it('falls back to the default type when neither names one', () => {
-      expect(DEFAULT_STORAGE_TYPE).toBe('s3');
+      expect(DEFAULT_STORAGE_TYPE).toBe('dynamodb');
       expect(resolveSecretStorage(makeContext(), undefined).type).toBe(DEFAULT_STORAGE_TYPE);
       expect(resolveSecretStorage(makeContext(), { config: {} } as any).type).toBe(DEFAULT_STORAGE_TYPE);
     });

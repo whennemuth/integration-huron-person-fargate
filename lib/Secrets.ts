@@ -61,8 +61,11 @@ export class HuronPersonSecrets {
   }
 }
 
-/** Storage type used when neither the context nor the integration config names one */
-export const DEFAULT_STORAGE_TYPE: StorageType = 's3';
+/**
+ * Storage type used when neither the context nor the integration config names one. Every CDK
+ * fallback for PREVIOUS_STORAGE_TYPE ends here, so they can't name different defaults.
+ */
+export const DEFAULT_STORAGE_TYPE: StorageType = 'dynamodb';
 
 /**
  * Reads the storage block of the integration config that HURON_PERSON_CONFIG refers to (a file

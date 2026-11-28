@@ -10,6 +10,7 @@ import { Construct } from 'constructs';
 import { FUNCTION_BASE_NAME } from '../../../src/post-processing/PostProcessorSubscriber';
 import { IContext } from '../../../context/IContext';
 import { DYNAMODB_TABLE_NAME as STATISTICS_TABLE_NAME } from '../../../src/dynamodb/StatisticsTable';
+import { DEFAULT_STORAGE_TYPE } from '../../Secrets';
 
 export interface PostProcessorSubscribingLambdaProps {
   vpc: IVpc;
@@ -84,7 +85,7 @@ export class PostProcessorSubscribingLambda extends Construct {
         POST_PROCESSOR_QUEUE_URL: props.postProcessorQueueUrl,
         CHUNKS_BUCKET_NAME: props.chunksBucketName,
         DRY_RUN: props.dryRun ? 'true' : 'false',
-        PREVIOUS_STORAGE_TYPE: props.context.PREVIOUS_STORAGE_TYPE || 's3',
+        PREVIOUS_STORAGE_TYPE: props.context.PREVIOUS_STORAGE_TYPE || DEFAULT_STORAGE_TYPE,
         // Conditionally add the statistics table name when in DynamoDB mode
         ...(props.context.PREVIOUS_STORAGE_TYPE === 'dynamodb' && {
           DYNAMODB_STATISTICS_TABLE_NAME: STATISTICS_TABLE_NAME(props.context),

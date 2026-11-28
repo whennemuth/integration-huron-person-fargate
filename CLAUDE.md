@@ -137,8 +137,10 @@ tables and run metadata in the statistics table.
 
 - **Switching**: change `PREVIOUS_STORAGE_TYPE` in the context and update the stack; the config secret's storage block
   is derived from it (`resolveSecretStorage()` in `lib/Secrets.ts`), so the integration config files need no change.
-- **Keep `PREVIOUS_STORAGE_TYPE` set in every `context.*.json`**: when missing, CDK's fallbacks disagree. Use `s3` or
-  `dynamodb`: the Docker routers throw on any other value.
+- **Keep `PREVIOUS_STORAGE_TYPE` set in every `context.*.json`**: when missing, CDK falls back to
+  `DEFAULT_STORAGE_TYPE` (`'dynamodb'`, `lib/Secrets.ts`), but only some fallbacks consult the integration config
+  first, so they can disagree. Use `s3` or `dynamodb`: the Docker routers throw on any other value. Point any new
+  fallback at `DEFAULT_STORAGE_TYPE`, never a literal.
 - **Switching to S3 mode deletes** the PersonCurrentState and PersonHistory tables (DESTROY); switching back creates
   them empty. An old S3 baseline (`delta-storage/`) is left alone, except by a mock landscape's reset.
 

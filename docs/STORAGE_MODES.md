@@ -18,7 +18,7 @@ resulting `config.storage.type`):
 S3 chunk NDJSON files (`chunk-0000.ndjson`, `chunk-0001.ndjson`, etc.) remain in S3 regardless of storage mode. Only
 state/metadata files move to DynamoDB.
 
-## S3 mode (the default)
+## S3 mode
 
 What's stored in S3:
 
@@ -36,7 +36,7 @@ Characteristics:
 - Lower cost for infrequent access patterns
 - Sequential file I/O (streaming, line-by-line reading)
 
-## DynamoDB mode
+## DynamoDB mode (the default)
 
 What's stored in DynamoDB:
 
@@ -94,7 +94,7 @@ DynamoDB mode does NOT remove S3 features; both modes coexist through template-p
 the S3 bucket plus DynamoDB table read/write (conditionally granted).
 
 **CDK infrastructure** (`lib/DynamoDB.ts`): tables are created when `context.PREVIOUS_STORAGE_TYPE === 'dynamodb'` or
-when `context.PREVIOUS_STORAGE_TYPE` is undefined (defaults to 'dynamodb'). Task definitions check
+when `context.PREVIOUS_STORAGE_TYPE` is undefined (`DEFAULT_STORAGE_TYPE`, 'dynamodb'). Task definitions check
 `dynamoDbTables.personCurrentStateTable` before granting permissions. S3 mode has zero DynamoDB infrastructure impact.
 
 ## Switching between modes
@@ -103,7 +103,7 @@ Set `PREVIOUS_STORAGE_TYPE` (`"s3"` or `"dynamodb"`) in the active `context/cont
 one value is the switch: the integration config files (`integration-huron-person/config/config.*.json`) need no
 change, because the config secret's storage block is derived from it (`resolveSecretStorage()` in `lib/Secrets.ts`):
 
-- **Type**: `context.PREVIOUS_STORAGE_TYPE`, else the integration config's `storage.type`, else `'s3'`
+- **Type**: `context.PREVIOUS_STORAGE_TYPE`, else the integration config's `storage.type`, else `'dynamodb'`
   (`DEFAULT_STORAGE_TYPE`, the last resort). So the secret always agrees with the mode the tasks run in.
 - **Settings**: the integration config's `storage.config` is kept only if it belongs to the resolved type (e.g. an S3
   `keyPrefix`); settings for another type are dropped, not mixed in. Settings the stack determines come from the
@@ -111,9 +111,11 @@ change, because the config secret's storage block is derived from it (`resolveSe
   region (DynamoDB mode).
 - Environment variables (`.env`, loaded by `bin/App.ts`) don't set storage in the secret.
 
-Keep `PREVIOUS_STORAGE_TYPE` set in every `context.*.json`: when it is missing, CDK's fallbacks disagree
-(`lib/DynamoDB.ts` creates the DynamoDB tables, `TaskDefinitions` takes the type from the locally loaded integration
-config). Switching a stack to S3 mode deletes its PersonCurrentState and PersonHistory tables (removal policy
+Keep `PREVIOUS_STORAGE_TYPE` set in every `context.*.json`. When it is missing, every CDK fallback ends at
+`DEFAULT_STORAGE_TYPE` (`'dynamodb'`, in `lib/Secrets.ts`), but they don't all look at the integration config first:
+`lib/DynamoDB.ts` and the chunker and post-processor subscriber Lambdas go straight to the default, while
+`TaskDefinitions` takes the locally loaded integration config's `storage.type` and the secret the context's
+`HURON_PERSON_CONFIG` storage. So an integration config that names `s3` would split the stack. Switching a stack to S3 mode deletes its PersonCurrentState and PersonHistory tables (removal policy
 DESTROY); switching back creates them empty. Switching does not touch an S3 baseline (`delta-storage/` in the chunks
 bucket) left by an earlier S3-mode period; in a mock landscape the runner's reset deletes it.
 

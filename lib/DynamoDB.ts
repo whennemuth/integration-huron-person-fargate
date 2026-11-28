@@ -3,6 +3,7 @@ import { AttributeType, BillingMode, ProjectionType, Table, TableEncryption } fr
 import { Construct } from 'constructs';
 import { IContext } from '../context/IContext';
 import { isMockLandscape } from '../src/Utils';
+import { DEFAULT_STORAGE_TYPE } from './Secrets';
 import { 
   DYNAMODB_PARTITION_KEY as statisticsPartitionKey, 
   DYNAMODB_SECONDARY_PARTITION_KEY as statisticsSecondaryPartitionKey, 
@@ -92,8 +93,8 @@ export class DynamoDbTables extends Construct {
     this.createPersonRecordProcessorLogTable();
 
     // Conditionally create DynamoDB-based delta storage tables
-    // Default to 'dynamodb' mode if PREVIOUS_STORAGE_TYPE is not specified
-    const previousStorageType = params.props.context.PREVIOUS_STORAGE_TYPE || 'dynamodb';
+    // DEFAULT_STORAGE_TYPE ('dynamodb') if PREVIOUS_STORAGE_TYPE is not specified
+    const previousStorageType = params.props.context.PREVIOUS_STORAGE_TYPE || DEFAULT_STORAGE_TYPE;
     if (previousStorageType === 'dynamodb') {
       this.createPersonCurrentStateTable();
       this.createPersonHistoryTable();

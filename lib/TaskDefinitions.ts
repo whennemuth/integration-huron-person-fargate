@@ -5,7 +5,7 @@ import { Config, TargetPersonDeleteType } from 'integration-huron-person';
 import { IContext } from '../context/IContext';
 import { DynamoDbTables } from './DynamoDB';
 import { CLUSTER_BASE_NAME } from './EcsInfrastructure';
-import { HuronPersonSecrets } from './Secrets';
+import { DEFAULT_STORAGE_TYPE, HuronPersonSecrets } from './Secrets';
 import { SERVICE_LOGICAL_ID } from './services/chunker/ChunkerService';
 import { ChunkerTaskDefinition } from './services/chunker/ChunkerTaskDefinition';
 import { PostProcessorTaskDefinition } from './services/post-processor/PostProcessorTaskDefinition';
@@ -45,11 +45,7 @@ export class TaskDefinitions extends Construct {
     let { config, repository, context: ctx, dynamoDbTables, huronPersonSecrets, tags } = props;
 
     const { storage, storage: { config: storageCfg } = {} } = props.config || {};
-    const previousStorageType = ctx.PREVIOUS_STORAGE_TYPE || storage?.type;
-
-    if( ! previousStorageType) {
-      throw new Error('context.HURON_PERSON_CONFIG.storage and config.storage.type are not defined. Please provide a valid storage configuration.');
-    }
+    const previousStorageType = ctx.PREVIOUS_STORAGE_TYPE || storage?.type || DEFAULT_STORAGE_TYPE;
 
     const storageParams: StorageParams = { previousStorageType, storageConfig: { } }
 
